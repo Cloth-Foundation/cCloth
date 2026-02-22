@@ -9,7 +9,6 @@
 
 namespace cloth {
 	namespace lexer {
-
 		// Owned by the compiler frontend, represents a source file or input buffer
 		struct SourceBuffer {
 			cloth::token::FileId file = 0;
@@ -171,6 +170,5 @@ namespace cloth {
 				return static_cast<std::uint32_t>(p - begin_);
 			}
 		};
-		
 	} // namespace cloth::lexer
 } // namespace cloth

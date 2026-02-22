@@ -43,6 +43,10 @@ namespace cloth {
 
 			Import,
 
+			Static,
+			Public, Private, Internal,
+			Module,
+
 			Try, Catch, Finally, Throw,
 
 			I8, I16, I32, I64,
@@ -51,9 +55,10 @@ namespace cloth {
 			String, Char, Bool,
 			Bit, Byte,
 			Void,
+			Any,
 
 			Defer, Async, Await,
-			Atomic,
+			Atomic, Shared, Owned,
 			Delete, New, This, Super
 		};
 
@@ -72,6 +77,8 @@ namespace cloth {
 			LeftParen, RightParen,
 			LeftBrace, RightBrace,
 			LeftBracket, RightBracket,
+
+			At, Hash, Dollar, Question,
 
 			ColonColon, DotDot, DotDotDot,
 		};
@@ -93,7 +100,8 @@ namespace cloth {
 			SourceLocation end{};
 
 			constexpr SourceSpan() = default;
-			constexpr SourceSpan(SourceLocation begin, SourceLocation end) : begin(begin), end(end) {}
+			constexpr SourceSpan(SourceLocation begin, SourceLocation end) : begin(begin), end(end) {
+			}
 
 			[[nodiscard]] constexpr bool valid() const noexcept {
 				return begin.file == end.file && end.offset >= begin.offset;
@@ -128,7 +136,8 @@ namespace cloth {
 				return this->kind == kind;
 			}
 
-			// Safe owning string when the token needs to be stored beyond the lifetime of the original source buffer
+			// Safe owning string when the token needs to be stored beyond the lifetime of the
+			// original source buffer
 			[[nodiscard]] std::string toString() const {
 				return std::string(lexeme);
 			}
@@ -137,7 +146,6 @@ namespace cloth {
 			[[nodiscard]] constexpr SourceLocation location() const noexcept {
 				return span.begin;
 			}
-
 		};
 	} // namespace cloth::token
 } // namespace cloth

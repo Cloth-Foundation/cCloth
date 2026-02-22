@@ -5,8 +5,10 @@
 #include <string_view>
 #include "Token.hpp"
 
-/// MetaTokens are a special kind of token used to represent compile-time metadata queries (e.g. LENGTH(int), TYPEOF(x), etc.) that can be evaluated by the compiler during parsing or semantic analysis. 
-/// They carry additional information about the specific metadata being queried (e.g. the type or expression involved) and are distinct from regular tokens produced by the lexer.
+/// MetaTokens are a special kind of token used to represent compile-time metadata queries (e.g.
+/// LENGTH(int), TYPEOF(x), etc.) that can be evaluated by the compiler during parsing or semantic
+/// analysis. They carry additional information about the specific metadata being queried (e.g. the
+/// type or expression involved) and are distinct from regular tokens produced by the lexer.
 namespace cloth {
 	namespace meta_token {
 		using FileId = std::uint32_t;
@@ -62,8 +64,6 @@ namespace cloth {
 			[[nodiscard]] constexpr cloth::token::SourceLocation location() const noexcept {
 				return span.begin;
 			}
-
 		};
-
 	} // namespace cloth::meta_token
 } // namespace cloth#pragma once

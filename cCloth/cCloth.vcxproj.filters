@@ -25,6 +25,21 @@
     <Filter Include="Header Files\token\Meta Token">
       <UniqueIdentifier>{af6dc137-5222-4af7-9ffd-8992f7efc6a6}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\ast">
+      <UniqueIdentifier>{62488ba9-07c9-49ca-b0dc-76e450a5f2e4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\parser">
+      <UniqueIdentifier>{4f3162c1-c1de-4f1b-9f2a-f7baf548e41e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\ast">
+      <UniqueIdentifier>{49b1bb36-7f28-4fe8-9bd0-78efcb774d10}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\parser">
+      <UniqueIdentifier>{c04dc8e8-9c84-4fff-8a34-d28739f7d788}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\error">
+      <UniqueIdentifier>{66125b18-b51f-4c56-b904-855ce0aa54e3}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -32,6 +47,12 @@
     </ClCompile>
     <ClCompile Include="Lexer.cpp">
       <Filter>Source Files\lexer</Filter>
+    </ClCompile>
+    <ClCompile Include="Parser.cpp">
+      <Filter>Source Files\parser</Filter>
+    </ClCompile>
+    <ClCompile Include="AST.cpp">
+      <Filter>Source Files\ast</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -46,6 +67,15 @@
     </ClInclude>
     <ClInclude Include="MetaToken.hpp">
       <Filter>Header Files\token\Meta Token</Filter>
+    </ClInclude>
+    <ClInclude Include="Parser.hpp">
+      <Filter>Header Files\parser</Filter>
+    </ClInclude>
+    <ClInclude Include="Error.hpp">
+      <Filter>Header Files\error</Filter>
+    </ClInclude>
+    <ClInclude Include="AST.hpp">
+      <Filter>Header Files\ast</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

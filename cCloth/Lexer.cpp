@@ -4,8 +4,7 @@
 
 namespace cloth {
 	namespace lexer {
-
-		static constexpr bool kNestedBlockComments = false; // Whether to support nested block comments (e.g. /* ... /* ... */ ... */)
+		static constexpr bool kNestedBlockComments = true; // Whether to support nested block comments (e.g. /* ... /* ... */ ... */)
 
 		Lexer::Lexer(SourceBuffer buffer, DiagnosticSink& diagnostics, LexerOptions options)
 			: buffer_(buffer), diagnostics_(diagnostics), options_(options) {
@@ -50,145 +49,145 @@ namespace cloth {
 			}
 		}
 
-        LexedToken Lexer::lexOne() {
-            LexedToken out{};
-            out.trivia.clear();
+		LexedToken Lexer::lexOne() {
+			LexedToken out{};
+			out.trivia.clear();
 
-            // Leading trivia (whitespace/comments) before the token
-            if (options_.keep_trivia || !options_.emit_whitespace || !options_.emit_comments) {
-                consumeTrivia(out.trivia.leading);
-            }
+			// Leading trivia (whitespace/comments) before the token
+			if (options_.keep_trivia || !options_.emit_whitespace || !options_.emit_comments) {
+				consumeTrivia(out.trivia.leading);
+			}
 
-            beginToken();
+			beginToken();
 
-            if (atEnd()) {
-                auto eofTok = scanEndOfFile();
-                // Trailing trivia after EOF is not meaningful; usually none anyway.
-                return emit(std::move(eofTok));
-            }
+			if (atEnd()) {
+				auto eofTok = scanEndOfFile();
+				// Trailing trivia after EOF is not meaningful; usually none anyway.
+				return emit(std::move(eofTok));
+			}
 
-            const char c = current();
+			const char c = current();
 
-            // Optional: emit whitespace tokens rather than consuming as trivia
-            if (options_.emit_whitespace && isWhitespace(c)) {
-                auto ws = scanWhitespaceToken();
-                maybeConsumeTrailingTrivia(ws.trivia);
-                return emit(std::move(ws));
-            }
+			// Optional: emit whitespace tokens rather than consuming as trivia
+			if (options_.emit_whitespace && isWhitespace(c)) {
+				auto ws = scanWhitespaceToken();
+				maybeConsumeTrailingTrivia(ws.trivia);
+				return emit(std::move(ws));
+			}
 
-            // Ident / keyword
-            if (isIdentStart(c)) {
-                auto id = scanIdentifierOrKeyword();
-                maybeConsumeTrailingTrivia(id.trivia);
-                return emit(std::move(id));
-            }
+			// Ident / keyword
+			if (isIdentStart(c)) {
+				auto id = scanIdentifierOrKeyword();
+				maybeConsumeTrailingTrivia(id.trivia);
+				return emit(std::move(id));
+			}
 
-            // Number (starting with digit; handle .123 in operator scanner if you allow)
-            if (isDigit(c)) {
-                auto num = scanNumber();
-                maybeConsumeTrailingTrivia(num.trivia);
-                return emit(std::move(num));
-            }
+			// Number (starting with digit; handle .123 in operator scanner if you allow)
+			if (isDigit(c)) {
+				auto num = scanNumber();
+				maybeConsumeTrailingTrivia(num.trivia);
+				return emit(std::move(num));
+			}
 
-            // String
-            if (c == '"' || c == '\'') {
-                auto str = scanStringLiteral(c);
-                maybeConsumeTrailingTrivia(str.trivia);
-                return emit(std::move(str));
-            }
+			// String
+			if (c == '"' || c == '\'') {
+				auto str = scanStringLiteral(c);
+				maybeConsumeTrailingTrivia(str.trivia);
+				return emit(std::move(str));
+			}
 
-            // Slash: comment or operator
-            if (c == '/') {
-                auto slash = scanCommentOrSlashOperator();
-                // If comments are tokens, trailing trivia should still attach.
-                maybeConsumeTrailingTrivia(slash.trivia);
-                return emit(std::move(slash));
-            }
+			// Slash: comment or operator
+			if (c == '/') {
+				auto slash = scanCommentOrSlashOperator();
+				// If comments are tokens, trailing trivia should still attach.
+				maybeConsumeTrailingTrivia(slash.trivia);
+				return emit(std::move(slash));
+			}
 
-            // Operator / punctuation / unknown
-            auto op = scanOperatorOrPunctuation();
-            maybeConsumeTrailingTrivia(op.trivia);
-            return emit(std::move(op));
-        }
+			// Operator / punctuation / unknown
+			auto op = scanOperatorOrPunctuation();
+			maybeConsumeTrailingTrivia(op.trivia);
+			return emit(std::move(op));
+		}
 
-        LexedToken Lexer::emit(LexedToken t) {
-            if (!options_.keep_trivia) {
-                t.trivia.clear();
-            }
-            return t;
-        }
+		LexedToken Lexer::emit(LexedToken t) {
+			if (!options_.keep_trivia) {
+				t.trivia.clear();
+			}
+			return t;
+		}
 
 		// --- Cursor Primitives ---
-        void Lexer::advance() noexcept {
-            if (atEnd()) return;
-            const char consumed = *current_++;
-            bumpLocation(consumed);
-        }
+		void Lexer::advance() noexcept {
+			if (atEnd()) return;
+			const char consumed = *current_++;
+			bumpLocation(consumed);
+		}
 
-        void Lexer::advanceN(std::size_t n) noexcept {
-            while (n-- && !atEnd()) advance();
-        }
+		void Lexer::advanceN(std::size_t n) noexcept {
+			while (n-- && !atEnd()) advance();
+		}
 
-        bool Lexer::match(char c) noexcept {
-            if (current() != c) return false;
-            advance();
-            return true;
-        }
+		bool Lexer::match(char c) noexcept {
+			if (current() != c) return false;
+			advance();
+			return true;
+		}
 
-        bool Lexer::match2(char a, char b) noexcept {
-            if (current() == a && lookaheadChar(1) == b) {
-                advanceN(2);
-                return true;
-            }
-            return false;
-        }
+		bool Lexer::match2(char a, char b) noexcept {
+			if (current() == a && lookaheadChar(1) == b) {
+				advanceN(2);
+				return true;
+			}
+			return false;
+		}
 
-        bool Lexer::matchString(std::string_view s) noexcept {
-            if (s.empty()) return true;
-            const std::size_t n = s.size();
-            if (static_cast<std::size_t>(end_ - current_) < n) return false;
-            for (std::size_t i = 0; i < n; ++i) {
-                if (current_[i] != s[i]) return false;
-            }
-            advanceN(n);
-            return true;
-        }
+		bool Lexer::matchString(std::string_view s) noexcept {
+			if (s.empty()) return true;
+			const std::size_t n = s.size();
+			if (static_cast<std::size_t>(end_ - current_) < n) return false;
+			for (std::size_t i = 0; i < n; ++i) {
+				if (current_[i] != s[i]) return false;
+			}
+			advanceN(n);
+			return true;
+		}
 
 		// --- Token Lifecycle ---
-        void Lexer::beginToken() noexcept {
-            token_begin_ = current_;
-            token_location_ = location_;
-        }
+		void Lexer::beginToken() noexcept {
+			token_begin_ = current_;
+			token_location_ = location_;
+		}
 
-        cloth::token::SourceSpan Lexer::endTokenSpan() const noexcept {
-            cloth::token::SourceLocation endLoc = location_;
-            endLoc.offset = offsetFromBegin(current_);
-            return cloth::token::SourceSpan{ token_location_ , endLoc };
-        }
+		cloth::token::SourceSpan Lexer::endTokenSpan() const noexcept {
+			cloth::token::SourceLocation endLoc = location_;
+			endLoc.offset = offsetFromBegin(current_);
+			return cloth::token::SourceSpan{ token_location_ , endLoc };
+		}
 
-        std::string_view Lexer::tokenLexeme() const noexcept {
-            return std::string_view(token_begin_, static_cast<std::size_t>(current_ - token_begin_));
-        }
+		std::string_view Lexer::tokenLexeme() const noexcept {
+			return std::string_view(token_begin_, static_cast<std::size_t>(current_ - token_begin_));
+		}
 
-        cloth::token::Token Lexer::makeToken(cloth::token::TokenKind kind) const {
-            cloth::token::Token t;
-            t.kind = kind;
-            t.span = endTokenSpan();
-            t.lexeme = tokenLexeme();
-            return t;
-        }
+		cloth::token::Token Lexer::makeToken(cloth::token::TokenKind kind) const {
+			cloth::token::Token t;
+			t.kind = kind;
+			t.span = endTokenSpan();
+			t.lexeme = tokenLexeme();
+			return t;
+		}
 
-        cloth::token::Token Lexer::makeToken(cloth::token::TokenKind kind, cloth::token::Keyword kw) const {
-            cloth::token::Token t = makeToken(kind);
-            t.keyword = kw;
-            return t;
-        }
+		cloth::token::Token Lexer::makeToken(cloth::token::TokenKind kind, cloth::token::Keyword kw) const {
+			cloth::token::Token t = makeToken(kind);
+			t.keyword = kw;
+			return t;
+		}
 
-        cloth::token::Token Lexer::makeToken(cloth::token::TokenKind kind, cloth::token::Operator op) const {
-            cloth::token::Token t = makeToken(kind);
-            t.op = op;
-            return t;
-        }
+		cloth::token::Token Lexer::makeToken(cloth::token::TokenKind kind, cloth::token::Operator op) const {
+			cloth::token::Token t = makeToken(kind);
+			t.op = op;
+			return t;
+		}
 
 		cloth::token::Token Lexer::makeErrorToken(std::string_view message) {
 			// error tokens should still carry a span/lexeme (even if empty) for tooling
@@ -206,694 +205,808 @@ namespace cloth {
 		}
 
 		// --- Classification ---
-        bool Lexer::isWhitespace(char c) noexcept {
-            return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
-        }
+		bool Lexer::isWhitespace(char c) noexcept {
+			return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
+		}
 
-        bool Lexer::isNewline(char c) noexcept {
-            return c == '\n';
-        }
+		bool Lexer::isNewline(char c) noexcept {
+			return c == '\n';
+		}
 
-        bool Lexer::isDigit(char c) noexcept { return c >= '0' && c <= '9'; }
+		bool Lexer::isDigit(char c) noexcept {
+			return c >= '0' && c <= '9';
+		}
 
-        bool Lexer::isHexDigit(char c) noexcept {
-            return (c >= '0' && c <= '9') ||
-                (c >= 'a' && c <= 'f') ||
-                (c >= 'A' && c <= 'F');
-        }
+		bool Lexer::isHexDigit(char c) noexcept {
+			return (c >= '0' && c <= '9') ||
+				(c >= 'a' && c <= 'f') ||
+				(c >= 'A' && c <= 'F');
+		}
 
-        bool Lexer::isAlpha(char c) noexcept {
-            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
-        }
+		bool Lexer::isAlpha(char c) noexcept {
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+		}
 
 		// TODO: Unicode identifier support (e.g. isIdentStart can include non-ASCII letters, isIdentContinue can include combining marks, etc.)
 		// TODO: We can basically make any rules we want for identifiers, as long as the lexer and parser are consistent. For example, we could allow emojis in identifiers if we wanted to. The current rules are just a common baseline.
-        bool Lexer::isIdentStart(char c) noexcept {
-            return isAlpha(c) || c == '_' || c == '$';
-        }
+		bool Lexer::isIdentStart(char c) noexcept {
+			return isAlpha(c) || c == '_' || c == '$';
+		}
 
-        bool Lexer::isIdentContinue(char c) noexcept {
-            return isIdentStart(c) || isDigit(c);
-        }
+		bool Lexer::isIdentContinue(char c) noexcept {
+			return isIdentStart(c) || isDigit(c);
+		}
 
-        // --- Trivia ---
-        void Lexer::consumeTrivia(std::vector<TriviaPiece>& outLeading) {
-            // Collect whitespace/comments as trivia, skipping them from token lexing.
-            // If emit_whitespace/comments are true, caller won’t route here for whitespace;
-            // comments still can be filtered here depending on opts.
-            while (!atEnd()) {
-                const char c = current();
+		// --- Trivia ---
+		void Lexer::consumeTrivia(std::vector<TriviaPiece>& outLeading) {
+			// Collect whitespace/comments as trivia, skipping them from token lexing.
+			// If emit_whitespace/comments are true, caller won’t route here for whitespace;
+			// comments still can be filtered here depending on opts.
+			while (!atEnd()) {
+				const char c = current();
 
-                // Whitespace
-                if (isWhitespace(c)) {
-                    // If whitespace is supposed to be a token, stop here.
-                    if (options_.emit_whitespace) break;
+				// Whitespace
+				if (isWhitespace(c)) {
+					// If whitespace is supposed to be a token, stop here.
+					if (options_.emit_whitespace) break;
 
-                    // Otherwise consume as trivia
-                    beginToken();
-                    while (!atEnd() && isWhitespace(current())) advance();
+					// Otherwise consume as trivia
+					beginToken();
+					while (!atEnd() && isWhitespace(current())) advance();
 
-                    if (options_.keep_trivia) {
-                        TriviaPiece tr;
-                        tr.kind = cloth::token::TokenKind::Whitespace;
-                        tr.span = endTokenSpan();
-                        tr.lexeme = tokenLexeme();
-                        outLeading.push_back(tr);
-                    }
-                    continue;
-                }
+					if (options_.keep_trivia) {
+						TriviaPiece tr;
+						tr.kind = cloth::token::TokenKind::Whitespace;
+						tr.span = endTokenSpan();
+						tr.lexeme = tokenLexeme();
+						outLeading.push_back(tr);
+					}
+					continue;
+				}
 
-                // Comments
-                if (c == '/' && (lookaheadChar(1) == '/' || lookaheadChar(1) == '*')) {
-                    // If comment should be a token, stop here.
-                    if (options_.emit_comments) break;
+				// Comments
+				if (c == '/' && (lookaheadChar(1) == '/' || lookaheadChar(1) == '*')) {
+					// If comment should be a token, stop here.
+					if (options_.emit_comments) break;
 
-                    beginToken();
-                    bool ok = (lookaheadChar(1) == '/') ? consumeLineComment() : consumeBlockComment();
-                    (void)ok;
+					beginToken();
+					bool ok = (lookaheadChar(1) == '/') ? consumeLineComment() : consumeBlockComment();
+					(void) ok;
 
-                    if (options_.keep_trivia) {
-                        TriviaPiece tr;
-                        tr.kind = cloth::token::TokenKind::Comment;
-                        tr.span = endTokenSpan();
-                        tr.lexeme = tokenLexeme();
-                        outLeading.push_back(tr);
-                    }
-                    continue;
-                }
+					if (options_.keep_trivia) {
+						TriviaPiece tr;
+						tr.kind = cloth::token::TokenKind::Comment;
+						tr.span = endTokenSpan();
+						tr.lexeme = tokenLexeme();
+						outLeading.push_back(tr);
+					}
+					continue;
+				}
 
-                break;
-            }
-        }
+				break;
+			}
+		}
 
-        void Lexer::maybeConsumeTrailingTrivia(Trivia& outTrailing) {
-            if (!options_.keep_trivia) return;
+		void Lexer::maybeConsumeTrailingTrivia(Trivia& outTrailing) {
+			if (!options_.keep_trivia) return;
 
-            // Common approach: only take trailing trivia on same line.
-            // That keeps “// comment” attached to the statement token.
-            // We’ll implement:
-            //   - consume spaces/tabs
-            //   - consume line comment
-            //   - stop at newline or EOF
-            while (!atEnd()) {
-                const char c = current();
-                if (c == ' ' || c == '\t' || c == '\v' || c == '\f') {
-                    beginToken();
-                    while (!atEnd()) {
-                        char cc = current();
-                        if (cc == ' ' || cc == '\t' || cc == '\v' || cc == '\f') advance();
-                        else break;
-                    }
-                    TriviaPiece tr{ cloth::token::TokenKind::Whitespace, endTokenSpan(), tokenLexeme() };
-                    outTrailing.trailing.push_back(tr);
-                    continue;
-                }
+			// Common approach: only take trailing trivia on same line.
+			// That keeps “// comment” attached to the statement token.
+			// We’ll implement:
+			//   - consume spaces/tabs
+			//   - consume line comment
+			//   - stop at newline or EOF
+			while (!atEnd()) {
+				const char c = current();
+				if (c == ' ' || c == '\t' || c == '\v' || c == '\f') {
+					beginToken();
+					while (!atEnd()) {
+						char cc = current();
+						if (cc == ' ' || cc == '\t' || cc == '\v' || cc == '\f') advance();
+						else break;
+					}
+					TriviaPiece tr{ cloth::token::TokenKind::Whitespace, endTokenSpan(), tokenLexeme() };
+					outTrailing.trailing.push_back(tr);
+					continue;
+				}
 
-                if (c == '/' && lookaheadChar(1) == '/') {
-                    beginToken();
-                    consumeLineComment();
-                    TriviaPiece tr{ cloth::token::TokenKind::Comment, endTokenSpan(), tokenLexeme() };
-                    outTrailing.trailing.push_back(tr);
-                    continue;
-                }
+				if (c == '/' && lookaheadChar(1) == '/') {
+					beginToken();
+					consumeLineComment();
+					TriviaPiece tr{ cloth::token::TokenKind::Comment, endTokenSpan(), tokenLexeme() };
+					outTrailing.trailing.push_back(tr);
+					continue;
+				}
 
-                // Stop at newline or anything else
-                break;
-            }
-        }
+				// Stop at newline or anything else
+				break;
+			}
+		}
 
 		// --- Scanners ---
-        LexedToken Lexer::scanEndOfFile() {
-            beginToken();
-            // don’t advance; eof lexeme is empty
-            LexedToken t;
-            t.token = makeToken(cloth::token::TokenKind::EndOfFile);
-            return t;
-        }
+		LexedToken Lexer::scanEndOfFile() {
+			beginToken();
+			// don’t advance; eof lexeme is empty
+			LexedToken t;
+			t.token = makeToken(cloth::token::TokenKind::EndOfFile);
+			return t;
+		}
 
-        LexedToken Lexer::scanWhitespaceToken() {
-            // Only called when emit_whitespace=true and current is whitespace
-            beginToken();
-            while (!atEnd() && isWhitespace(current())) advance();
+		LexedToken Lexer::scanWhitespaceToken() {
+			// Only called when emit_whitespace=true and current is whitespace
+			beginToken();
+			while (!atEnd() && isWhitespace(current())) advance();
 
-            LexedToken t;
-            t.token = makeToken(cloth::token::TokenKind::Whitespace);
-            return t;
-        }
+			LexedToken t;
+			t.token = makeToken(cloth::token::TokenKind::Whitespace);
+			return t;
+		}
 
-        LexedToken Lexer::scanIdentifierOrKeyword() {
-            beginToken();
-            // ASCII mode for now
-            advance(); // first char
-            while (!atEnd() && isIdentContinue(current())) advance();
+		LexedToken Lexer::scanIdentifierOrKeyword() {
+			beginToken();
+			// ASCII mode for now
+			advance(); // first char
+			while (!atEnd() && isIdentContinue(current())) advance();
 
-            const std::string_view ident = tokenLexeme();
+			const std::string_view ident = tokenLexeme();
 
-            // Check for meta keywords (UPPERCASE identifiers like MAX, SIZEOF, etc.)
-            // These will be used in expressions like: i32::MAX, String::LENGTH
-            const cloth::meta_token::MetaKeyword metaKw = resolveMetaToken(ident);
-            if (metaKw != cloth::meta_token::MetaKeyword::None) {
-                LexedToken t;
-                // Mark this as a Meta token kind so parser knows it's a meta keyword
-                t.token = makeToken(cloth::token::TokenKind::Meta);
-                // Store which meta keyword it is in the flags field (temporary solution)
-                // Or we could store it differently - the parser will need to check the lexeme anyway
-                return t;
-            }
+			// Check for meta keywords (UPPERCASE identifiers like MAX, SIZEOF, etc.)
+			// These will be used in expressions like: i32::MAX, String::LENGTH
+			const cloth::meta_token::MetaKeyword metaKw = resolveMetaToken(ident);
+			if (metaKw != cloth::meta_token::MetaKeyword::None) {
+				LexedToken t;
+				// Mark this as a Meta token kind so parser knows it's a meta keyword
+				t.token = makeToken(cloth::token::TokenKind::Meta);
+				// Store which meta keyword it is in the flags field (temporary solution)
+				// Or we could store it differently - the parser will need to check the lexeme anyway
+				return t;
+			}
 
-            // Then check for regular keywords
-            const cloth::token::Keyword kw = resolveKeyword(ident);
+			// Then check for regular keywords
+			const cloth::token::Keyword kw = resolveKeyword(ident);
 
-            LexedToken t;
-            if (kw != cloth::token::Keyword::None) t.token = makeToken(cloth::token::TokenKind::Keyword, kw);
-            else t.token = makeToken(cloth::token::TokenKind::Identifier);
-            return t;
-        }
+			LexedToken t;
+			if (kw != cloth::token::Keyword::None) t.token = makeToken(cloth::token::TokenKind::Keyword, kw);
+			else t.token = makeToken(cloth::token::TokenKind::Identifier);
+			return t;
+		}
 
-        LexedToken Lexer::scanNumber() {
-            beginToken();
+		LexedToken Lexer::scanNumber() {
+			beginToken();
 
-            // integers, floats, bases, separators, suffixes
-            // This is structured so you can extend without rewriting.
-            // Rules sketch:
-            //  - 0x... hex
-            //  - 0b... binary
-            //  - digits with optional '_' separators
-            //  - optional fraction '.' digits
-            //  - optional exponent e/E (+/-) digits
-            //  - optional suffix (u32, i64, f32, etc.) (decide for Cloth)
+			// integers, floats, bases, separators, suffixes
+			// This is structured so you can extend without rewriting.
+			// Rules sketch:
+			//  - 0x... hex
+			//  - 0b... binary
+			//  - digits with optional '_' separators
+			//  - optional fraction '.' digits
+			//  - optional exponent e/E (+/-) digits
+			//  - optional suffix (u32, i64, f32, etc.) (decide for Cloth)
 
-            // Base prefixes
-            if (current() == '0' && (lookaheadChar(1) == 'x' || lookaheadChar(1) == 'X')) {
-                advanceN(2);
-                bool any = false;
-                while (!atEnd()) {
-                    char c = current();
-                    if (c == '_') { advance(); continue; }
-                    if (!isHexDigit(c)) break;
-                    any = true;
-                    advance();
-                }
-                if (!any) {
-                    LexedToken t;
-                    t.token = makeErrorToken("Malformed hex literal (expected digits after 0x)");
-                    return t;
-                }
-                // TODO suffix parsing
-                LexedToken t;
-                t.token = makeToken(cloth::token::TokenKind::Number);
-                return t;
-            }
+			// Base prefixes
+			if (current() == '0' && (lookaheadChar(1) == 'x' || lookaheadChar(1) == 'X')) {
+				advanceN(2);
+				bool any = false;
+				while (!atEnd()) {
+					char c = current();
+					if (c == '_') {
+						advance(); continue;
+					}
+					if (!isHexDigit(c)) break;
+					any = true;
+					advance();
+				}
+				if (!any) {
+					LexedToken t;
+					t.token = makeErrorToken("Malformed hex literal (expected digits after 0x)");
+					return t;
+				}
+				// TODO suffix parsing
+				LexedToken t;
+				t.token = makeToken(cloth::token::TokenKind::Number);
+				return t;
+			}
 
-            if (current() == '0' && (lookaheadChar(1) == 'b' || lookaheadChar(1) == 'B')) {
-                advanceN(2);
-                bool any = false;
-                while (!atEnd()) {
-                    char c = current();
-                    if (c == '_') { advance(); continue; }
-                    if (c != '0' && c != '1') break;
-                    any = true;
-                    advance();
-                }
-                if (!any) {
-                    LexedToken t;
-                    t.token = makeErrorToken("Malformed binary literal (expected digits after 0b)");
-                    return t;
-                }
-                LexedToken t;
-                t.token = makeToken(cloth::token::TokenKind::Number);
-                return t;
-            }
+			if (current() == '0' && (lookaheadChar(1) == 'b' || lookaheadChar(1) == 'B')) {
+				advanceN(2);
+				bool any = false;
+				while (!atEnd()) {
+					char c = current();
+					if (c == '_') {
+						advance(); continue;
+					}
+					if (c != '0' && c != '1') break;
+					any = true;
+					advance();
+				}
+				if (!any) {
+					LexedToken t;
+					t.token = makeErrorToken("Malformed binary literal (expected digits after 0b)");
+					return t;
+				}
+				LexedToken t;
+				t.token = makeToken(cloth::token::TokenKind::Number);
+				return t;
+			}
 
-            // Decimal integer part
-            while (!atEnd()) {
-                char c = current();
-                if (c == '_') { advance(); continue; }
-                if (!isDigit(c)) break;
-                advance();
-            }
+			// Decimal integer part
+			while (!atEnd()) {
+				char c = current();
+				if (c == '_') {
+					advance(); continue;
+				}
+				if (!isDigit(c)) break;
+				advance();
+			}
 
-            // Fractional part
-            bool isFloat = false;
-            if (current() == '.' && isDigit(lookaheadChar(1))) {
-                isFloat = true;
-                advance(); // '.'
-                while (!atEnd()) {
-                    char c = current();
-                    if (c == '_') { advance(); continue; }
-                    if (!isDigit(c)) break;
-                    advance();
-                }
-            }
+			// Fractional part
+			bool isFloat = false;
+			if (current() == '.' && isDigit(lookaheadChar(1))) {
+				isFloat = true;
+				advance(); // '.'
+				while (!atEnd()) {
+					char c = current();
+					if (c == '_') {
+						advance(); continue;
+					}
+					if (!isDigit(c)) break;
+					advance();
+				}
+			}
 
-            // Exponent
-            if (current() == 'e' || current() == 'E') {
-                isFloat = true;
-                advance();
-                if (current() == '+' || current() == '-') advance();
+			// Exponent
+			if (current() == 'e' || current() == 'E') {
+				isFloat = true;
+				advance();
+				if (current() == '+' || current() == '-') advance();
 
-                bool any = false;
-                while (!atEnd()) {
-                    char c = current();
-                    if (c == '_') { advance(); continue; }
-                    if (!isDigit(c)) break;
-                    any = true;
-                    advance();
-                }
-                if (!any) {
-                    LexedToken t;
-                    t.token = makeErrorToken("Malformed exponent in numeric literal");
-                    return t;
-                }
-            }
+				bool any = false;
+				while (!atEnd()) {
+					char c = current();
+					if (c == '_') {
+						advance(); continue;
+					}
+					if (!isDigit(c)) break;
+					any = true;
+					advance();
+				}
+				if (!any) {
+					LexedToken t;
+					t.token = makeErrorToken("Malformed exponent in numeric literal");
+					return t;
+				}
+			}
 
-            // Optional suffix (example: u32, i64, f32)
-            // Keep it simple: suffix starts with alpha.
-            if (isAlpha(current())) {
-                // consume suffix chars [a-zA-Z0-9]
-                while (!atEnd()) {
-                    char c = current();
-                    if (isAlpha(c) || isDigit(c)) advance();
-                    else break;
-                }
-            }
+			// Optional suffix (example: u32, i64, f32)
+			// Keep it simple: suffix starts with alpha.
+			if (isAlpha(current())) {
+				// consume suffix chars [a-zA-Z0-9]
+				while (!atEnd()) {
+					char c = current();
+					if (isAlpha(c) || isDigit(c)) advance();
+					else break;
+				}
+			}
 
-            LexedToken t;
-            t.token = makeToken(cloth::token::TokenKind::Number);
-            (void)isFloat; // you can encode in Token.flags or parse later
-            return t;
-        }
+			LexedToken t;
+			t.token = makeToken(cloth::token::TokenKind::Number);
+			(void) isFloat; // you can encode in Token.flags or parse later
+			return t;
+		}
 
-        LexedToken Lexer::scanStringLiteral(char quote) {
-            beginToken();
+		LexedToken Lexer::scanStringLiteral(char quote) {
+			beginToken();
 
-            // Opening quote
-            advance();
+			// Opening quote
+			advance();
 
-            std::uint32_t bytes = 0;
-            while (!atEnd()) {
-                char c = current();
+			std::uint32_t bytes = 0;
+			while (!atEnd()) {
+				char c = current();
 
-                // Closing quote
-                if (c == quote) {
-                    advance();
-                    LexedToken t;
-                    t.token = makeToken(cloth::token::TokenKind::String);
-                    return t;
-                }
+				// Closing quote
+				if (c == quote) {
+					advance();
+					LexedToken t;
+					t.token = makeToken(cloth::token::TokenKind::String);
+					return t;
+				}
 
-                // Newline in string (if not allowed)
-                if (c == '\n') {
-                    LexedToken t;
-                    t.token = makeErrorToken("Unterminated string literal");
-                    return t;
-                }
+				// Newline in string (if not allowed)
+				if (c == '\n') {
+					LexedToken t;
+					t.token = makeErrorToken("Unterminated string literal");
+					return t;
+				}
 
-                // Escape
-                if (c == '\\') {
-                    advance();
-                    if (!consumeEscapeSequence()) {
-                        LexedToken t;
-                        t.token = makeErrorToken("Invalid escape sequence in string literal");
-                        return t;
-                    }
-                    bytes += 1;
-                }
-                else {
-                    advance();
-                    bytes += 1;
-                }
+				// Escape
+				if (c == '\\') {
+					advance();
+					if (!consumeEscapeSequence()) {
+						LexedToken t;
+						t.token = makeErrorToken("Invalid escape sequence in string literal");
+						return t;
+					}
+					bytes += 1;
+				}
+				else {
+					advance();
+					bytes += 1;
+				}
 
-                if (bytes > options_.max_string_literal_bytes) {
-                    LexedToken t;
-                    t.token = makeErrorToken("String literal exceeds maximum size limit");
-                    return t;
-                }
-            }
+				if (bytes > options_.max_string_literal_bytes) {
+					LexedToken t;
+					t.token = makeErrorToken("String literal exceeds maximum size limit");
+					return t;
+				}
+			}
 
-            LexedToken t;
-            t.token = makeErrorToken("Unterminated string literal at end of file");
-            return t;
-        }
+			LexedToken t;
+			t.token = makeErrorToken("Unterminated string literal at end of file");
+			return t;
+		}
 
-        LexedToken Lexer::scanCommentOrSlashOperator() {
-            // current == '/'
-            if (lookaheadChar(1) == '/') {
-                if (options_.emit_comments) {
-                    beginToken();
-                    consumeLineComment();
-                    LexedToken t;
-                    t.token = makeToken(cloth::token::TokenKind::Comment);
-                    return t;
-                }
+		LexedToken Lexer::scanCommentOrSlashOperator() {
+			// current == '/'
+			if (lookaheadChar(1) == '/') {
+				if (options_.emit_comments) {
+					beginToken();
+					consumeLineComment();
+					LexedToken t;
+					t.token = makeToken(cloth::token::TokenKind::Comment);
+					return t;
+				}
 
-                // otherwise consume as trivia in consumeTrivia() earlier,
-                // but if we get here, treat it as skipped comment and then lex again
-                Trivia dummy;
-                consumeTrivia(dummy.leading);
-                return lexOne();
-            }
+				// otherwise consume as trivia in consumeTrivia() earlier,
+				// but if we get here, treat it as skipped comment and then lex again
+				Trivia dummy;
+				consumeTrivia(dummy.leading);
+				return lexOne();
+			}
 
-            if (lookaheadChar(1) == '*') {
-                if (options_.emit_comments) {
-                    beginToken();
-                    consumeBlockComment();
-                    LexedToken t;
-                    t.token = makeToken(cloth::token::TokenKind::Comment);
-                    return t;
-                }
+			if (lookaheadChar(1) == '*') {
+				if (options_.emit_comments) {
+					beginToken();
+					consumeBlockComment();
+					LexedToken t;
+					t.token = makeToken(cloth::token::TokenKind::Comment);
+					return t;
+				}
 
-                Trivia dummy;
-                consumeTrivia(dummy.leading);
-                return lexOne();
-            }
+				Trivia dummy;
+				consumeTrivia(dummy.leading);
+				return lexOne();
+			}
 
-            // It's an operator '/'
-            beginToken();
-            advance();
-            LexedToken t;
-            t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Slash);
-            return t;
-        }
+			// It's an operator '/'
+			beginToken();
+			advance();
+			LexedToken t;
+			t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Slash);
+			return t;
+		}
 
-        LexedToken Lexer::scanOperatorOrPunctuation() {
-            beginToken();
+		LexedToken Lexer::scanOperatorOrPunctuation() {
+			beginToken();
 
-            // Max-munch strategy: try longest operators first.
-            // You can table-drive this if you prefer; switch is fast and readable.
-            // This list should match your language grammar.
+			// Max-munch strategy: try longest operators first.
+			// You can table-drive this if you prefer; switch is fast and readable.
+			// This list should match your language grammar.
 
-            // 3-char operators
-            if (matchString(">>=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, resolveOperator(">>=")); return t; }
-            if (matchString("<<=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, resolveOperator("<<=")); return t; }
-			if (matchString("...")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::DotDotDot); return t; }
+			// 3-char operators
+			if (matchString(">>=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, resolveOperator(">>=")); return t;
+			}
+			if (matchString("<<=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, resolveOperator("<<=")); return t;
+			}
+			if (matchString("...")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::DotDotDot); return t;
+			}
 
-            // 2-char operators/punct
-			if (matchString("++")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::PlusPlus); return t; }
-			if (matchString("--")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::MinusMinus); return t; }
-            if (matchString("==")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Equal); return t; }
-            if (matchString("!=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::NotEqual); return t; }
-            if (matchString("<=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::LessEqual); return t; }
-            if (matchString(">=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::GreaterEqual); return t; }
-            if (matchString("->")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Arrow); return t; }
-            if (matchString("+=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::PlusAssign); return t; }
-            if (matchString("-=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::MinusAssign); return t; }
-            if (matchString("*=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::StarAssign); return t; }
-            if (matchString("/=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::SlashAssign); return t; }
-			if (matchString("%=")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::PercentAssign); return t; }
-			if (matchString("::")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::ColonColon); return t; }
-			if (matchString("..")) { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::DotDot); return t; }
-            // Add ::, .., ..., ?? etc as needed.
+			// 2-char operators/punct
+			if (matchString("++")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::PlusPlus); return t;
+			}
+			if (matchString("--")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::MinusMinus); return t;
+			}
+			if (matchString("==")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Equal); return t;
+			}
+			if (matchString("!=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::NotEqual); return t;
+			}
+			if (matchString("<=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::LessEqual); return t;
+			}
+			if (matchString(">=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::GreaterEqual); return t;
+			}
+			if (matchString("->")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Arrow); return t;
+			}
+			if (matchString("+=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::PlusAssign); return t;
+			}
+			if (matchString("-=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::MinusAssign); return t;
+			}
+			if (matchString("*=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::StarAssign); return t;
+			}
+			if (matchString("/=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::SlashAssign); return t;
+			}
+			if (matchString("%=")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::PercentAssign); return t;
+			}
+			if (matchString("::")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::ColonColon); return t;
+			}
+			if (matchString("..")) {
+				LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::DotDot); return t;
+			}
+			// Add ::, .., ..., ?? etc as needed.
 
-            // 1-char tokens
-            const char c = current();
-            advance();
+			// 1-char tokens
+			const char c = current();
+			advance();
 
-            switch (c) {
-            case '+': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Plus); return t; }
-            case '-': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Minus); return t; }
-            case '*': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Star); return t; }
-			case '/': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Slash); return t; }
-            case '%': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Percent); return t; }
-            case '=': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Assign); return t; }
-            case '<': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Less); return t; }
-            case '>': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Greater); return t; }
-            case '!': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Bang); return t; }
-			case '&': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Amp); return t; }
-			case '|': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Pipe); return t; }
-			case '~': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Tilde); return t; }
+			switch (c) {
+				case '+': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Plus); return t;
+				}
+				case '-': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Minus); return t;
+				}
+				case '*': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Star); return t;
+				}
+				case '/': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Slash); return t;
+				}
+				case '%': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Percent); return t;
+				}
+				case '=': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Assign); return t;
+				}
+				case '<': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Less); return t;
+				}
+				case '>': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Greater); return t;
+				}
+				case '!': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Bang); return t;
+				}
+				case '&': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Amp); return t;
+				}
+				case '|': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Pipe); return t;
+				}
+				case '~': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Tilde); return t;
+				}
 
-            case '(': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::LeftParen); return t; }
-            case ')': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::RightParen); return t; }
-            case '{': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::LeftBrace); return t; }
-            case '}': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::RightBrace); return t; }
-            case '[': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::LeftBracket); return t; }
-            case ']': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::RightBracket); return t; }
+				case '(': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::LeftParen); return t;
+				}
+				case ')': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::RightParen); return t;
+				}
+				case '{': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::LeftBrace); return t;
+				}
+				case '}': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::RightBrace); return t;
+				}
+				case '[': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::LeftBracket); return t;
+				}
+				case ']': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::RightBracket); return t;
+				}
 
-            case '.': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::Dot); return t; }
-            case ',': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::Comma); return t; }
-            case ':': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::Colon); return t; }
-            case ';': { LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::Semicolon); return t; }
+				case '.': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::Dot); return t;
+				}
+				case ',': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::Comma); return t;
+				}
+				case ':': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::Colon); return t;
+				}
+				case ';': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Punctuation, cloth::token::Operator::Semicolon); return t;
+				}
+				case '?': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Question); return t;
+				}
+				case '@': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::At); return t;
+				}
+				case '#': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Hash); return t;
+				}
+				case '$': {
+					LexedToken t; t.token = makeToken(cloth::token::TokenKind::Operator, cloth::token::Operator::Dollar); return t;
+				}
 
-            default: break;
-            }
+				default: break;
+			}
 
-            // Unknown character (still consume it so we don’t infinite-loop)
-            LexedToken t;
-            t.token = makeErrorToken("Unexpected character in input");
-            return t;
-        }
+			// Unknown character (still consume it so we don’t infinite-loop)
+			LexedToken t;
+			t.token = makeErrorToken("Unexpected character in input");
+			return t;
+		}
 
 		// --- Comments and String helpers ---
-        bool Lexer::consumeLineComment() {
-            // assumes current is '/' and next is '/'
-            if (!matchString("//")) return false;
-            while (!atEnd() && current() != '\n') advance();
-            return true;
-        }
+		bool Lexer::consumeLineComment() {
+			// assumes current is '/' and next is '/'
+			if (!matchString("//")) return false;
+			while (!atEnd() && current() != '\n') advance();
+			return true;
+		}
 
-        bool Lexer::consumeBlockComment() {
-            // assumes current is '/' and next is '*'
-            if (!matchString("/*")) return false;
+		bool Lexer::consumeBlockComment() {
+			// assumes current is '/' and next is '*'
+			if (!matchString("/*")) return false;
 
-            int depth = 1;
-            while (!atEnd()) {
-                if (matchString("*/")) {
-                    depth--;
-                    if (depth == 0) return true;
-                    continue;
-                }
+			int depth = 1;
+			while (!atEnd()) {
+				if (matchString("*/")) {
+					depth--;
+					if (depth == 0) return true;
+					continue;
+				}
 
-                if constexpr (kNestedBlockComments) {
-                    if (matchString("/*")) { depth++; continue; }
-                }
+				if constexpr (kNestedBlockComments) {
+					if (matchString("/*")) {
+						depth++; continue;
+					}
+				}
 
-                advance();
-            }
+				advance();
+			}
 
-            // If we hit EOF without closing
-            diagnostics_.error(token_location_, "Unterminated block comment");
-            return false;
-        }
+			// If we hit EOF without closing
+			diagnostics_.error(token_location_, "Unterminated block comment");
+			return false;
+		}
 
-        bool Lexer::consumeEscapeSequence() {
-            // Called after consuming backslash '\'
-            if (atEnd()) return false;
-            char c = current();
-            advance();
+		bool Lexer::consumeEscapeSequence() {
+			// Called after consuming backslash '\'
+			if (atEnd()) return false;
+			char c = current();
+			advance();
 
-            switch (c) {
-            case 'n': case 'r': case 't':
-            case '\\': case '\'': case '"':
-            case '0':
-                return true;
-            case 'x': {
-                // \xHH
-                if (!isHexDigit(current())) return false;
-                advance();
-                if (!isHexDigit(current())) return false;
-                advance();
-                return true;
-            }
-            case 'u': {
-                // \u{...} or \uFFFF (choose)
-                // Placeholder: accept \uFFFF exactly
-                for (int i = 0; i < 4; ++i) {
-                    if (!isHexDigit(current())) return false;
-                    advance();
-                }
-                return true;
-            }
-            default:
-                return false;
-            }
-        }
+			switch (c) {
+				case 'n': case 'r': case 't':
+				case '\\': case '\'': case '"':
+				case '0':
+					return true;
+				case 'x': {
+					// \xHH
+					if (!isHexDigit(current())) return false;
+					advance();
+					if (!isHexDigit(current())) return false;
+					advance();
+					return true;
+				}
+				case 'u': {
+					// \u{...} or \uFFFF (choose)
+					// Placeholder: accept \uFFFF exactly
+					for (int i = 0; i < 4; ++i) {
+						if (!isHexDigit(current())) return false;
+						advance();
+					}
+					return true;
+				}
+				default:
+					return false;
+			}
+		}
 
 		// --- Keyword and Operator Resolution ---
-        cloth::token::Keyword Lexer::resolveKeyword(std::string_view ident) const noexcept {
-            // Table-driven is best; switch on first char keeps it fast without hashing.
-            // Expand with Cloth’s real keyword set.
-            switch (!ident.empty() ? ident[0] : '\0') {
-			case 'a': {
-				if (ident == "as") return cloth::token::Keyword::As;
-				if (ident == "async") return cloth::token::Keyword::Async;
-				if (ident == "await") return cloth::token::Keyword::Await;
-				if (ident == "atomic") return cloth::token::Keyword::Atomic;
-				if (ident == "and") return cloth::token::Keyword::And;
-				break;
+		cloth::token::Keyword Lexer::resolveKeyword(std::string_view ident) const noexcept {
+			switch (!ident.empty() ? ident[0] : '\0') {
+				case 'a': {
+					if (ident == "as") return cloth::token::Keyword::As;
+					if (ident == "async") return cloth::token::Keyword::Async;
+					if (ident == "await") return cloth::token::Keyword::Await;
+					if (ident == "atomic") return cloth::token::Keyword::Atomic;
+					if (ident == "and") return cloth::token::Keyword::And;
+					if (ident == "any") return cloth::token::Keyword::Any;
+					break;
+				}
+				case 'b': {
+					if (ident == "break") return cloth::token::Keyword::Break;
+					if (ident == "bool") return cloth::token::Keyword::Bool;
+					if (ident == "byte") return cloth::token::Keyword::Byte;
+					if (ident == "bit") return cloth::token::Keyword::Bit;
+					break;
+				}
+				case 'c': {
+					if (ident == "const") return cloth::token::Keyword::Const;
+					if (ident == "continue") return cloth::token::Keyword::Continue;
+					if (ident == "class") return cloth::token::Keyword::Class;
+					if (ident == "case") return cloth::token::Keyword::Case;
+					if (ident == "char") return cloth::token::Keyword::Char;
+					if (ident == "catch") return cloth::token::Keyword::Catch;
+					break;
+				}
+				case 'd': {
+					if (ident == "defer") return cloth::token::Keyword::Defer;
+					if (ident == "delete") return cloth::token::Keyword::Delete;
+					if (ident == "do") return cloth::token::Keyword::Do;
+					if (ident == "default") return cloth::token::Keyword::Default;
+					if (ident == "double") return cloth::token::Keyword::F64; // double -> F64 mapping
+					break;
+				}
+				case 'e': {
+					if (ident == "else") return cloth::token::Keyword::Else;
+					if (ident == "enum") return cloth::token::Keyword::Enum;
+					break;
+				}
+				case 'f': {
+					if (ident == "for") return cloth::token::Keyword::For;
+					if (ident == "func") return cloth::token::Keyword::Func;
+					if (ident == "float") return cloth::token::Keyword::F32;
+					if (ident == "f32") return cloth::token::Keyword::F32;
+					if (ident == "f64") return cloth::token::Keyword::F64;
+					if (ident == "finally") return cloth::token::Keyword::Finally;
+					if (ident == "false") return cloth::token::Keyword::False;
+					break;
+				}
+				case 'g': break;
+				case 'h': break;
+				case 'i': {
+					if (ident == "interface") return cloth::token::Keyword::Interface;
+					if (ident == "internal") return cloth::token::Keyword::Internal;
+					if (ident == "import") return cloth::token::Keyword::Import;
+					if (ident == "int") return cloth::token::Keyword::I32; // int -> I32 mapping
+					if (ident == "i8") return cloth::token::Keyword::I8;
+					if (ident == "i16") return cloth::token::Keyword::I16;
+					if (ident == "i32") return cloth::token::Keyword::I32;
+					if (ident == "i64") return cloth::token::Keyword::I64;
+					if (ident == "if") return cloth::token::Keyword::If;
+					if (ident == "in") return cloth::token::Keyword::In;
+					if (ident == "is") return cloth::token::Keyword::Is;
+					break;
+				}
+				case 'j': break;
+				case 'k': break;
+				case 'l': {
+					if (ident == "let") return cloth::token::Keyword::Let;
+					if (ident == "long") return cloth::token::Keyword::I64; // long -> I64 mapping
+					break;
+				}
+				case 'm': {
+					if (ident == "module") return cloth::token::Keyword::Module;
+					break;
+				}
+				case 'n': {
+					if (ident == "null") return cloth::token::Keyword::Null;
+					if (ident == "new") return cloth::token::Keyword::New;
+					break;
+				}
+				case 'o': {
+					if (ident == "or") return cloth::token::Keyword::Or;
+					if (ident == "owned") return cloth::token::Keyword::Owned;
+					break;
+				}
+				case 'p': {
+					if (ident == "public") return cloth::token::Keyword::Public;
+					if (ident == "private") return cloth::token::Keyword::Private;
+					break;
+				}
+				case 'q': break;
+				case 'r': {
+					if (ident == "return") return cloth::token::Keyword::Return;
+					if (ident == "real") return cloth::token::Keyword::F64; // real -> F64 mapping
+					break;
+				}
+				case 's': {
+					if (ident == "struct") return cloth::token::Keyword::Struct;
+					if (ident == "switch") return cloth::token::Keyword::Switch;
+					if (ident == "string") return cloth::token::Keyword::String;
+					if (ident == "super") return cloth::token::Keyword::Super;
+					if (ident == "short") return cloth::token::Keyword::I16; // short -> I16 mapping
+					if (ident == "shared") return cloth::token::Keyword::Shared;
+					if (ident == "static") return cloth::token::Keyword::Static;
+					break;
+				}
+				case 't': {
+					if (ident == "this") return cloth::token::Keyword::This;
+					if (ident == "throw") return cloth::token::Keyword::Throw;
+					if (ident == "try") return cloth::token::Keyword::Try;
+					if (ident == "true") return cloth::token::Keyword::True;
+					break;
+				}
+				case 'u': {
+					if (ident == "uint") return cloth::token::Keyword::U32;
+					if (ident == "u8") return cloth::token::Keyword::U8;
+					if (ident == "u16") return cloth::token::Keyword::U16;
+					if (ident == "u32") return cloth::token::Keyword::U32;
+					if (ident == "u64") return cloth::token::Keyword::U64;
+					break;
+				}
+				case 'v': {
+					if (ident == "var") return cloth::token::Keyword::Var;
+					if (ident == "void") return cloth::token::Keyword::Void;
+					break;
+				}
+				case 'w': {
+					if (ident == "while") return cloth::token::Keyword::While;
+					break;
+				}
+				case 'x': break;
+				case 'y': break;
+				case 'z': break;
+				default: break;
 			}
-			case 'b': {
-				if (ident == "break") return cloth::token::Keyword::Break;
-				if (ident == "bool") return cloth::token::Keyword::Bool;
-				if (ident == "byte") return cloth::token::Keyword::Byte;
-				if (ident == "bit") return cloth::token::Keyword::Bit;
-				break;
-			}
-			case 'c': {
-				if (ident == "const") return cloth::token::Keyword::Const;
-				if (ident == "continue") return cloth::token::Keyword::Continue;
-				if (ident == "class") return cloth::token::Keyword::Class;
-				if (ident == "case") return cloth::token::Keyword::Case;
-				if (ident == "char") return cloth::token::Keyword::Char;
-				if (ident == "catch") return cloth::token::Keyword::Catch;
-				break;
-			}
-			case 'd': {
-				if (ident == "defer") return cloth::token::Keyword::Defer;
-				if (ident == "delete") return cloth::token::Keyword::Delete;
-				if (ident == "do") return cloth::token::Keyword::Do;
-				if (ident == "default") return cloth::token::Keyword::Default;
-				if (ident == "double") return cloth::token::Keyword::F64; // example of mapping to internal type keyword
-				break;
-			}
-			case 'e': {
-				if (ident == "else") return cloth::token::Keyword::Else;
-				if (ident == "enum") return cloth::token::Keyword::Enum;
-				break;
-			}
-			case 'f': {
-				if (ident == "for") return cloth::token::Keyword::For;
-				if (ident == "func") return cloth::token::Keyword::Func;
-				if (ident == "float") return cloth::token::Keyword::F32;
-				if (ident == "f32") return cloth::token::Keyword::F32;
-				if (ident == "f64") return cloth::token::Keyword::F64;
-				if (ident == "finally") return cloth::token::Keyword::Finally;
-				if (ident == "false") return cloth::token::Keyword::False;
-				break;
-			}
-			case 'g': break;
-			case 'h': break;
-			case 'i': {
-				if (ident == "interface") return cloth::token::Keyword::Interface;
-				if (ident == "import") return cloth::token::Keyword::Import;
-				if (ident == "int") return cloth::token::Keyword::I32;
-				if (ident == "i8") return cloth::token::Keyword::I8;
-				if (ident == "i16") return cloth::token::Keyword::I16;
-				if (ident == "i32") return cloth::token::Keyword::I32;
-				if (ident == "i64") return cloth::token::Keyword::I64;
-				if (ident == "if") return cloth::token::Keyword::If;
-				if (ident == "in") return cloth::token::Keyword::In;
-				if (ident == "is") return cloth::token::Keyword::Is;
-				break;
-			}
-			case 'j': break;
-			case 'k': break;
-			case 'l': {
-				if (ident == "let") return cloth::token::Keyword::Let;
-				if (ident == "long") return cloth::token::Keyword::I64; // example of mapping to internal type keyword
-				break;
-			}
-			case 'm': break;
-			case 'n': {
-				if (ident == "null") return cloth::token::Keyword::Null;
-				if (ident == "new") return cloth::token::Keyword::New;
-				break;
-			}
-			case 'o': {
-				if (ident == "or") return cloth::token::Keyword::Or;
-				break;
-			}
-			case 'p': break;
-			case 'q': break;
-			case 'r': {
-				if (ident == "return") return cloth::token::Keyword::Return;
-				if (ident == "real") return cloth::token::Keyword::F64; // example of mapping to internal type keyword
-				break;
-			}
-			case 's': {
-				if (ident == "struct") return cloth::token::Keyword::Struct;
-				if (ident == "switch") return cloth::token::Keyword::Switch;
-				if (ident == "string") return cloth::token::Keyword::String;
-				if (ident == "super") return cloth::token::Keyword::Super;
-				break;
-			}
-			case 't': {
-				if (ident == "this") return cloth::token::Keyword::This;
-				if (ident == "throw") return cloth::token::Keyword::Throw;
-				if (ident == "try") return cloth::token::Keyword::Try;
-				if (ident == "true") return cloth::token::Keyword::True;
-				break;
-			}
-			case 'u': {
-				if (ident == "uint") return cloth::token::Keyword::U32;
-				if (ident == "u8") return cloth::token::Keyword::U8;
-				if (ident == "u16") return cloth::token::Keyword::U16;
-				if (ident == "u32") return cloth::token::Keyword::U32;
-				if (ident == "u64") return cloth::token::Keyword::U64;
-				break;
-			}
-			case 'v': {
-				if (ident == "var") return cloth::token::Keyword::Var;
-				if (ident == "void") return cloth::token::Keyword::Void;
-				break;
-			}
-			case 'w': {
-				if (ident == "while") return cloth::token::Keyword::While;
-				break;
-			}
-			case 'x': break;
-			case 'y': break;
-			case 'z': break;
-            default: break;
-            }
-            return cloth::token::Keyword::None;
-        }
+			return cloth::token::Keyword::None;
+		}
 
-        cloth::token::Operator Lexer::resolveOperator(std::string_view opText) const noexcept {
-            // Only used for multi-char operators you want centralized
-            if (opText == ">>=") return cloth::token::Operator::None; // fill as needed
-            if (opText == "<<=") return cloth::token::Operator::None;
-            return cloth::token::Operator::None;
-        }
+		cloth::token::Operator Lexer::resolveOperator(std::string_view opText) const noexcept {
+			// Only used for multi-char operators you want centralized
+			if (opText == ">>=") return cloth::token::Operator::None; // fill as needed
+			if (opText == "<<=") return cloth::token::Operator::None;
+			return cloth::token::Operator::None;
+		}
 
 		cloth::meta_token::MetaKeyword Lexer::resolveMetaToken(std::string_view ident) const noexcept {
 			switch (!ident.empty() ? ident[0] : '\0') {
-			case 'A': {
-				if (ident == "ALIGNOF") return cloth::meta_token::MetaKeyword::ALIGNOF;
-				break;
-			}
-			case 'D': {
-				if (ident == "DEFAULT") return cloth::meta_token::MetaKeyword::DEFAULT;
-				break;
-			}
-			case 'L': {
-				if (ident == "LENGTH") return cloth::meta_token::MetaKeyword::LENGTH;
-				break;
-			}
-			case 'M': {
-				if (ident == "MEMSPACE") return cloth::meta_token::MetaKeyword::MEMSPACE;
-				if (ident == "MAX") return cloth::meta_token::MetaKeyword::MAX;
-				if (ident == "MIN") return cloth::meta_token::MetaKeyword::MIN;
-				break;
-			}
-			case 'S': {
-				if (ident == "SIZEOF") return cloth::meta_token::MetaKeyword::SIZEOF;
-				break;
-			}
-			case 'T': {
-				if (ident == "TO_STRING") return cloth::meta_token::MetaKeyword::TO_STRING;
-				if (ident == "TYPEOF") return cloth::meta_token::MetaKeyword::TYPEOF;
-				if (ident == "TO_BYTES") return cloth::meta_token::MetaKeyword::TO_BYTES;
-				if (ident == "TO_BITS") return cloth::meta_token::MetaKeyword::TO_BITS;
-				break;
-			}
-			default: break;
+				case 'A': {
+					if (ident == "ALIGNOF") return cloth::meta_token::MetaKeyword::ALIGNOF;
+					break;
+				}
+				case 'D': {
+					if (ident == "DEFAULT") return cloth::meta_token::MetaKeyword::DEFAULT;
+					break;
+				}
+				case 'L': {
+					if (ident == "LENGTH") return cloth::meta_token::MetaKeyword::LENGTH;
+					break;
+				}
+				case 'M': {
+					if (ident == "MEMSPACE") return cloth::meta_token::MetaKeyword::MEMSPACE;
+					if (ident == "MAX") return cloth::meta_token::MetaKeyword::MAX;
+					if (ident == "MIN") return cloth::meta_token::MetaKeyword::MIN;
+					break;
+				}
+				case 'S': {
+					if (ident == "SIZEOF") return cloth::meta_token::MetaKeyword::SIZEOF;
+					break;
+				}
+				case 'T': {
+					if (ident == "TO_STRING") return cloth::meta_token::MetaKeyword::TO_STRING;
+					if (ident == "TYPEOF") return cloth::meta_token::MetaKeyword::TYPEOF;
+					if (ident == "TO_BYTES") return cloth::meta_token::MetaKeyword::TO_BYTES;
+					if (ident == "TO_BITS") return cloth::meta_token::MetaKeyword::TO_BITS;
+					break;
+				}
+				default: break;
 			}
 			return cloth::meta_token::MetaKeyword::None;
 		}
 
 		// --- Location Tracking ---
-        void Lexer::bumpLocation(char consumed) noexcept {
-            location_.offset = offsetFromBegin(current_);
+		void Lexer::bumpLocation(char consumed) noexcept {
+			location_.offset = offsetFromBegin(current_);
 
-            if (consumed == '\n') {
-                location_.line += 1;
-                location_.column = 1;
-            }
-            else {
-                location_.column += 1;
-            }
-        }
-
+			if (consumed == '\n') {
+				location_.line += 1;
+				location_.column = 1;
+			}
+			else {
+				location_.column += 1;
+			}
+		}
 	} // namespace cloth::lexer
 } // namespace cloth
