@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="cCloth/cCloth.vcxproj" Id="e90398bf-f672-4293-8abf-1fd97c3e64cc" />
+</Solution>
