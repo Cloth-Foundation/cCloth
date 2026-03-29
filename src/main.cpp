@@ -1,48 +1,29 @@
-#include "Lexer.hpp"
-#include "Token.hpp"
-#include "TokenName.hpp"
-#include "Error.hpp"
+#include <lexer/Lexer.h>
+#include <token/Token.h>
+#include <token/TokenName.h>
+#include <exit/ExitCodes.h>
 
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include "cmd/Command.h"
 
 std::string source = R"(
 module cloth;
 
 import std.io;
 
-public {
-	var x: atomic long? = 10;
+public class MyClass(int number?) {
+    const i32 myInt? { public get; };
 
-	class Animal {
-		func eat(food: string): void {
-			println("Eating " + food);
-		}
-	}
+    public MyClass {
+        this.myInt = number;
+    }
 
-	class Dog: Animal {
-		Dog() {
-			println("Dog constructor");
-		}
-
-		func bark(): void {
-			println("Woof!");
-		}
-	}
-}
-
-private {
-	func foo(): void {
-		println("Hello, world! " + x);
-	}
-}
-
-internal {
-	func bar(): i32 {
-		foo();
-		return 0;
-	}
+    public func convertIntToFloat() :> float {
+        return getMyInt() as float;
+    }
 }
 )";
 
@@ -77,7 +58,7 @@ static void printToken(const cloth::lexer::LexedToken& lt) {
 		std::cout << "Keyword: " << static_cast<std::uint32_t>(t.keyword) << "\n";
 	}
 	else if (t.kind == cloth::token::TokenKind::Operator || t.kind == cloth::token::TokenKind::Punctuation) {
-		std::cout << "Operator/Punct: " << static_cast<std::uint32_t>(t.op) << "\n";
+		std::cout << "Operator/Punctuation: " << static_cast<std::uint32_t>(t.op) << "\n";
 	}
 
 	std::cout << "Lexeme: `" << t.lexeme << "`\n";
@@ -106,8 +87,10 @@ static void printToken(const cloth::lexer::LexedToken& lt) {
 	}
 }
 
-int main() {
+int main(int argc, char** argv) {
 	// Build the buffer (the std::string must outlive the lexer!)
+    cloth::cmd::parse(argc, argv);
+
 	cloth::lexer::SourceBuffer buffer;
 	buffer.file = 1;
 	buffer.text = std::string_view(source);
@@ -125,15 +108,14 @@ int main() {
 	// Drive the lexer
 	while (true) {
 		cloth::lexer::LexedToken tok = lexer.next();
-		printToken(tok);
+		//printToken(tok);
 
 		if (tok.token.kind == cloth::token::TokenKind::EndOfFile) {
 			break;
 		}
 	}
 
-	std::printf("%s\n", source.c_str());
-	cloth::error::println(cloth::error::ErrorType::PARSING_ERROR);
+    std::printf("%s\n", source.c_str());
 
-	return 0;
+	return EXIT_SUCCESS;
 }
