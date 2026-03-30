@@ -2,11 +2,15 @@ module cloth;
 
 import std.io;
 
-public class MyClass(i32? number) maybe NegativeNumberError, NullValueError {
+public class NumberFunctions(i32? number) maybe NegativeNumberError, NullValueError {
     private const i32? myInt { public get; };
     private const unsigned? myUnsigned { public get; };
 
-    public MyClass {
+    #prototype
+    #trait deprecated(since="1.0.0", remove="1.1.0", message="Use toUnsignedChecked() instead")
+    public func intToUnsigned() :> unsigned maybe NegativeNumberError, NullValueError;
+
+    public NumberFunctions {
         this.myInt = number;
         this.myUnsigned = intToUnsigned();
     }
