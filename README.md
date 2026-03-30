@@ -1,4 +1,16 @@
 # Cloth [WIP]
+
+**A low-level, compiled, object-oriented systems programming language**
+
+Cloth is designed to combine the **clarity and structure of Java** with the **control and performance of C**, without the complexity, inconsistency, and historical baggage of C++.
+
+---
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Cloth-Foundation/cCloth/gradle.yml?style=for-the-badge)
+![GitHub License](https://img.shields.io/github/license/Cloth-Foundation/cCloth?style=for-the-badge)
+![GitHub Repo stars](https://img.shields.io/github/stars/Cloth-Foundation/cCloth?style=for-the-badge)
+![GitHub forks](https://img.shields.io/github/forks/Cloth-Foundation/cCloth?style=for-the-badge)
+![GitHub contributors](https://img.shields.io/github/contributors/Cloth-Foundation/cCloth?style=for-the-badge)
+
 ## What is Cloth?
 Cloth is an object-oriented, compiled language, inspired by C++, Java, and C#. It introduces a clean and clear syntax
 that is both easy to learn and easy to use. The main goal of Cloth is to be a simple, yet powerful enough to be used

@@ -981,12 +981,12 @@ namespace cloth::lexer {
             case 'j': break;
             case 'k': break;
             case 'l': {
-                if (ident == "let") return token::Keyword::Let;
                 if (ident == "long") return token::Keyword::I64; // long -> I64 mapping
                 break;
             }
             case 'm': {
                 if (ident == "module") return token::Keyword::Module;
+                if (ident == "maybe") return token::Keyword::Maybe;
                 break;
             }
             case 'n': {
@@ -1034,6 +1034,7 @@ namespace cloth::lexer {
                 if (ident == "u16") return token::Keyword::U16;
                 if (ident == "u32") return token::Keyword::U32;
                 if (ident == "u64") return token::Keyword::U64;
+                if (ident == "unsigned") return token::Keyword::U32; // unsigned -> U32 mapping
                 break;
             }
             case 'v': {
@@ -1047,6 +1048,7 @@ namespace cloth::lexer {
             }
             case 'x': break;
             case 'y': break;
+                if (ident == "yield") return token::Keyword::Yield;
             case 'z': break;
             default: break;
         }

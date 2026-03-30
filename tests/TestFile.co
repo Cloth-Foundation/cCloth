@@ -1,0 +1,23 @@
+module cloth;
+
+import std.io;
+
+public class MyClass(i32? number) maybe NegativeNumberError, NullValueError {
+    private const i32? myInt { public get; };
+    private const unsigned? myUnsigned { public get; };
+
+    public MyClass {
+        this.myInt = number;
+        this.myUnsigned = intToUnsigned();
+    }
+
+    public func convertIntToFloat() :> float maybe NullValueError {
+        const i32 value = getMyInt() | throw NullValueError("myInt is null");
+        return value as float;
+    }
+
+    public func intToUnsigned() :> unsigned maybe NegativeNumberError, NullValueError {
+        const i32 value = getMyInt() | throw NullValueError("myInt is null");
+        return (value as? unsigned) | throw NegativeNumberError("Negative number");
+    }
+}

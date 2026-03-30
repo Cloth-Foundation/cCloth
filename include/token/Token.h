@@ -37,7 +37,7 @@ namespace cloth::token {
         If, Else, For, While, Do, Switch, Case, Default,
         Return, Break, Continue,
         Func, Struct, Enum, Interface, Class,
-        Let, Var, Const,
+        Var, Const,
         As, In, Or, And, Is,
         Null, True, False,
 
@@ -62,6 +62,7 @@ namespace cloth::token {
         Delete, New, This, Super,
 
         Get, Set, // C# inspired, which this is probably the only part of the language I like.
+        Yield, Maybe,
     };
 
     enum class Operator : std::uint16_t {
