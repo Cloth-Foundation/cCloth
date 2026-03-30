@@ -3,6 +3,7 @@
 #include <token/Token.h>
 #include <token/MetaToken.h>
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <array>
 #include <vector>
@@ -11,8 +12,8 @@ namespace cloth::lexer {
     // Owned by the compiler frontend, represents a source file or input buffer
     struct SourceBuffer {
         token::FileId file = 0;
-        std::string_view text; // must outlive any tokens produced from this buffer
-        std::string_view filename; // for diagnostics
+        std::string text;
+        std::string filename;
     };
 
     // Diagnostic sink interface for reporting errors and warnings during lexing
@@ -72,11 +73,11 @@ namespace cloth::lexer {
         }
 
         [[nodiscard]] token::FileId file() const noexcept {
-            return buffer_.file;
+            return buffer_->file;
         }
 
     private:
-        SourceBuffer buffer_;
+        const SourceBuffer *buffer_ = nullptr;
         DiagnosticSink &diagnostics_;
         LexerOptions options_;
 
@@ -202,4 +203,6 @@ namespace cloth::lexer {
             return static_cast<std::uint32_t>(p - begin_);
         }
     };
+
+    void lexStream(Lexer &lexer, bool printStream);
 } // namespace cloth::lexer

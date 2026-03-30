@@ -1,6 +1,5 @@
 #include <lexer/Lexer.h>
 #include <token/Token.h>
-#include <token/TokenName.h>
 #include <exit/ExitCodes.h>
 
 #include <iostream>
@@ -8,6 +7,7 @@
 #include <vector>
 
 #include "cmd/Command.h"
+#include "file/SourceManager.h"
 
 std::string source = R"(
 module cloth;
@@ -28,94 +28,44 @@ public class MyClass(int number?) {
 )";
 
 struct StdErrDiagnostics final : cloth::lexer::DiagnosticSink {
-	void error(cloth::token::SourceLocation loc, std::string_view message) override {
-		std::cerr
-			<< "[error] file=" << loc.file
-			<< " line=" << loc.line
-			<< " col=" << loc.column
-			<< " off=" << loc.offset
-			<< ": " << message << "\n";
-	}
+    void error(cloth::token::SourceLocation loc, std::string_view message) override {
+        std::cerr
+                << "[error] file=" << loc.file
+                << " line=" << loc.line
+                << " col=" << loc.column
+                << " off=" << loc.offset
+                << ": " << message << "\n";
+    }
 
-	void warning(cloth::token::SourceLocation loc, std::string_view message) override {
-		std::cerr
-			<< "[warn ] file=" << loc.file
-			<< " line=" << loc.line
-			<< " col=" << loc.column
-			<< " off=" << loc.offset
-			<< ": " << message << "\n";
-	}
+    void warning(cloth::token::SourceLocation loc, std::string_view message) override {
+        std::cerr
+                << "[warn ] file=" << loc.file
+                << " line=" << loc.line
+                << " col=" << loc.column
+                << " off=" << loc.offset
+                << ": " << message << "\n";
+    }
 };
 
-static void printToken(const cloth::lexer::LexedToken& lt) {
-	const auto& t = lt.token;
-
-	std::cout << "----------------------------------------\n";
-	std::cout << "Kind: " << cloth::debug::to_string(t.kind) << "\n";
-
-	// Keyword / operator info (if your Token carries these)
-	if (t.kind == cloth::token::TokenKind::Keyword) {
-		std::cout << "Keyword: " << static_cast<std::uint32_t>(t.keyword) << "\n";
-	}
-	else if (t.kind == cloth::token::TokenKind::Operator || t.kind == cloth::token::TokenKind::Punctuation) {
-		std::cout << "Operator/Punctuation: " << static_cast<std::uint32_t>(t.op) << "\n";
-	}
-
-	std::cout << "Lexeme: `" << t.lexeme << "`\n";
-
-	std::cout
-		<< "Span: "
-		<< "file=" << t.span.begin.file
-		<< " [" << t.span.begin.line << ":" << t.span.begin.column << " off=" << t.span.begin.offset << "]"
-		<< " .. "
-		<< "file=" << t.span.end.file
-		<< " [" << t.span.end.line << ":" << t.span.end.column << " off=" << t.span.end.offset << "]"
-		<< " len=" << t.span.length()
-		<< "\n";
-
-	if (!lt.trivia.leading.empty()) {
-		std::cout << "Leading trivia:\n";
-		for (const auto& tr : lt.trivia.leading) {
-			std::cout << "  - " << cloth::debug::to_string(tr.kind) << " `" << tr.lexeme << "`\n";
-		}
-	}
-	if (!lt.trivia.trailing.empty()) {
-		std::cout << "Trailing trivia:\n";
-		for (const auto& tr : lt.trivia.trailing) {
-			std::cout << "  - " << cloth::debug::to_string(tr.kind) << " `" << tr.lexeme << "`\n";
-		}
-	}
-}
-
-int main(int argc, char** argv) {
-	// Build the buffer (the std::string must outlive the lexer!)
+int main(int argc, char **argv) {
+    // Build the buffer (the std::string must outlive the lexer!)
     cloth::cmd::parse(argc, argv);
 
-	cloth::lexer::SourceBuffer buffer;
-	buffer.file = 1;
-	buffer.text = std::string_view(source);
-	buffer.filename = "example.co";
+    cloth::file::SourceManager sources;
+    const cloth::token::FileId file = sources.addVirtualFile("example.co", source);
+    const cloth::lexer::SourceBuffer &buffer = sources.getBuffer(file);
 
-	StdErrDiagnostics diags;
+    StdErrDiagnostics diags;
 
-	cloth::lexer::LexerOptions opts;
-	opts.emit_whitespace = false;
-	opts.emit_comments = false;
-	opts.keep_trivia = false;
+    cloth::lexer::LexerOptions opts;
+    opts.emit_whitespace = false;
+    opts.emit_comments = false;
+    opts.keep_trivia = false;
 
-	cloth::lexer::Lexer lexer(buffer, diags, opts);
-
-	// Drive the lexer
-	while (true) {
-		cloth::lexer::LexedToken tok = lexer.next();
-		//printToken(tok);
-
-		if (tok.token.kind == cloth::token::TokenKind::EndOfFile) {
-			break;
-		}
-	}
+    cloth::lexer::Lexer lexer(buffer, diags, opts);
+    cloth::lexer::lexStream(lexer, false);
 
     std::printf("%s\n", source.c_str());
 
-	return EXIT_SUCCESS;
+    return EXIT_SUCCESS;
 }

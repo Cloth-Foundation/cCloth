@@ -1,18 +1,20 @@
+#include <iostream>
 #include <lexer/Lexer.h>
 
 #include <vector>
 
+#include "token/TokenName.h"
+
 namespace cloth::lexer {
     static constexpr bool kNestedBlockComments = true;
-    // Whether to support nested block comments (e.g. /* ... /* ... */ ... */)
 
     Lexer::Lexer(const SourceBuffer &buffer, DiagnosticSink &diagnostics, LexerOptions options)
-        : buffer_(buffer), diagnostics_(diagnostics), options_(options) {
-        begin_ = buffer_.text.data();
+        : buffer_(&buffer), diagnostics_(diagnostics), options_(options) {
+        begin_ = buffer_->text.data();
         current_ = begin_;
-        end_ = begin_ + buffer_.text.size();
+        end_ = begin_ + buffer_->text.size();
 
-        location_.file = buffer_.file;
+        location_.file = buffer_->file;
         location_.offset = 0;
         location_.line = 1;
         location_.column = 1;
@@ -1103,6 +1105,57 @@ namespace cloth::lexer {
             location_.column = 1;
         } else {
             location_.column += 1;
+        }
+    }
+
+    static void printToken(const LexedToken& lt) {
+        const auto& t = lt.token;
+
+        std::cout << "----------------------------------------\n";
+        std::cout << "Kind: " << debug::to_string(t.kind) << "\n";
+
+        // Keyword / operator info (if your Token carries these)
+        if (t.kind == token::TokenKind::Keyword) {
+            std::cout << "Keyword: " << static_cast<std::uint32_t>(t.keyword) << "\n";
+        }
+        else if (t.kind == token::TokenKind::Operator || t.kind == token::TokenKind::Punctuation) {
+            std::cout << "Operator/Punctuation: " << static_cast<std::uint32_t>(t.op) << "\n";
+        }
+
+        std::cout << "Lexeme: `" << t.lexeme << "`\n";
+
+        std::cout
+            << "Span: "
+            << "file=" << t.span.begin.file
+            << " [" << t.span.begin.line << ":" << t.span.begin.column << " off=" << t.span.begin.offset << "]"
+            << " .. "
+            << "file=" << t.span.end.file
+            << " [" << t.span.end.line << ":" << t.span.end.column << " off=" << t.span.end.offset << "]"
+            << " len=" << t.span.length()
+            << "\n";
+
+        if (!lt.trivia.leading.empty()) {
+            std::cout << "Leading trivia:\n";
+            for (const auto& tr : lt.trivia.leading) {
+                std::cout << "  - " << debug::to_string(tr.kind) << " `" << tr.lexeme << "`\n";
+            }
+        }
+        if (!lt.trivia.trailing.empty()) {
+            std::cout << "Trailing trivia:\n";
+            for (const auto& tr : lt.trivia.trailing) {
+                std::cout << "  - " << debug::to_string(tr.kind) << " `" << tr.lexeme << "`\n";
+            }
+        }
+    }
+
+    void lexStream(Lexer &lexer, bool printStream) {
+        while (true) {
+            LexedToken tok = lexer.next();
+            if (printStream) printToken(tok);
+
+            if (tok.token.kind == token::TokenKind::EndOfFile) {
+                break;
+            }
         }
     }
 } // namespace cloth::lexer
