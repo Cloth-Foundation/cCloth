@@ -28,7 +28,8 @@ namespace cloth::token {
         Comment,
 
         // Meta-access tokens
-        Meta
+        Meta,
+        Decorator,
     };
 
     enum class Keyword : std::uint16_t {

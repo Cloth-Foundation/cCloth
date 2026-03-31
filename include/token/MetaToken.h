@@ -66,5 +66,4 @@ namespace cloth::meta_token {
             return span.begin;
         }
     };
-} // namespace cloth::meta_token
-// namespace cloth#pragma once
+}

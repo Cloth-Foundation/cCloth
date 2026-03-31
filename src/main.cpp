@@ -1,6 +1,9 @@
 #include <lexer/Lexer.h>
 #include <token/Token.h>
 #include <exit/ExitCodes.h>
+#include <exit/Error.h>
+
+#include <parser/Parser.h>
 
 #include <iostream>
 #include <string>
@@ -10,31 +13,19 @@
 #include "file/SourceManager.h"
 
 std::string source = R"(
-module cloth;
-
-import std.io;
-
-public class MyClass(int number?) {
-    const i32 myInt? { public get; };
-
-    public MyClass {
-        this.myInt = number;
-    }
-
-    public func convertIntToFloat() :> float {
-        return getMyInt() as float;
-    }
-}
+i64 x = 5;
+print(x);
 )";
 
 struct StdErrDiagnostics final : cloth::lexer::DiagnosticSink {
     void error(cloth::token::SourceLocation loc, std::string_view message) override {
-        std::cerr
-                << "[error] file=" << loc.file
-                << " line=" << loc.line
-                << " col=" << loc.column
-                << " off=" << loc.offset
-                << ": " << message << "\n";
+        cloth::error::println(
+                cloth::error::ErrorType::SYNTAX_ERROR,
+                std::string(" file=") + std::to_string(loc.file) +
+                        " line=" + std::to_string(loc.line) +
+                        " col=" + std::to_string(loc.column) +
+                        " off=" + std::to_string(loc.offset) +
+                        ": " + std::string(message) + "\n");
     }
 
     void warning(cloth::token::SourceLocation loc, std::string_view message) override {
@@ -44,6 +35,18 @@ struct StdErrDiagnostics final : cloth::lexer::DiagnosticSink {
                 << " col=" << loc.column
                 << " off=" << loc.offset
                 << ": " << message << "\n";
+    }
+};
+
+struct ParserStdErrDiagnostics final : cloth::parser::DiagnosticSink {
+    void error(cloth::token::SourceLocation loc, std::string_view message) override {
+        cloth::error::println(
+                cloth::error::ErrorType::PARSING_ERROR,
+                std::string(" file=") + std::to_string(loc.file) +
+                        " line=" + std::to_string(loc.line) +
+                        " col=" + std::to_string(loc.column) +
+                        " off=" + std::to_string(loc.offset) +
+                        ": " + std::string(message) + "\n");
     }
 };
 
@@ -63,9 +66,14 @@ int main(int argc, char **argv) {
     opts.keep_trivia = false;
 
     cloth::lexer::Lexer lexer(buffer, diags, opts);
-    cloth::lexer::lexStream(lexer, false);
 
-    std::printf("%s\n", source.c_str());
+    ParserStdErrDiagnostics pdiags;
+    cloth::parser::Parser parser(lexer, pdiags);
+    const auto result = parser.parseProgram();
+
+    if (result.had_error) {
+        return EXIT_FAILURE;
+    }
 
     return EXIT_SUCCESS;
 }

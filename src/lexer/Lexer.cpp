@@ -3,6 +3,7 @@
 
 #include <vector>
 
+#include "token/DecoratorToken.h"
 #include "token/TokenName.h"
 
 namespace cloth::lexer {
@@ -200,6 +201,14 @@ namespace cloth::lexer {
 
     meta_token::MetaToken Lexer::makeMetaToken(token::TokenKind kind) const {
         meta_token::MetaToken t;
+        t.kind = kind;
+        t.span = endTokenSpan();
+        t.lexeme = tokenLexeme();
+        return t;
+    }
+
+    token::decorator::DecoratorToken Lexer::makeDecoratorToken(token::TokenKind kind) const {
+        token::decorator::DecoratorToken t;
         t.kind = kind;
         t.span = endTokenSpan();
         t.lexeme = tokenLexeme();
@@ -1098,6 +1107,35 @@ namespace cloth::lexer {
         return meta_token::MetaKeyword::None;
     }
 
+    token::decorator::DecoratorKeyword Lexer::resolveDecoratorToken(std::string_view ident) noexcept {
+        switch (!ident.empty() ? ident[0] : '\0') {
+            case 'D': {
+                if (ident == "Deprecated") return token::decorator::DecoratorKeyword::Deprecated;
+                break;
+            }
+            case 'O': {
+                if (ident == "Override") return token::decorator::DecoratorKeyword::Override;
+                break;
+            }
+            case 'P': {
+                if (ident == "Pure") return token::decorator::DecoratorKeyword::Pure;
+                if (ident == "Prototype") return token::decorator::DecoratorKeyword::Prototype;
+                break;
+            }
+            case 'T': {
+                if (ident == "Trait") return token::decorator::DecoratorKeyword::Trait;
+                break;
+            }
+            case 'U': {
+                if (ident == "Unused") return token::decorator::DecoratorKeyword::Unused;
+                if (ident == "Unstable") return token::decorator::DecoratorKeyword::Unstable;
+                break;
+            }
+            default: break;
+        }
+        return token::decorator::DecoratorKeyword::None;
+    }
+
     // --- Location Tracking ---
     void Lexer::bumpLocation(char consumed) noexcept {
         location_.offset = offsetFromBegin(current_);
@@ -1110,8 +1148,8 @@ namespace cloth::lexer {
         }
     }
 
-    static void printToken(const LexedToken& lt) {
-        const auto& t = lt.token;
+    static void printToken(const LexedToken &lt) {
+        const auto &t = lt.token;
 
         std::cout << "----------------------------------------\n";
         std::cout << "Kind: " << debug::to_string(t.kind) << "\n";
@@ -1119,32 +1157,31 @@ namespace cloth::lexer {
         // Keyword / operator info (if your Token carries these)
         if (t.kind == token::TokenKind::Keyword) {
             std::cout << "Keyword: " << static_cast<std::uint32_t>(t.keyword) << "\n";
-        }
-        else if (t.kind == token::TokenKind::Operator || t.kind == token::TokenKind::Punctuation) {
+        } else if (t.kind == token::TokenKind::Operator || t.kind == token::TokenKind::Punctuation) {
             std::cout << "Operator/Punctuation: " << static_cast<std::uint32_t>(t.op) << "\n";
         }
 
         std::cout << "Lexeme: `" << t.lexeme << "`\n";
 
         std::cout
-            << "Span: "
-            << "file=" << t.span.begin.file
-            << " [" << t.span.begin.line << ":" << t.span.begin.column << " off=" << t.span.begin.offset << "]"
-            << " .. "
-            << "file=" << t.span.end.file
-            << " [" << t.span.end.line << ":" << t.span.end.column << " off=" << t.span.end.offset << "]"
-            << " len=" << t.span.length()
-            << "\n";
+                << "Span: "
+                << "file=" << t.span.begin.file
+                << " [" << t.span.begin.line << ":" << t.span.begin.column << " off=" << t.span.begin.offset << "]"
+                << " .. "
+                << "file=" << t.span.end.file
+                << " [" << t.span.end.line << ":" << t.span.end.column << " off=" << t.span.end.offset << "]"
+                << " len=" << t.span.length()
+                << "\n";
 
         if (!lt.trivia.leading.empty()) {
             std::cout << "Leading trivia:\n";
-            for (const auto& tr : lt.trivia.leading) {
+            for (const auto &tr: lt.trivia.leading) {
                 std::cout << "  - " << debug::to_string(tr.kind) << " `" << tr.lexeme << "`\n";
             }
         }
         if (!lt.trivia.trailing.empty()) {
             std::cout << "Trailing trivia:\n";
-            for (const auto& tr : lt.trivia.trailing) {
+            for (const auto &tr: lt.trivia.trailing) {
                 std::cout << "  - " << debug::to_string(tr.kind) << " `" << tr.lexeme << "`\n";
             }
         }

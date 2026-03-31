@@ -8,6 +8,8 @@
 #include <array>
 #include <vector>
 
+#include "token/DecoratorToken.h"
+
 namespace cloth::lexer {
     // Owned by the compiler frontend, represents a source file or input buffer
     struct SourceBuffer {
@@ -147,6 +149,8 @@ namespace cloth::lexer {
 
         [[nodiscard]] meta_token::MetaToken makeMetaToken(token::TokenKind kind) const;
 
+        [[nodiscard]] token::decorator::DecoratorToken makeDecoratorToken(token::TokenKind kind) const;
+
         // --- Classification ---
         static bool isWhitespace(char c) noexcept;
 
@@ -190,6 +194,8 @@ namespace cloth::lexer {
         static token::Operator resolveOperator(std::string_view op) noexcept;
 
         static meta_token::MetaKeyword resolveMetaToken(std::string_view ident) noexcept;
+
+        static token::decorator::DecoratorKeyword resolveDecoratorToken(std::string_view ident) noexcept;
 
         bool consumeLineComment();
 

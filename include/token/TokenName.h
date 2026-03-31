@@ -18,6 +18,7 @@ namespace cloth::debug {
             case TK::Whitespace: return "Whitespace";
             case TK::Comment: return "Comment";
             case TK::Meta: return "Meta";
+            case TK::Decorator: return "Decorator";
             default: return "Unknown";
         }
     }
@@ -46,7 +47,6 @@ namespace cloth::debug {
             case KW::Enum: return "Enum";
             case KW::Interface: return "Interface";
             case KW::Class: return "Class";
-            case KW::Let: return "Let";
             case KW::Var: return "Var";
             case KW::Const: return "Const";
 
