@@ -79,7 +79,7 @@ void core_types_and_typed_hir(TestContext& test) {
   compilation.add("Values.co",
                   "int count = 1;\n"
                   "String Label = \"cloth\";\n"
-                  "function IsPositive(int value): bool {\n"
+                  "func IsPositive(int value): bool {\n"
                   "  int copy = value;\n"
                   "  if (copy > 0) { return true; } "
                   "else { return false; }\n"
@@ -104,12 +104,56 @@ void core_types_and_typed_hir(TestContext& test) {
               "HIR did not retain every typed expression");
 }
 
+void core_print_intrinsic(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("HelloWorld.co",
+            "func Main() { print(\"hello\"); print(1); print(true); }\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid core print call produced semantic errors");
+  const std::vector<cloth::SymbolId> print =
+      valid.result->semantics.find_intrinsics("print");
+  test.expect(print.size() == 3, "core print overload set was not registered");
+  bool bound_string = false;
+  bool bound_int32 = false;
+  bool bound_bool = false;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    const auto* call = std::get_if<cloth::HirCallExpression>(&expression.data);
+    if (call != nullptr && call->callable) {
+      const cloth::IntrinsicKind intrinsic =
+          valid.result->semantics.symbol(*call->callable).intrinsic;
+      bound_string =
+          bound_string || intrinsic == cloth::IntrinsicKind::kPrintString;
+      bound_int32 =
+          bound_int32 || intrinsic == cloth::IntrinsicKind::kPrintInt32;
+      bound_bool = bound_bool || intrinsic == cloth::IntrinsicKind::kPrintBool;
+    }
+  }
+  test.expect(bound_string && bound_int32 && bound_bool,
+              "core print overloads were not retained in typed HIR");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadPrint.co", "func Main() { print(1.5); }\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic("no matching overload"),
+              "print accepted a type without an overload");
+
+  AnalyzedCompilation shadowed;
+  shadowed.add("Shadow.co",
+               "func print(int value) {}\n"
+               "func Main() { print(1); }\n");
+  shadowed.analyze();
+  test.expect(shadowed.error_count() == 0,
+              "source member did not shadow core print");
+}
+
 void cross_file_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("App.co",
-                  "function Load(int id): User { return User.Find(id); }\n");
-  compilation.add("User.co",
-                  "function Find(int32 id): User { return null; }\n");
+                  "func Load(int id): User { return User.Find(id); }\n");
+  compilation.add("User.co", "func Find(int32 id): User { return null; }\n");
   compilation.analyze();
 
   test.expect(compilation.error_count() == 0,
@@ -132,9 +176,8 @@ void cross_file_binding(TestContext& test) {
 
 void private_member_access(TestContext& test) {
   AnalyzedCompilation compilation;
-  compilation.add("User.co", "function hidden(): bool { return true; }\n");
-  compilation.add("App.co",
-                  "function Read(): bool { return User.hidden(); }\n");
+  compilation.add("User.co", "func hidden(): bool { return true; }\n");
+  compilation.add("App.co", "func Read(): bool { return User.hidden(); }\n");
   compilation.analyze();
 
   test.expect(compilation.has_diagnostic(
@@ -156,7 +199,7 @@ void unknown_types_and_names(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Broken.co",
                   "Mystery value;\n"
-                  "function Read(): int { return missing; }\n");
+                  "func Read(): int { return missing; }\n");
   compilation.analyze();
 
   test.expect(compilation.has_diagnostic("unknown type 'Mystery'"),
@@ -168,7 +211,7 @@ void unknown_types_and_names(TestContext& test) {
 void type_checking(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("BadTypes.co",
-                  "function Bad(): int {\n"
+                  "func Bad(): int {\n"
                   "  bool flag = 1;\n"
                   "  if (1) { return true; }\n"
                   "  return false;\n"
@@ -189,9 +232,9 @@ void type_checking(TestContext& test) {
 void exact_overload_resolution(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Overloads.co",
-                  "function Pick(int value): int { return value; }\n"
-                  "function Pick(bool value): bool { return value; }\n"
-                  "function Choose(): bool { return Pick(true); }\n");
+                  "func Pick(int value): int { return value; }\n"
+                  "func Pick(bool value): bool { return value; }\n"
+                  "func Choose(): bool { return Pick(true); }\n");
   compilation.analyze();
 
   test.expect(compilation.error_count() == 0,
@@ -211,8 +254,8 @@ void exact_overload_resolution(TestContext& test) {
 void no_matching_overload(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Calls.co",
-                  "function Pick(int value): int { return value; }\n"
-                  "function Bad(): int { return Pick(true); }\n");
+                  "func Pick(int value): int { return value; }\n"
+                  "func Bad(): int { return Pick(true); }\n");
   compilation.analyze();
 
   test.expect(compilation.has_diagnostic("no matching overload"),
@@ -222,8 +265,8 @@ void no_matching_overload(TestContext& test) {
 void invalid_body_does_not_hide_signature(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Recovery.co",
-                  "function Broken(int value): int { return value }\n"
-                  "function Use(): int { return Broken(1); }\n");
+                  "func Broken(int value): int { return value }\n"
+                  "func Use(): int { return Broken(1); }\n");
   compilation.analyze();
 
   test.expect(compilation.has_diagnostic("expected ';' after return statement"),
@@ -237,8 +280,7 @@ void constructor_binding(TestContext& test) {
   compilation.add("User.co",
                   "String Name;\n"
                   "User(String name) { Name = name; }\n");
-  compilation.add("App.co",
-                  "function Make(): User { return User(\"Ada\"); }\n");
+  compilation.add("App.co", "func Make(): User { return User(\"Ada\"); }\n");
   compilation.analyze();
 
   test.expect(compilation.error_count() == 0, "constructor call did not bind");
@@ -258,7 +300,7 @@ void constructor_binding(TestContext& test) {
 void lexical_scopes(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("Scopes.co",
-            "function Read(int value): int {\n"
+            "func Read(int value): int {\n"
             "  { int value = 2; }\n"
             "  return value;\n"
             "}\n");
@@ -268,7 +310,7 @@ void lexical_scopes(TestContext& test) {
 
   AnalyzedCompilation duplicate;
   duplicate.add("Scopes.co",
-                "function Read(int value): int {\n"
+                "func Read(int value): int {\n"
                 "  int value = 2;\n"
                 "  return value;\n"
                 "}\n");
@@ -277,10 +319,37 @@ void lexical_scopes(TestContext& test) {
               "same-scope duplicate was not diagnosed");
 }
 
+void structured_loop_semantics(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Loops.co",
+            "func Run() {\n"
+            "  int value = 0;\n"
+            "  while (value < 3) {\n"
+            "    value = value + 1;\n"
+            "    if (value == 2) { continue; }\n"
+            "    if (value == 3) { break; }\n"
+            "  }\n"
+            "}\n");
+  valid.analyze();
+  test.expect(valid.error_count() == 0,
+              "valid structured loop produced semantic errors");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadLoops.co", "func Run() { while (1) {} break; continue; }\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic(
+                  "while condition has type 'int32'; expected 'bool'"),
+              "non-boolean while condition was accepted");
+  test.expect(invalid.has_diagnostic("'break' is only valid inside a loop"),
+              "break outside a loop was accepted");
+  test.expect(invalid.has_diagnostic("'continue' is only valid inside a loop"),
+              "continue outside a loop was accepted");
+}
+
 void complete_return_paths(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Returns.co",
-                  "function Maybe(bool flag): int {\n"
+                  "func Maybe(bool flag): int {\n"
                   "  if (flag) { return 1; }\n"
                   "}\n");
   compilation.analyze();
@@ -288,6 +357,19 @@ void complete_return_paths(TestContext& test) {
   test.expect(
       compilation.has_diagnostic("does not return a value on every path"),
       "incomplete return paths were accepted");
+
+  AnalyzedCompilation infinite;
+  infinite.add("Forever.co",
+               "func Forever(): int { while (true) { continue; } }\n");
+  infinite.analyze();
+  test.expect(!infinite.has_diagnostic("does not return a value on every path"),
+              "non-falling infinite loop was rejected");
+
+  AnalyzedCompilation breaks;
+  breaks.add("Breaks.co", "func Maybe(): int { while (true) { break; } }\n");
+  breaks.analyze();
+  test.expect(breaks.has_diagnostic("does not return a value on every path"),
+              "loop break did not preserve callable fallthrough");
 }
 
 void case_collision(TestContext& test) {
@@ -305,8 +387,8 @@ void null_assignability(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("User.co", "");
   compilation.add("Nulls.co",
-                  "function Empty(): User { return null; }\n"
-                  "function Number(): int { return null; }\n");
+                  "func Empty(): User { return null; }\n"
+                  "func Number(): int { return null; }\n");
   compilation.analyze();
 
   test.expect(!compilation.has_diagnostic(
@@ -319,8 +401,7 @@ void null_assignability(TestContext& test) {
 
 void assignment_requires_location(TestContext& test) {
   AnalyzedCompilation compilation;
-  compilation.add("Assignments.co",
-                  "function Bad(): int { 1 = 2; return 0; }\n");
+  compilation.add("Assignments.co", "func Bad(): int { 1 = 2; return 0; }\n");
   compilation.analyze();
 
   test.expect(compilation.has_diagnostic("assignment target is not mutable"),
@@ -331,7 +412,7 @@ void instance_member_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("User.co", "String Name;\n");
   compilation.add("Reader.co",
-                  "function Read(User value): String { return value.Name; }\n");
+                  "func Read(User value): String { return value.Name; }\n");
   compilation.analyze();
 
   test.expect(compilation.error_count() == 0,
@@ -343,7 +424,7 @@ void deterministic_diagnostics(TestContext& test) {
     AnalyzedCompilation compilation;
     compilation.add("Stable.co",
                     "Mystery value;\n"
-                    "function Bad(): int { if (1) { return true; } }\n");
+                    "func Bad(): int { if (1) { return true; } }\n");
     compilation.analyze();
     std::vector<std::string> messages;
     for (const cloth::Diagnostic& diagnostic :
@@ -369,6 +450,7 @@ struct TestCase {
 int main() {
   const std::vector<TestCase> tests{
       {"core types and typed HIR", core_types_and_typed_hir},
+      {"core print intrinsic", core_print_intrinsic},
       {"cross-file binding", cross_file_binding},
       {"private member access", private_member_access},
       {"private file class access", private_file_class_access},
@@ -379,6 +461,7 @@ int main() {
       {"invalid body retains signature", invalid_body_does_not_hide_signature},
       {"constructor binding", constructor_binding},
       {"lexical scopes", lexical_scopes},
+      {"structured loop semantics", structured_loop_semantics},
       {"complete return paths", complete_return_paths},
       {"case collision", case_collision},
       {"null assignability", null_assignability},

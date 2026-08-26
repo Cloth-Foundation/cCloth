@@ -114,13 +114,23 @@ struct HirIfStatement {
   std::optional<HirBlockId> else_block;
 };
 
+struct HirWhileStatement {
+  HirExpressionId condition;
+  HirBlockId body;
+};
+
+struct HirBreakStatement {};
+
+struct HirContinueStatement {};
+
 struct HirNestedBlockStatement {
   HirBlockId block;
 };
 
 using HirStatementData =
     std::variant<HirInvalidStatement, HirLocalStatement, HirReturnStatement,
-                 HirExpressionStatement, HirIfStatement,
+                 HirExpressionStatement, HirIfStatement, HirWhileStatement,
+                 HirBreakStatement, HirContinueStatement,
                  HirNestedBlockStatement>;
 
 struct HirStatement {

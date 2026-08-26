@@ -1,5 +1,7 @@
 #include "cloth/compiler/compilation.h"
 
+#include "cloth/abi/abi.h"
+#include "cloth/abi/abi_verifier.h"
 #include "cloth/flow/control_flow.h"
 #include "cloth/hir/hir_verifier.h"
 #include "cloth/lexer/lexer.h"
@@ -13,6 +15,11 @@
 #include <vector>
 
 namespace cloth {
+
+Compilation::Compilation() : Compilation(TargetDataLayout::llvm_x86_64()) {}
+
+Compilation::Compilation(TargetDataLayout target)
+    : target_(std::move(target)) {}
 
 void Compilation::add_source(SourceFile source) {
   units_.push_back(Unit{std::move(source), {}, std::nullopt});
@@ -34,17 +41,28 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
   const bool hir_is_valid = verify_hir(hir, semantic_result.model, diagnostics);
   ControlFlowAnalysis control_flow;
   MirModule mir;
+  AbiModule abi{target_, {}, {}};
   bool mir_is_valid = false;
+  bool abi_is_valid = false;
   if (hir_is_valid) {
     control_flow =
         analyze_control_flow(hir, semantic_result.model, diagnostics);
     mir = lower_to_mir(hir, semantic_result.model);
     mir_is_valid = verify_mir(mir, semantic_result.model, diagnostics);
+    if (mir_is_valid) {
+      abi = lower_to_abi(mir, semantic_result.model, target_);
+      abi_is_valid = verify_abi(abi, mir, semantic_result.model, diagnostics);
+    }
   }
   const bool is_valid = !diagnostics.has_errors() && hir_is_valid &&
-                        mir_is_valid && semantic_result.is_valid;
-  return CompilationResult{std::move(semantic_result.model), std::move(hir),
-                           std::move(control_flow), std::move(mir), is_valid};
+                        mir_is_valid && abi_is_valid &&
+                        semantic_result.is_valid;
+  return CompilationResult{std::move(semantic_result.model),
+                           std::move(hir),
+                           std::move(control_flow),
+                           std::move(mir),
+                           std::move(abi),
+                           is_valid};
 }
 
 std::size_t Compilation::source_count() const noexcept { return units_.size(); }

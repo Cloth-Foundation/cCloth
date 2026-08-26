@@ -62,7 +62,7 @@ enum class TokenKind {
   kPipeEqual,
   kCaretEqual,
 
-  kKwFunction,
+  kKwFunc,
   kKwReturn,
   kKwIf,
   kKwElse,

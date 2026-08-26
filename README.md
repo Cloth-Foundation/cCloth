@@ -1,21 +1,27 @@
-# Cloth compiler - Stage 3.0 control-flow front end
+# Cloth compiler - Stage 7.0 structured loops
 
-This repository contains the deterministic Stage 3.0 front end for Cloth source
-files (`.co`). It lexes and parses an explicit compilation set, binds implicit
-file classes and their members, checks types and visibility, verifies typed HIR,
-analyzes control flow, and lowers executable definitions to target-independent
-MIR. The driver prints readable token, AST, HIR, and MIR summaries. Errors are
-collected with source ranges.
+This repository contains the deterministic Stage 7.0 compiler core for Cloth
+source files (`.co`). It lexes and parses an explicit compilation set, binds
+implicit file classes and their members, checks types and visibility, verifies
+typed HIR, analyzes control flow, and lowers executable definitions to
+target-independent MIR, a verified target ABI, and textual LLVM IR. The driver
+prints readable token, AST, HIR, MIR, and ABI summaries or emits a standalone
+LLVM module or builds a native x86-64 executable. Errors are collected with
+source ranges.
 
-The project intentionally contains no backend, runtime, virtual machine, garbage
-collector, data-layout contract, ABI lowering, or code-generation implementation
-yet.
+The project includes structured `while`, `break`, and `continue` control flow
+and a minimal native runtime for allocation, strings, null receiver checks, and
+typed `print` overloads for `String`, `int32`, and `bool`. It intentionally
+contains no garbage collector, virtual machine, standard library, debugger, or
+package system. LLVM IR emission has no link-time dependency on LLVM libraries.
 
 ## Requirements
 
 - CMake 3.25 or newer
 - A C++23 compiler (recent MSVC, Clang, or GCC)
 - An optional build tool supported by CMake, such as Ninja
+- Optional LLVM `opt` for LLVM IR verification tests
+- LLVM `llc` and the configured C++ linker driver for native builds
 
 No third-party libraries are required.
 
@@ -51,6 +57,35 @@ On Windows with a single-configuration generator:
 .\build\clothc.exe examples\User.co examples\Repository.co
 ```
 
+Select the 32-bit WebAssembly layout with:
+
+```sh
+./build/clothc --target=wasm32 examples/User.co examples/Repository.co
+```
+
+Emit LLVM IR to standard output or a file with:
+
+```sh
+./build/clothc --emit-llvm examples/User.co examples/Repository.co
+./build/clothc --emit-llvm=cloth.ll examples/User.co examples/Repository.co
+```
+
+Build and run Cloth's first native program with:
+
+```sh
+./build/clothc --build=hello examples/hello/HelloWorld.co
+./hello
+```
+
+On Windows, use `--build=hello.exe` and run `.\hello.exe`.
+
+The Stage 7 loop and typed-output example is FizzBuzz:
+
+```sh
+./build/clothc --build=fizzbuzz examples/FizzBuzz.co
+./fizzbuzz
+```
+
 Visual Studio and other multi-configuration generators may place the binary in
 `build/Debug`. The portable CMake target below builds the executable and runs
 the example regardless of its output directory:
@@ -59,9 +94,13 @@ the example regardless of its output directory:
 cmake --build build --config Debug --target run_compiler
 ```
 
-The command accepts one or more source paths as one compilation set. Tokens,
-ASTs, typed HIR, and control-flow MIR are written to standard output;
-diagnostics are written to standard error. Exit codes have these meanings:
+The command accepts `--target=x86_64` or `--target=wasm32`, one output mode,
+and one or more source paths as one compilation set. Output modes are
+`--emit-llvm[=<path>]` and `--build=<path>`. Native builds currently require
+the x86-64 target.
+Without LLVM emission, tokens, ASTs, typed HIR, control-flow MIR, and the
+portable ABI are written to standard output. Diagnostics are written to
+standard error. Exit codes have these meanings:
 
 - `0`: front-end compilation completed without errors
 - `1`: lexical, syntactic, or semantic errors were reported
@@ -80,8 +119,18 @@ candidates, statements, expressions, source ranges, and recovery. Semantic
 coverage includes cross-file binding, privacy, core types, exact overload and
 constructor resolution, lexical scopes, type checking, return paths, portable
 file-name collisions, typed HIR, and deterministic diagnostics. MIR coverage
-includes branches, fallthrough joins, short-circuit phi nodes, dead blocks,
-field initializers, explicit conversions, receivers, and verifier failures.
+includes branches, fallthrough joins, structured loop edges, short-circuit phi
+nodes, dead blocks, field initializers, explicit conversions, receivers, and
+verifier failures.
+ABI coverage includes primitive and reference layouts, class padding, both
+target widths, receiver slots, constructor returns, linkage, mangling, and
+verifier failures.
+Backend coverage includes arithmetic, short-circuit branches, phi values,
+objects, field initializers, receiver forms, constructors, typed output, and
+wasm32.
+When `opt` is available, CTest also verifies an emitted module with LLVM itself.
+When `llc` is available, CTest builds and executes both native examples. The
+FizzBuzz test compares all output exactly against a golden file.
 
 ## VS Code
 
@@ -125,14 +174,22 @@ include/cloth/          Public compiler interfaces
   hir/                  Typed target-independent intermediate representation
   flow/                 Callable-level control-flow analysis
   mir/                  Explicit basic-block intermediate representation
+  target/               Backend-neutral target data-layout descriptions
+  abi/                  Object layout, signatures, linkage, and mangling
+  backend/              LLVM IR emission
   compiler/             Multi-file compilation orchestration
+  runtime/              Native runtime ABI interface
 src/                    Implementations and the clothc driver
+runtime/                Native allocation, strings, traps, and output
 tests/                  Deterministic lexer, parser, and semantic tests
-examples/               Cross-file implicit-class example
+examples/               Native and cross-file language examples
 docs/language_design.md Stable language and compiler design constraints
-docs/grammar.md         Implemented Stage 1.0 grammar and precedence
+docs/grammar.md         Implemented grammar and precedence
 docs/semantic_analysis.md Implemented Stage 2.0 semantic rules
 docs/control_flow_and_mir.md Implemented Stage 3.0 IR contract
+docs/data_layout_and_abi.md Implemented Stage 4.0 ABI contract
+docs/llvm_backend.md     Implemented Stage 5.0 LLVM lowering contract
+docs/native_runtime.md   Implemented Stage 6.0 native execution contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -166,6 +223,23 @@ terminators, short-circuit branches, and phi values. See
 [docs/control_flow_and_mir.md](docs/control_flow_and_mir.md) for the Stage 3
 contract and backend boundary.
 
+Verified MIR lowers to target-specific, LLVM-friendly ABI descriptions without
+linking LLVM into the front end. Stage 4 fixes primitive representation, object
+layout, linkage, receiver slots, constructor results, and versioned symbol
+mangling. See [docs/data_layout_and_abi.md](docs/data_layout_and_abi.md).
+
+The Stage 5 backend consumes only verified MIR and ABI data. It emits opaque-
+pointer LLVM IR, composes field initializers with constructors, and isolates
+allocation and null-receiver behavior behind runtime intrinsics. See
+[docs/llvm_backend.md](docs/llvm_backend.md).
+
+Stage 6 binds the first typed core output intrinsic, emits a native `main`
+adapter for Cloth's public `Main()`, implements the minimal runtime, and drives
+LLVM object emission plus the configured host linker. Stage 7 adds structured
+loops and `String`, `int32`, and `bool` output overloads, making FizzBuzz the
+first complete control-flow example. See
+[docs/native_runtime.md](docs/native_runtime.md).
+
 ## Extending the lexer
 
 Keywords are defined in one table in `src/lexer/lexer.cc`, while token debug
@@ -174,6 +248,9 @@ recognizes decimal integers and decimal fractions with digits on both sides of
 the decimal point. Original lexemes are preserved so later compiler stages can
 define numeric conversion, suffixes, separators, and alternate bases without
 changing the token representation.
+
+Function declarations use the `func` keyword. The former `function` spelling is
+an ordinary identifier and is not accepted as declaration syntax.
 
 ## Extending the parser
 

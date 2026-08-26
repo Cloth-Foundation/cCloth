@@ -30,9 +30,16 @@ compilation invalid.
 Each function and constructor receives deterministic flow facts. The analysis
 counts reachable and unreachable statements and determines whether control can
 fall through the callable body. It diagnoses value-returning functions that do
-not return on every reachable path. Statements after a guaranteed return are
-retained for tooling, diagnosed as unreachable warnings, and lowered into dead
-MIR blocks.
+not return on every reachable path. Statements after a guaranteed `return`,
+`break`, or `continue` are retained for tooling, diagnosed as unreachable
+warnings, and lowered into dead MIR blocks.
+
+A `while` loop lowers to condition, body, and exit blocks. The condition
+branches to the body or exit, body fallthrough and `continue` jump to the
+condition, and `break` jumps to the exit. Loop targets form a stack, so nested
+loops always resolve control statements to the innermost loop. A literal
+`while (true)` cannot fall through unless its body contains a reachable
+`break`.
 
 ## MIR structure
 
@@ -50,7 +57,8 @@ Instructions represent literals, symbol and member loads/stores, local
 declarations, unary and binary operations, calls, explicit conversions, and phi
 values. Source ranges, `TypeId`, and `SymbolId` identities survive lowering.
 
-Evaluation is left-to-right. Instance-qualified calls carry an explicit
+Evaluation is left-to-right. Structured loops use the same explicit jump and
+branch terminators as other control flow. Instance-qualified calls carry an explicit
 receiver; file-class-qualified calls do not. Nullable-to-reference coercion is
 an explicit MIR conversion. `&&` and `||` lower to branches and a typed phi
 value, preserving short-circuit behavior.
@@ -60,13 +68,13 @@ instance-qualified, or constructor calls. This avoids choosing an implicit
 method calling convention before the ABI stage.
 
 Field initializers are lowered to independent MIR bodies that return the
-initialized value. A later object-layout stage will decide how those bodies are
-composed with constructor execution; MIR does not assume an object layout.
+initialized value. The LLVM backend composes those bodies with constructor
+execution using the Stage 4 object layout; MIR does not assume that layout.
 
 ## Deferred boundaries
 
 Stage 3.0 does not define object size or alignment, vtables, calling
 conventions, name mangling, exception handling, target machine types, LLVM IR,
-machine code, runtime services, or garbage-collector barriers. The next stage
-should define a portable data-layout and ABI contract before selecting a
-backend.
+machine code, runtime services, or garbage-collector barriers. Stage 4.0 defines
+the data-layout and ABI boundary in
+[data_layout_and_abi.md](data_layout_and_abi.md).

@@ -13,7 +13,7 @@ namespace {
 using Keyword = std::pair<std::string_view, TokenKind>;
 
 constexpr std::array kKeywords{
-    Keyword{"function", TokenKind::kKwFunction},
+    Keyword{"func", TokenKind::kKwFunc},
     Keyword{"return", TokenKind::kKwReturn},
     Keyword{"if", TokenKind::kKwIf},
     Keyword{"else", TokenKind::kKwElse},

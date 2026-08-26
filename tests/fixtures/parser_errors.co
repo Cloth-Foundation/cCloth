@@ -1,5 +1,5 @@
 int32 broken =
 
-function Valid(): int {
+func Valid(): int {
     return 10;
 }

@@ -19,6 +19,11 @@ struct LoweredLocation {
   bool is_member{false};
 };
 
+struct LoopTargets {
+  MirBlockId continue_target;
+  MirBlockId break_target;
+};
+
 class BodyBuilder {
  public:
   BodyBuilder(const HirModule& hir, const SemanticModel& semantics, FileId file,
@@ -179,6 +184,23 @@ class BodyBuilder {
       lower_if(*if_statement, statement.range);
       return;
     }
+    if (const auto* while_statement =
+            std::get_if<HirWhileStatement>(&statement.data)) {
+      lower_while(*while_statement, statement.range);
+      return;
+    }
+    if (std::holds_alternative<HirBreakStatement>(statement.data)) {
+      if (!loop_targets_.empty()) {
+        jump_to(loop_targets_.back().break_target, statement.range);
+      }
+      return;
+    }
+    if (std::holds_alternative<HirContinueStatement>(statement.data)) {
+      if (!loop_targets_.empty()) {
+        jump_to(loop_targets_.back().continue_target, statement.range);
+      }
+      return;
+    }
     const auto& nested = std::get<HirNestedBlockStatement>(statement.data);
     lower_block(nested.block);
   }
@@ -260,6 +282,32 @@ class BodyBuilder {
       jump_to(continuation, range);
     }
     current_block_ = continuation;
+  }
+
+  void lower_while(const HirWhileStatement& while_statement,
+                   SourceRange range) {
+    const bool loop_reachable = current_is_reachable();
+    const MirBlockId condition_block = add_block(loop_reachable);
+    const MirBlockId body_block = add_block(loop_reachable);
+    const MirBlockId exit_block = add_block(loop_reachable);
+    jump_to(condition_block, range);
+
+    current_block_ = condition_block;
+    const HirExpression& condition_syntax =
+        hir_.storage.expression(while_statement.condition);
+    const MirValueId condition =
+        require_value(lower_expression(while_statement.condition),
+                      condition_syntax.type, condition_syntax.range);
+    terminate(MirBranchTerminator{condition, body_block, exit_block}, range);
+
+    loop_targets_.push_back(LoopTargets{condition_block, exit_block});
+    current_block_ = body_block;
+    lower_block(while_statement.body);
+    if (current_block_) {
+      jump_to(condition_block, range);
+    }
+    loop_targets_.pop_back();
+    current_block_ = exit_block;
   }
 
   std::optional<MirValueId> lower_expression(HirExpressionId id) {
@@ -526,6 +574,7 @@ class BodyBuilder {
   std::vector<TypeId> value_types_;
   std::vector<bool> terminated_;
   std::optional<MirBlockId> current_block_;
+  std::vector<LoopTargets> loop_targets_;
 };
 
 MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,

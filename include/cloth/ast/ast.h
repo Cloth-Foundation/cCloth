@@ -123,13 +123,23 @@ struct IfStatement {
   std::optional<BlockId> else_block;
 };
 
+struct WhileStatement {
+  ExpressionId condition;
+  BlockId body;
+};
+
+struct BreakStatement {};
+
+struct ContinueStatement {};
+
 struct NestedBlockStatement {
   BlockId block;
 };
 
 using StatementData =
     std::variant<InvalidStatement, LocalVariableStatement, ReturnStatement,
-                 ExpressionStatement, IfStatement, NestedBlockStatement>;
+                 ExpressionStatement, IfStatement, WhileStatement,
+                 BreakStatement, ContinueStatement, NestedBlockStatement>;
 
 struct Statement {
   SourceRange range;
@@ -206,6 +216,9 @@ enum class DeclarationKind {
 struct MemberReference {
   DeclarationKind kind;
   std::size_t index;
+
+  friend bool operator==(const MemberReference&,
+                         const MemberReference&) = default;
 };
 
 struct FileClassDecl {

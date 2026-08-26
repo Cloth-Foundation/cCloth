@@ -10,9 +10,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_program(CLOTH_CLANG_FORMAT_EXECUTABLE NAMES clang-format)
+find_program(CLOTH_LLVM_OPT_EXECUTABLE NAMES opt)
+find_program(CLOTH_LLVM_LLC_EXECUTABLE NAMES llc)
 if(CLOTH_CLANG_FORMAT_EXECUTABLE)
     file(GLOB_RECURSE CLOTH_FORMAT_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_CURRENT_SOURCE_DIR}/include/cloth/*.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cc
     )
@@ -31,8 +34,13 @@ if(CLOTH_CLANG_FORMAT_EXECUTABLE)
 endif()
 
 add_library(cloth_compiler
+    src/abi/abi.cc
+    src/abi/abi_printer.cc
+    src/abi/abi_verifier.cc
     src/ast/ast.cc
     src/ast/ast_printer.cc
+    src/backend/llvm_ir.cc
+    src/backend/native_toolchain.cc
     src/compiler/compilation.cc
     src/diagnostics/diagnostic_engine.cc
     src/flow/control_flow.cc
@@ -53,6 +61,7 @@ add_library(cloth_compiler
     src/sema/semantic_model.cc
     src/sema/visibility.cc
     src/source/source_file.cc
+    src/target/data_layout.cc
 )
 
 target_compile_features(cloth_compiler PUBLIC cxx_std_23)
@@ -84,12 +93,57 @@ endfunction()
 
 cloth_enable_warnings(cloth_compiler)
 
+add_library(cloth_runtime STATIC runtime/runtime.cc)
+target_compile_features(cloth_runtime PUBLIC cxx_std_23)
+target_include_directories(cloth_runtime
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+cloth_enable_warnings(cloth_runtime)
+
 add_executable(clothc src/main.cc)
 target_link_libraries(clothc PRIVATE cloth_compiler)
 cloth_enable_warnings(clothc)
+add_dependencies(clothc cloth_runtime)
+
+file(TO_CMAKE_PATH "${CMAKE_CXX_COMPILER}" CLOTH_NATIVE_LINKER_PATH)
+if(WIN32)
+    if(MSVC)
+        set(CLOTH_NATIVE_TARGET_TRIPLE "x86_64-pc-windows-msvc")
+        target_compile_definitions(clothc PRIVATE CLOTH_NATIVE_LINKER_MSVC=1)
+    else()
+        set(CLOTH_NATIVE_TARGET_TRIPLE "x86_64-w64-windows-gnu")
+        target_compile_definitions(clothc PRIVATE
+            CLOTH_NATIVE_STATIC_RUNTIME=1)
+    endif()
+elseif(APPLE)
+    set(CLOTH_NATIVE_TARGET_TRIPLE "x86_64-apple-macosx")
+else()
+    set(CLOTH_NATIVE_TARGET_TRIPLE "x86_64-unknown-linux-gnu")
+endif()
+target_compile_definitions(clothc PRIVATE
+    CLOTH_DEFAULT_NATIVE_LINKER="${CLOTH_NATIVE_LINKER_PATH}"
+    CLOTH_DEFAULT_NATIVE_TARGET="${CLOTH_NATIVE_TARGET_TRIPLE}"
+    CLOTH_DEFAULT_RUNTIME_LIBRARY="$<TARGET_FILE:cloth_runtime>"
+)
+if(CLOTH_LLVM_LLC_EXECUTABLE)
+    file(TO_CMAKE_PATH "${CLOTH_LLVM_LLC_EXECUTABLE}"
+         CLOTH_LLVM_LLC_PATH)
+    target_compile_definitions(clothc PRIVATE
+        CLOTH_DEFAULT_LLC="${CLOTH_LLVM_LLC_PATH}"
+    )
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(cloth_abi_tests tests/abi_tests.cc)
+    target_link_libraries(cloth_abi_tests PRIVATE cloth_compiler)
+    cloth_enable_warnings(cloth_abi_tests)
+    add_test(NAME cloth_abi_tests COMMAND cloth_abi_tests)
+    add_executable(cloth_backend_tests tests/backend_tests.cc)
+    target_link_libraries(cloth_backend_tests PRIVATE cloth_compiler)
+    cloth_enable_warnings(cloth_backend_tests)
+    add_test(NAME cloth_backend_tests COMMAND cloth_backend_tests)
     add_executable(cloth_lexer_tests tests/lexer_tests.cc)
     target_link_libraries(cloth_lexer_tests PRIVATE cloth_compiler)
     cloth_enable_warnings(cloth_lexer_tests)
@@ -112,6 +166,97 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
                 ${CMAKE_CURRENT_SOURCE_DIR}/examples/Repository.co
     )
+    add_test(
+        NAME cloth_cli_wasm32
+        COMMAND clothc --target=wasm32
+                ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
+                ${CMAKE_CURRENT_SOURCE_DIR}/examples/Repository.co
+    )
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        set(CLOTH_TEST_LLVM_IR ${CMAKE_CURRENT_BINARY_DIR}/cloth-example.ll)
+        add_test(
+            NAME cloth_cli_emit_llvm
+            COMMAND clothc --emit-llvm=${CLOTH_TEST_LLVM_IR}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
+                    ${CMAKE_CURRENT_SOURCE_DIR}/examples/Repository.co
+        )
+        add_test(
+            NAME cloth_llvm_verify
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                    -passes=verify -disable-output ${CLOTH_TEST_LLVM_IR}
+        )
+        set_tests_properties(cloth_llvm_verify PROPERTIES
+            DEPENDS cloth_cli_emit_llvm
+        )
+    endif()
+    if(CLOTH_LLVM_LLC_EXECUTABLE)
+        if(WIN32)
+            set(CLOTH_TEST_HELLO_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth hello.exe")
+        else()
+            set(CLOTH_TEST_HELLO_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth hello")
+        endif()
+        add_test(
+            NAME cloth_cli_build_hello
+            COMMAND clothc "--build=${CLOTH_TEST_HELLO_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/examples/hello/HelloWorld.co
+        )
+        add_test(
+            NAME cloth_hello_world
+            COMMAND ${CLOTH_TEST_HELLO_EXECUTABLE}
+        )
+        set_tests_properties(cloth_hello_world PROPERTIES
+            DEPENDS cloth_cli_build_hello
+            PASS_REGULAR_EXPRESSION "Hello, World!"
+        )
+
+        if(WIN32)
+            set(CLOTH_TEST_FIZZBUZZ_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth fizzbuzz.exe")
+        else()
+            set(CLOTH_TEST_FIZZBUZZ_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth fizzbuzz")
+        endif()
+        add_test(
+            NAME cloth_cli_build_fizzbuzz
+            COMMAND clothc "--build=${CLOTH_TEST_FIZZBUZZ_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/examples/FizzBuzz.co
+        )
+        add_test(
+            NAME cloth_fizzbuzz
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_FIZZBUZZ_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/fizzbuzz.txt"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_fizzbuzz PROPERTIES
+            DEPENDS cloth_cli_build_fizzbuzz
+        )
+
+        if(WIN32)
+            set(CLOTH_TEST_PRINT_VALUES_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth print values.exe")
+        else()
+            set(CLOTH_TEST_PRINT_VALUES_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth print values")
+        endif()
+        add_test(
+            NAME cloth_cli_build_print_values
+            COMMAND clothc "--build=${CLOTH_TEST_PRINT_VALUES_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/PrintValues.co
+        )
+        add_test(
+            NAME cloth_print_values
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_PRINT_VALUES_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/print_values.txt"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_print_values PROPERTIES
+            DEPENDS cloth_cli_build_print_values
+        )
+    endif()
     add_test(
         NAME cloth_cli_lexical_error
         COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/errors.co

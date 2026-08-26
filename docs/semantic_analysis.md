@@ -12,8 +12,8 @@ registered before any initializer or body is checked. Forward references and
 input declaration order therefore have the same meaning.
 
 `Compilation` owns its source files, immutable token streams, and parse results.
-This keeps token lexemes, syntax names, and source-range file names valid through
-semantic analysis and HIR consumption.
+This keeps token lexemes, syntax names, and source-range file names valid
+through semantic analysis and HIR consumption.
 
 Compilation input order defines stable `FileId`, `TypeId`, and `SymbolId`
 allocation. Tables use ordered storage, and diagnostic traversal follows source
@@ -51,6 +51,11 @@ may be shadowed by nested blocks but may not be redeclared in the same scope.
 
 Capitalization-based visibility is enforced for both named types and members.
 Private declarations remain accessible inside their defining file class.
+
+The core scope provides `print(String)`, `print(int32)`, and `print(bool)` as
+typed intrinsic overloads. Locals and members retain normal precedence over
+core names, so a source declaration can shadow `print`. Calls still use exact
+parameter matching.
 Public functions can be qualified by a file-class name, such as
 `Repository.Find(id)`. Fields require an instance.
 
@@ -59,7 +64,8 @@ The checker currently validates:
 - field and local initializers
 - mutable assignment targets and assigned values
 - unary and binary operator operand types
-- boolean `if` conditions
+- boolean `if` and `while` conditions
+- `break` and `continue` placement inside loops
 - member access and visibility
 - exact overload and constructor selection
 - return value presence and type compatibility

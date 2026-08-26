@@ -488,6 +488,33 @@ class SemanticAnalyzer {
               : false;
       return then_returns && if_statement->else_block && else_returns;
     }
+    if (const auto* while_statement =
+            std::get_if<WhileStatement>(&statement.data)) {
+      const ExpressionState condition =
+          analyze_expression(while_statement->condition);
+      check_value(condition, expression_range(while_statement->condition));
+      check_assignment(model_.bool_type(), condition.type,
+                       expression_range(while_statement->condition),
+                       "while condition");
+      ++loop_depth_;
+      static_cast<void>(analyze_block(while_statement->body, true));
+      --loop_depth_;
+      return false;
+    }
+    if (std::holds_alternative<BreakStatement>(statement.data)) {
+      if (loop_depth_ == 0) {
+        diagnostics_.error(statement.range,
+                           "'break' is only valid inside a loop");
+      }
+      return false;
+    }
+    if (std::holds_alternative<ContinueStatement>(statement.data)) {
+      if (loop_depth_ == 0) {
+        diagnostics_.error(statement.range,
+                           "'continue' is only valid inside a loop");
+      }
+      return false;
+    }
     const auto& nested = std::get<NestedBlockStatement>(statement.data);
     return analyze_block(nested.block, true);
   }
@@ -551,6 +578,14 @@ class SemanticAnalyzer {
                              ValueCategory::kCallable,
                              {},
                              std::move(members)};
+    }
+
+    std::vector<SymbolId> intrinsics = model_.find_intrinsics(identifier.name);
+    if (!intrinsics.empty()) {
+      return ExpressionState{model_.error_type(),
+                             ValueCategory::kCallable,
+                             {},
+                             std::move(intrinsics)};
     }
 
     if (const std::optional<FileId> file = find_file(identifier.name)) {
@@ -958,6 +993,7 @@ class SemanticAnalyzer {
   TypeId expected_return_type_{0};
   std::vector<Scope> scopes_;
   std::optional<std::size_t> current_scope_;
+  std::size_t loop_depth_{0};
 };
 
 SemanticAnalysisResult analyze_semantics(

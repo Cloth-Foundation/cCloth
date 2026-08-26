@@ -1,6 +1,7 @@
 #ifndef CLOTH_COMPILER_COMPILATION_H_
 #define CLOTH_COMPILER_COMPILATION_H_
 
+#include "cloth/abi/abi.h"
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/flow/control_flow.h"
@@ -10,6 +11,7 @@
 #include "cloth/parser/parser.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_file.h"
+#include "cloth/target/data_layout.h"
 
 #include <cstddef>
 #include <optional>
@@ -23,11 +25,15 @@ struct CompilationResult {
   HirModule hir;
   ControlFlowAnalysis control_flow;
   MirModule mir;
+  AbiModule abi;
   bool is_valid;
 };
 
 class Compilation {
  public:
+  Compilation();
+  explicit Compilation(TargetDataLayout target);
+
   void add_source(SourceFile source);
   // Source ranges in the result refer to source storage owned here.
   [[nodiscard]] CompilationResult analyze(DiagnosticEngine& diagnostics);
@@ -46,6 +52,7 @@ class Compilation {
   };
 
   std::vector<Unit> units_;
+  TargetDataLayout target_;
 };
 
 }  // namespace cloth

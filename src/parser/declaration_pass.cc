@@ -48,7 +48,7 @@ DeclarationPassResult DeclarationPass::run() {
 
   while (!at_end()) {
     const std::size_t before = current_;
-    if (current().kind == TokenKind::kKwFunction) {
+    if (current().kind == TokenKind::kKwFunc) {
       parse_function();
     } else if (is_nested_type_keyword(current().kind)) {
       skip_deferred_nested_type();
@@ -258,7 +258,7 @@ void DeclarationPass::parse_field() {
       }
       if (parenthesis_depth == 0 &&
           (current().kind == TokenKind::kSemicolon ||
-           current().kind == TokenKind::kKwFunction ||
+           current().kind == TokenKind::kKwFunc ||
            is_nested_type_keyword(current().kind) ||
            (current_ != initializer_begin && can_start_type(current().kind) &&
             peek(1).kind == TokenKind::kIdentifier))) {
@@ -301,8 +301,7 @@ void DeclarationPass::parse_function() {
   const std::size_t begin = current_;
   advance();
   if (current().kind != TokenKind::kIdentifier) {
-    diagnostics_.error(current().range,
-                       "expected function name after 'function'");
+    diagnostics_.error(current().range, "expected function name after 'func'");
     is_valid_ = false;
     synchronize_member();
     return;
@@ -433,7 +432,7 @@ bool DeclarationPass::has_duplicate(const MemberSymbol& symbol) {
 bool DeclarationPass::looks_like_member_start(
     std::size_t index) const noexcept {
   const TokenKind kind = tokens_[index].kind;
-  if (kind == TokenKind::kKwFunction || is_nested_type_keyword(kind)) {
+  if (kind == TokenKind::kKwFunc || is_nested_type_keyword(kind)) {
     return true;
   }
   if (!can_start_type(kind)) {

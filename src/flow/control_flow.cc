@@ -10,49 +10,84 @@
 namespace cloth {
 namespace {
 
+struct FlowResult {
+  bool can_fall_through{true};
+  bool has_break{false};
+};
+
 class CallableAnalyzer {
  public:
   CallableAnalyzer(const HirModule& hir, DiagnosticEngine& diagnostics)
       : hir_(hir), diagnostics_(diagnostics) {}
 
   CallableControlFlow analyze(const HirCallable& callable) {
-    const bool definitely_returns = analyze_block(callable.body);
-    return CallableControlFlow{callable.symbol, !definitely_returns,
+    const FlowResult flow = analyze_block(callable.body);
+    return CallableControlFlow{callable.symbol, flow.can_fall_through,
                                reachable_statements_, unreachable_statements_};
   }
 
  private:
-  bool analyze_block(HirBlockId id) {
+  FlowResult analyze_block(HirBlockId id) {
     const HirBlock& block = hir_.storage.block(id);
-    bool terminated = false;
+    FlowResult block_flow;
     for (const HirStatementId statement_id : block.statements) {
       const HirStatement& statement = hir_.storage.statement(statement_id);
-      if (terminated) {
+      if (!block_flow.can_fall_through) {
         ++unreachable_statements_;
         diagnostics_.warning(statement.range, "unreachable statement");
         continue;
       }
       ++reachable_statements_;
-      terminated = analyze_statement(statement);
+      const FlowResult statement_flow = analyze_statement(statement);
+      block_flow.can_fall_through = statement_flow.can_fall_through;
+      block_flow.has_break = block_flow.has_break || statement_flow.has_break;
     }
-    return terminated;
+    return block_flow;
   }
 
-  bool analyze_statement(const HirStatement& statement) {
+  FlowResult analyze_statement(const HirStatement& statement) {
     if (std::holds_alternative<HirReturnStatement>(statement.data)) {
-      return true;
+      return FlowResult{false, false};
+    }
+    if (std::holds_alternative<HirBreakStatement>(statement.data)) {
+      return FlowResult{false, true};
+    }
+    if (std::holds_alternative<HirContinueStatement>(statement.data)) {
+      return FlowResult{false, false};
     }
     if (const auto* if_statement =
             std::get_if<HirIfStatement>(&statement.data)) {
-      const bool then_returns = analyze_block(if_statement->then_block);
-      const bool else_returns = if_statement->else_block
-                                    ? analyze_block(*if_statement->else_block)
-                                    : false;
-      return if_statement->else_block && then_returns && else_returns;
+      const FlowResult then_flow = analyze_block(if_statement->then_block);
+      const FlowResult else_flow =
+          if_statement->else_block ? analyze_block(*if_statement->else_block)
+                                   : FlowResult{};
+      return FlowResult{
+          then_flow.can_fall_through || else_flow.can_fall_through,
+          then_flow.has_break || else_flow.has_break};
+    }
+    if (const auto* while_statement =
+            std::get_if<HirWhileStatement>(&statement.data)) {
+      const FlowResult body_flow = analyze_block(while_statement->body);
+      return FlowResult{
+          !is_true(while_statement->condition) || body_flow.has_break, false};
     }
     if (const auto* nested =
             std::get_if<HirNestedBlockStatement>(&statement.data)) {
       return analyze_block(nested->block);
+    }
+    return FlowResult{};
+  }
+
+  bool is_true(HirExpressionId id) const {
+    const HirExpression& expression = hir_.storage.expression(id);
+    if (const auto* literal =
+            std::get_if<HirLiteralExpression>(&expression.data)) {
+      return literal->kind == LiteralKind::kBoolean &&
+             literal->lexeme == "true";
+    }
+    if (const auto* grouped =
+            std::get_if<HirGroupedExpression>(&expression.data)) {
+      return is_true(grouped->expression);
     }
     return false;
   }

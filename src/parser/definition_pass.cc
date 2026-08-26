@@ -223,6 +223,13 @@ StatementId DefinitionPass::parse_statement() {
   if (current().kind == TokenKind::kKwIf) {
     return parse_if_statement();
   }
+  if (current().kind == TokenKind::kKwWhile) {
+    return parse_while_statement();
+  }
+  if (current().kind == TokenKind::kKwBreak ||
+      current().kind == TokenKind::kKwContinue) {
+    return parse_loop_control_statement();
+  }
   if (can_start_type(current().kind) &&
       peek(1).kind == TokenKind::kIdentifier) {
     return parse_local_variable();
@@ -303,6 +310,42 @@ StatementId DefinitionPass::parse_if_statement() {
                 IfStatement{condition, then_block, else_block}});
 }
 
+StatementId DefinitionPass::parse_while_statement() {
+  const Token& keyword = advance();
+  expect(TokenKind::kLeftParen, "expected '(' after 'while'");
+  const ExpressionId condition = parse_expression();
+  expect(TokenKind::kRightParen, "expected ')' after while condition");
+
+  BlockId body = file_class_.storage.add_block(
+      Block{point_range(current().range.begin), {}, false});
+  if (current().kind == TokenKind::kLeftBrace) {
+    body = parse_block();
+  } else {
+    diagnostics_.error(current().range, "expected '{' to begin while body");
+  }
+
+  return file_class_.storage.add_statement(
+      Statement{SourceRange{keyword.range.begin,
+                            file_class_.storage.block(body).range.end},
+                WhileStatement{condition, body}});
+}
+
+StatementId DefinitionPass::parse_loop_control_statement() {
+  const Token& keyword = advance();
+  SourceLocation end = keyword.range.end;
+  if (match(TokenKind::kSemicolon)) {
+    end = tokens_[current_ - 1].range.end;
+  } else {
+    diagnostics_.error(current().range, "expected ';' after '" +
+                                            std::string{keyword.lexeme} + "'");
+  }
+  StatementData data = keyword.kind == TokenKind::kKwBreak
+                           ? StatementData{BreakStatement{}}
+                           : StatementData{ContinueStatement{}};
+  return file_class_.storage.add_statement(
+      Statement{SourceRange{keyword.range.begin, end}, std::move(data)});
+}
+
 StatementId DefinitionPass::parse_expression_statement() {
   const SourceLocation begin = current().range.begin;
   const ExpressionId expression = parse_expression();
@@ -325,6 +368,9 @@ void DefinitionPass::synchronize_statement() {
     }
     if (current().kind == TokenKind::kKwReturn ||
         current().kind == TokenKind::kKwIf ||
+        current().kind == TokenKind::kKwWhile ||
+        current().kind == TokenKind::kKwBreak ||
+        current().kind == TokenKind::kKwContinue ||
         current().kind == TokenKind::kLeftBrace ||
         (can_start_type(current().kind) &&
          peek(1).kind == TokenKind::kIdentifier)) {

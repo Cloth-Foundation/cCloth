@@ -88,7 +88,7 @@ bool has_diagnostic(const cloth::DiagnosticEngine& diagnostics,
 void straight_line_body(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Math.co",
-                  "function Add(int a, int b): int {\n"
+                  "func Add(int a, int b): int {\n"
                   "  int sum = a + b;\n"
                   "  return sum;\n"
                   "}\n");
@@ -103,7 +103,7 @@ void straight_line_body(TestContext& test) {
               "straight-line function created extra blocks");
   test.expect(std::holds_alternative<cloth::MirReturnTerminator>(
                   function.body.blocks[0].terminator.data),
-              "function does not end in an explicit return");
+              "func does not end in an explicit return");
   test.expect(body_has_instruction<cloth::MirBinaryInstruction>(function.body),
               "binary expression was not lowered");
   test.expect(
@@ -114,7 +114,7 @@ void straight_line_body(TestContext& test) {
 void branching_returns(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Branches.co",
-                  "function Choose(bool flag): int {\n"
+                  "func Choose(bool flag): int {\n"
                   "  if (flag) { return 1; } else { return 2; }\n"
                   "}\n");
   compilation.compile();
@@ -135,7 +135,7 @@ void branching_returns(TestContext& test) {
 void branch_continuation(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Continuation.co",
-                  "function Choose(bool flag): int {\n"
+                  "func Choose(bool flag): int {\n"
                   "  if (flag) { return 1; }\n"
                   "  return 2;\n"
                   "}\n");
@@ -158,10 +158,10 @@ void branch_continuation(TestContext& test) {
 void short_circuit_control_flow(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Logic.co",
-                  "function Both(bool left, bool right): bool {\n"
+                  "func Both(bool left, bool right): bool {\n"
                   "  return left && right;\n"
                   "}\n"
-                  "function Either(bool left, bool right): bool {\n"
+                  "func Either(bool left, bool right): bool {\n"
                   "  return left || right;\n"
                   "}\n");
   compilation.compile();
@@ -189,10 +189,65 @@ void short_circuit_control_flow(TestContext& test) {
               "logical-or merge has no phi value");
 }
 
+void structured_loop_control_flow(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Loop.co",
+                  "func Run() {\n"
+                  "  int value = 0;\n"
+                  "  while (value < 4) {\n"
+                  "    value = value + 1;\n"
+                  "    if (value == 2) { continue; }\n"
+                  "    if (value == 3) { break; }\n"
+                  "  }\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid, "structured loop failed to lower");
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  const auto* entry_jump = std::get_if<cloth::MirJumpTerminator>(
+      &body.blocks[body.entry.value].terminator.data);
+  test.expect(entry_jump != nullptr,
+              "loop entry does not jump to its condition");
+  if (entry_jump == nullptr || entry_jump->target.value >= body.blocks.size()) {
+    return;
+  }
+
+  const cloth::MirBlockId condition_block = entry_jump->target;
+  const auto* condition_branch = std::get_if<cloth::MirBranchTerminator>(
+      &body.blocks[condition_block.value].terminator.data);
+  test.expect(condition_branch != nullptr,
+              "loop condition does not branch to body and exit blocks");
+  if (condition_branch == nullptr) {
+    return;
+  }
+
+  std::size_t continue_edges = 0;
+  std::size_t break_edges = 0;
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    const auto* jump =
+        std::get_if<cloth::MirJumpTerminator>(&block.terminator.data);
+    if (jump == nullptr) {
+      continue;
+    }
+    if (jump->target == condition_block) {
+      ++continue_edges;
+    }
+    if (jump->target == condition_branch->else_block) {
+      ++break_edges;
+    }
+  }
+  test.expect(continue_edges >= 2,
+              "continue or loop backedge does not target the condition");
+  test.expect(break_edges >= 1, "break does not target the loop exit");
+  test.expect(compilation.result->control_flow.callables[0].can_fall_through,
+              "loop with a reachable break was marked non-falling");
+}
+
 void unreachable_statements(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Dead.co",
-                  "function Stop(): int {\n"
+                  "func Stop(): int {\n"
                   "  return 1;\n"
                   "  return 2;\n"
                   "}\n");
@@ -217,7 +272,7 @@ void unreachable_statements(TestContext& test) {
 void incomplete_return_flow(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Returns.co",
-                  "function Maybe(bool flag): int {\n"
+                  "func Maybe(bool flag): int {\n"
                   "  if (flag) { return 1; }\n"
                   "}\n");
   compilation.compile();
@@ -240,7 +295,7 @@ void incomplete_return_flow(TestContext& test) {
 
 void no_value_fallthrough(TestContext& test) {
   CompiledSources compilation;
-  compilation.add("Actions.co", "function Run() { int value = 1; }\n");
+  compilation.add("Actions.co", "func Run() { int value = 1; }\n");
   compilation.compile();
 
   const cloth::MirTerminator& terminator =
@@ -288,7 +343,7 @@ void member_store(TestContext& test) {
 void nullable_conversion(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co", "");
-  compilation.add("Factory.co", "function Empty(): User { return null; }\n");
+  compilation.add("Factory.co", "func Empty(): User { return null; }\n");
   compilation.compile();
 
   const cloth::MirBody& body =
@@ -302,13 +357,13 @@ void call_receivers(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co",
                   "User() {}\n"
-                  "function Echo(int value): int { return value; }\n"
-                  "function Forward(int value): int { return Echo(value); }\n");
+                  "func Echo(int value): int { return value; }\n"
+                  "func Forward(int value): int { return Echo(value); }\n");
   compilation.add("Calls.co",
-                  "function Static(User user): int { return User.Echo(1); }\n"
-                  "function Instance(User user): int { "
+                  "func Static(User user): int { return User.Echo(1); }\n"
+                  "func Instance(User user): int { "
                   "return user.Echo(1); }\n"
-                  "function Make(): User { return User(); }\n");
+                  "func Make(): User { return User(); }\n");
   compilation.compile();
 
   test.expect(compilation.result->is_valid, "valid calls failed to lower");
@@ -349,7 +404,7 @@ void call_receivers(TestContext& test) {
 
 void verifiers_reject_corruption(TestContext& test) {
   CompiledSources compilation;
-  compilation.add("Verify.co", "function Value(): int { return 1; }\n");
+  compilation.add("Verify.co", "func Value(): int { return 1; }\n");
   compilation.compile();
 
   cloth::MirModule broken_mir = compilation.result->mir;
@@ -394,6 +449,7 @@ int main() {
       {"branching returns", branching_returns},
       {"branch continuation", branch_continuation},
       {"short-circuit control flow", short_circuit_control_flow},
+      {"structured loop control flow", structured_loop_control_flow},
       {"unreachable statements", unreachable_statements},
       {"incomplete return flow", incomplete_return_flow},
       {"no-value fallthrough", no_value_fallthrough},

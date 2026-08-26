@@ -1,6 +1,6 @@
-# Cloth Stage 1.0 grammar
+# Implemented Cloth grammar
 
-This document defines only the syntax implemented by the Stage 1.0 parser.
+This document defines the syntax implemented through Stage 7.0.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -44,7 +44,7 @@ field_declaration
     = type identifier [ "=" expression ] ";" ;
 
 function_declaration
-    = "function" identifier
+    = "func" identifier
       "(" [ parameter_list ] ")"
       [ ":" type ]
       block ;
@@ -87,6 +87,9 @@ statement
     = local_variable_statement
     | return_statement
     | if_statement
+    | while_statement
+    | break_statement
+    | continue_statement
     | expression_statement
     | block ;
 
@@ -99,12 +102,22 @@ return_statement
 if_statement
     = "if" "(" expression ")" block [ "else" block ] ;
 
+while_statement
+    = "while" "(" expression ")" block ;
+
+break_statement
+    = "break" ";" ;
+
+continue_statement
+    = "continue" ";" ;
+
 expression_statement
     = expression ";" ;
 ```
 
-Braces and semicolons shown above are mandatory. Stage 1.0 does not implement
-loops or declarations inside blocks.
+Braces and semicolons shown above are mandatory. `break` and `continue` are
+valid only inside a `while` body. `for` loops and declarations inside blocks
+remain deferred.
 
 ## Expressions
 

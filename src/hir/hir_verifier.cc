@@ -91,6 +91,10 @@ class HirVerifier {
         if (if_statement->else_block) {
           verify_block(*if_statement->else_block, statement.range);
         }
+      } else if (const auto* while_statement =
+                     std::get_if<HirWhileStatement>(&statement.data)) {
+        verify_expression(while_statement->condition, statement.range);
+        verify_block(while_statement->body, statement.range);
       } else if (const auto* nested =
                      std::get_if<HirNestedBlockStatement>(&statement.data)) {
         verify_block(nested->block, statement.range);

@@ -1,0 +1,118 @@
+#ifndef CLOTH_ABI_ABI_H_
+#define CLOTH_ABI_ABI_H_
+
+#include "cloth/ast/ast.h"
+#include "cloth/mir/mir.h"
+#include "cloth/sema/semantic_model.h"
+#include "cloth/target/data_layout.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace cloth {
+
+enum class AbiTypeKind {
+  kInvalid,
+  kVoid,
+  kInteger,
+  kFloat,
+  kReference,
+};
+
+struct AbiTypeLayout {
+  TypeId type;
+  AbiTypeKind kind;
+  std::uint32_t bit_width;
+  SizeAlignment storage;
+
+  friend bool operator==(const AbiTypeLayout&, const AbiTypeLayout&) = default;
+};
+
+struct AbiFieldLayout {
+  SymbolId symbol;
+  TypeId type;
+  std::uint64_t offset;
+
+  friend bool operator==(const AbiFieldLayout&,
+                         const AbiFieldLayout&) = default;
+};
+
+struct AbiClassLayout {
+  std::uint64_t header_size;
+  std::uint64_t size;
+  std::uint64_t alignment;
+  std::vector<AbiFieldLayout> fields;
+
+  friend bool operator==(const AbiClassLayout&,
+                         const AbiClassLayout&) = default;
+};
+
+enum class AbiCallableKind {
+  kFunction,
+  kConstructor,
+};
+
+enum class AbiLinkage {
+  kInternal,
+  kExternal,
+};
+
+enum class AbiCallingConvention {
+  kC,
+};
+
+enum class AbiParameterKind {
+  kReceiver,
+  kExplicit,
+};
+
+struct AbiParameter {
+  AbiParameterKind kind;
+  SymbolId symbol;
+  TypeId type;
+
+  friend bool operator==(const AbiParameter&, const AbiParameter&) = default;
+};
+
+struct AbiCallable {
+  SymbolId symbol;
+  AbiCallableKind kind;
+  AbiLinkage linkage;
+  AbiCallingConvention calling_convention;
+  std::string mangled_name;
+  TypeId return_type;
+  std::vector<AbiParameter> parameters;
+
+  friend bool operator==(const AbiCallable&, const AbiCallable&) = default;
+};
+
+struct AbiFileClass {
+  FileId file;
+  SymbolId symbol;
+  AbiClassLayout layout;
+  std::vector<AbiCallable> functions;
+  std::vector<AbiCallable> constructors;
+  std::vector<MemberReference> member_order;
+
+  friend bool operator==(const AbiFileClass&, const AbiFileClass&) = default;
+};
+
+struct AbiModule {
+  TargetDataLayout target;
+  std::vector<AbiTypeLayout> types;
+  std::vector<AbiFileClass> files;
+
+  friend bool operator==(const AbiModule&, const AbiModule&) = default;
+};
+
+[[nodiscard]] AbiModule lower_to_abi(const MirModule& mir,
+                                     const SemanticModel& semantics,
+                                     TargetDataLayout target);
+
+[[nodiscard]] std::string mangle_abi_symbol(const SemanticSymbol& symbol,
+                                            const SemanticModel& semantics);
+
+}  // namespace cloth
+
+#endif  // CLOTH_ABI_ABI_H_

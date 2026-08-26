@@ -183,6 +183,14 @@ class Lowerer {
           if_statement->else_block
               ? std::optional<HirBlockId>{block(*if_statement->else_block)}
               : std::nullopt};
+    } else if (const auto* while_statement =
+                   std::get_if<WhileStatement>(&syntax.data)) {
+      data = HirWhileStatement{expression(while_statement->condition),
+                               block(while_statement->body)};
+    } else if (std::holds_alternative<BreakStatement>(syntax.data)) {
+      data = HirBreakStatement{};
+    } else if (std::holds_alternative<ContinueStatement>(syntax.data)) {
+      data = HirContinueStatement{};
     } else if (const auto* nested =
                    std::get_if<NestedBlockStatement>(&syntax.data)) {
       data = HirNestedBlockStatement{block(nested->block)};

@@ -1,0 +1,225 @@
+#include "cloth/abi/abi.h"
+#include "cloth/abi/abi_verifier.h"
+#include "cloth/compiler/compilation.h"
+#include "cloth/diagnostics/diagnostic_engine.h"
+#include "cloth/sema/semantic_model.h"
+#include "cloth/source/source_file.h"
+#include "cloth/target/data_layout.h"
+
+#include <filesystem>
+#include <iostream>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace {
+
+class TestContext {
+ public:
+  explicit TestContext(std::string_view name) : name_(name) {}
+
+  void expect(bool condition, std::string_view message) {
+    if (!condition) {
+      ++failures_;
+      std::cerr << "  " << name_ << ": " << message << '\n';
+    }
+  }
+
+  [[nodiscard]] int failures() const noexcept { return failures_; }
+
+ private:
+  std::string_view name_;
+  int failures_{0};
+};
+
+struct CompiledSource {
+  explicit CompiledSource(
+      std::string text,
+      cloth::TargetDataLayout target = cloth::TargetDataLayout::llvm_x86_64())
+      : compilation(std::move(target)) {
+    compilation.add_source(cloth::SourceFile::from_memory(
+        std::filesystem::path{"Layout.co"}, std::move(text)));
+    result.emplace(compilation.analyze(diagnostics));
+  }
+
+  cloth::Compilation compilation;
+  cloth::DiagnosticEngine diagnostics;
+  std::optional<cloth::CompilationResult> result;
+};
+
+bool has_diagnostic(const cloth::DiagnosticEngine& diagnostics,
+                    std::string_view text) {
+  for (const cloth::Diagnostic& diagnostic : diagnostics.diagnostics()) {
+    if (diagnostic.message.find(text) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void x86_64_type_layout(TestContext& test) {
+  const CompiledSource source{"byte Small;\nint64 Wide;\nString Name;\n"};
+  const cloth::CompilationResult& result = *source.result;
+  const cloth::AbiModule& abi = result.abi;
+  const cloth::TypeId bool_type = *result.semantics.find_type("bool");
+  const cloth::TypeId int64_type = *result.semantics.find_type("int64");
+
+  test.expect(result.is_valid, "valid x86-64 ABI failed verification");
+  test.expect(abi.target.pointer == cloth::SizeAlignment{8, 8},
+              "x86-64 pointer layout is wrong");
+  test.expect(
+      abi.types[bool_type.value].bit_width == 1 &&
+          abi.types[bool_type.value].storage == cloth::SizeAlignment{1, 1},
+      "bool register and storage layout is wrong");
+  test.expect(abi.types[int64_type.value].storage == cloth::SizeAlignment{8, 8},
+              "int64 layout is wrong");
+}
+
+void class_field_layout(TestContext& test) {
+  const CompiledSource source{"byte Small;\nint64 Wide;\nString Name;\n"};
+  const cloth::AbiClassLayout& layout = source.result->abi.files[0].layout;
+
+  test.expect(layout.header_size == 16, "object header is not two words");
+  test.expect(layout.size == 40 && layout.alignment == 8,
+              "x86-64 class size or alignment is wrong");
+  test.expect(layout.fields.size() == 3 && layout.fields[0].offset == 16 &&
+                  layout.fields[1].offset == 24 &&
+                  layout.fields[2].offset == 32,
+              "fields were not laid out in declaration order");
+}
+
+void wasm32_layout(TestContext& test) {
+  const CompiledSource source{"byte Small;\nint64 Wide;\nString Name;\n",
+                              cloth::TargetDataLayout::llvm_wasm32()};
+  const cloth::AbiModule& abi = source.result->abi;
+  const cloth::AbiClassLayout& layout = abi.files[0].layout;
+
+  test.expect(source.result->is_valid, "valid wasm32 ABI failed verification");
+  test.expect(abi.target.pointer == cloth::SizeAlignment{4, 4},
+              "wasm32 pointer layout is wrong");
+  test.expect(layout.header_size == 8 && layout.size == 32 &&
+                  layout.fields[0].offset == 8 &&
+                  layout.fields[1].offset == 16 &&
+                  layout.fields[2].offset == 24,
+              "wasm32 class layout is wrong");
+}
+
+void callable_abi(TestContext& test) {
+  const CompiledSource source{
+      "Layout(int32 value) {}\n"
+      "func Build(int32 value): Layout { return Layout(value); }\n"
+      "func hidden(): bool { return true; }\n"};
+  const cloth::AbiFileClass& file = source.result->abi.files[0];
+  const cloth::AbiCallable& build = file.functions[0];
+  const cloth::AbiCallable& hidden = file.functions[1];
+  const cloth::AbiCallable& constructor = file.constructors[0];
+
+  test.expect(build.linkage == cloth::AbiLinkage::kExternal &&
+                  hidden.linkage == cloth::AbiLinkage::kInternal,
+              "capitalization did not determine ABI linkage");
+  test.expect(build.calling_convention == cloth::AbiCallingConvention::kC,
+              "function ABI does not use the C calling convention");
+  test.expect(
+      build.parameters.size() == 2 &&
+          build.parameters[0].kind == cloth::AbiParameterKind::kReceiver &&
+          build.parameters[1].kind == cloth::AbiParameterKind::kExplicit,
+      "function ABI does not contain its uniform receiver slot");
+  test.expect(constructor.parameters.size() == 1 &&
+                  constructor.parameters[0].kind ==
+                      cloth::AbiParameterKind::kExplicit &&
+                  constructor.return_type ==
+                      source.result->semantics.file(cloth::FileId{0}).type,
+              "constructor ABI does not return the allocated object");
+}
+
+void deterministic_mangling(TestContext& test) {
+  const CompiledSource source{
+      "func Pick(int value): int { return value; }\n"
+      "func Pick(bool value): bool { return value; }\n"};
+  const std::vector<cloth::AbiCallable>& functions =
+      source.result->abi.files[0].functions;
+
+  test.expect(functions[0].mangled_name == "_C1F6_Layout4_PickP1_i32",
+              "int32 overload has an unstable mangled name");
+  test.expect(functions[1].mangled_name == "_C1F6_Layout4_PickP1_b",
+              "bool overload has an unstable mangled name");
+  test.expect(functions[0].mangled_name != functions[1].mangled_name,
+              "overloads have colliding mangled names");
+}
+
+void verifier_rejects_layout_corruption(TestContext& test) {
+  const CompiledSource source{"int64 Wide;\n"};
+  cloth::AbiModule broken = source.result->abi;
+  broken.files[0].layout.fields[0].offset = 17;
+  cloth::DiagnosticEngine diagnostics;
+
+  test.expect(!cloth::verify_abi(broken, source.result->mir,
+                                 source.result->semantics, diagnostics),
+              "ABI verifier accepted a misaligned field");
+  test.expect(has_diagnostic(diagnostics, "class layout does not match"),
+              "ABI verifier reported the wrong layout invariant");
+
+  broken = source.result->abi;
+  const cloth::TypeId int64_type = *source.result->semantics.find_type("int64");
+  broken.types[int64_type.value].storage.alignment = 0;
+  cloth::DiagnosticEngine type_diagnostics;
+  test.expect(!cloth::verify_abi(broken, source.result->mir,
+                                 source.result->semantics, type_diagnostics),
+              "ABI verifier accepted a zero type alignment");
+}
+
+void verifier_rejects_invalid_target(TestContext& test) {
+  const CompiledSource source{""};
+  cloth::AbiModule broken = source.result->abi;
+  broken.target.pointer.alignment = 3;
+  cloth::DiagnosticEngine diagnostics;
+
+  test.expect(!cloth::verify_abi(broken, source.result->mir,
+                                 source.result->semantics, diagnostics),
+              "ABI verifier accepted a non-power-of-two alignment");
+  test.expect(has_diagnostic(diagnostics, "target data layout is invalid"),
+              "invalid target produced the wrong diagnostic");
+}
+
+using TestFunction = void (*)(TestContext&);
+
+struct TestCase {
+  std::string_view name;
+  TestFunction function;
+};
+
+}  // namespace
+
+int main() {
+  const std::vector<TestCase> tests{
+      {"x86-64 type layout", x86_64_type_layout},
+      {"class field layout", class_field_layout},
+      {"wasm32 layout", wasm32_layout},
+      {"callable ABI", callable_abi},
+      {"deterministic mangling", deterministic_mangling},
+      {"verifier rejects layout corruption",
+       verifier_rejects_layout_corruption},
+      {"verifier rejects invalid target", verifier_rejects_invalid_target},
+  };
+
+  int failures = 0;
+  for (const TestCase& test_case : tests) {
+    TestContext context{test_case.name};
+    test_case.function(context);
+    if (context.failures() == 0) {
+      std::cout << "[pass] " << test_case.name << '\n';
+    } else {
+      std::cout << "[fail] " << test_case.name << '\n';
+      failures += context.failures();
+    }
+  }
+
+  if (failures == 0) {
+    std::cout << tests.size() << " tests passed\n";
+    return 0;
+  }
+  std::cerr << failures << " assertion(s) failed\n";
+  return 1;
+}

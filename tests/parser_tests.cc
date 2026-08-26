@@ -150,10 +150,9 @@ void fields_and_visibility(TestContext& test) {
 }
 
 void functions(TestContext& test) {
-  const ParsedSource source{
-      "Functions.co",
-      "function shutdown() {}\n"
-      "function Add(int a, int b): int { return a + b; }\n"};
+  const ParsedSource source{"Functions.co",
+                            "func shutdown() {}\n"
+                            "func Add(int a, int b): int { return a + b; }\n"};
   test.expect(error_count(source) == 0, "valid functions should parse");
   test.expect(source.ast().functions.size() == 2, "wrong function count");
   if (source.ast().functions.size() != 2) {
@@ -167,13 +166,20 @@ void functions(TestContext& test) {
               "lowercase function should be private");
 
   const cloth::FunctionDecl& add = source.ast().functions[1];
-  test.expect(add.parameters.size() == 2, "function parameters were lost");
+  test.expect(add.parameters.size() == 2, "func parameters were lost");
   test.expect(add.return_type && add.return_type->name == "int",
-              "function return type is wrong");
+              "func return type is wrong");
   test.expect(add.visibility == cloth::Visibility::kPublic,
               "uppercase function should be public");
   test.expect(source.ast().storage.block(add.body).statements.size() == 1,
-              "function body was not parsed");
+              "func body was not parsed");
+}
+
+void legacy_function_keyword_rejected(TestContext& test) {
+  const ParsedSource source{"Legacy.co", "function Old() {}\n"};
+  test.expect(error_count(source) != 0, "legacy function keyword was accepted");
+  test.expect(source.ast().functions.empty(),
+              "legacy syntax created a function declaration");
 }
 
 void constructors(TestContext& test) {
@@ -211,10 +217,9 @@ void invalid_file_class_name(TestContext& test) {
 }
 
 void duplicate_declarations(TestContext& test) {
-  const ParsedSource source{
-      "Duplicates.co",
-      "int32 id;\nint32 id;\n"
-      "function Find(int x) {}\nfunction Find(int y) {}\n"};
+  const ParsedSource source{"Duplicates.co",
+                            "int32 id;\nint32 id;\n"
+                            "func Find(int x) {}\nfunc Find(int y) {}\n"};
   test.expect(has_diagnostic(source, "conflicts with previous field"),
               "duplicate field was not diagnosed");
   test.expect(has_diagnostic(source, "duplicate function signature"),
@@ -225,8 +230,8 @@ void duplicate_declarations(TestContext& test) {
 
 void overload_candidates(TestContext& test) {
   const ParsedSource source{"Overloads.co",
-                            "function Find(int value) {}\n"
-                            "function Find(String value) {}\n"};
+                            "func Find(int value) {}\n"
+                            "func Find(String value) {}\n"};
   test.expect(error_count(source) == 0,
               "distinct signatures should remain overload candidates");
   test.expect(source.ast().functions.size() == 2,
@@ -235,11 +240,11 @@ void overload_candidates(TestContext& test) {
 
 void declaration_order_independence(TestContext& test) {
   const ParsedSource first{"Order.co",
-                           "function A(): int { return B(); }\n"
-                           "function B(): int { return 10; }\n"};
+                           "func A(): int { return B(); }\n"
+                           "func B(): int { return 10; }\n"};
   const ParsedSource second{"Order.co",
-                            "function B(): int { return 10; }\n"
-                            "function A(): int { return B(); }\n"};
+                            "func B(): int { return 10; }\n"
+                            "func A(): int { return B(); }\n"};
   test.expect(error_count(first) == 0 && error_count(second) == 0,
               "declaration order changed validity");
   for (const std::string_view name :
@@ -252,8 +257,8 @@ void declaration_order_independence(TestContext& test) {
 
 void malformed_parameters_recover(TestContext& test) {
   const ParsedSource source{"Parameters.co",
-                            "function Broken(int a int b): int { return 0; }\n"
-                            "function Valid(): int { return 10; }\n"};
+                            "func Broken(int a int b): int { return 0; }\n"
+                            "func Valid(): int { return 10; }\n"};
   test.expect(has_diagnostic(source, "expected ',' or ')' after parameter"),
               "missing parameter comma was not diagnosed");
   test.expect(has_member(source, "Valid", cloth::DeclarationKind::kFunction),
@@ -265,8 +270,8 @@ void malformed_parameters_recover(TestContext& test) {
 
 void missing_parenthesis_recover(TestContext& test) {
   const ParsedSource source{"Parenthesis.co",
-                            "function Broken(int value { return value; }\n"
-                            "function Valid() {}\n"};
+                            "func Broken(int value { return value; }\n"
+                            "func Valid() {}\n"};
   test.expect(has_diagnostic(source, "expected ')' after parameter list"),
               "missing parenthesis was not diagnosed");
   test.expect(has_member(source, "Valid", cloth::DeclarationKind::kFunction),
@@ -275,7 +280,7 @@ void missing_parenthesis_recover(TestContext& test) {
 
 void missing_function_brace_recover(TestContext& test) {
   const ParsedSource source{"Brace.co",
-                            "function Broken(): int;\nfunction Valid() {}\n"};
+                            "func Broken(): int;\nfunc Valid() {}\n"};
   test.expect(has_diagnostic(source, "expected '{' to begin body"),
               "missing function brace was not diagnosed");
   test.expect(has_member(source, "Valid", cloth::DeclarationKind::kFunction),
@@ -284,7 +289,7 @@ void missing_function_brace_recover(TestContext& test) {
 
 void malformed_field_recover(TestContext& test) {
   const ParsedSource source{
-      "Recovery.co", "int32 broken =\nfunction Valid(): int { return 10; }\n"};
+      "Recovery.co", "int32 broken =\nfunc Valid(): int { return 10; }\n"};
   test.expect(has_diagnostic(source, "expected expression after '='"),
               "missing field initializer was not diagnosed");
   test.expect(has_diagnostic(source, "expected ';' after field declaration"),
@@ -315,7 +320,7 @@ void deferred_nested_type_recover(TestContext& test) {
 void expressions_and_if_statement(TestContext& test) {
   const ParsedSource source{
       "Expressions.co",
-      "function Check(int x): bool {\n"
+      "func Check(int x): bool {\n"
       "  int value = x + 1 * 2;\n"
       "  if (value > 0) { return true; } else { return false; }\n"
       "}\n"};
@@ -363,6 +368,34 @@ void expressions_and_if_statement(TestContext& test) {
               "if/else structure was not preserved");
 }
 
+void while_break_and_continue(TestContext& test) {
+  const ParsedSource source{
+      "Loops.co", "func Run() { while (true) { continue; break; } }\n"};
+  test.expect(error_count(source) == 0,
+              "structured loop statements should parse");
+  const cloth::Block& function_body =
+      source.ast().storage.block(source.ast().functions[0].body);
+  const cloth::Statement& loop_statement =
+      source.ast().storage.statement(function_body.statements[0]);
+  const auto* loop = std::get_if<cloth::WhileStatement>(&loop_statement.data);
+  test.expect(loop != nullptr, "while AST node is missing");
+  if (loop == nullptr) {
+    return;
+  }
+  const cloth::Block& loop_body = source.ast().storage.block(loop->body);
+  test.expect(loop_body.statements.size() == 2,
+              "loop body has the wrong statement count");
+  if (loop_body.statements.size() != 2) {
+    return;
+  }
+  test.expect(std::holds_alternative<cloth::ContinueStatement>(
+                  source.ast().storage.statement(loop_body.statements[0]).data),
+              "continue AST node is missing");
+  test.expect(std::holds_alternative<cloth::BreakStatement>(
+                  source.ast().storage.statement(loop_body.statements[1]).data),
+              "break AST node is missing");
+}
+
 void calls_members_and_assignment(TestContext& test) {
   const ParsedSource source{
       "Calls.co",
@@ -388,7 +421,7 @@ void calls_members_and_assignment(TestContext& test) {
 
 void missing_statement_semicolon_recover(TestContext& test) {
   const ParsedSource source{"Statements.co",
-                            "function Values(): int { return 1 return 2; }\n"};
+                            "func Values(): int { return 1 return 2; }\n"};
   test.expect(has_diagnostic(source, "expected ';' after return statement"),
               "missing return semicolon was not diagnosed");
   const cloth::Block& body =
@@ -399,14 +432,14 @@ void missing_statement_semicolon_recover(TestContext& test) {
 
 void mandatory_if_braces(TestContext& test) {
   const ParsedSource source{"Braces.co",
-                            "function Check() { if (true) return; return; }\n"};
+                            "func Check() { if (true) return; return; }\n"};
   test.expect(has_diagnostic(source, "expected '{' to begin if body"),
               "brace-less if body was accepted");
 }
 
 void malformed_expression_recover(TestContext& test) {
   const ParsedSource source{
-      "Malformed.co", "function Broken(): int { return (1 + ); return 2; }\n"};
+      "Malformed.co", "func Broken(): int { return (1 + ); return 2; }\n"};
   test.expect(has_diagnostic(source, "expected expression"),
               "malformed expression was not diagnosed");
   const cloth::Block& body =
@@ -418,8 +451,8 @@ void malformed_expression_recover(TestContext& test) {
 void multiple_independent_errors(TestContext& test) {
   const ParsedSource source{"Errors.co",
                             "int32 broken =\n"
-                            "function First(): int { return (1 + ); }\n"
-                            "function Second(): int { return 2 }\n"};
+                            "func First(): int { return (1 + ); }\n"
+                            "func Second(): int { return 2 }\n"};
   test.expect(error_count(source) >= 4,
               "expected multiple independent diagnostics");
   test.expect(
@@ -430,7 +463,7 @@ void multiple_independent_errors(TestContext& test) {
 
 void source_ranges(TestContext& test) {
   const std::string text =
-      "int32 id;\nfunction Read(int32 value): bool { return true; }\n";
+      "int32 id;\nfunc Read(int32 value): bool { return true; }\n";
   const ParsedSource source{"Ranges.co", text};
   test.expect(error_count(source) == 0, "range fixture should parse");
   const cloth::FieldDecl& field = source.ast().fields[0];
@@ -439,11 +472,11 @@ void source_ranges(TestContext& test) {
       "field range is not half-open");
 
   const cloth::FunctionDecl& function = source.ast().functions[0];
-  const std::size_t function_begin = text.find("function");
+  const std::size_t function_begin = text.find("func");
   const std::size_t function_end = text.find('}') + 1;
   test.expect(function.range.begin.byte_offset == function_begin &&
                   function.range.end.byte_offset == function_end,
-              "function range is wrong");
+              "func range is wrong");
   test.expect(function.parameters[0].range.begin.byte_offset ==
                       text.find("int32", function_begin) &&
                   function.parameters[0].range.end.byte_offset ==
@@ -480,7 +513,7 @@ void source_ranges(TestContext& test) {
 void deterministic_diagnostics(TestContext& test) {
   const std::string text =
       "int32 broken =\n"
-      "function Bad(int a int b): int { return (1 + ); }\n";
+      "func Bad(int a int b): int { return (1 + ); }\n";
   const ParsedSource first{"Stable.co", text};
   const ParsedSource second{"Stable.co", text};
   const auto first_diagnostics = first.diagnostics.diagnostics();
@@ -504,8 +537,8 @@ void deterministic_diagnostics(TestContext& test) {
 void deterministic_ast_summary(TestContext& test) {
   const ParsedSource source{"User.co",
                             "String Name;\nint32 id;\nUser() {}\n"
-                            "function Find(int32 id): User { return id; }\n"
-                            "function validate(): bool { return true; }\n"};
+                            "func Find(int32 id): User { return id; }\n"
+                            "func validate(): bool { return true; }\n"};
   std::ostringstream output;
   cloth::print_ast_summary(source.ast(), output);
   const std::string expected =
@@ -534,6 +567,7 @@ int main() {
       {"parser requires eof", parser_requires_eof},
       {"fields and visibility", fields_and_visibility},
       {"functions", functions},
+      {"legacy function keyword rejected", legacy_function_keyword_rejected},
       {"constructors", constructors},
       {"wrong constructor", wrong_constructor},
       {"invalid file class name", invalid_file_class_name},
@@ -547,6 +581,7 @@ int main() {
       {"unexpected top-level token", unexpected_top_level_token},
       {"deferred nested type recover", deferred_nested_type_recover},
       {"expressions and if statement", expressions_and_if_statement},
+      {"while, break, and continue", while_break_and_continue},
       {"calls, members, and assignment", calls_members_and_assignment},
       {"missing statement semicolon recover",
        missing_statement_semicolon_recover},

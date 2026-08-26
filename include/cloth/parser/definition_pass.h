@@ -44,6 +44,8 @@ class DefinitionPass {
   [[nodiscard]] StatementId parse_local_variable();
   [[nodiscard]] StatementId parse_return_statement();
   [[nodiscard]] StatementId parse_if_statement();
+  [[nodiscard]] StatementId parse_while_statement();
+  [[nodiscard]] StatementId parse_loop_control_statement();
   [[nodiscard]] StatementId parse_expression_statement();
   void synchronize_statement();
 

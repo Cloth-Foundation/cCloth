@@ -1,3 +1,3 @@
-function Find(int32 id): User {
+func Find(int32 id): User {
   return null;
 }

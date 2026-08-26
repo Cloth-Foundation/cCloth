@@ -1,0 +1,7 @@
+func Main() {
+    print("value: ");
+    print(42);
+    print(" ");
+    print(true);
+    print("\n");
+}

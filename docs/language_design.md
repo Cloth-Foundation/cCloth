@@ -56,8 +56,8 @@ and its nested scopes.
 // User.co defines the public class User.
 String Name;                       // Public field.
 int32 id;                          // Private field.
-function Find(UserId id): User {}  // Public function.
-function validate(): bool {}       // Private function.
+func Find(UserId id): User {}      // Public function.
+func validate(): bool {}           // Private function.
 ```
 
 An implicit class receives its visibility from the source file stem, so
@@ -117,3 +117,43 @@ basic-block handles, and ends every block with an explicit terminator. Logical
 Field initializers remain independent executable bodies until object layout and
 constructor composition are specified. MIR must not encode host pointer size,
 ABI rules, runtime object headers, or garbage-collector barriers.
+
+## Portable ABI boundary
+
+Target data layout is supplied explicitly and never inferred from the compiler
+host. Primitive widths are language properties, while reference width,
+alignment, object padding, and endianness belong to the selected target.
+
+File-class fields retain declaration order in object layout. Public
+capitalization maps to external linkage and private capitalization maps to
+internal linkage. ABI names are deterministic and versioned. Backend-specific
+IR must consume the verified ABI instead of independently recomputing layouts
+or exported names.
+
+## LLVM lowering
+
+LLVM IR lowering consumes only verified MIR and ABI data. It preserves explicit
+control-flow edges and ABI field offsets, uses opaque pointers for references,
+and isolates allocation, string construction, and null-receiver traps behind a
+small runtime interface. Source meaning must not depend on whether LLVM is
+linked into the compiler process or invoked as external tooling.
+
+## Structured loops
+
+`while` is Cloth's first loop form. Its condition must be `bool`, and its body
+must be braced. `break` exits the innermost loop and `continue` re-evaluates its
+condition. Both control statements are errors outside a loop. This small core
+is sufficient to express general iteration without committing to `for` syntax
+or iterator protocols prematurely.
+
+## Core output and native entry point
+
+`print(String)`, `print(int32)`, and `print(bool)` are compiler-provided core
+intrinsics. They write the value without appending a newline. Boolean output is
+lowercase `true` or `false`. A source member named `print` shadows all intrinsic
+overloads under normal lexical lookup rules.
+
+A native program contains exactly one public `Main` function with no explicit
+parameters. `Main` may omit its return type or return `int32`; the process exit
+status is zero in the first case and the returned value in the second. The
+native adapter invokes `Main` as a class-qualified function with no instance.

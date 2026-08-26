@@ -71,6 +71,13 @@ enum class SymbolKind {
   kSelf,
 };
 
+enum class IntrinsicKind {
+  kNone,
+  kPrintString,
+  kPrintInt32,
+  kPrintBool,
+};
+
 struct SemanticSymbol {
   SymbolKind kind;
   std::string name;
@@ -81,6 +88,7 @@ struct SemanticSymbol {
   SourceRange range;
   bool is_valid{true};
   std::vector<SymbolId> parameter_symbols{};
+  IntrinsicKind intrinsic{IntrinsicKind::kNone};
 };
 
 enum class ValueCategory {
@@ -121,6 +129,8 @@ class SemanticModel {
 
   [[nodiscard]] std::optional<TypeId> find_type(
       std::string_view name) const noexcept;
+  [[nodiscard]] std::vector<SymbolId> find_intrinsics(
+      std::string_view name) const;
   [[nodiscard]] const SemanticType& type(TypeId id) const;
   [[nodiscard]] const SemanticSymbol& symbol(SymbolId id) const;
   [[nodiscard]] const FileSemantics& file(FileId id) const;

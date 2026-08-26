@@ -1,0 +1,26 @@
+func Main() {
+    int value = 1;
+    while (true) {
+        if (value > 100) {
+            break;
+        }
+        if (value % 15 == 0) {
+            print("FizzBuzz\n");
+            value = value + 1;
+            continue;
+        }
+        if (value % 3 == 0) {
+            print("Fizz\n");
+            value = value + 1;
+            continue;
+        }
+        if (value % 5 == 0) {
+            print("Buzz\n");
+            value = value + 1;
+            continue;
+        }
+        print(value);
+        print("\n");
+        value = value + 1;
+    }
+}

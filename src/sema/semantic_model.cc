@@ -24,6 +24,44 @@ SemanticModel::SemanticModel() {
   string_type_ = add_type(SemanticType{TypeKind::kString, "String", {}});
   add_type_alias("int", int32);
   add_type_alias("uint", uint32);
+
+  const SourceLocation core_location{"<core>"};
+  static_cast<void>(add_symbol(SemanticSymbol{
+      SymbolKind::kFunction,
+      "print",
+      no_value_type_,
+      {string_type_},
+      Visibility::kPublic,
+      std::nullopt,
+      point_range(core_location),
+      true,
+      {},
+      IntrinsicKind::kPrintString,
+  }));
+  static_cast<void>(add_symbol(SemanticSymbol{
+      SymbolKind::kFunction,
+      "print",
+      no_value_type_,
+      {int32},
+      Visibility::kPublic,
+      std::nullopt,
+      point_range(core_location),
+      true,
+      {},
+      IntrinsicKind::kPrintInt32,
+  }));
+  static_cast<void>(add_symbol(SemanticSymbol{
+      SymbolKind::kFunction,
+      "print",
+      no_value_type_,
+      {bool_type_},
+      Visibility::kPublic,
+      std::nullopt,
+      point_range(core_location),
+      true,
+      {},
+      IntrinsicKind::kPrintBool,
+  }));
 }
 
 TypeId SemanticModel::error_type() const noexcept { return error_type_; }
@@ -67,6 +105,18 @@ std::optional<TypeId> SemanticModel::find_type(
     }
   }
   return std::nullopt;
+}
+
+std::vector<SymbolId> SemanticModel::find_intrinsics(
+    std::string_view name) const {
+  std::vector<SymbolId> matches;
+  for (std::size_t index = 0; index < symbols_.size(); ++index) {
+    const SemanticSymbol& symbol = symbols_[index];
+    if (symbol.intrinsic != IntrinsicKind::kNone && symbol.name == name) {
+      matches.push_back(SymbolId{index});
+    }
+  }
+  return matches;
 }
 
 const SemanticType& SemanticModel::type(TypeId id) const {
