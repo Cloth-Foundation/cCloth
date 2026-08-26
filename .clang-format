@@ -1,0 +1,12 @@
+BasedOnStyle: Google
+Standard: Latest
+ColumnLimit: 80
+DerivePointerAlignment: false
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"cloth/'
+    Priority: 1
+  - Regex: '^<'
+    Priority: 2
+PointerAlignment: Left
+SortIncludes: CaseSensitive

@@ -1,0 +1,3 @@
+function broken(): int32 {
+    return @;
+}

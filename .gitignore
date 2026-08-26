@@ -1,4 +1,4 @@
-/cmake-build-debug
-.idea
-*.exe
-build
+/build/
+/.cache/
+/.vscode/*.log
+compile_commands.json

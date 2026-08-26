@@ -1,0 +1,9 @@
+function loadUser(UserId id): Result<User, Error> {
+    int32 attempts = 3;
+
+    if (attempts > 0) {
+        return repository.find(id);
+    }
+
+    return null;
+}

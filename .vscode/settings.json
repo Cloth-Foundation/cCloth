@@ -1,0 +1,12 @@
+{
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+    "cmake.configureOnOpen": true,
+    "cmake.buildBeforeRun": true,
+    "C_Cpp.default.cppStandard": "c++23",
+    "C_Cpp.clang_format_style": "file",
+    "FSharp.suggestGitignore": false,
+    "[cpp]": {
+        "editor.defaultFormatter": "ms-vscode.cpptools",
+        "editor.formatOnSave": true
+    }
+}

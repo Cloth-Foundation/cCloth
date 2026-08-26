@@ -1,0 +1,77 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "CMake: configure",
+            "type": "process",
+            "command": "cmake",
+            "args": [
+                "-S",
+                "${workspaceFolder}",
+                "-B",
+                "${workspaceFolder}/build",
+                "-DCMAKE_BUILD_TYPE=Debug"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "CMake: build",
+            "type": "process",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build",
+                "--config",
+                "Debug"
+            ],
+            "dependsOn": "CMake: configure",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "CMake: build and run lexer",
+            "type": "process",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build",
+                "--config",
+                "Debug",
+                "--target",
+                "run_lexer"
+            ],
+            "dependsOn": "CMake: configure",
+            "problemMatcher": ["$gcc"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "CMake: test",
+            "type": "process",
+            "command": "ctest",
+            "args": [
+                "--test-dir",
+                "${workspaceFolder}/build",
+                "--build-config",
+                "Debug",
+                "--output-on-failure"
+            ],
+            "dependsOn": "CMake: build",
+            "problemMatcher": []
+        },
+        {
+            "label": "CMake: check format",
+            "type": "process",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build",
+                "--target",
+                "check_format"
+            ],
+            "dependsOn": "CMake: configure",
+            "problemMatcher": []
+        }
+    ]
+}
