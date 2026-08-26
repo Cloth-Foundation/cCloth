@@ -1,0 +1,3 @@
+function Find(int32 id): User {
+  return null;
+}

@@ -1,0 +1,186 @@
+#ifndef CLOTH_HIR_HIR_H_
+#define CLOTH_HIR_HIR_H_
+
+#include "cloth/ast/ast.h"
+#include "cloth/lexer/token.h"
+#include "cloth/sema/semantic_model.h"
+#include "cloth/source/source_range.h"
+
+#include <cstddef>
+#include <optional>
+#include <span>
+#include <string>
+#include <variant>
+#include <vector>
+
+namespace cloth {
+
+struct HirExpressionId {
+  std::size_t value;
+
+  friend bool operator==(const HirExpressionId&,
+                         const HirExpressionId&) = default;
+};
+
+struct HirStatementId {
+  std::size_t value;
+
+  friend bool operator==(const HirStatementId&,
+                         const HirStatementId&) = default;
+};
+
+struct HirBlockId {
+  std::size_t value;
+
+  friend bool operator==(const HirBlockId&, const HirBlockId&) = default;
+};
+
+struct HirInvalidExpression {};
+
+struct HirLiteralExpression {
+  LiteralKind kind;
+  std::string lexeme;
+};
+
+struct HirSymbolExpression {
+  SymbolId symbol;
+};
+
+struct HirTypeExpression {
+  TypeId type;
+};
+
+struct HirUnaryExpression {
+  TokenKind operation;
+  HirExpressionId operand;
+};
+
+struct HirBinaryExpression {
+  HirExpressionId left;
+  TokenKind operation;
+  HirExpressionId right;
+};
+
+struct HirAssignmentExpression {
+  HirExpressionId target;
+  HirExpressionId value;
+};
+
+struct HirMemberExpression {
+  HirExpressionId object;
+  std::optional<SymbolId> member;
+};
+
+struct HirCallExpression {
+  HirExpressionId callee;
+  std::optional<SymbolId> callable;
+  std::vector<HirExpressionId> arguments;
+};
+
+struct HirGroupedExpression {
+  HirExpressionId expression;
+};
+
+using HirExpressionData =
+    std::variant<HirInvalidExpression, HirLiteralExpression,
+                 HirSymbolExpression, HirTypeExpression, HirUnaryExpression,
+                 HirBinaryExpression, HirAssignmentExpression,
+                 HirMemberExpression, HirCallExpression, HirGroupedExpression>;
+
+struct HirExpression {
+  TypeId type;
+  SourceRange range;
+  HirExpressionData data;
+};
+
+struct HirInvalidStatement {};
+
+struct HirLocalStatement {
+  std::optional<SymbolId> symbol;
+  std::optional<HirExpressionId> initializer;
+};
+
+struct HirReturnStatement {
+  std::optional<HirExpressionId> value;
+};
+
+struct HirExpressionStatement {
+  HirExpressionId expression;
+};
+
+struct HirIfStatement {
+  HirExpressionId condition;
+  HirBlockId then_block;
+  std::optional<HirBlockId> else_block;
+};
+
+struct HirNestedBlockStatement {
+  HirBlockId block;
+};
+
+using HirStatementData =
+    std::variant<HirInvalidStatement, HirLocalStatement, HirReturnStatement,
+                 HirExpressionStatement, HirIfStatement,
+                 HirNestedBlockStatement>;
+
+struct HirStatement {
+  SourceRange range;
+  HirStatementData data;
+};
+
+struct HirBlock {
+  SourceRange range;
+  std::vector<HirStatementId> statements;
+};
+
+class HirStorage {
+ public:
+  [[nodiscard]] HirExpressionId add_expression(HirExpression expression);
+  [[nodiscard]] HirStatementId add_statement(HirStatement statement);
+  [[nodiscard]] HirBlockId add_block(HirBlock block);
+
+  [[nodiscard]] const HirExpression& expression(HirExpressionId id) const;
+  [[nodiscard]] const HirStatement& statement(HirStatementId id) const;
+  [[nodiscard]] const HirBlock& block(HirBlockId id) const;
+
+  [[nodiscard]] std::span<const HirExpression> expressions() const noexcept;
+  [[nodiscard]] std::span<const HirStatement> statements() const noexcept;
+  [[nodiscard]] std::span<const HirBlock> blocks() const noexcept;
+
+ private:
+  std::vector<HirExpression> expressions_;
+  std::vector<HirStatement> statements_;
+  std::vector<HirBlock> blocks_;
+};
+
+struct HirField {
+  SymbolId symbol;
+  std::optional<HirExpressionId> initializer;
+};
+
+struct HirCallable {
+  SymbolId symbol;
+  HirBlockId body;
+};
+
+struct HirFileClass {
+  FileId file;
+  SymbolId symbol;
+  std::vector<HirField> fields;
+  std::vector<HirCallable> functions;
+  std::vector<HirCallable> constructors;
+  std::vector<MemberReference> member_order;
+};
+
+struct HirModule {
+  HirStorage storage;
+  std::vector<HirFileClass> files;
+};
+
+[[nodiscard]] HirModule lower_to_hir(
+    std::span<const FileClassDecl* const> files,
+    const SemanticModel& semantics);
+
+}  // namespace cloth
+
+#endif  // CLOTH_HIR_HIR_H_

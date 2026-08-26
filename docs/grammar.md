@@ -194,5 +194,6 @@ The declaration pass enforces these rules separately from the grammar:
 - Conflicting fields and exact duplicate callable signatures are rejected.
 - Member declaration order does not affect declaration availability.
 
-Module lookup, type checking, assignment-target validation, return checking, and
-overload resolution belong to later semantic stages.
+Stage 2.0 module-set lookup, type checking, assignment-target validation, return
+checking, and overload resolution are defined in
+[semantic_analysis.md](semantic_analysis.md).

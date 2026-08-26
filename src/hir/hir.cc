@@ -1,0 +1,233 @@
+#include "cloth/hir/hir.h"
+
+#include <cstddef>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace cloth {
+
+HirExpressionId HirStorage::add_expression(HirExpression expression) {
+  const HirExpressionId id{expressions_.size()};
+  expressions_.push_back(std::move(expression));
+  return id;
+}
+
+HirStatementId HirStorage::add_statement(HirStatement statement) {
+  const HirStatementId id{statements_.size()};
+  statements_.push_back(std::move(statement));
+  return id;
+}
+
+HirBlockId HirStorage::add_block(HirBlock block) {
+  const HirBlockId id{blocks_.size()};
+  blocks_.push_back(std::move(block));
+  return id;
+}
+
+const HirExpression& HirStorage::expression(HirExpressionId id) const {
+  return expressions_.at(id.value);
+}
+
+const HirStatement& HirStorage::statement(HirStatementId id) const {
+  return statements_.at(id.value);
+}
+
+const HirBlock& HirStorage::block(HirBlockId id) const {
+  return blocks_.at(id.value);
+}
+
+std::span<const HirExpression> HirStorage::expressions() const noexcept {
+  return expressions_;
+}
+
+std::span<const HirStatement> HirStorage::statements() const noexcept {
+  return statements_;
+}
+
+std::span<const HirBlock> HirStorage::blocks() const noexcept {
+  return blocks_;
+}
+
+namespace {
+
+class Lowerer {
+ public:
+  Lowerer(std::span<const FileClassDecl* const> files,
+          const SemanticModel& semantics)
+      : files_(files), semantics_(semantics) {}
+
+  HirModule run() {
+    for (std::size_t index = 0; index < files_.size(); ++index) {
+      lower_file(FileId{index});
+    }
+    return std::move(module_);
+  }
+
+ private:
+  void lower_file(FileId file_id) {
+    current_file_ = file_id;
+    expression_base_ = module_.storage.expressions().size();
+    statement_base_ = module_.storage.statements().size();
+    block_base_ = module_.storage.blocks().size();
+    const FileClassDecl& syntax = *files_[file_id.value];
+
+    for (std::size_t index = 0; index < syntax.storage.expressions().size();
+         ++index) {
+      lower_expression(ExpressionId{index});
+    }
+    for (std::size_t index = 0; index < syntax.storage.statements().size();
+         ++index) {
+      lower_statement(StatementId{index});
+    }
+    for (std::size_t index = 0; index < syntax.storage.blocks().size();
+         ++index) {
+      lower_block(BlockId{index});
+    }
+
+    const FileSemantics& semantic_file = semantics_.file(file_id);
+    HirFileClass file{file_id, semantic_file.symbol, {}, {},
+                      {},      syntax.member_order};
+    file.fields.reserve(syntax.fields.size());
+    for (std::size_t index = 0; index < syntax.fields.size(); ++index) {
+      const FieldDecl& field = syntax.fields[index];
+      file.fields.push_back(HirField{
+          semantic_file.fields[index],
+          field.initializer
+              ? std::optional<HirExpressionId>{expression(*field.initializer)}
+              : std::nullopt});
+    }
+    file.functions.reserve(syntax.functions.size());
+    for (std::size_t index = 0; index < syntax.functions.size(); ++index) {
+      file.functions.push_back(HirCallable{
+          semantic_file.functions[index], block(syntax.functions[index].body)});
+    }
+    file.constructors.reserve(syntax.constructors.size());
+    for (std::size_t index = 0; index < syntax.constructors.size(); ++index) {
+      file.constructors.push_back(
+          HirCallable{semantic_file.constructors[index],
+                      block(syntax.constructors[index].body)});
+    }
+    module_.files.push_back(std::move(file));
+  }
+
+  void lower_expression(ExpressionId id) {
+    const Expression& syntax =
+        files_[current_file_.value]->storage.expression(id);
+    const ExpressionSemantics& semantic =
+        semantics_.file(current_file_).expressions.at(id.value);
+    HirExpressionData data = HirInvalidExpression{};
+
+    if (const auto* literal = std::get_if<LiteralExpression>(&syntax.data)) {
+      data = HirLiteralExpression{literal->kind, std::string{literal->lexeme}};
+    } else if (std::holds_alternative<IdentifierExpression>(syntax.data)) {
+      if (semantic.category == ValueCategory::kType) {
+        data = HirTypeExpression{semantic.type};
+      } else if (semantic.symbol) {
+        data = HirSymbolExpression{*semantic.symbol};
+      }
+    } else if (const auto* unary = std::get_if<UnaryExpression>(&syntax.data)) {
+      data = HirUnaryExpression{unary->operation, expression(unary->operand)};
+    } else if (const auto* binary =
+                   std::get_if<BinaryExpression>(&syntax.data)) {
+      data = HirBinaryExpression{expression(binary->left), binary->operation,
+                                 expression(binary->right)};
+    } else if (const auto* assignment =
+                   std::get_if<AssignmentExpression>(&syntax.data)) {
+      data = HirAssignmentExpression{expression(assignment->target),
+                                     expression(assignment->value)};
+    } else if (const auto* member =
+                   std::get_if<MemberAccessExpression>(&syntax.data)) {
+      data = HirMemberExpression{expression(member->object), semantic.symbol};
+    } else if (const auto* call = std::get_if<CallExpression>(&syntax.data)) {
+      std::vector<HirExpressionId> arguments;
+      arguments.reserve(call->arguments.size());
+      for (const ExpressionId argument : call->arguments) {
+        arguments.push_back(expression(argument));
+      }
+      data = HirCallExpression{expression(call->callee), semantic.symbol,
+                               std::move(arguments)};
+    } else if (const auto* grouped =
+                   std::get_if<ParenthesizedExpression>(&syntax.data)) {
+      data = HirGroupedExpression{expression(grouped->expression)};
+    }
+
+    static_cast<void>(module_.storage.add_expression(
+        HirExpression{semantic.type, syntax.range, std::move(data)}));
+  }
+
+  void lower_statement(StatementId id) {
+    const Statement& syntax =
+        files_[current_file_.value]->storage.statement(id);
+    HirStatementData data = HirInvalidStatement{};
+    if (const auto* local = std::get_if<LocalVariableStatement>(&syntax.data)) {
+      data = HirLocalStatement{
+          semantics_.file(current_file_).statement_symbols.at(id.value),
+          local->initializer
+              ? std::optional<HirExpressionId>{expression(*local->initializer)}
+              : std::nullopt};
+    } else if (const auto* return_statement =
+                   std::get_if<ReturnStatement>(&syntax.data)) {
+      data = HirReturnStatement{return_statement->value
+                                    ? std::optional<HirExpressionId>{expression(
+                                          *return_statement->value)}
+                                    : std::nullopt};
+    } else if (const auto* expression_statement =
+                   std::get_if<ExpressionStatement>(&syntax.data)) {
+      data =
+          HirExpressionStatement{expression(expression_statement->expression)};
+    } else if (const auto* if_statement =
+                   std::get_if<IfStatement>(&syntax.data)) {
+      data = HirIfStatement{
+          expression(if_statement->condition), block(if_statement->then_block),
+          if_statement->else_block
+              ? std::optional<HirBlockId>{block(*if_statement->else_block)}
+              : std::nullopt};
+    } else if (const auto* nested =
+                   std::get_if<NestedBlockStatement>(&syntax.data)) {
+      data = HirNestedBlockStatement{block(nested->block)};
+    }
+    static_cast<void>(module_.storage.add_statement(
+        HirStatement{syntax.range, std::move(data)}));
+  }
+
+  void lower_block(BlockId id) {
+    const Block& syntax = files_[current_file_.value]->storage.block(id);
+    std::vector<HirStatementId> statements;
+    statements.reserve(syntax.statements.size());
+    for (const StatementId statement_id : syntax.statements) {
+      statements.push_back(statement(statement_id));
+    }
+    static_cast<void>(module_.storage.add_block(
+        HirBlock{syntax.range, std::move(statements)}));
+  }
+
+  HirExpressionId expression(ExpressionId id) const noexcept {
+    return HirExpressionId{expression_base_ + id.value};
+  }
+
+  HirStatementId statement(StatementId id) const noexcept {
+    return HirStatementId{statement_base_ + id.value};
+  }
+
+  HirBlockId block(BlockId id) const noexcept {
+    return HirBlockId{block_base_ + id.value};
+  }
+
+  std::span<const FileClassDecl* const> files_;
+  const SemanticModel& semantics_;
+  HirModule module_;
+  FileId current_file_{0};
+  std::size_t expression_base_{0};
+  std::size_t statement_base_{0};
+  std::size_t block_base_{0};
+};
+
+}  // namespace
+
+HirModule lower_to_hir(std::span<const FileClassDecl* const> files,
+                       const SemanticModel& semantics) {
+  return Lowerer{files, semantics}.run();
+}
+
+}  // namespace cloth

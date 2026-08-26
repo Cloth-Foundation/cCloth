@@ -33,7 +33,10 @@ endif()
 add_library(cloth_compiler
     src/ast/ast.cc
     src/ast/ast_printer.cc
+    src/compiler/compilation.cc
     src/diagnostics/diagnostic_engine.cc
+    src/hir/hir.cc
+    src/hir/hir_printer.cc
     src/lexer/lexer.cc
     src/lexer/token.cc
     src/parser/declaration_pass.cc
@@ -41,6 +44,8 @@ add_library(cloth_compiler
     src/parser/expression_parser.cc
     src/parser/parser.cc
     src/sema/file_class_symbols.cc
+    src/sema/semantic_analyzer.cc
+    src/sema/semantic_model.cc
     src/sema/visibility.cc
     src/source/source_file.cc
 )
@@ -88,9 +93,15 @@ if(BUILD_TESTING)
     target_link_libraries(cloth_parser_tests PRIVATE cloth_compiler)
     cloth_enable_warnings(cloth_parser_tests)
     add_test(NAME cloth_parser_tests COMMAND cloth_parser_tests)
+    add_executable(cloth_sema_tests tests/sema_tests.cc)
+    target_link_libraries(cloth_sema_tests PRIVATE cloth_compiler)
+    cloth_enable_warnings(cloth_sema_tests)
+    add_test(NAME cloth_sema_tests COMMAND cloth_sema_tests)
     add_test(
         NAME cloth_cli_example
-        COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
+        COMMAND clothc
+                ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
+                ${CMAKE_CURRENT_SOURCE_DIR}/examples/Repository.co
     )
     add_test(
         NAME cloth_cli_lexical_error
@@ -102,10 +113,17 @@ if(BUILD_TESTING)
         COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/parser_errors.co
     )
     set_tests_properties(cloth_cli_parser_error PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME cloth_cli_sema_error
+        COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sema_errors.co
+    )
+    set_tests_properties(cloth_cli_sema_error PROPERTIES WILL_FAIL TRUE)
 endif()
 
 add_custom_target(run_compiler
-    COMMAND $<TARGET_FILE:clothc> ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
+    COMMAND $<TARGET_FILE:clothc>
+            ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
+            ${CMAKE_CURRENT_SOURCE_DIR}/examples/Repository.co
     DEPENDS clothc
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     USES_TERMINAL

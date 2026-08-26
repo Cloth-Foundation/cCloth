@@ -1,18 +1,18 @@
 #include "cloth/ast/ast_printer.h"
+#include "cloth/compiler/compilation.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
-#include "cloth/lexer/lexer.h"
+#include "cloth/hir/hir_printer.h"
 #include "cloth/lexer/token.h"
-#include "cloth/parser/parser.h"
 #include "cloth/source/source_file.h"
 
 #include <cctype>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
-#include <vector>
 
 namespace {
 
@@ -67,7 +67,7 @@ void print_diagnostics(const cloth::DiagnosticEngine& engine) {
   }
 }
 
-void print_tokens(const std::vector<cloth::Token>& tokens) {
+void print_tokens(std::span<const cloth::Token> tokens) {
   std::cout << "\nTokens:\n";
 
   for (const auto& token : tokens) {
@@ -83,27 +83,40 @@ void print_tokens(const std::vector<cloth::Token>& tokens) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-  if (argc != 2) {
-    std::cerr << "usage: clothc <source.co>\n";
+  if (argc < 2) {
+    std::cerr << "usage: clothc <source.co>...\n";
     return 2;
   }
 
-  auto source_result = cloth::SourceFile::load(std::filesystem::path{argv[1]});
-  if (!source_result) {
-    const auto& error = source_result.error();
-    std::cerr << error.path.generic_string() << ": error: " << error.message
-              << '\n';
-    return 2;
+  cloth::Compilation compilation;
+  for (int index = 1; index < argc; ++index) {
+    auto source_result =
+        cloth::SourceFile::load(std::filesystem::path{argv[index]});
+    if (!source_result) {
+      const auto& error = source_result.error();
+      std::cerr << error.path.generic_string() << ": error: " << error.message
+                << '\n';
+      return 2;
+    }
+    compilation.add_source(std::move(*source_result));
   }
 
-  auto source = std::move(*source_result);
   cloth::DiagnosticEngine diagnostics;
-  const auto tokens = cloth::Lexer{source, diagnostics}.lex();
-  const auto parse_result = cloth::Parser{source, tokens, diagnostics}.parse();
+  const cloth::CompilationResult compilation_result =
+      compilation.analyze(diagnostics);
 
   print_diagnostics(diagnostics);
-  print_tokens(tokens);
-  std::cout << "\nAST:\n";
-  cloth::print_ast_summary(parse_result.file_class, std::cout);
+  for (std::size_t index = 0; index < compilation.source_count(); ++index) {
+    if (compilation.source_count() > 1) {
+      std::cout << "\nSource " << compilation.source(index).display_path()
+                << ":\n";
+    }
+    print_tokens(compilation.tokens(index));
+    std::cout << "\nAST:\n";
+    cloth::print_ast_summary(compilation.syntax(index), std::cout);
+  }
+  std::cout << "\nTyped HIR:\n";
+  cloth::print_hir_summary(compilation_result.hir, compilation_result.semantics,
+                           std::cout);
   return diagnostics.has_errors() ? 1 : 0;
 }

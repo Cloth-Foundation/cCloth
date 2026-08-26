@@ -6,7 +6,10 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${command:cmake.launchTargetPath}",
-            "args": ["${workspaceFolder}/examples/User.co"],
+            "args": [
+                "${workspaceFolder}/examples/User.co",
+                "${workspaceFolder}/examples/Repository.co"
+            ],
             "cwd": "${workspaceFolder}",
             "stopAtEntry": false,
             "externalConsole": false,
@@ -18,7 +21,10 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${command:cmake.launchTargetPath}",
-            "args": ["${workspaceFolder}/examples/User.co"],
+            "args": [
+                "${workspaceFolder}/examples/User.co",
+                "${workspaceFolder}/examples/Repository.co"
+            ],
             "cwd": "${workspaceFolder}",
             "stopAtEntry": false,
             "externalConsole": false,
@@ -30,7 +36,10 @@
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${command:cmake.launchTargetPath}",
-            "args": ["${workspaceFolder}/examples/User.co"],
+            "args": [
+                "${workspaceFolder}/examples/User.co",
+                "${workspaceFolder}/examples/Repository.co"
+            ],
             "cwd": "${workspaceFolder}",
             "stopAtEntry": false,
             "externalConsole": false,

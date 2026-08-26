@@ -69,6 +69,23 @@ For portable builds, a module must not contain source files whose stems differ
 only by letter case. The compiler must diagnose these collisions
 deterministically even on a case-sensitive host file system.
 
+## Core semantic rules
+
+Compilation is performed over an explicit set of source files. Every file class
+is registered before member signatures, and every member signature is registered
+before executable definitions are checked. This preserves forward references
+without making meaning depend on input order.
+
+`int` and `uint` are portable aliases of `int32` and `uint32`. `String` is a core
+reference type. General implicit numeric conversions are not part of the initial
+language; overload selection uses exact canonical parameter types. The null
+value is assignable only to reference types.
+
+Lexical scopes contain `self`, parameters, and locals. A nested block may shadow
+an outer name, but declarations in the same scope may not collide. Public
+functions may be referenced through their file-class name. Fields require an
+instance, including `self` for explicit member access.
+
 ## Two-pass parsing
 
 Parsing is designed as two deterministic passes:
@@ -85,3 +102,7 @@ behavior.
 Syntax and semantic object allocation may move to garbage-collected storage in a
 future compiler. The initial parser should keep ownership localized and avoid
 exposing allocation details as language or compiler identities.
+
+Semantic model and HIR identities are stable numeric handles. Their allocation
+strategy is likewise not part of the language contract and may move to managed
+storage later.

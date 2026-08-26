@@ -1,12 +1,13 @@
-# Cloth compiler - Stage 1.0 front end
+# Cloth compiler - Stage 2.0 semantic front end
 
-This repository contains the deterministic Stage 1.0 front end for Cloth source
-files (`.co`). It loads and lexes one source file, performs declaration and
-definition parsing, and prints readable token and implicit file-class AST
-summaries. Lexical and syntactic errors are reported with source ranges.
+This repository contains the deterministic Stage 2.0 front end for Cloth source
+files (`.co`). It lexes and parses an explicit compilation set, binds implicit
+file classes and their members, checks types and visibility, and lowers the
+result to typed, target-independent HIR. The driver prints readable token, AST,
+and HIR summaries. Errors are collected with source ranges.
 
-The project intentionally contains no type checker, backend, runtime, virtual
-machine, garbage collector, or code-generation implementation yet.
+The project intentionally contains no backend, runtime, virtual machine, garbage
+collector, ABI lowering, or code-generation implementation yet.
 
 ## Requirements
 
@@ -39,13 +40,13 @@ cmake -S . -B build -DCLOTH_WARNINGS_AS_ERRORS=ON
 On Linux or macOS:
 
 ```sh
-./build/clothc examples/User.co
+./build/clothc examples/User.co examples/Repository.co
 ```
 
 On Windows with a single-configuration generator:
 
 ```powershell
-.\build\clothc.exe examples\User.co
+.\build\clothc.exe examples\User.co examples\Repository.co
 ```
 
 Visual Studio and other multi-configuration generators may place the binary in
@@ -56,11 +57,12 @@ the example regardless of its output directory:
 cmake --build build --config Debug --target run_compiler
 ```
 
-The command accepts exactly one source path. Tokens are written to standard
-output, diagnostics to standard error, and exit codes have these meanings:
+The command accepts one or more source paths as one compilation set. Tokens,
+ASTs, and typed HIR are written to standard output; diagnostics are written to
+standard error. Exit codes have these meanings:
 
-- `0`: lexing and parsing completed without errors
-- `1`: lexical or syntactic errors were reported
+- `0`: front-end compilation completed without errors
+- `1`: lexical, syntactic, or semantic errors were reported
 - `2`: command-line usage or source-loading failure
 
 ## Run tests
@@ -72,8 +74,10 @@ ctest --test-dir build --build-config Debug --output-on-failure
 The internal test executables use no external test framework. Lexer coverage
 includes tokens, comments, literals, operators, invalid input, ranges, and EOF.
 Parser coverage includes declarations, visibility, constructors, overload
-candidates, statements, expressions, source ranges, recovery, and deterministic
-diagnostic ordering.
+candidates, statements, expressions, source ranges, and recovery. Semantic
+coverage includes cross-file binding, privacy, core types, exact overload and
+constructor resolution, lexical scopes, type checking, return paths, portable
+file-name collisions, typed HIR, and deterministic diagnostics.
 
 ## VS Code
 
@@ -90,8 +94,8 @@ Available tasks include:
 
 For debugging, select `clothc` as the CMake launch target and choose the launch
 configuration matching the local debugger: GDB, LLDB, or MSVC. Each passes
-`examples/User.co` to the compiler and uses the repository root as its working
-directory.
+`examples/User.co` and `examples/Repository.co` to the compiler and uses the
+repository root as its working directory.
 
 ## Code style
 
@@ -113,18 +117,22 @@ include/cloth/          Public compiler interfaces
   lexer/                Tokens and the lexer API
   parser/               Declaration and definition passes
   ast/                  Stable-handle syntax tree representation
-  sema/                 Visibility and file-class declaration symbols
+  sema/                 Stable types, symbols, binding, and type checking
+  hir/                  Typed target-independent intermediate representation
+  compiler/             Multi-file compilation orchestration
 src/                    Implementations and the clothc driver
-tests/                  Deterministic lexer, parser, and recovery tests
-examples/User.co        Stage 1.0 implicit file-class example
+tests/                  Deterministic lexer, parser, and semantic tests
+examples/               Cross-file implicit-class example
 docs/language_design.md Stable language and compiler design constraints
 docs/grammar.md         Implemented Stage 1.0 grammar and precedence
+docs/semantic_analysis.md Implemented Stage 2.0 semantic rules
 .vscode/                Build, test, and debug integration
 ```
 
 `SourceFile` owns source text. Token and AST names are `std::string_view`s into
 that storage, so the `SourceFile` must outlive its tokens and parse result.
-Moving a `SourceFile` does not invalidate those views.
+Moving a `SourceFile` does not invalidate those views. `Compilation` owns all
+three for multi-file front-end runs.
 
 Locations use a zero-based byte offset and one-based line and column numbers.
 Columns count source bytes; tabs currently advance by one column. Both LF and
@@ -138,6 +146,12 @@ logical passes over the same immutable token stream: declaration discovery
 first, followed by executable body parsing. AST recursion uses stable numeric
 handles owned by `AstStorage`, keeping allocation strategy out of public node
 identity.
+
+Semantic analysis registers every file class before members and every member
+before bodies. It emits stable `FileId`, `TypeId`, and `SymbolId` handles, then
+lowers bound syntax to typed HIR. See
+[docs/semantic_analysis.md](docs/semantic_analysis.md) for the implemented
+contract and deliberate Stage 2 boundaries.
 
 ## Extending the lexer
 
