@@ -1,0 +1,5 @@
+int32 broken =
+
+function Valid(): int {
+    return 10;
+}

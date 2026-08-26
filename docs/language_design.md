@@ -20,7 +20,8 @@ User.co -> User
 ```
 
 Fields, functions, and nested types declared at file scope are members of that
-class. Source code does not repeat an enclosing `class User { ... }` declaration.
+class. Source code does not repeat an enclosing `class User { ... }`
+declaration.
 The compiler retains the file-class identity through all compilation stages so
 other files can reference `User` as a normal type.
 
@@ -34,6 +35,39 @@ User(String name, int32 id) {
 
 The parser must diagnose a file name that cannot form a valid Cloth type name.
 Module and directory naming rules remain to be specified.
+
+## Capitalization and visibility
+
+Cloth identifiers are case-sensitive. Visibility is inferred from the first
+character of a declaration name:
+
+- An ASCII uppercase letter (`A` through `Z`) makes the declaration public.
+- An ASCII lowercase letter (`a` through `z`) or underscore (`_`) makes the
+  declaration private.
+
+This rule applies to implicit file classes and their fields, functions, and
+nested types. It does not apply to local variables or parameters because those
+names are not exported across an access boundary. Public declarations may be
+referenced from other file classes, subject to the future module and import
+rules. Private declarations are visible only within their defining file class
+and its nested scopes.
+
+```text
+// User.co defines the public class User.
+String Name;                       // Public field.
+int32 id;                          // Private field.
+function Find(UserId id): User {}  // Public function.
+function validate(): bool {}       // Private function.
+```
+
+An implicit class receives its visibility from the source file stem, so
+`User.co` is public and `user.co` is private. A constructor uses the class name
+and inherits the class visibility. Until Cloth defines Unicode identifier
+rules, only ASCII letter case participates in visibility.
+
+For portable builds, a module must not contain source files whose stems differ
+only by letter case. The compiler must diagnose these collisions
+deterministically even on a case-sensitive host file system.
 
 ## Two-pass parsing
 

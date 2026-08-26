@@ -28,7 +28,7 @@
             "problemMatcher": ["$gcc"]
         },
         {
-            "label": "CMake: build and run lexer",
+            "label": "CMake: build and run compiler",
             "type": "process",
             "command": "cmake",
             "args": [
@@ -37,7 +37,7 @@
                 "--config",
                 "Debug",
                 "--target",
-                "run_lexer"
+                "run_compiler"
             ],
             "dependsOn": "CMake: configure",
             "problemMatcher": ["$gcc"],

@@ -274,7 +274,8 @@ SourceLocation Lexer::current_location() const noexcept {
 
 Token Lexer::make_token(TokenKind kind, std::size_t start,
                         SourceLocation location) const noexcept {
-  return Token{kind, input_.substr(start, current_ - start), location};
+  return Token{kind, input_.substr(start, current_ - start),
+               SourceRange{location, current_location()}};
 }
 
 void Lexer::skip_ignored() {
@@ -322,7 +323,8 @@ Token Lexer::scan_identifier(std::size_t start, SourceLocation location) {
     advance();
   }
   const auto lexeme = input_.substr(start, current_ - start);
-  return Token{identifier_kind(lexeme), lexeme, location};
+  return Token{identifier_kind(lexeme), lexeme,
+               SourceRange{location, current_location()}};
 }
 
 Token Lexer::scan_number(std::size_t start, SourceLocation location) {

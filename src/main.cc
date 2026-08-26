@@ -1,6 +1,8 @@
+#include "cloth/ast/ast_printer.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/lexer/lexer.h"
 #include "cloth/lexer/token.h"
+#include "cloth/parser/parser.h"
 #include "cloth/source/source_file.h"
 
 #include <cctype>
@@ -56,11 +58,10 @@ std::string escaped_lexeme(std::string_view lexeme) {
 
 void print_diagnostics(const cloth::DiagnosticEngine& engine) {
   for (const auto& diagnostic : engine.diagnostics()) {
-    const auto file = diagnostic.location.file.empty()
-                          ? std::string_view{"<unknown>"}
-                          : diagnostic.location.file;
-    std::cerr << file << ':' << diagnostic.location.line << ':'
-              << diagnostic.location.column << ": "
+    const auto& location = diagnostic.range.begin;
+    const auto file =
+        location.file.empty() ? std::string_view{"<unknown>"} : location.file;
+    std::cerr << file << ':' << location.line << ':' << location.column << ": "
               << cloth::diagnostic_severity_name(diagnostic.severity) << ": "
               << diagnostic.message << '\n';
   }
@@ -70,8 +71,9 @@ void print_tokens(const std::vector<cloth::Token>& tokens) {
   std::cout << "\nTokens:\n";
 
   for (const auto& token : tokens) {
+    const auto& location = token.range.begin;
     std::ostringstream position;
-    position << token.location.line << ':' << token.location.column;
+    position << location.line << ':' << location.column;
     std::cout << std::left << std::setw(8) << position.str() << std::setw(24)
               << cloth::token_kind_name(token.kind)
               << escaped_lexeme(token.lexeme) << '\n';
@@ -97,8 +99,11 @@ int main(int argc, char* argv[]) {
   auto source = std::move(*source_result);
   cloth::DiagnosticEngine diagnostics;
   const auto tokens = cloth::Lexer{source, diagnostics}.lex();
+  const auto parse_result = cloth::Parser{source, tokens, diagnostics}.parse();
 
   print_diagnostics(diagnostics);
   print_tokens(tokens);
+  std::cout << "\nAST:\n";
+  cloth::print_ast_summary(parse_result.file_class, std::cout);
   return diagnostics.has_errors() ? 1 : 0;
 }

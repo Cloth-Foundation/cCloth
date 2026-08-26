@@ -32,6 +32,7 @@ class SourceFile {
 
   [[nodiscard]] const std::filesystem::path& path() const noexcept;
   [[nodiscard]] std::string_view display_path() const noexcept;
+  [[nodiscard]] std::string_view stem() const noexcept;
   [[nodiscard]] std::string_view contents() const noexcept;
 
  private:

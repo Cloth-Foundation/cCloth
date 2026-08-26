@@ -31,9 +31,17 @@ if(CLOTH_CLANG_FORMAT_EXECUTABLE)
 endif()
 
 add_library(cloth_compiler
+    src/ast/ast.cc
+    src/ast/ast_printer.cc
     src/diagnostics/diagnostic_engine.cc
     src/lexer/lexer.cc
     src/lexer/token.cc
+    src/parser/declaration_pass.cc
+    src/parser/definition_pass.cc
+    src/parser/expression_parser.cc
+    src/parser/parser.cc
+    src/sema/file_class_symbols.cc
+    src/sema/visibility.cc
     src/source/source_file.cc
 )
 
@@ -45,23 +53,23 @@ target_include_directories(cloth_compiler
 )
 
 function(cloth_enable_warnings target)
-if(MSVC)
+    if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /permissive- /Zc:__cplusplus)
-    if(CLOTH_WARNINGS_AS_ERRORS)
+        if(CLOTH_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE /WX)
-    endif()
-else()
+        endif()
+    else()
         target_compile_options(${target} PRIVATE
-        -Wall
-        -Wextra
-        -Wpedantic
-        -Wconversion
-        -Wsign-conversion
-    )
-    if(CLOTH_WARNINGS_AS_ERRORS)
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wconversion
+            -Wsign-conversion
+        )
+        if(CLOTH_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE -Werror)
+        endif()
     endif()
-endif()
 endfunction()
 
 cloth_enable_warnings(cloth_compiler)
@@ -76,19 +84,28 @@ if(BUILD_TESTING)
     target_link_libraries(cloth_lexer_tests PRIVATE cloth_compiler)
     cloth_enable_warnings(cloth_lexer_tests)
     add_test(NAME cloth_lexer_tests COMMAND cloth_lexer_tests)
+    add_executable(cloth_parser_tests tests/parser_tests.cc)
+    target_link_libraries(cloth_parser_tests PRIVATE cloth_compiler)
+    cloth_enable_warnings(cloth_parser_tests)
+    add_test(NAME cloth_parser_tests COMMAND cloth_parser_tests)
     add_test(
         NAME cloth_cli_example
-        COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.co
+        COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
     )
     add_test(
         NAME cloth_cli_lexical_error
         COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/errors.co
     )
     set_tests_properties(cloth_cli_lexical_error PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME cloth_cli_parser_error
+        COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/parser_errors.co
+    )
+    set_tests_properties(cloth_cli_parser_error PROPERTIES WILL_FAIL TRUE)
 endif()
 
-add_custom_target(run_lexer
-    COMMAND $<TARGET_FILE:clothc> ${CMAKE_CURRENT_SOURCE_DIR}/examples/hello.co
+add_custom_target(run_compiler
+    COMMAND $<TARGET_FILE:clothc> ${CMAKE_CURRENT_SOURCE_DIR}/examples/User.co
     DEPENDS clothc
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     USES_TERMINAL

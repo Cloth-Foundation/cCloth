@@ -9,6 +9,7 @@ namespace cloth {
 struct SourceFile::Storage {
   std::filesystem::path path;
   std::string display_path;
+  std::string stem;
   std::string contents;
 };
 
@@ -44,8 +45,10 @@ SourceFile SourceFile::from_memory(std::filesystem::path path,
     display_path = "<memory>";
   }
 
+  auto stem = path.stem().generic_string();
   return SourceFile{std::make_unique<Storage>(
-      Storage{std::move(path), std::move(display_path), std::move(contents)})};
+      Storage{std::move(path), std::move(display_path), std::move(stem),
+              std::move(contents)})};
 }
 
 const std::filesystem::path& SourceFile::path() const noexcept {
@@ -55,6 +58,8 @@ const std::filesystem::path& SourceFile::path() const noexcept {
 std::string_view SourceFile::display_path() const noexcept {
   return storage_->display_path;
 }
+
+std::string_view SourceFile::stem() const noexcept { return storage_->stem; }
 
 std::string_view SourceFile::contents() const noexcept {
   return storage_->contents;

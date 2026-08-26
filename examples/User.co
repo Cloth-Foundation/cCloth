@@ -1,0 +1,15 @@
+String Name;
+int32 id;
+
+User(String name, int32 id) {
+    self.Name = name;
+    self.id = id;
+}
+
+function Find(int32 id): User {
+    return Repository.Find(id);
+}
+
+function validate(): bool {
+    return id > 0;
+}

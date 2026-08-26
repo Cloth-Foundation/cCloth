@@ -13,9 +13,14 @@ class DiagnosticEngine {
  public:
   void report(DiagnosticSeverity severity, SourceLocation location,
               std::string message);
+  void report(DiagnosticSeverity severity, SourceRange range,
+              std::string message);
   void error(SourceLocation location, std::string message);
+  void error(SourceRange range, std::string message);
   void warning(SourceLocation location, std::string message);
+  void warning(SourceRange range, std::string message);
   void note(SourceLocation location, std::string message);
+  void note(SourceRange range, std::string message);
 
   [[nodiscard]] bool has_errors() const noexcept;
   [[nodiscard]] std::span<const Diagnostic> diagnostics() const noexcept;

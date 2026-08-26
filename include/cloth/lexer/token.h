@@ -1,7 +1,7 @@
 #ifndef CLOTH_LEXER_TOKEN_H_
 #define CLOTH_LEXER_TOKEN_H_
 
-#include "cloth/source/source_location.h"
+#include "cloth/source/source_range.h"
 
 #include <string_view>
 
@@ -106,7 +106,7 @@ enum class TokenKind {
 struct Token {
   TokenKind kind;
   std::string_view lexeme;
-  SourceLocation location;
+  SourceRange range;
 };
 
 [[nodiscard]] std::string_view token_kind_name(TokenKind kind) noexcept;

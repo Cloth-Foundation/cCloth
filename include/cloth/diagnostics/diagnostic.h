@@ -1,7 +1,7 @@
 #ifndef CLOTH_DIAGNOSTICS_DIAGNOSTIC_H_
 #define CLOTH_DIAGNOSTICS_DIAGNOSTIC_H_
 
-#include "cloth/source/source_location.h"
+#include "cloth/source/source_range.h"
 
 #include <string>
 #include <string_view>
@@ -16,7 +16,7 @@ enum class DiagnosticSeverity {
 
 struct Diagnostic {
   DiagnosticSeverity severity;
-  SourceLocation location;
+  SourceRange range;
   std::string message;
 };
 

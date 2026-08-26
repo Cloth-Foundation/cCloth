@@ -74,11 +74,13 @@ void expect_token(TestContext& test, const LexedSource& source,
   const auto& token = source.tokens[index];
   test.expect(token.kind == kind, "unexpected token kind");
   test.expect(token.lexeme == lexeme, "unexpected token lexeme");
-  test.expect(token.location.file == "test.co", "unexpected source file");
-  test.expect(token.location.line == line, "unexpected token line");
-  test.expect(token.location.column == column, "unexpected token column");
-  test.expect(token.location.byte_offset == byte_offset,
+  test.expect(token.range.begin.file == "test.co", "unexpected source file");
+  test.expect(token.range.begin.line == line, "unexpected token line");
+  test.expect(token.range.begin.column == column, "unexpected token column");
+  test.expect(token.range.begin.byte_offset == byte_offset,
               "unexpected token byte offset");
+  test.expect(token.range.end.byte_offset == byte_offset + lexeme.size(),
+              "unexpected token range end");
 }
 
 void empty_source(TestContext& test) {
@@ -207,7 +209,7 @@ void unterminated_block_comment(TestContext& test) {
     const auto& diagnostic = source.diagnostics.diagnostics().front();
     test.expect(diagnostic.message == "unterminated block comment",
                 "unexpected diagnostic message");
-    test.expect(diagnostic.location.column == 3,
+    test.expect(diagnostic.range.begin.column == 3,
                 "block comment diagnostic should point at slash");
   }
 }
@@ -268,9 +270,9 @@ void invalid_characters_recover(TestContext& test) {
   test.expect(source.diagnostics.diagnostics().size() == 2,
               "expected both invalid characters to be diagnosed");
   if (source.diagnostics.diagnostics().size() == 2) {
-    test.expect(source.diagnostics.diagnostics()[0].location.column == 7,
+    test.expect(source.diagnostics.diagnostics()[0].range.begin.column == 7,
                 "first invalid character location is wrong");
-    test.expect(source.diagnostics.diagnostics()[1].location.column == 16,
+    test.expect(source.diagnostics.diagnostics()[1].range.begin.column == 16,
                 "second invalid character location is wrong");
   }
 }
