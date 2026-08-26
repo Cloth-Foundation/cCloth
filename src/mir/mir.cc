@@ -1,0 +1,582 @@
+#include "cloth/mir/mir.h"
+
+#include "cloth/hir/hir.h"
+#include "cloth/sema/semantic_model.h"
+
+#include <cstddef>
+#include <optional>
+#include <utility>
+#include <variant>
+#include <vector>
+
+namespace cloth {
+namespace {
+
+struct LoweredLocation {
+  std::optional<SymbolId> symbol;
+  std::optional<MirValueId> object;
+  TypeId type;
+  bool is_member{false};
+};
+
+class BodyBuilder {
+ public:
+  BodyBuilder(const HirModule& hir, const SemanticModel& semantics, FileId file,
+              SourceRange range, TypeId return_type)
+      : hir_(hir),
+        semantics_(semantics),
+        file_(file),
+        return_type_(return_type),
+        body_{range, MirBlockId{0}, {}, 0} {
+    body_.entry = add_block(true);
+    current_block_ = body_.entry;
+  }
+
+  MirBody lower_callable(HirBlockId block) {
+    lower_block(block);
+    if (current_block_) {
+      if (return_type_ == semantics_.no_value_type()) {
+        terminate(MirReturnTerminator{}, body_.range);
+      } else {
+        terminate(MirUnreachableTerminator{}, body_.range);
+      }
+    }
+    finish_unterminated_blocks();
+    body_.value_count = value_types_.size();
+    return std::move(body_);
+  }
+
+  MirBody lower_initializer(HirExpressionId expression, TypeId field_type) {
+    const HirExpression& syntax = hir_.storage.expression(expression);
+    const MirValueId value =
+        require_value(lower_expression(expression), syntax.type, syntax.range);
+    const MirValueId converted = coerce(value, field_type, syntax.range);
+    terminate(MirReturnTerminator{converted}, syntax.range);
+    finish_unterminated_blocks();
+    body_.value_count = value_types_.size();
+    return std::move(body_);
+  }
+
+ private:
+  MirBlockId add_block(bool is_reachable) {
+    const MirBlockId id{body_.blocks.size()};
+    body_.blocks.push_back(
+        MirBasicBlock{is_reachable,
+                      {},
+                      MirTerminator{body_.range, MirUnreachableTerminator{}}});
+    terminated_.push_back(false);
+    return id;
+  }
+
+  void ensure_current(SourceRange range) {
+    if (!current_block_) {
+      current_block_ = add_block(false);
+      body_.blocks[current_block_->value].terminator.range = range;
+    }
+  }
+
+  bool current_is_reachable() const {
+    return current_block_ && body_.blocks[current_block_->value].is_reachable;
+  }
+
+  template <typename Data>
+  MirValueId emit_value(TypeId type, SourceRange range, Data data) {
+    ensure_current(range);
+    const MirValueId value{value_types_.size()};
+    value_types_.push_back(type);
+    body_.blocks[current_block_->value].instructions.push_back(MirInstruction{
+        value, type, range, MirInstructionData{std::move(data)}});
+    return value;
+  }
+
+  template <typename Data>
+  void emit_void(SourceRange range, Data data) {
+    ensure_current(range);
+    body_.blocks[current_block_->value].instructions.push_back(
+        MirInstruction{std::nullopt, semantics_.no_value_type(), range,
+                       MirInstructionData{std::move(data)}});
+  }
+
+  template <typename Data>
+  void terminate(Data data, SourceRange range) {
+    if (!current_block_) {
+      return;
+    }
+    const std::size_t index = current_block_->value;
+    body_.blocks[index].terminator =
+        MirTerminator{range, MirTerminatorData{std::move(data)}};
+    terminated_[index] = true;
+    current_block_.reset();
+  }
+
+  void jump_to(MirBlockId target, SourceRange range) {
+    terminate(MirJumpTerminator{target}, range);
+  }
+
+  MirValueId invalid_value(SourceRange range) {
+    return emit_value(semantics_.error_type(), range, MirInvalidInstruction{});
+  }
+
+  MirValueId require_value(std::optional<MirValueId> value, TypeId,
+                           SourceRange range) {
+    if (value) {
+      return *value;
+    }
+    return invalid_value(range);
+  }
+
+  TypeId value_type(MirValueId value) const {
+    return value_types_.at(value.value);
+  }
+
+  MirValueId coerce(MirValueId value, TypeId expected, SourceRange range) {
+    const TypeId actual = value_type(value);
+    if (actual == expected || actual == semantics_.error_type() ||
+        expected == semantics_.error_type()) {
+      return value;
+    }
+    if (actual == semantics_.null_type() && is_reference(expected)) {
+      return emit_value(expected, range, MirConvertInstruction{value});
+    }
+    return invalid_value(range);
+  }
+
+  bool is_reference(TypeId type) const {
+    const TypeKind kind = semantics_.type(type).kind;
+    return kind == TypeKind::kString || kind == TypeKind::kFileClass;
+  }
+
+  void lower_block(HirBlockId id) {
+    const HirBlock& block = hir_.storage.block(id);
+    for (const HirStatementId statement_id : block.statements) {
+      const HirStatement& statement = hir_.storage.statement(statement_id);
+      ensure_current(statement.range);
+      lower_statement(statement);
+    }
+  }
+
+  void lower_statement(const HirStatement& statement) {
+    if (std::holds_alternative<HirInvalidStatement>(statement.data)) {
+      emit_void(statement.range, MirInvalidInstruction{});
+      return;
+    }
+    if (const auto* local = std::get_if<HirLocalStatement>(&statement.data)) {
+      lower_local(*local, statement.range);
+      return;
+    }
+    if (const auto* return_statement =
+            std::get_if<HirReturnStatement>(&statement.data)) {
+      lower_return(*return_statement, statement.range);
+      return;
+    }
+    if (const auto* expression =
+            std::get_if<HirExpressionStatement>(&statement.data)) {
+      static_cast<void>(lower_expression(expression->expression));
+      return;
+    }
+    if (const auto* if_statement =
+            std::get_if<HirIfStatement>(&statement.data)) {
+      lower_if(*if_statement, statement.range);
+      return;
+    }
+    const auto& nested = std::get<HirNestedBlockStatement>(statement.data);
+    lower_block(nested.block);
+  }
+
+  void lower_local(const HirLocalStatement& local, SourceRange range) {
+    std::optional<MirValueId> initializer;
+    if (local.initializer) {
+      const HirExpression& syntax = hir_.storage.expression(*local.initializer);
+      MirValueId value = require_value(lower_expression(*local.initializer),
+                                       syntax.type, syntax.range);
+      if (local.symbol) {
+        value =
+            coerce(value, semantics_.symbol(*local.symbol).type, syntax.range);
+      }
+      initializer = value;
+    }
+    if (local.symbol) {
+      emit_void(range, MirDeclareLocalInstruction{*local.symbol, initializer});
+    } else {
+      emit_void(range, MirInvalidInstruction{});
+    }
+  }
+
+  void lower_return(const HirReturnStatement& return_statement,
+                    SourceRange range) {
+    std::optional<MirValueId> value;
+    if (return_statement.value) {
+      const HirExpression& syntax =
+          hir_.storage.expression(*return_statement.value);
+      MirValueId lowered = require_value(
+          lower_expression(*return_statement.value), syntax.type, syntax.range);
+      if (return_type_ != semantics_.no_value_type()) {
+        lowered = coerce(lowered, return_type_, syntax.range);
+        value = lowered;
+      }
+    }
+    if (!value && return_type_ != semantics_.no_value_type()) {
+      terminate(MirUnreachableTerminator{}, range);
+      return;
+    }
+    terminate(MirReturnTerminator{value}, range);
+  }
+
+  void lower_if(const HirIfStatement& if_statement, SourceRange range) {
+    const HirExpression& condition_syntax =
+        hir_.storage.expression(if_statement.condition);
+    const MirValueId condition =
+        require_value(lower_expression(if_statement.condition),
+                      condition_syntax.type, condition_syntax.range);
+    const bool branch_reachable = current_is_reachable();
+    const MirBlockId then_block = add_block(branch_reachable);
+    const MirBlockId else_block = add_block(branch_reachable);
+    terminate(MirBranchTerminator{condition, then_block, else_block}, range);
+
+    current_block_ = then_block;
+    lower_block(if_statement.then_block);
+    const std::optional<MirBlockId> then_end = current_block_;
+
+    current_block_ = else_block;
+    if (if_statement.else_block) {
+      lower_block(*if_statement.else_block);
+    }
+    const std::optional<MirBlockId> else_end = current_block_;
+
+    if (!then_end && !else_end) {
+      current_block_.reset();
+      return;
+    }
+    const bool continuation_reachable =
+        (then_end && body_.blocks[then_end->value].is_reachable) ||
+        (else_end && body_.blocks[else_end->value].is_reachable);
+    const MirBlockId continuation = add_block(continuation_reachable);
+    if (then_end) {
+      current_block_ = then_end;
+      jump_to(continuation, range);
+    }
+    if (else_end) {
+      current_block_ = else_end;
+      jump_to(continuation, range);
+    }
+    current_block_ = continuation;
+  }
+
+  std::optional<MirValueId> lower_expression(HirExpressionId id) {
+    const HirExpression& expression = hir_.storage.expression(id);
+    if (std::holds_alternative<HirInvalidExpression>(expression.data)) {
+      return invalid_value(expression.range);
+    }
+    if (const auto* literal =
+            std::get_if<HirLiteralExpression>(&expression.data)) {
+      return emit_value(expression.type, expression.range,
+                        MirLiteralInstruction{literal->kind, literal->lexeme});
+    }
+    if (const auto* symbol =
+            std::get_if<HirSymbolExpression>(&expression.data)) {
+      return lower_symbol(*symbol, expression);
+    }
+    if (std::holds_alternative<HirTypeExpression>(expression.data)) {
+      return invalid_value(expression.range);
+    }
+    if (const auto* unary = std::get_if<HirUnaryExpression>(&expression.data)) {
+      const MirValueId operand = require_value(
+          lower_expression(unary->operand),
+          hir_.storage.expression(unary->operand).type, expression.range);
+      return emit_value(expression.type, expression.range,
+                        MirUnaryInstruction{unary->operation, operand});
+    }
+    if (const auto* binary =
+            std::get_if<HirBinaryExpression>(&expression.data)) {
+      if (binary->operation == TokenKind::kAmpersandAmpersand ||
+          binary->operation == TokenKind::kPipePipe) {
+        return lower_short_circuit(*binary, expression);
+      }
+      const MirValueId left = require_value(
+          lower_expression(binary->left),
+          hir_.storage.expression(binary->left).type, expression.range);
+      const MirValueId right = require_value(
+          lower_expression(binary->right),
+          hir_.storage.expression(binary->right).type, expression.range);
+      return emit_value(expression.type, expression.range,
+                        MirBinaryInstruction{left, binary->operation, right});
+    }
+    if (const auto* assignment =
+            std::get_if<HirAssignmentExpression>(&expression.data)) {
+      return lower_assignment(*assignment, expression);
+    }
+    if (const auto* member =
+            std::get_if<HirMemberExpression>(&expression.data)) {
+      return lower_member(*member, expression);
+    }
+    if (const auto* call = std::get_if<HirCallExpression>(&expression.data)) {
+      return lower_call(*call, expression);
+    }
+    const auto& grouped = std::get<HirGroupedExpression>(expression.data);
+    return lower_expression(grouped.expression);
+  }
+
+  std::optional<MirValueId> lower_symbol(
+      const HirSymbolExpression& symbol_expression,
+      const HirExpression& expression) {
+    const SemanticSymbol& symbol = semantics_.symbol(symbol_expression.symbol);
+    if (symbol.kind == SymbolKind::kField) {
+      const MirValueId self = emit_self(expression.range);
+      return emit_value(
+          expression.type, expression.range,
+          MirLoadMemberInstruction{self, symbol_expression.symbol});
+    }
+    if (symbol.kind == SymbolKind::kParameter ||
+        symbol.kind == SymbolKind::kLocal || symbol.kind == SymbolKind::kSelf) {
+      return emit_value(expression.type, expression.range,
+                        MirLoadSymbolInstruction{symbol_expression.symbol});
+    }
+    return invalid_value(expression.range);
+  }
+
+  std::optional<MirValueId> lower_member(const HirMemberExpression& member,
+                                         const HirExpression& expression) {
+    const MirValueId object = require_value(
+        lower_expression(member.object),
+        hir_.storage.expression(member.object).type, expression.range);
+    if (!member.member) {
+      return invalid_value(expression.range);
+    }
+    const SemanticSymbol& symbol = semantics_.symbol(*member.member);
+    if (symbol.kind != SymbolKind::kField) {
+      return invalid_value(expression.range);
+    }
+    return emit_value(expression.type, expression.range,
+                      MirLoadMemberInstruction{object, *member.member});
+  }
+
+  std::optional<MirValueId> lower_assignment(
+      const HirAssignmentExpression& assignment,
+      const HirExpression& expression) {
+    const LoweredLocation location = lower_location(assignment.target);
+    const HirExpression& value_syntax =
+        hir_.storage.expression(assignment.value);
+    MirValueId value = require_value(lower_expression(assignment.value),
+                                     value_syntax.type, value_syntax.range);
+    value = coerce(value, location.type, value_syntax.range);
+    if (!location.symbol) {
+      emit_void(expression.range, MirInvalidInstruction{});
+      return invalid_value(expression.range);
+    }
+    if (location.is_member && location.object) {
+      emit_void(
+          expression.range,
+          MirStoreMemberInstruction{*location.object, *location.symbol, value});
+    } else {
+      emit_void(expression.range,
+                MirStoreSymbolInstruction{*location.symbol, value});
+    }
+    return value;
+  }
+
+  LoweredLocation lower_location(HirExpressionId id) {
+    const HirExpression& expression = hir_.storage.expression(id);
+    if (const auto* grouped =
+            std::get_if<HirGroupedExpression>(&expression.data)) {
+      return lower_location(grouped->expression);
+    }
+    if (const auto* symbol_expression =
+            std::get_if<HirSymbolExpression>(&expression.data)) {
+      const SemanticSymbol& symbol =
+          semantics_.symbol(symbol_expression->symbol);
+      if (symbol.kind == SymbolKind::kField) {
+        return LoweredLocation{symbol_expression->symbol,
+                               emit_self(expression.range), symbol.type, true};
+      }
+      if (symbol.kind == SymbolKind::kParameter ||
+          symbol.kind == SymbolKind::kLocal) {
+        return LoweredLocation{symbol_expression->symbol, std::nullopt,
+                               symbol.type, false};
+      }
+    }
+    if (const auto* member =
+            std::get_if<HirMemberExpression>(&expression.data)) {
+      const MirValueId object = require_value(
+          lower_expression(member->object),
+          hir_.storage.expression(member->object).type, expression.range);
+      if (member->member) {
+        return LoweredLocation{member->member, object,
+                               semantics_.symbol(*member->member).type, true};
+      }
+      return LoweredLocation{std::nullopt, std::nullopt,
+                             semantics_.error_type(), false};
+    }
+    static_cast<void>(lower_expression(id));
+    return LoweredLocation{std::nullopt, std::nullopt, semantics_.error_type(),
+                           false};
+  }
+
+  std::optional<MirValueId> lower_call(const HirCallExpression& call,
+                                       const HirExpression& expression) {
+    MirCallKind kind = MirCallKind::kUnqualified;
+    std::optional<MirValueId> receiver;
+    const HirExpression& callee = hir_.storage.expression(call.callee);
+    if (const auto* member = std::get_if<HirMemberExpression>(&callee.data)) {
+      const HirExpression& object = hir_.storage.expression(member->object);
+      if (std::holds_alternative<HirTypeExpression>(object.data)) {
+        kind = MirCallKind::kClassQualified;
+      } else {
+        kind = MirCallKind::kInstance;
+        receiver = require_value(lower_expression(member->object), object.type,
+                                 object.range);
+      }
+    } else if (std::holds_alternative<HirTypeExpression>(callee.data)) {
+      kind = MirCallKind::kConstructor;
+    } else if (!std::holds_alternative<HirSymbolExpression>(callee.data) &&
+               !std::holds_alternative<HirTypeExpression>(callee.data)) {
+      static_cast<void>(lower_expression(call.callee));
+    }
+
+    std::vector<MirValueId> arguments;
+    arguments.reserve(call.arguments.size());
+    for (std::size_t index = 0; index < call.arguments.size(); ++index) {
+      const HirExpressionId argument_id = call.arguments[index];
+      const HirExpression& argument = hir_.storage.expression(argument_id);
+      MirValueId value = require_value(lower_expression(argument_id),
+                                       argument.type, argument.range);
+      if (call.callable) {
+        const auto& parameter_types =
+            semantics_.symbol(*call.callable).parameter_types;
+        if (index < parameter_types.size()) {
+          value = coerce(value, parameter_types[index], argument.range);
+        }
+      }
+      arguments.push_back(value);
+    }
+
+    if (!call.callable) {
+      return invalid_value(expression.range);
+    }
+    MirCallInstruction instruction{kind, *call.callable, receiver,
+                                   std::move(arguments)};
+    if (expression.type == semantics_.no_value_type()) {
+      emit_void(expression.range, std::move(instruction));
+      return std::nullopt;
+    }
+    return emit_value(expression.type, expression.range,
+                      std::move(instruction));
+  }
+
+  std::optional<MirValueId> lower_short_circuit(
+      const HirBinaryExpression& binary, const HirExpression& expression) {
+    const HirExpression& left_syntax = hir_.storage.expression(binary.left);
+    const MirValueId left = require_value(lower_expression(binary.left),
+                                          left_syntax.type, left_syntax.range);
+    const bool branch_reachable = current_is_reachable();
+    const MirBlockId right_block = add_block(branch_reachable);
+    const MirBlockId short_block = add_block(branch_reachable);
+    const MirBlockId merge_block = add_block(branch_reachable);
+    const bool is_and = binary.operation == TokenKind::kAmpersandAmpersand;
+    const MirBlockId then_block = is_and ? right_block : short_block;
+    const MirBlockId else_block = is_and ? short_block : right_block;
+    terminate(MirBranchTerminator{left, then_block, else_block},
+              expression.range);
+
+    current_block_ = right_block;
+    const HirExpression& right_syntax = hir_.storage.expression(binary.right);
+    const MirValueId right = require_value(
+        lower_expression(binary.right), right_syntax.type, right_syntax.range);
+    const MirBlockId right_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = short_block;
+    const bool short_value = !is_and;
+    const MirValueId short_result =
+        emit_value(semantics_.bool_type(), expression.range,
+                   MirLiteralInstruction{LiteralKind::kBoolean,
+                                         short_value ? "true" : "false"});
+    const MirBlockId short_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = merge_block;
+    std::vector<MirPhiIncoming> incoming;
+    incoming.push_back(MirPhiIncoming{right_end, right});
+    incoming.push_back(MirPhiIncoming{short_end, short_result});
+    return emit_value(expression.type, expression.range,
+                      MirPhiInstruction{std::move(incoming)});
+  }
+
+  MirValueId emit_self(SourceRange range) {
+    const SymbolId self = semantics_.file(file_).self_symbol;
+    return emit_value(semantics_.symbol(self).type, range,
+                      MirLoadSymbolInstruction{self});
+  }
+
+  void finish_unterminated_blocks() {
+    for (std::size_t index = 0; index < body_.blocks.size(); ++index) {
+      if (!terminated_[index]) {
+        body_.blocks[index].terminator =
+            MirTerminator{body_.range, MirUnreachableTerminator{}};
+        terminated_[index] = true;
+      }
+    }
+    current_block_.reset();
+  }
+
+  const HirModule& hir_;
+  const SemanticModel& semantics_;
+  FileId file_;
+  TypeId return_type_;
+  MirBody body_;
+  std::vector<TypeId> value_types_;
+  std::vector<bool> terminated_;
+  std::optional<MirBlockId> current_block_;
+};
+
+MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,
+                           FileId file, const HirCallable& callable) {
+  const SemanticSymbol& symbol = semantics.symbol(callable.symbol);
+  const SourceRange range = hir.storage.block(callable.body).range;
+  const TypeId return_type = symbol.kind == SymbolKind::kConstructor
+                                 ? semantics.no_value_type()
+                                 : symbol.type;
+  MirBody body =
+      BodyBuilder{hir, semantics, file, range, return_type}.lower_callable(
+          callable.body);
+  return MirCallable{callable.symbol, symbol.parameter_symbols,
+                     std::move(body)};
+}
+
+}  // namespace
+
+MirModule lower_to_mir(const HirModule& hir, const SemanticModel& semantics) {
+  MirModule module;
+  module.files.reserve(hir.files.size());
+  for (const HirFileClass& hir_file : hir.files) {
+    MirFileClass file{hir_file.file,        hir_file.symbol, {}, {}, {},
+                      hir_file.member_order};
+    file.fields.reserve(hir_file.fields.size());
+    for (const HirField& hir_field : hir_file.fields) {
+      std::optional<MirBody> initializer;
+      if (hir_field.initializer) {
+        const SourceRange range =
+            hir.storage.expression(*hir_field.initializer).range;
+        initializer =
+            BodyBuilder{hir, semantics, hir_file.file, range,
+                        semantics.symbol(hir_field.symbol).type}
+                .lower_initializer(*hir_field.initializer,
+                                   semantics.symbol(hir_field.symbol).type);
+      }
+      file.fields.push_back(MirField{hir_field.symbol, std::move(initializer)});
+    }
+    file.functions.reserve(hir_file.functions.size());
+    for (const HirCallable& function : hir_file.functions) {
+      file.functions.push_back(
+          lower_callable(hir, semantics, hir_file.file, function));
+    }
+    file.constructors.reserve(hir_file.constructors.size());
+    for (const HirCallable& constructor : hir_file.constructors) {
+      file.constructors.push_back(
+          lower_callable(hir, semantics, hir_file.file, constructor));
+    }
+    module.files.push_back(std::move(file));
+  }
+  return module;
+}
+
+}  // namespace cloth

@@ -3,8 +3,10 @@
 
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
+#include "cloth/flow/control_flow.h"
 #include "cloth/hir/hir.h"
 #include "cloth/lexer/token.h"
+#include "cloth/mir/mir.h"
 #include "cloth/parser/parser.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_file.h"
@@ -19,6 +21,8 @@ namespace cloth {
 struct CompilationResult {
   SemanticModel semantics;
   HirModule hir;
+  ControlFlowAnalysis control_flow;
+  MirModule mir;
   bool is_valid;
 };
 

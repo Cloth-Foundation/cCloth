@@ -1,13 +1,15 @@
-# Cloth compiler - Stage 2.0 semantic front end
+# Cloth compiler - Stage 3.0 control-flow front end
 
-This repository contains the deterministic Stage 2.0 front end for Cloth source
+This repository contains the deterministic Stage 3.0 front end for Cloth source
 files (`.co`). It lexes and parses an explicit compilation set, binds implicit
-file classes and their members, checks types and visibility, and lowers the
-result to typed, target-independent HIR. The driver prints readable token, AST,
-and HIR summaries. Errors are collected with source ranges.
+file classes and their members, checks types and visibility, verifies typed HIR,
+analyzes control flow, and lowers executable definitions to target-independent
+MIR. The driver prints readable token, AST, HIR, and MIR summaries. Errors are
+collected with source ranges.
 
 The project intentionally contains no backend, runtime, virtual machine, garbage
-collector, ABI lowering, or code-generation implementation yet.
+collector, data-layout contract, ABI lowering, or code-generation implementation
+yet.
 
 ## Requirements
 
@@ -58,8 +60,8 @@ cmake --build build --config Debug --target run_compiler
 ```
 
 The command accepts one or more source paths as one compilation set. Tokens,
-ASTs, and typed HIR are written to standard output; diagnostics are written to
-standard error. Exit codes have these meanings:
+ASTs, typed HIR, and control-flow MIR are written to standard output;
+diagnostics are written to standard error. Exit codes have these meanings:
 
 - `0`: front-end compilation completed without errors
 - `1`: lexical, syntactic, or semantic errors were reported
@@ -77,7 +79,9 @@ Parser coverage includes declarations, visibility, constructors, overload
 candidates, statements, expressions, source ranges, and recovery. Semantic
 coverage includes cross-file binding, privacy, core types, exact overload and
 constructor resolution, lexical scopes, type checking, return paths, portable
-file-name collisions, typed HIR, and deterministic diagnostics.
+file-name collisions, typed HIR, and deterministic diagnostics. MIR coverage
+includes branches, fallthrough joins, short-circuit phi nodes, dead blocks,
+field initializers, explicit conversions, receivers, and verifier failures.
 
 ## VS Code
 
@@ -119,6 +123,8 @@ include/cloth/          Public compiler interfaces
   ast/                  Stable-handle syntax tree representation
   sema/                 Stable types, symbols, binding, and type checking
   hir/                  Typed target-independent intermediate representation
+  flow/                 Callable-level control-flow analysis
+  mir/                  Explicit basic-block intermediate representation
   compiler/             Multi-file compilation orchestration
 src/                    Implementations and the clothc driver
 tests/                  Deterministic lexer, parser, and semantic tests
@@ -126,6 +132,7 @@ examples/               Cross-file implicit-class example
 docs/language_design.md Stable language and compiler design constraints
 docs/grammar.md         Implemented Stage 1.0 grammar and precedence
 docs/semantic_analysis.md Implemented Stage 2.0 semantic rules
+docs/control_flow_and_mir.md Implemented Stage 3.0 IR contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -152,6 +159,12 @@ before bodies. It emits stable `FileId`, `TypeId`, and `SymbolId` handles, then
 lowers bound syntax to typed HIR. See
 [docs/semantic_analysis.md](docs/semantic_analysis.md) for the implemented
 contract and deliberate Stage 2 boundaries.
+
+HIR is verified before control-flow analysis. Callable bodies and field
+initializers then lower to verified MIR with explicit instructions, blocks,
+terminators, short-circuit branches, and phi values. See
+[docs/control_flow_and_mir.md](docs/control_flow_and_mir.md) for the Stage 3
+contract and backend boundary.
 
 ## Extending the lexer
 

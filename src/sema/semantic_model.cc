@@ -85,6 +85,10 @@ FileSemantics& SemanticModel::mutable_file(FileId id) {
   return files_.at(id.value);
 }
 
+SemanticSymbol& SemanticModel::mutable_symbol(SymbolId id) {
+  return symbols_.at(id.value);
+}
+
 std::span<const SemanticType> SemanticModel::types() const noexcept {
   return types_;
 }

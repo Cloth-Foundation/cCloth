@@ -76,10 +76,10 @@ is registered before member signatures, and every member signature is registered
 before executable definitions are checked. This preserves forward references
 without making meaning depend on input order.
 
-`int` and `uint` are portable aliases of `int32` and `uint32`. `String` is a core
-reference type. General implicit numeric conversions are not part of the initial
-language; overload selection uses exact canonical parameter types. The null
-value is assignable only to reference types.
+`int` and `uint` are portable aliases of `int32` and `uint32`. `String` is a
+core reference type. General implicit numeric conversions are not part of the
+initial language; overload selection uses exact canonical parameter types. The
+null value is assignable only to reference types.
 
 Lexical scopes contain `self`, parameters, and locals. A nested block may shadow
 an outer name, but declarations in the same scope may not collide. Public
@@ -106,3 +106,14 @@ exposing allocation details as language or compiler identities.
 Semantic model and HIR identities are stable numeric handles. Their allocation
 strategy is likewise not part of the language contract and may move to managed
 storage later.
+
+## Explicit control flow
+
+Executable HIR lowers to a target-independent MIR before target layout or code
+generation. MIR preserves source evaluation order, uses body-local value and
+basic-block handles, and ends every block with an explicit terminator. Logical
+`&&` and `||` retain short-circuit behavior through branches and phi values.
+
+Field initializers remain independent executable bodies until object layout and
+constructor composition are specified. MIR must not encode host pointer size,
+ABI rules, runtime object headers, or garbage-collector barriers.

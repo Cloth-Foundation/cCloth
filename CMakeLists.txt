@@ -35,10 +35,15 @@ add_library(cloth_compiler
     src/ast/ast_printer.cc
     src/compiler/compilation.cc
     src/diagnostics/diagnostic_engine.cc
+    src/flow/control_flow.cc
     src/hir/hir.cc
     src/hir/hir_printer.cc
+    src/hir/hir_verifier.cc
     src/lexer/lexer.cc
     src/lexer/token.cc
+    src/mir/mir.cc
+    src/mir/mir_printer.cc
+    src/mir/mir_verifier.cc
     src/parser/declaration_pass.cc
     src/parser/definition_pass.cc
     src/parser/expression_parser.cc
@@ -97,6 +102,10 @@ if(BUILD_TESTING)
     target_link_libraries(cloth_sema_tests PRIVATE cloth_compiler)
     cloth_enable_warnings(cloth_sema_tests)
     add_test(NAME cloth_sema_tests COMMAND cloth_sema_tests)
+    add_executable(cloth_mir_tests tests/mir_tests.cc)
+    target_link_libraries(cloth_mir_tests PRIVATE cloth_compiler)
+    cloth_enable_warnings(cloth_mir_tests)
+    add_test(NAME cloth_mir_tests COMMAND cloth_mir_tests)
     add_test(
         NAME cloth_cli_example
         COMMAND clothc

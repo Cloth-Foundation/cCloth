@@ -80,6 +80,7 @@ struct SemanticSymbol {
   std::optional<FileId> file;
   SourceRange range;
   bool is_valid{true};
+  std::vector<SymbolId> parameter_symbols{};
 };
 
 enum class ValueCategory {
@@ -141,6 +142,7 @@ class SemanticModel {
   [[nodiscard]] SymbolId add_symbol(SemanticSymbol symbol);
   [[nodiscard]] FileId add_file(FileSemantics file);
   [[nodiscard]] FileSemantics& mutable_file(FileId id);
+  [[nodiscard]] SemanticSymbol& mutable_symbol(SymbolId id);
 
   std::vector<SemanticType> types_;
   std::vector<TypeName> type_names_;

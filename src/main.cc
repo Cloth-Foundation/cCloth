@@ -3,6 +3,7 @@
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/hir/hir_printer.h"
 #include "cloth/lexer/token.h"
+#include "cloth/mir/mir_printer.h"
 #include "cloth/source/source_file.h"
 
 #include <cctype>
@@ -117,6 +118,9 @@ int main(int argc, char* argv[]) {
   }
   std::cout << "\nTyped HIR:\n";
   cloth::print_hir_summary(compilation_result.hir, compilation_result.semantics,
+                           std::cout);
+  std::cout << "\nControl-flow MIR:\n";
+  cloth::print_mir_summary(compilation_result.mir, compilation_result.semantics,
                            std::cout);
   return diagnostics.has_errors() ? 1 : 0;
 }

@@ -297,26 +297,21 @@ class SemanticAnalyzer {
     const FunctionDecl& function =
         files_[current_file_.value]->functions.at(index);
     const SymbolId symbol = model_.file(current_file_).functions.at(index);
-    analyze_callable(
-        symbol, function.parameters, function.body, model_.symbol(symbol).type,
-        function.range,
-        std::string{"function '"} + std::string{function.name} + "'");
+    analyze_callable(symbol, function.parameters, function.body,
+                     model_.symbol(symbol).type);
   }
 
   void analyze_constructor(std::size_t index) {
     const ConstructorDecl& constructor =
         files_[current_file_.value]->constructors.at(index);
     const SymbolId symbol = model_.file(current_file_).constructors.at(index);
-    analyze_callable(
-        symbol, constructor.parameters, constructor.body,
-        model_.no_value_type(), constructor.range,
-        std::string{"constructor '"} + std::string{constructor.name} + "'");
+    analyze_callable(symbol, constructor.parameters, constructor.body,
+                     model_.no_value_type());
   }
 
   void analyze_callable(SymbolId callable_symbol,
                         std::span<const ParameterDecl> parameters, BlockId body,
-                        TypeId return_type, SourceRange range,
-                        std::string_view display_name) {
+                        TypeId return_type) {
     begin_root_scope();
     const std::vector<TypeId> parameter_types =
         model_.symbol(callable_symbol).parameter_types;
@@ -334,16 +329,13 @@ class SemanticAnalyzer {
                          current_file_,
                          parameter.range,
                          parameter_type != model_.error_type()});
+      model_.mutable_symbol(callable_symbol)
+          .parameter_symbols.push_back(symbol);
       bind_name(parameter.name, symbol, parameter.range);
     }
 
     expected_return_type_ = return_type;
-    const bool definitely_returns = analyze_block(body, false);
-    if (return_type != model_.no_value_type() &&
-        return_type != model_.error_type() && !definitely_returns) {
-      diagnostics_.error(range, std::string{display_name} +
-                                    " does not return a value on every path");
-    }
+    static_cast<void>(analyze_block(body, false));
     expected_return_type_ = model_.no_value_type();
     end_root_scope();
   }

@@ -62,11 +62,13 @@ The checker currently validates:
 - boolean `if` conditions
 - member access and visibility
 - exact overload and constructor selection
-- return values and complete return paths for value-returning functions
+- return value presence and type compatibility
 
 Overload matching is exact after the `int` and `uint` aliases are canonicalized.
 User-defined conversions, numeric promotions, inheritance, traits, generics,
 first-class function values, and implicit default constructors are deferred.
+Complete return-path and reachability checks are performed by the Stage 3.0
+control-flow analysis after HIR verification.
 
 ## Typed HIR
 

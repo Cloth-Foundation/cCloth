@@ -1,6 +1,10 @@
 #include "cloth/compiler/compilation.h"
 
+#include "cloth/flow/control_flow.h"
+#include "cloth/hir/hir_verifier.h"
 #include "cloth/lexer/lexer.h"
+#include "cloth/mir/mir.h"
+#include "cloth/mir/mir_verifier.h"
 #include "cloth/parser/parser.h"
 #include "cloth/sema/semantic_analyzer.h"
 
@@ -27,8 +31,20 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
   SemanticAnalysisResult semantic_result =
       analyze_semantics(files, diagnostics);
   HirModule hir = lower_to_hir(files, semantic_result.model);
+  const bool hir_is_valid = verify_hir(hir, semantic_result.model, diagnostics);
+  ControlFlowAnalysis control_flow;
+  MirModule mir;
+  bool mir_is_valid = false;
+  if (hir_is_valid) {
+    control_flow =
+        analyze_control_flow(hir, semantic_result.model, diagnostics);
+    mir = lower_to_mir(hir, semantic_result.model);
+    mir_is_valid = verify_mir(mir, semantic_result.model, diagnostics);
+  }
+  const bool is_valid = !diagnostics.has_errors() && hir_is_valid &&
+                        mir_is_valid && semantic_result.is_valid;
   return CompilationResult{std::move(semantic_result.model), std::move(hir),
-                           semantic_result.is_valid};
+                           std::move(control_flow), std::move(mir), is_valid};
 }
 
 std::size_t Compilation::source_count() const noexcept { return units_.size(); }
