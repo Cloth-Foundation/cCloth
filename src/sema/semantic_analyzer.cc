@@ -74,6 +74,7 @@ class SemanticAnalyzer {
 
   SemanticAnalysisResult run() {
     register_file_classes();
+    register_object_print_intrinsics();
     register_imports();
     register_members();
     analyze_definitions();
@@ -82,6 +83,17 @@ class SemanticAnalyzer {
   }
 
  private:
+  void register_object_print_intrinsics() {
+    for (std::size_t index = 0; index < files_.size(); ++index) {
+      const TypeId type = model_.file(FileId{index}).type;
+      if (type == model_.error_type()) {
+        continue;
+      }
+      model_.add_intrinsic("print", {type}, IntrinsicKind::kPrintObject);
+      model_.add_intrinsic("println", {type}, IntrinsicKind::kPrintObject);
+    }
+  }
+
   void register_file_classes() {
     for (std::size_t index = 0; index < files_.size(); ++index) {
       const FileClassDecl& syntax = *files_[index];
@@ -318,9 +330,9 @@ class SemanticAnalyzer {
       parameters.push_back(type);
       valid = valid && type != model_.error_type();
     }
-    TypeId return_type = model_.no_value_type();
+    TypeId return_type = model_.void_type();
     if (function.return_type) {
-      return_type = resolve_type(*function.return_type, file_id);
+      return_type = resolve_type(*function.return_type, file_id, true);
       valid = valid && return_type != model_.error_type();
     }
     const SymbolId symbol = model_.add_symbol(
@@ -349,9 +361,24 @@ class SemanticAnalyzer {
     model_.mutable_file(file_id).constructors.at(index) = symbol;
   }
 
-  TypeId resolve_type(const TypeSyntax& syntax, FileId current_file) {
+  TypeId resolve_type(const TypeSyntax& syntax, FileId current_file,
+                      bool allow_void = false) {
     if (const std::optional<TypeId> core = model_.find_type(syntax.name);
         core && model_.type(*core).kind != TypeKind::kFileClass) {
+      if (*core == model_.void_type()) {
+        if (syntax.is_array) {
+          diagnostics_.error(syntax.range,
+                             "'void' cannot be an array element type");
+          model_.mutable_file(current_file).is_valid = false;
+          return model_.error_type();
+        }
+        if (!allow_void) {
+          diagnostics_.error(syntax.range,
+                             "'void' is only valid as a function return type");
+          model_.mutable_file(current_file).is_valid = false;
+          return model_.error_type();
+        }
+      }
       return syntax.is_array ? model_.get_array_type(*core) : *core;
     }
     const std::optional<FileId> file =
@@ -439,7 +466,7 @@ class SemanticAnalyzer {
         files_[current_file_.value]->constructors.at(index);
     const SymbolId symbol = model_.file(current_file_).constructors.at(index);
     analyze_callable(symbol, constructor.parameters, constructor.body,
-                     model_.no_value_type());
+                     model_.void_type());
   }
 
   void analyze_callable(SymbolId callable_symbol,
@@ -469,7 +496,7 @@ class SemanticAnalyzer {
 
     expected_return_type_ = return_type;
     static_cast<void>(analyze_block(body, false));
-    expected_return_type_ = model_.no_value_type();
+    expected_return_type_ = model_.void_type();
     end_root_scope();
   }
 
@@ -573,7 +600,7 @@ class SemanticAnalyzer {
     if (const auto* return_statement =
             std::get_if<ReturnStatement>(&statement.data)) {
       if (!return_statement->value) {
-        if (expected_return_type_ != model_.no_value_type() &&
+        if (expected_return_type_ != model_.void_type() &&
             expected_return_type_ != model_.error_type()) {
           diagnostics_.error(statement.range,
                              "return statement requires a value of type '" +
@@ -583,9 +610,9 @@ class SemanticAnalyzer {
         const ExpressionState value =
             analyze_expression(*return_statement->value);
         check_value(value, expression_range(*return_statement->value));
-        if (expected_return_type_ == model_.no_value_type()) {
+        if (expected_return_type_ == model_.void_type()) {
           diagnostics_.error(statement.range,
-                             "cannot return a value from a no-value callable");
+                             "cannot return a value from a void function");
         } else {
           check_assignment(expected_return_type_, value.type,
                            expression_range(*return_statement->value),
@@ -827,6 +854,7 @@ class SemanticAnalyzer {
       ExpressionState state = analyze_expression(element);
       check_value(state, expression_range(element));
       if (state.type != model_.error_type() &&
+          state.type != model_.void_type() &&
           state.type != model_.null_type() && !element_type) {
         element_type = state.type;
       }
@@ -1052,6 +1080,7 @@ class SemanticAnalyzer {
     }
 
     std::vector<SymbolId> matches;
+    std::vector<SymbolId> exact_matches;
     std::vector<SymbolId> recovery_matches;
     for (const SymbolId candidate : candidates) {
       const SemanticSymbol& symbol = model_.symbol(candidate);
@@ -1059,20 +1088,30 @@ class SemanticAnalyzer {
         continue;
       }
       bool matches_types = true;
+      bool matches_exactly = true;
       for (std::size_t index = 0; index < arguments.size(); ++index) {
         if (!is_assignable(symbol.parameter_types[index],
                            arguments[index].type)) {
           matches_types = false;
           break;
         }
+        matches_exactly = matches_exactly && symbol.parameter_types[index] ==
+                                                 arguments[index].type;
       }
       if (matches_types) {
         if (symbol.is_valid) {
           matches.push_back(candidate);
+          if (matches_exactly) {
+            exact_matches.push_back(candidate);
+          }
         } else {
           recovery_matches.push_back(candidate);
         }
       }
+    }
+
+    if (!exact_matches.empty()) {
+      matches = std::move(exact_matches);
     }
 
     if (matches.empty() && !recovery_matches.empty()) {
@@ -1207,6 +1246,10 @@ class SemanticAnalyzer {
       diagnostics_.error(range, "type reference cannot be used as a value");
       return false;
     }
+    if (state.type == model_.void_type()) {
+      diagnostics_.error(range, "void expression cannot be used as a value");
+      return false;
+    }
     return state.category != ValueCategory::kInvalid ||
            state.type == model_.error_type();
   }
@@ -1221,8 +1264,13 @@ class SemanticAnalyzer {
   }
 
   bool is_assignable(TypeId expected, TypeId actual) const {
-    if (expected == model_.error_type() || actual == model_.error_type() ||
-        expected == actual) {
+    if (expected == model_.error_type() || actual == model_.error_type()) {
+      return true;
+    }
+    if (expected == model_.void_type() || actual == model_.void_type()) {
+      return false;
+    }
+    if (expected == actual) {
       return true;
     }
     return actual == model_.null_type() && is_reference(expected);

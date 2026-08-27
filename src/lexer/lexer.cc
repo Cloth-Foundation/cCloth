@@ -55,6 +55,7 @@ constexpr std::array kKeywords{
     Keyword{"bool", TokenKind::kKwBool},
     Keyword{"char", TokenKind::kKwChar},
     Keyword{"byte", TokenKind::kKwByte},
+    Keyword{"void", TokenKind::kKwVoid},
 };
 
 constexpr bool is_digit(char character) noexcept {

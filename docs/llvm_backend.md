@@ -49,6 +49,12 @@ comparison from the semantic operand type. Floating-point operations use LLVM
 floating instructions. Null-to-reference conversions disappear because both
 representations use opaque pointers.
 
+Canonical void functions lower to LLVM `void` regardless of whether the source
+omitted the return annotation or wrote `: void`. Their fallthrough and
+`return;` paths emit `ret void`. Calls to them do not create an LLVM result.
+The native entry adapter translates a void `Main` completion to process status
+zero.
+
 ## Calls and construction
 
 Ordinary functions receive the Stage 4 receiver slot followed by explicit
@@ -63,30 +69,44 @@ return the object.
 
 ## Runtime boundary
 
-Generated modules declare nine runtime functions:
+Generated modules declare the allocation, checking, and typed-output runtime
+boundary:
 
 ```llvm
-declare ptr @cloth_rt_alloc(i64, i64)
+declare ptr @cloth_rt_alloc(i64, i64, ptr, i64)
 declare ptr @cloth_rt_string_literal(ptr, i64)
 declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)
 declare i32 @cloth_rt_array_length(ptr)
 declare ptr @cloth_rt_array_element(ptr, i32)
 declare void @cloth_rt_require_receiver(ptr)
 declare void @cloth_rt_print(ptr)
+declare void @cloth_rt_print_char(i32)
+declare void @cloth_rt_print_i8(i8)
+declare void @cloth_rt_print_i16(i16)
 declare void @cloth_rt_print_i32(i32)
+declare void @cloth_rt_print_i64(i64)
+declare void @cloth_rt_print_u8(i8)
+declare void @cloth_rt_print_u16(i16)
+declare void @cloth_rt_print_u32(i32)
+declare void @cloth_rt_print_u64(i64)
+declare void @cloth_rt_print_f32(float)
+declare void @cloth_rt_print_f64(double)
 declare void @cloth_rt_print_bool(i8)
+declare void @cloth_rt_print_object(ptr)
+declare void @cloth_rt_print_newline()
 ```
 
-`cloth_rt_alloc` receives object size and alignment and returns
-zero-initialized storage or terminates through the runtime failure path.
+`cloth_rt_alloc` receives object size, alignment, and qualified type-name bytes.
+It returns zero-initialized storage with an active object descriptor or
+terminates through the runtime failure path.
 `cloth_rt_string_literal` constructs or interns an opaque Cloth string from
 immutable bytes.
 The array calls allocate typed element storage, query its fixed length, and
 perform null and bounds checked element addressing.
 `cloth_rt_require_receiver` returns for a non-null reference and traps through
 the runtime null-reference path otherwise.
-The print functions write a `String`, signed `int32`, or lowercase `bool`
-respectively. LLVM `i1` booleans are extended to the runtime ABI's `i8`.
+The print functions cover all primitive ABI widths, file-class references, and
+line feeds. LLVM `i1` booleans are extended to the runtime ABI's `i8`.
 
 These declarations intentionally keep allocation, strings, traps, and future
 garbage-collector integration outside generated user functions.

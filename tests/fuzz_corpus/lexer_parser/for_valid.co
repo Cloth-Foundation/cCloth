@@ -1,0 +1,5 @@
+func Visit(String[] values) {
+    for (var value in values) {
+        print(value);
+    }
+}

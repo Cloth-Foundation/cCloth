@@ -191,10 +191,11 @@ void fields_and_visibility(TestContext& test) {
 void functions(TestContext& test) {
   const ParsedSource source{"Functions.co",
                             "func shutdown() {}\n"
-                            "func Add(int a, int b): int { return a + b; }\n"};
+                            "func Add(int a, int b): int { return a + b; }\n"
+                            "func Flush(): void { return; }\n"};
   test.expect(error_count(source) == 0, "valid functions should parse");
-  test.expect(source.ast().functions.size() == 2, "wrong function count");
-  if (source.ast().functions.size() != 2) {
+  test.expect(source.ast().functions.size() == 3, "wrong function count");
+  if (source.ast().functions.size() != 3) {
     return;
   }
   const cloth::FunctionDecl& shutdown = source.ast().functions[0];
@@ -212,6 +213,12 @@ void functions(TestContext& test) {
               "uppercase function should be public");
   test.expect(source.ast().storage.block(add.body).statements.size() == 1,
               "func body was not parsed");
+
+  const cloth::FunctionDecl& flush = source.ast().functions[2];
+  test.expect(flush.return_type && flush.return_type->name == "void" &&
+                  flush.return_type->is_primitive &&
+                  !flush.return_type->is_array,
+              "explicit void return type was not retained");
 }
 
 void legacy_function_keyword_rejected(TestContext& test) {
@@ -463,6 +470,44 @@ void for_iteration_declarations(TestContext& test) {
               "explicit iteration declaration was not retained");
 }
 
+void malformed_for_headers_recover(TestContext& test) {
+  struct MalformedForCase {
+    std::string_view header;
+    std::string_view diagnostic;
+  };
+  const std::vector<MalformedForCase> cases{
+      {"for var value in values) {}", "expected '(' after 'for'"},
+      {"for (in values) {}", "expected 'var' or an explicit type in for loop"},
+      {"for (var in values) {}", "expected iteration variable name"},
+      {"for (var value values) {}", "expected 'in' after iteration variable"},
+      {"for (var value in) {}", "expected expression"},
+      {"for (var value in values {}", "expected ')' after for iterable"},
+      {"for (var value in values) ;", "expected '{' to begin for body"},
+  };
+
+  for (const MalformedForCase& malformed : cases) {
+    const ParsedSource source{"MalformedFor.co",
+                              "func Visit(int32[] values) {\n  " +
+                                  std::string{malformed.header} +
+                                  "\n  int32 recovered = 1;\n}\n"};
+    test.expect(has_diagnostic(source, malformed.diagnostic),
+                "malformed for header produced the wrong diagnostic");
+
+    bool recovered = false;
+    if (!source.ast().functions.empty()) {
+      const cloth::Block& body =
+          source.ast().storage.block(source.ast().functions[0].body);
+      for (const cloth::StatementId statement_id : body.statements) {
+        const auto* local = std::get_if<cloth::LocalVariableStatement>(
+            &source.ast().storage.statement(statement_id).data);
+        recovered =
+            recovered || (local != nullptr && local->name == "recovered");
+      }
+    }
+    test.expect(recovered, "malformed for header prevented statement recovery");
+  }
+}
+
 void calls_members_and_assignment(TestContext& test) {
   const ParsedSource source{
       "Calls.co",
@@ -688,6 +733,7 @@ int main() {
       {"expressions and if statement", expressions_and_if_statement},
       {"while, break, and continue", while_break_and_continue},
       {"for iteration declarations", for_iteration_declarations},
+      {"malformed for headers recover", malformed_for_headers_recover},
       {"calls, members, and assignment", calls_members_and_assignment},
       {"arrays", arrays},
       {"missing statement semicolon recover",

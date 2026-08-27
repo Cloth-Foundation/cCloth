@@ -104,7 +104,7 @@ class MirVerifier {
         report(range, "callable parameter count does not match its signature");
       }
       return_type = expected_kind == SymbolKind::kConstructor
-                        ? semantics_.no_value_type()
+                        ? semantics_.void_type()
                         : symbol.type;
     }
     for (const SymbolId parameter : callable.parameters) {
@@ -242,7 +242,9 @@ class MirVerifier {
                    std::get_if<MirArrayLiteralInstruction>(&instruction.data)) {
       verify_type(array->element_type, instruction.range);
       require_result(instruction);
-      if (instruction.type.value < semantics_.types().size()) {
+      if (instruction.type.value < semantics_.types().size() &&
+          instruction.type != semantics_.error_type() &&
+          array->element_type != semantics_.error_type()) {
         const SemanticType& type = semantics_.type(instruction.type);
         if (type.kind != TypeKind::kArray ||
             type.element_type != array->element_type) {
@@ -358,7 +360,7 @@ class MirVerifier {
                             instruction.range);
         }
       }
-      if (instruction.type == semantics_.no_value_type()) {
+      if (instruction.type == semantics_.void_type()) {
         require_no_result(instruction);
       } else {
         require_result(instruction);
@@ -397,11 +399,10 @@ class MirVerifier {
                    std::get_if<MirReturnTerminator>(&terminator.data)) {
       verify_optional_value(return_terminator->value, value_types,
                             terminator.range);
-      if (return_type == semantics_.no_value_type() &&
-          return_terminator->value) {
-        report(terminator.range, "no-value body returns a value");
+      if (return_type == semantics_.void_type() && return_terminator->value) {
+        report(terminator.range, "void body returns a value");
       }
-      if (return_type != semantics_.no_value_type() &&
+      if (return_type != semantics_.void_type() &&
           return_type != semantics_.error_type() && !return_terminator->value) {
         report(terminator.range, "value body returns without a value");
       }
@@ -416,8 +417,8 @@ class MirVerifier {
     if (!instruction.result) {
       report(instruction.range, "value instruction has no result");
     }
-    if (instruction.type == semantics_.no_value_type()) {
-      report(instruction.range, "value instruction has the no-value type");
+    if (instruction.type == semantics_.void_type()) {
+      report(instruction.range, "value instruction has the void type");
     }
   }
 
@@ -425,7 +426,7 @@ class MirVerifier {
     if (instruction.result) {
       report(instruction.range, "effect instruction unexpectedly has a result");
     }
-    if (instruction.type != semantics_.no_value_type()) {
+    if (instruction.type != semantics_.void_type()) {
       report(instruction.range, "effect instruction has a value type");
     }
   }

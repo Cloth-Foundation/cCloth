@@ -3,6 +3,91 @@ cmake_minimum_required(VERSION 3.25)
 project(Cloth VERSION 0.1.0 LANGUAGES CXX)
 
 option(CLOTH_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(CLOTH_ENABLE_SANITIZERS
+       "Enable supported address and undefined-behavior sanitizers" OFF)
+option(CLOTH_ENABLE_COVERAGE "Enable compiler coverage instrumentation" OFF)
+option(CLOTH_BUILD_FUZZERS "Build opt-in lexer/parser fuzz targets" OFF)
+set(CLOTH_TEST_TIMEOUT_SECONDS 15 CACHE STRING
+    "Maximum runtime in seconds for each CTest test")
+
+if(NOT CLOTH_TEST_TIMEOUT_SECONDS MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "CLOTH_TEST_TIMEOUT_SECONDS must be a positive integer")
+endif()
+
+if(CLOTH_ENABLE_SANITIZERS AND CLOTH_ENABLE_COVERAGE)
+    message(FATAL_ERROR
+        "CLOTH_ENABLE_SANITIZERS and CLOTH_ENABLE_COVERAGE cannot be combined"
+    )
+endif()
+if(CLOTH_BUILD_FUZZERS AND
+   (NOT CLOTH_ENABLE_SANITIZERS OR MSVC OR
+    NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+    message(FATAL_ERROR
+        "CLOTH_BUILD_FUZZERS requires Clang with "
+        "CLOTH_ENABLE_SANITIZERS=ON"
+    )
+endif()
+if(CLOTH_ENABLE_SANITIZERS AND WIN32 AND
+   CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    execute_process(
+        COMMAND ${CMAKE_CXX_COMPILER} -print-resource-dir
+        RESULT_VARIABLE CLOTH_CLANG_RESOURCE_RESULT
+        OUTPUT_VARIABLE CLOTH_CLANG_RESOURCE_DIRECTORY
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT CLOTH_CLANG_RESOURCE_RESULT EQUAL 0)
+        message(FATAL_ERROR "Unable to locate the Clang runtime directory")
+    endif()
+    file(TO_CMAKE_PATH "${CLOTH_CLANG_RESOURCE_DIRECTORY}/lib/windows"
+         CLOTH_CLANG_RUNTIME_DIRECTORY)
+endif()
+
+if(CLOTH_ENABLE_SANITIZERS)
+    include(CheckCXXSourceCompiles)
+    set(CLOTH_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+    set(CLOTH_SAVED_REQUIRED_LINK_OPTIONS "${CMAKE_REQUIRED_LINK_OPTIONS}")
+    if(MSVC)
+        set(CMAKE_REQUIRED_FLAGS "/fsanitize=address")
+        set(CMAKE_REQUIRED_LINK_OPTIONS "/fsanitize=address")
+    else()
+        set(CMAKE_REQUIRED_FLAGS "-fsanitize=address,undefined")
+        set(CMAKE_REQUIRED_LINK_OPTIONS "-fsanitize=address,undefined")
+    endif()
+    check_cxx_source_compiles(
+        "int main() { return 0; }"
+        CLOTH_SANITIZER_RUNTIME_AVAILABLE
+    )
+    set(CMAKE_REQUIRED_FLAGS "${CLOTH_SAVED_REQUIRED_FLAGS}")
+    set(CMAKE_REQUIRED_LINK_OPTIONS
+        "${CLOTH_SAVED_REQUIRED_LINK_OPTIONS}")
+    if(NOT CLOTH_SANITIZER_RUNTIME_AVAILABLE)
+        message(FATAL_ERROR
+            "The selected compiler does not provide the requested "
+            "sanitizer runtimes"
+        )
+    endif()
+endif()
+
+if(CLOTH_ENABLE_COVERAGE)
+    include(CheckCXXSourceCompiles)
+    set(CLOTH_SAVED_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS}")
+    set(CLOTH_SAVED_REQUIRED_LINK_OPTIONS "${CMAKE_REQUIRED_LINK_OPTIONS}")
+    set(CMAKE_REQUIRED_FLAGS "--coverage")
+    set(CMAKE_REQUIRED_LINK_OPTIONS "--coverage")
+    check_cxx_source_compiles(
+        "int main() { return 0; }"
+        CLOTH_COVERAGE_RUNTIME_AVAILABLE
+    )
+    set(CMAKE_REQUIRED_FLAGS "${CLOTH_SAVED_REQUIRED_FLAGS}")
+    set(CMAKE_REQUIRED_LINK_OPTIONS
+        "${CLOTH_SAVED_REQUIRED_LINK_OPTIONS}")
+    if(NOT CLOTH_COVERAGE_RUNTIME_AVAILABLE)
+        message(FATAL_ERROR
+            "The selected compiler does not provide coverage instrumentation"
+        )
+    endif()
+endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -90,6 +175,50 @@ function(cloth_enable_warnings target)
             target_compile_options(${target} PRIVATE -Werror)
         endif()
     endif()
+
+    if(CLOTH_ENABLE_SANITIZERS AND NOT "${target}" STREQUAL "cloth_runtime")
+        if(MSVC)
+            target_compile_options(${target} PRIVATE /fsanitize=address)
+            target_link_options(${target} PRIVATE /fsanitize=address)
+        elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+            target_compile_options(${target} PRIVATE
+                -fsanitize=address,undefined
+                -fno-omit-frame-pointer
+            )
+            target_link_options(${target} PRIVATE
+                -fsanitize=address,undefined
+            )
+        else()
+            message(FATAL_ERROR
+                "CLOTH_ENABLE_SANITIZERS is unsupported by "
+                "${CMAKE_CXX_COMPILER_ID}"
+            )
+        endif()
+    endif()
+
+    if(CLOTH_ENABLE_SANITIZERS AND WIN32 AND
+       CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND
+       NOT "${target}" STREQUAL "cloth_runtime")
+        target_compile_definitions(${target} PRIVATE
+            _DISABLE_STRING_ANNOTATION=1
+            _DISABLE_VECTOR_ANNOTATION=1
+        )
+    endif()
+
+    if(CLOTH_BUILD_FUZZERS AND NOT "${target}" STREQUAL "cloth_runtime")
+        target_compile_options(${target} PRIVATE -fsanitize=fuzzer-no-link)
+    endif()
+
+    if(CLOTH_ENABLE_COVERAGE AND NOT "${target}" STREQUAL "cloth_runtime")
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+            target_compile_options(${target} PRIVATE --coverage -O0 -g)
+            target_link_options(${target} PRIVATE --coverage)
+        else()
+            message(FATAL_ERROR
+                "CLOTH_ENABLE_COVERAGE requires Clang or GNU C++"
+            )
+        endif()
+    endif()
 endfunction()
 
 cloth_enable_warnings(cloth_compiler)
@@ -107,11 +236,22 @@ target_link_libraries(clothc PRIVATE cloth_compiler)
 cloth_enable_warnings(clothc)
 add_dependencies(clothc cloth_runtime)
 
+if(CLOTH_BUILD_FUZZERS)
+    add_executable(cloth_lexer_parser_fuzzer
+        tests/lexer_parser_fuzzer.cc
+    )
+    target_link_libraries(cloth_lexer_parser_fuzzer PRIVATE cloth_compiler)
+    cloth_enable_warnings(cloth_lexer_parser_fuzzer)
+    target_link_options(cloth_lexer_parser_fuzzer PRIVATE -fsanitize=fuzzer)
+endif()
+
 file(TO_CMAKE_PATH "${CMAKE_CXX_COMPILER}" CLOTH_NATIVE_LINKER_PATH)
 if(WIN32)
     if(MSVC)
         set(CLOTH_NATIVE_TARGET_TRIPLE "x86_64-pc-windows-msvc")
         target_compile_definitions(clothc PRIVATE CLOTH_NATIVE_LINKER_MSVC=1)
+    elseif(CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+        set(CLOTH_NATIVE_TARGET_TRIPLE "x86_64-pc-windows-msvc")
     else()
         set(CLOTH_NATIVE_TARGET_TRIPLE "x86_64-w64-windows-gnu")
         target_compile_definitions(clothc PRIVATE
@@ -168,6 +308,15 @@ if(BUILD_TESTING)
     target_link_libraries(cloth_mir_tests PRIVATE cloth_compiler)
     cloth_enable_warnings(cloth_mir_tests)
     add_test(NAME cloth_mir_tests COMMAND cloth_mir_tests)
+    if(CLOTH_BUILD_FUZZERS)
+        add_test(
+            NAME cloth_lexer_parser_fuzzer_smoke
+            COMMAND cloth_lexer_parser_fuzzer
+                    -runs=100
+                    -max_len=4096
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz_corpus/lexer_parser
+        )
+    endif()
     add_test(
         NAME cloth_cli_example
         COMMAND clothc
@@ -220,6 +369,30 @@ if(BUILD_TESTING)
         )
 
         if(WIN32)
+            set(CLOTH_TEST_VOID_MAIN_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth void main.exe")
+        else()
+            set(CLOTH_TEST_VOID_MAIN_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth void main")
+        endif()
+        add_test(
+            NAME cloth_cli_build_void_main
+            COMMAND clothc "--build=${CLOTH_TEST_VOID_MAIN_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/VoidMain.co
+        )
+        add_test(
+            NAME cloth_void_main
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_VOID_MAIN_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/void_main.txt"
+                    -DCLOTH_EXACT_OUTPUT=ON
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_void_main PROPERTIES
+            DEPENDS cloth_cli_build_void_main
+        )
+
+        if(WIN32)
             set(CLOTH_TEST_FIZZBUZZ_EXECUTABLE
                 "${CMAKE_CURRENT_BINARY_DIR}/cloth fizzbuzz.exe")
         else()
@@ -263,6 +436,31 @@ if(BUILD_TESTING)
         )
         set_tests_properties(cloth_print_values PROPERTIES
             DEPENDS cloth_cli_build_print_values
+        )
+
+        if(WIN32)
+            set(CLOTH_TEST_PRINT_REPRESENTATION_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth print representation.exe")
+        else()
+            set(CLOTH_TEST_PRINT_REPRESENTATION_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth print representation")
+        endif()
+        add_test(
+            NAME cloth_cli_build_print_representation
+            COMMAND clothc
+                    "--build=${CLOTH_TEST_PRINT_REPRESENTATION_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/PrintRepresentation.co
+        )
+        add_test(
+            NAME cloth_print_representation
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_PRINT_REPRESENTATION_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/print_representation.txt"
+                    -DCLOTH_EXACT_OUTPUT=ON
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_print_representation PROPERTIES
+            DEPENDS cloth_cli_build_print_representation
         )
 
         if(WIN32)
@@ -357,6 +555,52 @@ if(BUILD_TESTING)
         set_tests_properties(cloth_for_each PROPERTIES
             DEPENDS cloth_cli_build_for_each
         )
+
+        if(WIN32)
+            set(CLOTH_TEST_FOR_CONTRACT_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth for contract.exe")
+        else()
+            set(CLOTH_TEST_FOR_CONTRACT_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth for contract")
+        endif()
+        add_test(
+            NAME cloth_cli_build_for_contract
+            COMMAND clothc "--build=${CLOTH_TEST_FOR_CONTRACT_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ForContract.co
+        )
+        add_test(
+            NAME cloth_for_contract
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_FOR_CONTRACT_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/for_contract.txt"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_for_contract PROPERTIES
+            DEPENDS cloth_cli_build_for_contract
+        )
+
+        if(WIN32)
+            set(CLOTH_TEST_FOR_NULL_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth for null.exe")
+        else()
+            set(CLOTH_TEST_FOR_NULL_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth for null")
+        endif()
+        add_test(
+            NAME cloth_cli_build_for_null
+            COMMAND clothc "--build=${CLOTH_TEST_FOR_NULL_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ForNull.co
+        )
+        add_test(
+            NAME cloth_for_null
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_FOR_NULL_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED_ERROR=null array"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_failure.cmake
+        )
+        set_tests_properties(cloth_for_null PROPERTIES
+            DEPENDS cloth_cli_build_for_null
+        )
     endif()
     add_test(
         NAME cloth_cli_lexical_error
@@ -373,6 +617,23 @@ if(BUILD_TESTING)
         COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/sema_errors.co
     )
     set_tests_properties(cloth_cli_sema_error PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME cloth_cli_void_error
+        COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/void_errors.co
+    )
+    set_tests_properties(cloth_cli_void_error PROPERTIES WILL_FAIL TRUE)
+
+    get_property(CLOTH_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${CLOTH_REGISTERED_TESTS} PROPERTIES
+        TIMEOUT ${CLOTH_TEST_TIMEOUT_SECONDS}
+    )
+    if(CLOTH_ENABLE_SANITIZERS AND WIN32 AND
+       CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set_tests_properties(${CLOTH_REGISTERED_TESTS} PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${CLOTH_CLANG_RUNTIME_DIRECTORY}"
+        )
+    endif()
 endif()
 
 add_custom_target(run_compiler

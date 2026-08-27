@@ -1,0 +1,56 @@
+int32 Calls = 0;
+
+ForContract() {}
+
+func Values(): int32[] {
+    Calls = Calls + 1;
+    return [1, 2, 3];
+}
+
+func GetCalls(): int32 {
+    return Calls;
+}
+
+func Main() {
+    ForContract tracker = ForContract();
+    int32 total = 0;
+    for (var value in tracker.Values()) {
+        total = total + value;
+    }
+    print(total);
+    print("\n");
+    print(tracker.GetCalls());
+    print("\n");
+
+    int32[] source = [7];
+    for (var value in source) {
+        value = 99;
+    }
+    print(source[0]);
+    print("\n");
+
+    String[] labels = ["A", "B"];
+    for (String label in labels) {
+        print(label);
+    }
+    print("\n");
+
+    int32[] outerValues = [1, 2];
+    int32[] innerValues = [1, 2, 3];
+    for (int32 outerValue in outerValues) {
+        for (var innerValue in innerValues) {
+            if (innerValue == 2) {
+                continue;
+            }
+            if (innerValue == 3) {
+                break;
+            }
+            print(outerValue);
+        }
+        if (outerValue == 2) {
+            continue;
+        }
+        print("-");
+    }
+    print("\n");
+}

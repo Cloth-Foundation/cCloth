@@ -75,6 +75,19 @@ bool body_has_instruction(const cloth::MirBody& body) {
   return false;
 }
 
+std::optional<cloth::MirBlockId> for_latch_block(const cloth::MirBody& body) {
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      const auto* phi =
+          std::get_if<cloth::MirPhiInstruction>(&instruction.data);
+      if (phi != nullptr && phi->incoming.size() == 2) {
+        return phi->incoming[1].predecessor;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 bool has_diagnostic(const cloth::DiagnosticEngine& diagnostics,
                     std::string_view text) {
   for (const cloth::Diagnostic& diagnostic : diagnostics.diagnostics()) {
@@ -293,19 +306,34 @@ void incomplete_return_flow(TestContext& test) {
               "invalid value fallthrough lacks an unreachable terminator");
 }
 
-void no_value_fallthrough(TestContext& test) {
+void void_fallthrough(TestContext& test) {
   CompiledSources compilation;
-  compilation.add("Actions.co", "func Run() { int value = 1; }\n");
+  compilation.add("Actions.co",
+                  "func Explicit(): void { return; }\n"
+                  "func Implicit() { Explicit(); }\n");
   compilation.compile();
 
-  const cloth::MirTerminator& terminator =
-      compilation.result->mir.files[0].functions[0].body.blocks[0].terminator;
-  const auto* return_terminator =
-      std::get_if<cloth::MirReturnTerminator>(&terminator.data);
-  test.expect(compilation.result->is_valid,
-              "no-value fallthrough should be valid");
-  test.expect(return_terminator != nullptr && !return_terminator->value,
-              "no-value fallthrough lacks an implicit return");
+  test.expect(compilation.result->is_valid, "void fallthrough should be valid");
+  for (const cloth::MirCallable& function :
+       compilation.result->mir.files[0].functions) {
+    const cloth::MirTerminator& terminator = function.body.blocks[0].terminator;
+    const auto* return_terminator =
+        std::get_if<cloth::MirReturnTerminator>(&terminator.data);
+    test.expect(return_terminator != nullptr && !return_terminator->value,
+                "void function lacks a valueless return");
+  }
+  const cloth::MirBasicBlock& implicit_body =
+      compilation.result->mir.files[0].functions[1].body.blocks[0];
+  bool found_void_call = false;
+  for (const cloth::MirInstruction& instruction : implicit_body.instructions) {
+    found_void_call =
+        found_void_call ||
+        (std::holds_alternative<cloth::MirCallInstruction>(instruction.data) &&
+         !instruction.result &&
+         instruction.type == compilation.result->semantics.void_type());
+  }
+  test.expect(found_void_call,
+              "void call incorrectly materialized a MIR value");
 }
 
 void field_initializer_body(TestContext& test) {
@@ -371,6 +399,7 @@ void for_iteration_control_flow(TestContext& test) {
                   "  int32 total = 0;\n"
                   "  for (var value in values) {\n"
                   "    if (value == 2) { continue; }\n"
+                  "    if (value == 3) { break; }\n"
                   "    total = total + value;\n"
                   "  }\n"
                   "  return total;\n"
@@ -390,6 +419,136 @@ void for_iteration_control_flow(TestContext& test) {
               "iteration variable was not declared in MIR");
   test.expect(body.blocks.size() >= 7,
               "for loop did not create condition, body, latch, and exit flow");
+
+  std::optional<cloth::MirBlockId> condition_block;
+  const cloth::MirPhiInstruction* index_phi = nullptr;
+  std::optional<cloth::MirValueId> index;
+  std::optional<cloth::MirValueId> array;
+  for (std::size_t block_index = 0; block_index < body.blocks.size();
+       ++block_index) {
+    for (const cloth::MirInstruction& instruction :
+         body.blocks[block_index].instructions) {
+      if (const auto* phi =
+              std::get_if<cloth::MirPhiInstruction>(&instruction.data)) {
+        condition_block = cloth::MirBlockId{block_index};
+        index_phi = phi;
+        index = instruction.result;
+      } else if (const auto* length =
+                     std::get_if<cloth::MirArrayLengthInstruction>(
+                         &instruction.data)) {
+        array = length->array;
+      }
+    }
+  }
+  test.expect(condition_block && index_phi != nullptr && index && array,
+              "for condition does not contain its canonical values");
+  if (!condition_block || index_phi == nullptr || !index || !array ||
+      index_phi->incoming.size() != 2) {
+    return;
+  }
+
+  const cloth::MirBlockId preheader = index_phi->incoming[0].predecessor;
+  const cloth::MirBlockId latch = index_phi->incoming[1].predecessor;
+  test.expect(preheader == body.entry,
+              "for phi does not receive zero from the preheader");
+  const auto* preheader_jump = std::get_if<cloth::MirJumpTerminator>(
+      &body.blocks[preheader.value].terminator.data);
+  const auto* latch_jump = std::get_if<cloth::MirJumpTerminator>(
+      &body.blocks[latch.value].terminator.data);
+  test.expect(
+      preheader_jump != nullptr && preheader_jump->target == *condition_block,
+      "for preheader does not enter the condition");
+  test.expect(latch_jump != nullptr && latch_jump->target == *condition_block,
+              "for latch does not return to the condition");
+
+  const auto* condition_branch = std::get_if<cloth::MirBranchTerminator>(
+      &body.blocks[condition_block->value].terminator.data);
+  test.expect(condition_branch != nullptr,
+              "for condition does not branch to body and exit");
+  if (condition_branch == nullptr) {
+    return;
+  }
+
+  bool indexed_with_phi = false;
+  for (const cloth::MirInstruction& instruction :
+       body.blocks[condition_branch->then_block.value].instructions) {
+    const auto* load =
+        std::get_if<cloth::MirArrayLoadInstruction>(&instruction.data);
+    indexed_with_phi =
+        indexed_with_phi ||
+        (load != nullptr && load->array == *array && load->index == *index);
+  }
+  test.expect(indexed_with_phi,
+              "for body does not load the indexed element from its iterable");
+
+  std::size_t latch_edges = 0;
+  std::size_t condition_edges = 0;
+  std::size_t exit_edges = 0;
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    const auto* jump =
+        std::get_if<cloth::MirJumpTerminator>(&block.terminator.data);
+    if (jump == nullptr) {
+      continue;
+    }
+    latch_edges += jump->target == latch ? 1U : 0U;
+    condition_edges += jump->target == *condition_block ? 1U : 0U;
+    exit_edges += jump->target == condition_branch->else_block ? 1U : 0U;
+  }
+  test.expect(latch_edges >= 2,
+              "continue or body fallthrough does not target the latch");
+  test.expect(condition_edges == 2,
+              "an edge other than preheader or latch bypasses the for index");
+  test.expect(exit_edges >= 1, "break does not target the for exit");
+}
+
+void for_terminating_body_reachability(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Terminating.co",
+                  "func BreakFirst(int32[] values): int32 {\n"
+                  "  for (var value in values) { break; }\n"
+                  "  return 1;\n"
+                  "}\n"
+                  "func ContinueAll(int32[] values): int32 {\n"
+                  "  int32 total = 0;\n"
+                  "  for (var value in values) {\n"
+                  "    total = total + value;\n"
+                  "    continue;\n"
+                  "  }\n"
+                  "  return total;\n"
+                  "}\n"
+                  "func ReturnFirst(int32[] values): int32 {\n"
+                  "  for (var value in values) { return value; }\n"
+                  "  return 0;\n"
+                  "}\n");
+  compilation.compile();
+  test.expect(compilation.result->is_valid,
+              "terminating for bodies failed MIR verification");
+
+  const std::vector<cloth::MirCallable>& functions =
+      compilation.result->mir.files[0].functions;
+  test.expect(functions.size() == 3,
+              "terminating body fixture has the wrong function count");
+  if (functions.size() != 3) {
+    return;
+  }
+
+  const std::optional<cloth::MirBlockId> break_latch =
+      for_latch_block(functions[0].body);
+  const std::optional<cloth::MirBlockId> continue_latch =
+      for_latch_block(functions[1].body);
+  const std::optional<cloth::MirBlockId> return_latch =
+      for_latch_block(functions[2].body);
+  test.expect(break_latch && continue_latch && return_latch,
+              "terminating body fixture lost a for latch");
+  if (!break_latch || !continue_latch || !return_latch) {
+    return;
+  }
+  test.expect(!functions[0].body.blocks[break_latch->value].is_reachable,
+              "unconditional break left the latch reachable");
+  test.expect(functions[1].body.blocks[continue_latch->value].is_reachable,
+              "unconditional continue did not reach the latch");
+  test.expect(!functions[2].body.blocks[return_latch->value].is_reachable,
+              "unconditional return left the latch reachable");
 }
 
 void nullable_conversion(TestContext& test) {
@@ -478,12 +637,24 @@ void verifiers_reject_corruption(TestContext& test) {
       compilation.result->semantics.bool_type(), range,
       cloth::HirUnaryExpression{cloth::TokenKind::kBang,
                                 cloth::HirExpressionId{999}}}));
+  static_cast<void>(broken_hir.storage.add_expression(cloth::HirExpression{
+      compilation.result->semantics.void_type(), range,
+      cloth::HirLiteralExpression{cloth::LiteralKind::kInteger, "1"}}));
+  static_cast<void>(broken_hir.storage.add_statement(cloth::HirStatement{
+      range,
+      cloth::HirForStatement{cloth::SymbolId{999}, cloth::HirExpressionId{999},
+                             cloth::HirBlockId{999}}}));
   cloth::DiagnosticEngine hir_diagnostics;
   test.expect(!cloth::verify_hir(broken_hir, compilation.result->semantics,
                                  hir_diagnostics),
               "HIR verifier accepted an invalid expression target");
   test.expect(has_diagnostic(hir_diagnostics, "unknown expression"),
               "HIR verifier reported the wrong invariant failure");
+  test.expect(has_diagnostic(hir_diagnostics, "unknown symbol") &&
+                  has_diagnostic(hir_diagnostics, "unknown block"),
+              "HIR verifier did not validate for statement references");
+  test.expect(has_diagnostic(hir_diagnostics, "void expression"),
+              "HIR verifier accepted a fabricated void value");
 }
 
 using TestFunction = void (*)(TestContext&);
@@ -504,11 +675,12 @@ int main() {
       {"structured loop control flow", structured_loop_control_flow},
       {"unreachable statements", unreachable_statements},
       {"incomplete return flow", incomplete_return_flow},
-      {"no-value fallthrough", no_value_fallthrough},
+      {"void fallthrough", void_fallthrough},
       {"field initializer body", field_initializer_body},
       {"member store", member_store},
       {"array instructions", array_instructions},
       {"for iteration control flow", for_iteration_control_flow},
+      {"for terminating body reachability", for_terminating_body_reachability},
       {"nullable conversion", nullable_conversion},
       {"call receivers", call_receivers},
       {"verifiers reject corruption", verifiers_reject_corruption},

@@ -1,0 +1,17 @@
+A
+cloth
+true
+0
+0
+0
+0
+0
+0
+0
+0
+0
+0
+1.5
+<PrintRepresentation>
+null
+done

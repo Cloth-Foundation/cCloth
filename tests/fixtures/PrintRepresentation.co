@@ -1,0 +1,39 @@
+char Character = 'A';
+String Text = "cloth";
+bool Flag = true;
+byte ByteValue;
+int8 Int8Value;
+int16 Int16Value;
+int32 Int32Value;
+int64 Int64Value;
+uint8 Uint8Value;
+uint16 Uint16Value;
+uint32 Uint32Value;
+uint64 Uint64Value;
+float32 Float32Value;
+float64 Float64Value = 1.5;
+
+PrintRepresentation() {}
+
+func Main() {
+    PrintRepresentation values = PrintRepresentation();
+    println(values.Character);
+    println(values.Text);
+    println(values.Flag);
+    println(values.ByteValue);
+    println(values.Int8Value);
+    println(values.Int16Value);
+    println(values.Int32Value);
+    println(values.Int64Value);
+    println(values.Uint8Value);
+    println(values.Uint16Value);
+    println(values.Uint32Value);
+    println(values.Uint64Value);
+    println(values.Float32Value);
+    println(values.Float64Value);
+    println(values);
+    PrintRepresentation missing = null;
+    println(missing);
+    print("done");
+    println();
+}

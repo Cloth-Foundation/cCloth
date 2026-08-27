@@ -1,4 +1,4 @@
-# Cloth Stage 10.0 array iteration
+# Cloth Stage 10.1 array iteration
 
 Stage 10.0 adds declaration-based `for` iteration over arrays:
 
@@ -35,9 +35,24 @@ index. `break` targets the exit.
 This structure preserves left-to-right evaluation, executes the iterable only
 once, and prevents `continue` from accidentally repeating the same element.
 
+## Verification contract
+
+Stage 10.1 locks these rules with parser, semantic, HIR, MIR, backend, and
+native tests. Malformed headers must diagnose each missing boundary and recover
+to the following statement. Semantic tests cover reference elements,
+evaluation-before-binding, shadowing, duplicate locals, invalid types, and
+non-cascading errors.
+
+MIR tests verify the exact preheader, condition, body, latch, and exit edges;
+the two phi predecessors; and reachability after unconditional `break`,
+`continue`, or `return`. Native tests prove evaluate-once behavior, mutable-copy
+bindings, `String[]` iteration, innermost nested-loop control, and null-array
+trapping. The wasm32 backend also emits and verifies the same target-independent
+iteration shape.
+
 ## Deferred work
 
-Stage 10.0 iterates arrays only. Index/value dual bindings, numeric ranges,
+Stage 10 iterates arrays only. Index/value dual bindings, numeric ranges,
 destructuring, asynchronous iteration, and a general `Iterable<T>` protocol are
 deferred. The `declaration in expression` syntax can support those features
 without changing existing array source.

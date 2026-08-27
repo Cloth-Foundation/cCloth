@@ -1,0 +1,8 @@
+func Write(): void {
+    println("stage 11");
+    return;
+}
+
+func Main(): void {
+    Write();
+}

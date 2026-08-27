@@ -26,6 +26,10 @@ Fixed-width integer and floating-point names retain their declared bit widths.
 `byte`, `int8`, and `uint8` occupy one byte. `char` is a 32-bit value. `bool`
 has one-bit value semantics and one-byte storage.
 
+`void` is a callable-result marker with ABI size zero and alignment one; it has
+no storage representation. An omitted function return annotation and explicit
+`: void` produce the same semantic and ABI return type.
+
 `String`, file classes, arrays, and `null` use the target reference
 representation. A reference has the target pointer size and alignment. ABI
 references are opaque; the contract does not expose a native C++ object or
@@ -35,8 +39,10 @@ types remain structural semantic data and use an `a` prefix in mangled names.
 ## File-class objects
 
 Every file-class object begins with two opaque, reference-sized runtime words.
-They reserve stable space for type metadata and runtime or collector state
-without defining their backend implementation.
+Stage 10.5 initializes the first with an opaque type descriptor and the second
+with null collector state. The descriptor carries the qualified file-class
+identity used by deterministic object output; generated LLVM still does not
+depend on its private runtime layout.
 
 Fields follow the header in source declaration order. Each field is aligned for
 its ABI type, padding is explicit in its recorded offset, and the complete

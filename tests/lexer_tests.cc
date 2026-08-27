@@ -111,7 +111,7 @@ void keywords_versus_identifiers(TestContext& test) {
 void primitive_keywords(TestContext& test) {
   const LexedSource source{
       "int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 "
-      "float float32 float64 bool char byte"};
+      "float float32 float64 bool char byte void"};
   expect_kinds(test, source,
                {cloth::TokenKind::kKwInt, cloth::TokenKind::kKwInt8,
                 cloth::TokenKind::kKwInt16, cloth::TokenKind::kKwInt32,
@@ -121,7 +121,7 @@ void primitive_keywords(TestContext& test) {
                 cloth::TokenKind::kKwFloat, cloth::TokenKind::kKwFloat32,
                 cloth::TokenKind::kKwFloat64, cloth::TokenKind::kKwBool,
                 cloth::TokenKind::kKwChar, cloth::TokenKind::kKwByte,
-                cloth::TokenKind::kEof});
+                cloth::TokenKind::kKwVoid, cloth::TokenKind::kEof});
 }
 
 void numeric_literals(TestContext& test) {

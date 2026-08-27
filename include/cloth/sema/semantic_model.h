@@ -36,7 +36,7 @@ struct SymbolId {
 
 enum class TypeKind {
   kError,
-  kNoValue,
+  kVoid,
   kNull,
   kBool,
   kChar,
@@ -76,8 +76,20 @@ enum class SymbolKind {
 enum class IntrinsicKind {
   kNone,
   kPrintString,
-  kPrintInt32,
   kPrintBool,
+  kPrintChar,
+  kPrintInt8,
+  kPrintInt16,
+  kPrintInt32,
+  kPrintInt64,
+  kPrintUint8,
+  kPrintUint16,
+  kPrintUint32,
+  kPrintUint64,
+  kPrintFloat32,
+  kPrintFloat64,
+  kPrintObject,
+  kPrintNewline,
 };
 
 struct SemanticSymbol {
@@ -124,7 +136,7 @@ class SemanticModel {
   SemanticModel();
 
   [[nodiscard]] TypeId error_type() const noexcept;
-  [[nodiscard]] TypeId no_value_type() const noexcept;
+  [[nodiscard]] TypeId void_type() const noexcept;
   [[nodiscard]] TypeId null_type() const noexcept;
   [[nodiscard]] TypeId bool_type() const noexcept;
   [[nodiscard]] TypeId string_type() const noexcept;
@@ -152,6 +164,8 @@ class SemanticModel {
   [[nodiscard]] TypeId add_type(SemanticType type);
   [[nodiscard]] TypeId get_array_type(TypeId element_type);
   void add_type_alias(std::string name, TypeId type);
+  void add_intrinsic(std::string name, std::vector<TypeId> parameter_types,
+                     IntrinsicKind intrinsic);
   [[nodiscard]] SymbolId add_symbol(SemanticSymbol symbol);
   [[nodiscard]] FileId add_file(FileSemantics file);
   [[nodiscard]] FileSemantics& mutable_file(FileId id);
@@ -162,7 +176,7 @@ class SemanticModel {
   std::vector<SemanticSymbol> symbols_;
   std::vector<FileSemantics> files_;
   TypeId error_type_{0};
-  TypeId no_value_type_{0};
+  TypeId void_type_{0};
   TypeId null_type_{0};
   TypeId bool_type_{0};
   TypeId string_type_{0};

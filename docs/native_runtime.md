@@ -1,44 +1,44 @@
 # Cloth native runtime and execution
 
 Stage 6.0 turns a verified Cloth compilation into a native x86-64 executable.
-It keeps LLVM behind an external tool boundary and gives the first core
-operation, `print(String)`, a typed language and runtime contract. Stage 7.0
-extends that contract with exact `int32` and `bool` output. Stage 9.0 adds
-fixed-length array allocation and checked access.
+Stage 7.0 adds initial typed output, Stage 9.0 adds fixed-length arrays, and
+Stage 10.5 completes scalar output plus file-class object descriptors.
 
 ## Source contract
 
-The core scope contains this intrinsic signature:
+The core scope contains these intrinsic families:
 
 ```text
-print(String): no value
-print(int32): no value
-print(bool): no value
+print(T): no value
+println(T): no value
+println(): no value
 ```
 
-`print` does not add a newline. Strings are written byte-for-byte, integers use
-base 10, and booleans use lowercase `true` or `false`. Ordinary local and member
-lookup precedes the core scope, so source code can shadow the intrinsic
-overloads without a special parser rule.
+`T` covers every primitive, every file class, and `null`. `print` does not add
+a newline; `println` adds exactly one line feed. The complete representation
+rules are in
+[printing_and_object_representation.md](printing_and_object_representation.md).
 
 A native compilation must contain exactly one eligible entry point:
 
 ```text
 func Main() { ... }
+func Main(): void { ... }
 func Main(): int32 { ... }
 ```
 
 Capitalization makes `Main` public. It takes no explicit parameters. Omitting
-the return type produces process status zero; returning `int32` supplies the
-process status. An LLVM `main` adapter invokes the Cloth function with a null
-class receiver, matching ordinary class-qualified call semantics.
+the return type or explicitly returning `void` produces process status zero;
+returning `int32` supplies the process status. An LLVM `main` adapter invokes
+the Cloth function with a null class receiver, matching ordinary
+class-qualified call semantics.
 
 ## Runtime ABI
 
-The static Cloth runtime implements nine C-linkage functions:
+The static Cloth runtime exposes these C-linkage operation groups:
 
 ```text
-cloth_rt_alloc(size, alignment) -> reference
+cloth_rt_alloc(size, alignment, type_name, type_name_size) -> reference
 cloth_rt_string_literal(data, size) -> String
 cloth_rt_array_alloc(length, element_size, element_alignment,
                      contains_references) -> array
@@ -46,12 +46,19 @@ cloth_rt_array_length(array) -> int32
 cloth_rt_array_element(array, index) -> element address
 cloth_rt_require_receiver(reference)
 cloth_rt_print(String)
-cloth_rt_print_i32(int32)
+cloth_rt_print_{i8,i16,i32,i64}(signed integer)
+cloth_rt_print_{u8,u16,u32,u64}(unsigned integer)
+cloth_rt_print_{f32,f64}(floating point)
+cloth_rt_print_char(uint32)
 cloth_rt_print_bool(uint8)
+cloth_rt_print_object(reference)
+cloth_rt_print_newline()
 ```
 
 Object allocation honors the verified ABI size and alignment and zeroes the
-storage. A runtime string is currently an opaque byte pointer and length. Its
+storage. It interns the supplied qualified type name, stores the descriptor in
+the first object-header word, and clears the future collector-state word. A
+runtime string is currently an opaque byte pointer and length. Its
 representation is deliberately absent from generated LLVM IR so interning and
 garbage collection can replace the initial allocation strategy later.
 

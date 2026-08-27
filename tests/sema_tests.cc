@@ -112,20 +112,98 @@ void core_types_and_typed_hir(TestContext& test) {
               "HIR did not retain every typed expression");
 }
 
+void void_callable_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Stage11.co",
+            "func Explicit(): void { return; }\n"
+            "func Implicit() { Explicit(); }\n"
+            "func Main(): void { Implicit(); return; }\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid explicit or implicit void function failed");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::TypeId void_type = semantics.void_type();
+  test.expect(semantics.find_type("void") == void_type &&
+                  semantics.type(void_type).kind == cloth::TypeKind::kVoid &&
+                  semantics.type(void_type).name == "void",
+              "void was not registered as the canonical semantic type");
+  const cloth::FileSemantics& file = semantics.file(cloth::FileId{0});
+  for (const cloth::SymbolId function : file.functions) {
+    test.expect(semantics.symbol(function).type == void_type,
+                "explicit and omitted returns did not canonicalize to void");
+  }
+
+  AnalyzedCompilation invalid_storage;
+  invalid_storage.add("VoidStorage.co",
+                      "void Field;\n"
+                      "void[] Values;\n"
+                      "func Parameter(void value) {}\n"
+                      "func ReturnArray(): void[] {}\n"
+                      "func Locals(int32[] values) {\n"
+                      "  void local;\n"
+                      "  for (void value in values) {}\n"
+                      "}\n");
+  invalid_storage.analyze();
+  test.expect(invalid_storage.has_diagnostic(
+                  "'void' is only valid as a function return type"),
+              "void storage or parameter position was accepted");
+  test.expect(
+      invalid_storage.has_diagnostic("'void' cannot be an array element type"),
+      "void array type was accepted");
+
+  AnalyzedCompilation invalid_values;
+  invalid_values.add("VoidValues.co",
+                     "func Nothing(): void {}\n"
+                     "func Take(int32 value): void {}\n"
+                     "func Bad(): void {\n"
+                     "  int32 local = Nothing();\n"
+                     "  Take(Nothing());\n"
+                     "  print(Nothing());\n"
+                     "  int32[] values = [Nothing()];\n"
+                     "  if (Nothing()) {}\n"
+                     "  return Nothing();\n"
+                     "}\n");
+  invalid_values.analyze();
+  test.expect(invalid_values.has_diagnostic(
+                  "void expression cannot be used as a value"),
+              "void call was accepted in a value context");
+  test.expect(invalid_values.has_diagnostic(
+                  "cannot return a value from a void function"),
+              "value return from void function was accepted");
+  test.expect(!invalid_values.has_diagnostic("internal"),
+              "invalid void use caused an internal compiler diagnostic");
+}
+
 void core_print_intrinsic(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("HelloWorld.co",
-            "func Main() { print(\"hello\"); print(1); print(true); }\n");
+            "HelloWorld() {}\n"
+            "func Main() {\n"
+            "  HelloWorld value = HelloWorld();\n"
+            "  print(\"hello\"); print(1); print(true); print('C');\n"
+            "  print(1.5); print(value); print(null);\n"
+            "  println(\"cloth\"); println(value); println();\n"
+            "}\n");
   valid.analyze();
 
   test.expect(valid.error_count() == 0,
               "valid core print call produced semantic errors");
   const std::vector<cloth::SymbolId> print =
       valid.result->semantics.find_intrinsics("print");
-  test.expect(print.size() == 3, "core print overload set was not registered");
+  const std::vector<cloth::SymbolId> println =
+      valid.result->semantics.find_intrinsics("println");
+  test.expect(print.size() == 16,
+              "complete core print overload set was not registered");
+  test.expect(println.size() == 17,
+              "complete core println overload set was not registered");
   bool bound_string = false;
   bool bound_int32 = false;
   bool bound_bool = false;
+  bool bound_char = false;
+  bool bound_float64 = false;
+  bool bound_object = false;
+  bool bound_newline = false;
   for (const cloth::HirExpression& expression :
        valid.result->hir.storage.expressions()) {
     const auto* call = std::get_if<cloth::HirCallExpression>(&expression.data);
@@ -137,16 +215,54 @@ void core_print_intrinsic(TestContext& test) {
       bound_int32 =
           bound_int32 || intrinsic == cloth::IntrinsicKind::kPrintInt32;
       bound_bool = bound_bool || intrinsic == cloth::IntrinsicKind::kPrintBool;
+      bound_char = bound_char || intrinsic == cloth::IntrinsicKind::kPrintChar;
+      bound_float64 =
+          bound_float64 || intrinsic == cloth::IntrinsicKind::kPrintFloat64;
+      bound_object =
+          bound_object || intrinsic == cloth::IntrinsicKind::kPrintObject;
+      bound_newline =
+          bound_newline || intrinsic == cloth::IntrinsicKind::kPrintNewline;
     }
   }
-  test.expect(bound_string && bound_int32 && bound_bool,
-              "core print overloads were not retained in typed HIR");
+  test.expect(bound_string && bound_int32 && bound_bool && bound_char &&
+                  bound_float64 && bound_object && bound_newline,
+              "print and println overloads were not retained in typed HIR");
+
+  const std::vector<std::pair<std::string_view, cloth::IntrinsicKind>>
+      primitive_overloads{
+          {"String", cloth::IntrinsicKind::kPrintString},
+          {"bool", cloth::IntrinsicKind::kPrintBool},
+          {"char", cloth::IntrinsicKind::kPrintChar},
+          {"byte", cloth::IntrinsicKind::kPrintUint8},
+          {"int8", cloth::IntrinsicKind::kPrintInt8},
+          {"int16", cloth::IntrinsicKind::kPrintInt16},
+          {"int32", cloth::IntrinsicKind::kPrintInt32},
+          {"int64", cloth::IntrinsicKind::kPrintInt64},
+          {"uint8", cloth::IntrinsicKind::kPrintUint8},
+          {"uint16", cloth::IntrinsicKind::kPrintUint16},
+          {"uint32", cloth::IntrinsicKind::kPrintUint32},
+          {"uint64", cloth::IntrinsicKind::kPrintUint64},
+          {"float32", cloth::IntrinsicKind::kPrintFloat32},
+          {"float64", cloth::IntrinsicKind::kPrintFloat64},
+      };
+  for (const auto& [type_name, expected_intrinsic] : primitive_overloads) {
+    const std::optional<cloth::TypeId> type =
+        valid.result->semantics.find_type(type_name);
+    bool found = false;
+    for (const cloth::SymbolId symbol_id : print) {
+      const cloth::SemanticSymbol& symbol =
+          valid.result->semantics.symbol(symbol_id);
+      found = found || (type && symbol.parameter_types == std::vector{*type} &&
+                        symbol.intrinsic == expected_intrinsic);
+    }
+    test.expect(found, "primitive print overload is missing");
+  }
 
   AnalyzedCompilation invalid;
-  invalid.add("BadPrint.co", "func Main() { print(1.5); }\n");
+  invalid.add("BadPrint.co", "func Main() { print(); println(1, 2); }\n");
   invalid.analyze();
   test.expect(invalid.has_diagnostic("no matching overload"),
-              "print accepted a type without an overload");
+              "invalid print arity was accepted");
 
   AnalyzedCompilation shadowed;
   shadowed.add("Shadow.co",
@@ -569,6 +685,56 @@ void for_iteration_semantics(TestContext& test) {
       "possibly empty for loop was treated as a guaranteed return");
 }
 
+void for_binding_scope_and_types(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Binding.co",
+            "func Read(String[] values): String {\n"
+            "  String value = \"outer\";\n"
+            "  for (var values in values) {\n"
+            "    String copy = values;\n"
+            "    values = copy;\n"
+            "  }\n"
+            "  for (String value in values) { value = \"changed\"; }\n"
+            "  return value;\n"
+            "}\n");
+  valid.analyze();
+  test.expect(valid.error_count() == 0,
+              "valid reference iteration or loop shadowing failed");
+
+  std::size_t string_bindings = 0;
+  const cloth::TypeId string_type =
+      *valid.result->semantics.find_type("String");
+  for (const cloth::HirStatement& statement :
+       valid.result->hir.storage.statements()) {
+    const auto* loop = std::get_if<cloth::HirForStatement>(&statement.data);
+    if (loop != nullptr && loop->variable &&
+        valid.result->semantics.symbol(*loop->variable).type == string_type) {
+      ++string_bindings;
+    }
+  }
+  test.expect(string_bindings == 2,
+              "reference iteration bindings have the wrong inferred type");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadBindings.co",
+              "func Duplicate(int32[] values) {\n"
+              "  for (var value in values) { int32 value = 0; }\n"
+              "}\n"
+              "func InvalidType(int32[] values) {\n"
+              "  for (Missing value in values) {}\n"
+              "  for (var value in missing) {}\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic("duplicate local name 'value'"),
+              "loop binding and body local did not share a scope");
+  test.expect(invalid.has_diagnostic("unknown type 'Missing'"),
+              "unknown explicit iteration type was accepted");
+  test.expect(invalid.has_diagnostic("unknown name 'missing'"),
+              "unknown iterable did not produce its primary diagnostic");
+  test.expect(!invalid.has_diagnostic("type '<error>' is not iterable"),
+              "invalid iterable produced a cascading type diagnostic");
+}
+
 void instance_member_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("User.co", "String Name;\n");
@@ -611,6 +777,7 @@ struct TestCase {
 int main() {
   const std::vector<TestCase> tests{
       {"core types and typed HIR", core_types_and_typed_hir},
+      {"void callable contract", void_callable_contract},
       {"core print intrinsic", core_print_intrinsic},
       {"cross-file binding", cross_file_binding},
       {"package imports", package_imports},
@@ -631,6 +798,7 @@ int main() {
       {"assignment requires location", assignment_requires_location},
       {"array semantics", array_semantics},
       {"for iteration semantics", for_iteration_semantics},
+      {"for binding scope and types", for_binding_scope_and_types},
       {"instance member binding", instance_member_binding},
       {"deterministic diagnostics", deterministic_diagnostics},
   };

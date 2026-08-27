@@ -190,6 +190,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "char";
     case TokenKind::kKwByte:
       return "byte";
+    case TokenKind::kKwVoid:
+      return "void";
   }
   return "unknown";
 }

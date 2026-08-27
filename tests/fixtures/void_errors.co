@@ -1,0 +1,11 @@
+func Nothing(): void {}
+func Take(int32 value): void {}
+
+func Bad(): void {
+    int32 local = Nothing();
+    Take(Nothing());
+    print(Nothing());
+    int32[] values = [Nothing()];
+    if (Nothing()) {}
+    return Nothing();
+}

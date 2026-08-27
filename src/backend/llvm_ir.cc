@@ -189,6 +189,11 @@ class ModuleEmitter {
       report(fallback_range(), "MIR and ABI file counts differ");
       return std::nullopt;
     }
+    type_name_globals_.resize(mir_.files.size());
+    for (const AbiFileClass& file : abi_.files) {
+      const std::string& name = semantics_.symbol(file.symbol).name;
+      type_name_globals_.at(file.file.value) = add_string_literal(name);
+    }
     for (std::size_t index = 0; index < mir_.files.size(); ++index) {
       emit_file(mir_.files[index], abi_.files[index]);
     }
@@ -204,15 +209,27 @@ class ModuleEmitter {
            << "source_filename = \"cloth\"\n"
            << "target datalayout = \"" << abi_.target.llvm_data_layout << "\"\n"
            << "target triple = \"" << abi_.target.target_name << "\"\n\n"
-           << "declare ptr @cloth_rt_alloc(i64, i64)\n"
+           << "declare ptr @cloth_rt_alloc(i64, i64, ptr, i64)\n"
            << "declare ptr @cloth_rt_string_literal(ptr, i64)\n"
            << "declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)\n"
            << "declare i32 @cloth_rt_array_length(ptr)\n"
            << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
            << "declare void @cloth_rt_require_receiver(ptr)\n"
            << "declare void @cloth_rt_print(ptr)\n"
+           << "declare void @cloth_rt_print_char(i32)\n"
+           << "declare void @cloth_rt_print_i8(i8)\n"
+           << "declare void @cloth_rt_print_i16(i16)\n"
            << "declare void @cloth_rt_print_i32(i32)\n"
-           << "declare void @cloth_rt_print_bool(i8)\n\n";
+           << "declare void @cloth_rt_print_i64(i64)\n"
+           << "declare void @cloth_rt_print_u8(i8)\n"
+           << "declare void @cloth_rt_print_u16(i16)\n"
+           << "declare void @cloth_rt_print_u32(i32)\n"
+           << "declare void @cloth_rt_print_u64(i64)\n"
+           << "declare void @cloth_rt_print_f32(float)\n"
+           << "declare void @cloth_rt_print_f64(double)\n"
+           << "declare void @cloth_rt_print_bool(i8)\n"
+           << "declare void @cloth_rt_print_object(ptr)\n"
+           << "declare void @cloth_rt_print_newline()\n\n";
     for (const std::string& global : globals_) {
       output << global << '\n';
     }
@@ -291,6 +308,10 @@ class ModuleEmitter {
            << " x i8] c\"" << llvm_string_bytes(value) << "\"";
     globals_.push_back(global.str());
     return name;
+  }
+
+  [[nodiscard]] const std::string& type_name_global(FileId file) const {
+    return type_name_globals_.at(file.value);
   }
 
   void report(SourceRange range, std::string message) {
@@ -388,8 +409,7 @@ class ModuleEmitter {
         const bool valid_signature =
             symbol.parameter_types.empty() &&
             callable.linkage == AbiLinkage::kExternal &&
-            (return_kind == TypeKind::kNoValue ||
-             return_kind == TypeKind::kInt32);
+            (return_kind == TypeKind::kVoid || return_kind == TypeKind::kInt32);
         if (!valid_signature) {
           continue;
         }
@@ -413,7 +433,7 @@ class ModuleEmitter {
     const TypeKind return_kind = semantics_.type(entry->return_type).kind;
     definitions_ << "define i32 @main() {\n"
                  << "entry:\n";
-    if (return_kind == TypeKind::kNoValue) {
+    if (return_kind == TypeKind::kVoid) {
       definitions_ << "  call void @" << entry->mangled_name << "(ptr null)\n"
                    << "  ret i32 0\n";
     } else {
@@ -435,6 +455,7 @@ class ModuleEmitter {
   LlvmIrOptions options_;
   std::ostringstream definitions_;
   std::vector<std::string> globals_;
+  std::vector<std::string> type_name_globals_;
   bool is_valid_{true};
 };
 
@@ -535,8 +556,12 @@ void BodyEmitter::emit_prologue(std::ostringstream& output) {
     }
   }
   if (is_constructor_) {
+    const std::string& type_name =
+        module_.semantics().symbol(file_.symbol).name;
     output << "  %self = call ptr @cloth_rt_alloc(i64 " << file_.layout.size
-           << ", i64 " << file_.layout.alignment << ")\n";
+           << ", i64 " << file_.layout.alignment << ", ptr "
+           << module_.type_name_global(file_.file) << ", i64 "
+           << type_name.size() << ")\n";
     emit_field_initializers(output);
   }
 }
@@ -888,9 +913,15 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
                             std::ostringstream& output) {
   const SemanticSymbol& symbol = module_.semantics().symbol(call.callable);
   if (symbol.intrinsic != IntrinsicKind::kNone) {
-    if (call.arguments.size() != 1 || instruction.result) {
+    const std::size_t expected_arguments =
+        symbol.intrinsic == IntrinsicKind::kPrintNewline ? 0U : 1U;
+    if (call.arguments.size() != expected_arguments || instruction.result) {
       module_.report(instruction.range,
                      "invalid core intrinsic reached LLVM lowering");
+      return;
+    }
+    if (symbol.intrinsic == IntrinsicKind::kPrintNewline) {
+      output << "  call void @cloth_rt_print_newline()\n";
       return;
     }
     const std::string argument = value(call.arguments[0]);
@@ -898,19 +929,58 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
       case IntrinsicKind::kPrintString:
         output << "  call void @cloth_rt_print(ptr " << argument << ")\n";
         break;
-      case IntrinsicKind::kPrintInt32:
-        output << "  call void @cloth_rt_print_i32(i32 " << argument << ")\n";
-        break;
       case IntrinsicKind::kPrintBool: {
         const std::string extended = next_address();
         output << "  " << extended << " = zext i1 " << argument << " to i8\n"
                << "  call void @cloth_rt_print_bool(i8 " << extended << ")\n";
         break;
       }
+      case IntrinsicKind::kPrintChar:
+        output << "  call void @cloth_rt_print_char(i32 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintInt8:
+        output << "  call void @cloth_rt_print_i8(i8 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintInt16:
+        output << "  call void @cloth_rt_print_i16(i16 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintInt32:
+        output << "  call void @cloth_rt_print_i32(i32 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintInt64:
+        output << "  call void @cloth_rt_print_i64(i64 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintUint8:
+        output << "  call void @cloth_rt_print_u8(i8 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintUint16:
+        output << "  call void @cloth_rt_print_u16(i16 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintUint32:
+        output << "  call void @cloth_rt_print_u32(i32 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintUint64:
+        output << "  call void @cloth_rt_print_u64(i64 " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintFloat32:
+        output << "  call void @cloth_rt_print_f32(float " << argument << ")\n";
+        break;
+      case IntrinsicKind::kPrintFloat64:
+        output << "  call void @cloth_rt_print_f64(double " << argument
+               << ")\n";
+        break;
+      case IntrinsicKind::kPrintObject:
+        output << "  call void @cloth_rt_print_object(ptr " << argument
+               << ")\n";
+        break;
+      case IntrinsicKind::kPrintNewline:
       case IntrinsicKind::kNone:
         module_.report(instruction.range,
                        "invalid core intrinsic reached LLVM lowering");
         break;
+    }
+    if (symbol.name == "println") {
+      output << "  call void @cloth_rt_print_newline()\n";
     }
     return;
   }

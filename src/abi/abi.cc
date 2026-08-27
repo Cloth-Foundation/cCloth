@@ -50,7 +50,7 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
   switch (semantic_type.kind) {
     case TypeKind::kError:
       return make_type_layout(type, AbiTypeKind::kInvalid, 0, 0, 1);
-    case TypeKind::kNoValue:
+    case TypeKind::kVoid:
       return make_type_layout(type, AbiTypeKind::kVoid, 0, 0, 1);
     case TypeKind::kNull:
     case TypeKind::kString:
@@ -95,7 +95,7 @@ std::string encode_type(TypeId type, const SemanticModel& semantics) {
   switch (semantic_type.kind) {
     case TypeKind::kError:
       return "e";
-    case TypeKind::kNoValue:
+    case TypeKind::kVoid:
       return "v";
     case TypeKind::kNull:
       return "n";

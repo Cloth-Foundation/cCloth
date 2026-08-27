@@ -83,8 +83,9 @@ void target_header(TestContext& test) {
               "LLVM target triple is missing");
   test.expect(sources.contains("target datalayout = "),
               "LLVM data layout is missing");
-  test.expect(sources.contains("declare ptr @cloth_rt_alloc(i64, i64)"),
-              "allocation runtime boundary is missing");
+  test.expect(
+      sources.contains("declare ptr @cloth_rt_alloc(i64, i64, ptr, i64)"),
+      "allocation runtime boundary is missing");
   test.expect(sources.contains("declare void @cloth_rt_print_i32(i32)"),
               "int32 print runtime boundary is missing");
   test.expect(sources.contains("declare void @cloth_rt_print_bool(i8)"),
@@ -126,7 +127,8 @@ void object_construction(TestContext& test) {
   test.expect(sources.contains("define internal ptr @_C1I5_Model4_Name") &&
                   sources.contains("call ptr @_C1I5_Model4_Name(ptr %self)"),
               "field initializer was not composed with construction");
-  test.expect(sources.contains("call ptr @cloth_rt_alloc(i64 32, i64 8)"),
+  test.expect(sources.contains("call ptr @cloth_rt_alloc(i64 32, i64 8, ptr "
+                               "@.cloth.str.0, i64 5)"),
               "constructor does not allocate its ABI object size");
   test.expect(sources.contains("getelementptr i8, ptr %self, i64 16"),
               "field access does not use its verified ABI offset");
@@ -185,23 +187,49 @@ void call_receivers(TestContext& test) {
 
 void wasm32_module(TestContext& test) {
   CompiledSources sources{cloth::TargetDataLayout::llvm_wasm32()};
-  sources.add("Small.co", "int32 Value;\nSmall() {}\n");
+  sources.add("Small.co",
+              "int32 Value;\n"
+              "Small() {}\n"
+              "func Count(String[] values): int32 {\n"
+              "  int32 count = 0;\n"
+              "  for (var value in values) { count = count + 1; }\n"
+              "  return count;\n"
+              "}\n"
+              "func Show(Small value): void {\n"
+              "  println(value); println(1.5); return;\n"
+              "}\n");
   sources.compile();
 
   test.expect(sources.llvm.has_value(), "wasm32 module failed to emit");
   test.expect(sources.contains("target triple = \"wasm32-unknown-unknown\""),
               "wasm32 triple is missing");
-  test.expect(sources.contains("call ptr @cloth_rt_alloc(i64 12, i64 4)"),
+  test.expect(sources.contains("call ptr @cloth_rt_alloc(i64 12, i64 4, ptr "
+                               "@.cloth.str.0, i64 5)"),
               "wasm32 object size was not preserved");
+  test.expect(sources.contains(" = phi i32 ") &&
+                  sources.contains("call i32 @cloth_rt_array_length(ptr ") &&
+                  sources.contains("call ptr @cloth_rt_array_element(ptr "),
+              "wasm32 for iteration lost its portable array lowering");
+  test.expect(sources.contains("call void @cloth_rt_print_object(ptr ") &&
+                  sources.contains("call void @cloth_rt_print_f64(double ") &&
+                  sources.contains("call void @cloth_rt_print_newline()"),
+              "wasm32 typed println lowering is incomplete");
 }
 
 void print_and_native_entry_point(TestContext& test) {
   CompiledSources sources;
   sources.add("HelloWorld.co",
-              "func Main() {\n"
+              "HelloWorld() {}\n"
+              "func Main(): void {\n"
               "  print(\"Hello, World!\\n\");\n"
               "  print(7);\n"
               "  print(true);\n"
+              "  print('C');\n"
+              "  print(1.5);\n"
+              "  HelloWorld value = HelloWorld();\n"
+              "  println(value);\n"
+              "  println(null);\n"
+              "  println();\n"
               "}\n");
   sources.compile(cloth::LlvmIrOptions{true});
 
@@ -215,10 +243,23 @@ void print_and_native_entry_point(TestContext& test) {
   test.expect(sources.contains("zext i1 true to i8") &&
                   sources.contains("call void @cloth_rt_print_bool(i8 %addr"),
               "bool print intrinsic was not lowered with its ABI width");
+  test.expect(sources.contains("call void @cloth_rt_print_char(i32 67)"),
+              "char print intrinsic was not lowered");
+  test.expect(sources.contains("call void @cloth_rt_print_f64(double "),
+              "float64 print intrinsic was not lowered");
   test.expect(
-      sources.contains("define i32 @main()") &&
+      sources.contains("call void @cloth_rt_print_object(ptr ") &&
+          sources.contains("call void @cloth_rt_print_object(ptr null)"),
+      "object print intrinsic was not lowered");
+  test.expect(sources.contains("call void @cloth_rt_print_newline()"),
+              "println did not lower its line feed");
+  test.expect(
+      sources.contains(
+          "define void @_C1F10_HelloWorld4_MainP0(ptr %receiver)") &&
+          sources.contains("ret void") &&
+          sources.contains("define i32 @main()") &&
           sources.contains("call void @_C1F10_HelloWorld4_MainP0(ptr null)"),
-      "native entry adapter was not emitted");
+      "explicit void Main or its native entry adapter was not emitted");
 
   CompiledSources exit_code;
   exit_code.add("Program.co", "func Main(): int32 { return 7; }\n");

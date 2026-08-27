@@ -1,0 +1,6 @@
+func Main() {
+    int32[] values = null;
+    for (var value in values) {
+        print(value);
+    }
+}

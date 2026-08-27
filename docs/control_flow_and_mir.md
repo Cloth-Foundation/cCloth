@@ -34,6 +34,13 @@ not return on every reachable path. Statements after a guaranteed `return`,
 `break`, or `continue` are retained for tooling, diagnosed as unreachable
 warnings, and lowered into dead MIR blocks.
 
+Functions with an omitted return annotation and functions explicitly returning
+`void` share the same semantic type. They may fall through or terminate with a
+valueless return. A void call lowers without a result value, so MIR cannot
+accidentally feed it into a value-producing instruction. Constructor bodies use
+the same valueless control-flow rules, while constructor call instructions still
+produce the allocated object reference.
+
 A `while` loop lowers to condition, body, and exit blocks. The condition
 branches to the body or exit, body fallthrough and `continue` jump to the
 condition, and `break` jumps to the exit. Loop targets form a stack, so nested

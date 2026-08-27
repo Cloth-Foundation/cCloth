@@ -23,6 +23,7 @@ namespace cloth {
     case TokenKind::kKwBool:
     case TokenKind::kKwChar:
     case TokenKind::kKwByte:
+    case TokenKind::kKwVoid:
       return true;
     default:
       return false;

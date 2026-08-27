@@ -30,7 +30,7 @@ The core type table contains:
 - `uint8`, `uint16`, `uint32`, and `uint64`
 - `float32` and `float64`
 - `String`
-- internal error, no-value, and null types
+- `void`, plus internal error and null types
 - one named reference type for each valid file class
 - one canonical array reference type for each used element type
 
@@ -39,6 +39,12 @@ and `float32` respectively.
 Integer and floating literals have `int32` and `float64` type respectively.
 General implicit numeric conversions are not implemented. `null` is assignable
 to `String`, file-class, and array reference types, but not to value types.
+
+An omitted function return annotation and explicit `: void` resolve to one
+canonical type. Void has no values or storage: it is rejected for fields,
+parameters, locals, arrays, and iteration bindings. Void calls are valid only
+where their result is not consumed. Void functions may fall through or use
+`return;`; value-returning functions retain complete-return requirements.
 
 An array literal infers its element type from the first non-null, non-error
 element, then requires every element to be assignable to that exact type.
@@ -63,10 +69,12 @@ Imports are file-scoped and non-transitive. Explicit aliases disambiguate
 otherwise conflicting file-class names. Wildcards expose only public direct
 members of one package, and ambiguous wildcard names are diagnosed.
 
-The core scope provides `print(String)`, `print(int32)`, and `print(bool)` as
-typed intrinsic overloads. Locals and members retain normal precedence over
-core names, so a source declaration can shadow `print`. Calls still use exact
-parameter matching.
+The core scope provides typed `print` and `println` overloads for every
+primitive, each file-class type, and `null`; `println()` is a separate
+zero-argument intrinsic. Locals and members retain normal precedence over core
+names, so a source declaration can shadow either overload set. Exact parameter
+matches take precedence over nullable-reference conversions, keeping
+`print(null)` unambiguous as file-class overloads are added.
 Public functions can be qualified by a file-class name, such as
 `Repository.Find(id)`. Fields require an instance.
 

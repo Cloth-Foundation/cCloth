@@ -105,6 +105,7 @@ enum class TokenKind {
   kKwBool,
   kKwChar,
   kKwByte,
+  kKwVoid,
 };
 
 struct Token {

@@ -116,7 +116,7 @@ ControlFlowAnalysis analyze_control_flow(const HirModule& hir,
         CallableControlFlow flow =
             CallableAnalyzer{hir, diagnostics}.analyze(function);
         const SemanticSymbol& symbol = semantics.symbol(function.symbol);
-        if (symbol.is_valid && symbol.type != semantics.no_value_type() &&
+        if (symbol.is_valid && symbol.type != semantics.void_type() &&
             symbol.type != semantics.error_type() && flow.can_fall_through) {
           diagnostics.error(symbol.range, "function '" + symbol.name +
                                               "' does not return a value on "

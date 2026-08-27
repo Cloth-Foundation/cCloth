@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 10.0.
+This document defines the syntax implemented through Stage 11.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -55,8 +55,12 @@ field_declaration
 function_declaration
     = "func" identifier
       "(" [ parameter_list ] ")"
-      [ ":" type ]
+      [ ":" return_type ]
       block ;
+
+return_type
+    = type
+    | "void" ;
 
 constructor_declaration
     = identifier
@@ -88,6 +92,10 @@ named_type
 
 `struct`, `class`, and `enum` are reserved as possible nested-type declaration
 starters, but Stage 1.0 diagnoses them as unsupported.
+
+`void` is accepted only as a function return type. An omitted function return
+type defaults to `void`. Fields, parameters, locals, arrays, and iteration
+bindings require a value-producing `type`.
 
 Imports must precede every member declaration. A `module` declaration is not
 part of Cloth: the source path relative to the project source root supplies the

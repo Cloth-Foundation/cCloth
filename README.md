@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 10.0 array iteration
+# Cloth compiler - Stage 11 callable contracts
 
-This repository contains the deterministic Stage 10.0 compiler core for Cloth
+This repository contains the deterministic Stage 11 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -11,8 +11,8 @@ source ranges.
 
 The project includes structured `while` and array `for` iteration, `break` and
 `continue` control flow, fixed-length mutable arrays with checked indexing, and
-a minimal native runtime for allocation, strings, null checks, and typed
-`print` overloads for `String`, `int32`, and `bool`. It intentionally
+a minimal native runtime for allocation, strings, null checks, object type
+descriptors, and typed `print` and `println` overloads. It intentionally
 contains no garbage collector, virtual machine, standard library, debugger, or
 external package registry. LLVM IR emission has no link-time dependency on LLVM
 libraries.
@@ -171,6 +171,9 @@ and wasm32.
 When `opt` is available, CTest also verifies an emitted module with LLVM itself.
 When `llc` is available, CTest builds and executes the native examples and the
 multi-package project. Their output is compared exactly against golden files.
+Every CTest case has a configurable timeout, and native program probes have a
+shorter subprocess timeout. Opt-in coverage, sanitizer, and lexer/parser fuzz
+configurations are documented in [docs/testing.md](docs/testing.md).
 
 ## VS Code
 
@@ -234,6 +237,9 @@ docs/native_runtime.md   Implemented Stage 6.0 native execution contract
 docs/packages_and_imports.md Implemented Stage 8.0 package graph contract
 docs/arrays_and_indexing.md Implemented Stage 9.0 array contract
 docs/array_iteration.md   Implemented Stage 10.0 iteration contract
+docs/testing.md           Stage 10.1 test and diagnostic-build contract
+docs/printing_and_object_representation.md Stage 10.5 output contract
+docs/void_and_callable_contracts.md Stage 11 void contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -298,6 +304,23 @@ Stage 10 adds `for (declaration in expression)` over arrays. The loop binding
 may infer its element type with `var` or state it explicitly. Lowering evaluates
 the iterable once and uses a dedicated latch so `continue` always advances the
 hidden index. See [docs/array_iteration.md](docs/array_iteration.md).
+
+Stage 10.1 hardens that contract with malformed-header recovery, exact MIR edge
+checks, nested-loop and terminating-body coverage, native reference iteration,
+copy-semantics and evaluate-once probes, null trapping, timeouts, coverage
+instrumentation, sanitizers, and an opt-in lexer/parser fuzzer. See
+[docs/testing.md](docs/testing.md).
+
+Stage 10.5 completes primitive `print` overloads, adds `println(value)` and
+`println()`, and initializes file-class object headers with opaque type
+descriptors. Default object output is the stable `<qualified.Type>` form and
+never includes an address. See
+[docs/printing_and_object_representation.md](docs/printing_and_object_representation.md).
+
+Stage 11 adds explicit `void`, defaults omitted function returns to the same
+canonical type, and prevents void calls from being used as values. It preserves
+valueless fallthrough and lowers explicit and implicit forms identically. See
+[docs/void_and_callable_contracts.md](docs/void_and_callable_contracts.md).
 
 ## Extending the lexer
 

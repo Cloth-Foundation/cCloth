@@ -34,6 +34,11 @@ class HirVerifier {
     const auto expressions = hir_.storage.expressions();
     for (const HirExpression& expression : expressions) {
       verify_type(expression.type, expression.range);
+      if (expression.type == semantics_.void_type() &&
+          !is_valid_void_expression(expression)) {
+        report(expression.range,
+               "void expression is not a call or grouped void call");
+      }
       if (const auto* symbol =
               std::get_if<HirSymbolExpression>(&expression.data)) {
         verify_symbol(symbol->symbol, expression.range);
@@ -80,6 +85,21 @@ class HirVerifier {
         verify_expression(grouped->expression, expression.range);
       }
     }
+  }
+
+  bool is_valid_void_expression(const HirExpression& expression) const {
+    if (const auto* call = std::get_if<HirCallExpression>(&expression.data)) {
+      return call->callable &&
+             call->callable->value < semantics_.symbols().size() &&
+             semantics_.symbol(*call->callable).type == semantics_.void_type();
+    }
+    if (const auto* grouped =
+            std::get_if<HirGroupedExpression>(&expression.data)) {
+      return grouped->expression.value < hir_.storage.expressions().size() &&
+             hir_.storage.expression(grouped->expression).type ==
+                 semantics_.void_type();
+    }
+    return false;
   }
 
   void verify_statements() {

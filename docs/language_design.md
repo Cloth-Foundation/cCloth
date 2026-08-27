@@ -139,6 +139,19 @@ Field initializers remain independent executable bodies until object layout and
 constructor composition are specified. MIR must not encode host pointer size,
 ABI rules, runtime object headers, or garbage-collector barriers.
 
+## Void functions
+
+`void` is the canonical return type for a function that produces no value. An
+omitted return annotation is exactly equivalent to `: void`; return statements
+do not infer a function's return type. Void functions may fall through or use
+`return;`, but may not return a value.
+
+Void is not a general-purpose value or storage type. It is invalid for fields,
+parameters, locals, array elements, and iteration bindings. A call returning
+void is valid as an expression statement but cannot be consumed by another
+expression. Constructors remain unannotated: their bodies follow void control
+flow, while constructor calls produce the new file-class reference.
+
 ## Portable ABI boundary
 
 Target data layout is supplied explicitly and never inferred from the compiler
@@ -193,12 +206,17 @@ collection boundary designed for a future tracing collector.
 
 ## Core output and native entry point
 
-`print(String)`, `print(int32)`, and `print(bool)` are compiler-provided core
-intrinsics. They write the value without appending a newline. Boolean output is
-lowercase `true` or `false`. A source member named `print` shadows all intrinsic
-overloads under normal lexical lookup rules.
+`print(T)` and `println(T)` are compiler-provided core intrinsics for all
+primitive types, file-class objects, and `null`. `print` appends nothing;
+`println` appends exactly one line feed, and its zero-argument overload writes
+only that line feed. File-class objects use `<qualified.Type>` without an
+address. Source members named `print` or `println` shadow the corresponding
+intrinsic overload set under normal lexical lookup rules. The exact formatting
+contract is documented in
+[printing_and_object_representation.md](printing_and_object_representation.md).
 
 A native program contains exactly one public `Main` function with no explicit
-parameters. `Main` may omit its return type or return `int32`; the process exit
-status is zero in the first case and the returned value in the second. The
-native adapter invokes `Main` as a class-qualified function with no instance.
+parameters. `Main` may omit its return type, explicitly return `void`, or return
+`int32`. A void `Main` produces process status zero; an `int32` `Main` supplies
+the returned value. The native adapter invokes `Main` as a class-qualified
+function with no instance.

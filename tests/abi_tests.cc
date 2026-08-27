@@ -134,6 +134,26 @@ void callable_abi(TestContext& test) {
               "constructor ABI does not return the allocated object");
 }
 
+void void_abi(TestContext& test) {
+  const CompiledSource source{
+      "func Explicit(): void { return; }\n"
+      "func Implicit() {}\n"};
+  const cloth::SemanticModel& semantics = source.result->semantics;
+  const cloth::TypeId void_type = semantics.void_type();
+  const cloth::AbiTypeLayout& layout =
+      source.result->abi.types[void_type.value];
+  const std::vector<cloth::AbiCallable>& functions =
+      source.result->abi.files[0].functions;
+
+  test.expect(source.result->is_valid, "valid void ABI failed verification");
+  test.expect(layout.kind == cloth::AbiTypeKind::kVoid &&
+                  layout.storage == cloth::SizeAlignment{0, 1},
+              "void has an invalid ABI layout");
+  test.expect(functions.size() == 2 && functions[0].return_type == void_type &&
+                  functions[1].return_type == void_type,
+              "explicit and implicit void functions have different ABIs");
+}
+
 void deterministic_mangling(TestContext& test) {
   const CompiledSource source{
       "func Pick(int value): int { return value; }\n"
@@ -240,6 +260,7 @@ int main() {
       {"class field layout", class_field_layout},
       {"wasm32 layout", wasm32_layout},
       {"callable ABI", callable_abi},
+      {"void ABI", void_abi},
       {"deterministic mangling", deterministic_mangling},
       {"array ABI", array_abi},
       {"package-qualified mangling", package_qualified_mangling},

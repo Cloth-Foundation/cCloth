@@ -42,7 +42,7 @@ class BodyBuilder {
   MirBody lower_callable(HirBlockId block) {
     lower_block(block);
     if (current_block_) {
-      if (return_type_ == semantics_.no_value_type()) {
+      if (return_type_ == semantics_.void_type()) {
         terminate(MirReturnTerminator{}, body_.range);
       } else {
         terminate(MirUnreachableTerminator{}, body_.range);
@@ -100,7 +100,7 @@ class BodyBuilder {
   void emit_void(SourceRange range, Data data) {
     ensure_current(range);
     body_.blocks[current_block_->value].instructions.push_back(
-        MirInstruction{std::nullopt, semantics_.no_value_type(), range,
+        MirInstruction{std::nullopt, semantics_.void_type(), range,
                        MirInstructionData{std::move(data)}});
   }
 
@@ -240,12 +240,12 @@ class BodyBuilder {
           hir_.storage.expression(*return_statement.value);
       MirValueId lowered = require_value(
           lower_expression(*return_statement.value), syntax.type, syntax.range);
-      if (return_type_ != semantics_.no_value_type()) {
+      if (return_type_ != semantics_.void_type()) {
         lowered = coerce(lowered, return_type_, syntax.range);
         value = lowered;
       }
     }
-    if (!value && return_type_ != semantics_.no_value_type()) {
+    if (!value && return_type_ != semantics_.void_type()) {
       terminate(MirUnreachableTerminator{}, range);
       return;
     }
@@ -633,7 +633,7 @@ class BodyBuilder {
     }
     MirCallInstruction instruction{kind, *call.callable, receiver,
                                    std::move(arguments)};
-    if (expression.type == semantics_.no_value_type()) {
+    if (expression.type == semantics_.void_type()) {
       emit_void(expression.range, std::move(instruction));
       return std::nullopt;
     }
@@ -738,7 +738,7 @@ MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,
   const SemanticSymbol& symbol = semantics.symbol(callable.symbol);
   const SourceRange range = hir.storage.block(callable.body).range;
   const TypeId return_type = symbol.kind == SymbolKind::kConstructor
-                                 ? semantics.no_value_type()
+                                 ? semantics.void_type()
                                  : symbol.type;
   MirBody body =
       BodyBuilder{hir, semantics, file, range, return_type}.lower_callable(
