@@ -143,6 +143,7 @@ add_library(cloth_compiler
     src/parser/parser.cc
     src/project/project_layout.cc
     src/sema/file_class_symbols.cc
+    src/sema/final_field_analysis.cc
     src/sema/semantic_analyzer.cc
     src/sema/semantic_model.cc
     src/sema/visibility.cc
@@ -393,6 +394,30 @@ if(BUILD_TESTING)
         )
 
         if(WIN32)
+            set(CLOTH_TEST_FINAL_BINDINGS_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth final bindings.exe")
+        else()
+            set(CLOTH_TEST_FINAL_BINDINGS_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth final bindings")
+        endif()
+        add_test(
+            NAME cloth_cli_build_final_bindings
+            COMMAND clothc "--build=${CLOTH_TEST_FINAL_BINDINGS_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/FinalBindings.co
+        )
+        add_test(
+            NAME cloth_final_bindings
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_FINAL_BINDINGS_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/final_bindings.txt"
+                    -DCLOTH_EXACT_OUTPUT=ON
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_final_bindings PROPERTIES
+            DEPENDS cloth_cli_build_final_bindings
+        )
+
+        if(WIN32)
             set(CLOTH_TEST_FIZZBUZZ_EXECUTABLE
                 "${CMAKE_CURRENT_BINARY_DIR}/cloth fizzbuzz.exe")
         else()
@@ -622,6 +647,11 @@ if(BUILD_TESTING)
         COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/void_errors.co
     )
     set_tests_properties(cloth_cli_void_error PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME cloth_cli_final_error
+        COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/FinalErrors.co
+    )
+    set_tests_properties(cloth_cli_final_error PROPERTIES WILL_FAIL TRUE)
 
     get_property(CLOTH_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
     set_tests_properties(${CLOTH_REGISTERED_TESTS} PROPERTIES

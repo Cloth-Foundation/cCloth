@@ -109,6 +109,19 @@ Semantic model and HIR identities are stable numeric handles. Their allocation
 strategy is likewise not part of the language contract and may move to managed
 storage later.
 
+## Final bindings
+
+`final` prevents a field, parameter, local, or iteration binding from being
+assigned again. It does not recursively freeze referenced objects or arrays.
+The qualifier is declaration metadata, not part of type identity or overload
+selection.
+
+Final fields are initialized in declaration order or exactly once on every
+exit path of each constructor. Constructor-body initialization is restricted
+to direct assignments on the current instance and cannot occur in loops. These
+rules establish the definite-initialization foundation that future non-null
+fields will reuse.
+
 ## Path-derived packages
 
 Cloth has no `module` or `package` declaration. A file's directory relative to

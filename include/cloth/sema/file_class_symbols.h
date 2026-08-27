@@ -16,6 +16,7 @@ struct ParameterSymbol {
   TypeSyntax type;
   std::string_view name;
   SourceRange range;
+  bool is_final{false};
 };
 
 struct MemberSymbol {
@@ -26,6 +27,7 @@ struct MemberSymbol {
   std::vector<ParameterSymbol> parameters;
   std::optional<TypeSyntax> declared_type;
   bool is_valid{true};
+  bool is_final{false};
 };
 
 class FileClassSymbols {

@@ -30,6 +30,7 @@ constexpr std::array kKeywords{
     Keyword{"let", TokenKind::kKwLet},
     Keyword{"var", TokenKind::kKwVar},
     Keyword{"const", TokenKind::kKwConst},
+    Keyword{"final", TokenKind::kKwFinal},
     Keyword{"true", TokenKind::kKwTrue},
     Keyword{"false", TokenKind::kKwFalse},
     Keyword{"null", TokenKind::kKwNull},

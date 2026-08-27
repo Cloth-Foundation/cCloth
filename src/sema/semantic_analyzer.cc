@@ -1,6 +1,7 @@
 #include "cloth/sema/semantic_analyzer.h"
 
 #include "cloth/lexer/token.h"
+#include "cloth/sema/final_field_analysis.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -317,6 +318,7 @@ class SemanticAnalyzer {
                        file_id,
                        field.range,
                        field.is_valid && type != model_.error_type()});
+    model_.mutable_symbol(symbol).is_final = field.is_final;
     model_.mutable_file(file_id).fields.at(index) = symbol;
   }
 
@@ -422,6 +424,7 @@ class SemanticAnalyzer {
             break;
         }
       }
+      validate_final_fields(syntax, model_, current_file_, diagnostics_);
       const auto diagnostics = diagnostics_.diagnostics();
       for (std::size_t index = diagnostic_begin; index < diagnostics.size();
            ++index) {
@@ -489,13 +492,16 @@ class SemanticAnalyzer {
                          current_file_,
                          parameter.range,
                          parameter_type != model_.error_type()});
+      model_.mutable_symbol(symbol).is_final = parameter.is_final;
       model_.mutable_symbol(callable_symbol)
           .parameter_symbols.push_back(symbol);
       bind_name(parameter.name, symbol, parameter.range);
     }
 
     expected_return_type_ = return_type;
+    current_callable_kind_ = model_.symbol(callable_symbol).kind;
     static_cast<void>(analyze_block(body, false));
+    current_callable_kind_.reset();
     expected_return_type_ = model_.void_type();
     end_root_scope();
   }
@@ -575,13 +581,36 @@ class SemanticAnalyzer {
     }
     if (const auto* local =
             std::get_if<LocalVariableStatement>(&statement.data)) {
-      const TypeId type = resolve_type(local->type, current_file_);
+      TypeId type = model_.error_type();
+      std::optional<ExpressionState> initializer;
       if (local->initializer) {
-        const ExpressionState value = analyze_expression(*local->initializer);
-        check_value(value, expression_range(*local->initializer));
-        check_assignment(type, value.type,
-                         expression_range(*local->initializer),
-                         "local initializer");
+        initializer = analyze_expression(*local->initializer);
+        check_value(*initializer, expression_range(*local->initializer));
+      }
+      if (local->type) {
+        type = resolve_type(*local->type, current_file_);
+        if (initializer) {
+          check_assignment(type, initializer->type,
+                           expression_range(*local->initializer),
+                           "local initializer");
+        }
+      } else if (!initializer) {
+        if (!local->is_final) {
+          diagnostics_.error(statement.range, "inferred local '" +
+                                                  std::string{local->name} +
+                                                  "' requires an initializer");
+        }
+      } else if (initializer->type == model_.null_type()) {
+        diagnostics_.error(expression_range(*local->initializer),
+                           "cannot infer the type of local '" +
+                               std::string{local->name} + "' from null");
+      } else if (initializer->type != model_.void_type()) {
+        type = initializer->type;
+      }
+      if (local->is_final && !initializer) {
+        diagnostics_.error(statement.range, "final local '" +
+                                                std::string{local->name} +
+                                                "' requires an initializer");
       }
       const SymbolId symbol =
           model_.add_symbol(SemanticSymbol{SymbolKind::kLocal,
@@ -592,6 +621,7 @@ class SemanticAnalyzer {
                                            current_file_,
                                            statement.range,
                                            type != model_.error_type()});
+      model_.mutable_symbol(symbol).is_final = local->is_final;
       model_.mutable_file(current_file_).statement_symbols.at(id.value) =
           symbol;
       bind_name(local->name, symbol, statement.range);
@@ -695,6 +725,7 @@ class SemanticAnalyzer {
                          current_file_,
                          for_statement->variable.range,
                          variable_type != model_.error_type()});
+      model_.mutable_symbol(symbol).is_final = for_statement->variable.is_final;
       model_.mutable_file(current_file_).statement_symbols.at(id.value) =
           symbol;
 
@@ -990,6 +1021,14 @@ class SemanticAnalyzer {
       diagnostics_.error(expression_range(assignment.target),
                          "assignment target is not mutable");
     }
+    if (target.symbol && model_.symbol(*target.symbol).is_final &&
+        !can_initialize_final_field(assignment.target, *target.symbol)) {
+      const SemanticSymbol& symbol = model_.symbol(*target.symbol);
+      diagnostics_.error(expression_range(assignment.target),
+                         "cannot assign to final " +
+                             std::string{symbol_kind_name(symbol.kind)} + " '" +
+                             symbol.name + "'");
+    }
     check_value(value, expression_range(assignment.value));
     check_assignment(target.type, value.type, range, "assignment");
     if (target.type == model_.error_type() ||
@@ -998,6 +1037,33 @@ class SemanticAnalyzer {
     }
     return ExpressionState{
         target.type, ValueCategory::kValue, target.symbol, {}};
+  }
+
+  bool can_initialize_final_field(ExpressionId target, SymbolId symbol) const {
+    const SemanticSymbol& target_symbol = model_.symbol(symbol);
+    return current_callable_kind_ == SymbolKind::kConstructor &&
+           target_symbol.kind == SymbolKind::kField &&
+           target_symbol.file == current_file_ &&
+           is_self_field_reference(target, symbol);
+  }
+
+  bool is_self_field_reference(ExpressionId id, SymbolId symbol) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (std::holds_alternative<IdentifierExpression>(expression.data)) {
+      return true;
+    }
+    if (const auto* member =
+            std::get_if<MemberAccessExpression>(&expression.data)) {
+      const ExpressionSemantics& object =
+          model_.file(current_file_).expressions.at(member->object.value);
+      return object.symbol == model_.file(current_file_).self_symbol;
+    }
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return is_self_field_reference(grouped->expression, symbol);
+    }
+    return false;
   }
 
   ExpressionState analyze_member_access(const MemberAccessExpression& member,
@@ -1323,6 +1389,7 @@ class SemanticAnalyzer {
   SemanticModel model_;
   FileId current_file_{0};
   TypeId expected_return_type_{0};
+  std::optional<SymbolKind> current_callable_kind_;
   std::vector<Scope> scopes_;
   std::vector<std::vector<VisibleFile>> visible_files_;
   std::optional<std::size_t> current_scope_;

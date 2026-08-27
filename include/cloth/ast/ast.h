@@ -114,9 +114,10 @@ struct Expression {
 struct InvalidStatement {};
 
 struct LocalVariableStatement {
-  TypeSyntax type;
+  std::optional<TypeSyntax> type;
   std::string_view name;
   std::optional<ExpressionId> initializer;
+  bool is_final{false};
 };
 
 struct ReturnStatement {
@@ -142,6 +143,7 @@ struct ForVariableDecl {
   std::optional<TypeSyntax> type;
   std::string_view name;
   SourceRange range;
+  bool is_final{false};
 };
 
 struct ForStatement {
@@ -198,6 +200,7 @@ struct ParameterDecl {
   TypeSyntax type;
   std::string_view name;
   SourceRange range;
+  bool is_final{false};
 };
 
 struct FieldDecl {
@@ -207,6 +210,7 @@ struct FieldDecl {
   std::optional<ExpressionId> initializer;
   SourceRange range;
   bool is_valid{true};
+  bool is_final{false};
 };
 
 struct FunctionDecl {

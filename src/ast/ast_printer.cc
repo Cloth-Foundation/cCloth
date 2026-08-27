@@ -13,6 +13,9 @@ void print_parameters(const std::vector<ParameterDecl>& parameters,
     if (index != 0) {
       output << ", ";
     }
+    if (parameters[index].is_final) {
+      output << "final ";
+    }
     output << parameters[index].type.name;
     if (parameters[index].type.is_array) {
       output << "[]";
@@ -60,7 +63,11 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
     switch (member.kind) {
       case DeclarationKind::kField: {
         const FieldDecl& field = file_class.fields[member.index];
-        output << "Field " << field.name << ": " << field.type.name;
+        output << "Field " << field.name << ": ";
+        if (field.is_final) {
+          output << "final ";
+        }
+        output << field.type.name;
         if (field.type.is_array) {
           output << "[]";
         }

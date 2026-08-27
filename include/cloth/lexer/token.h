@@ -80,6 +80,7 @@ enum class TokenKind {
   kKwLet,
   kKwVar,
   kKwConst,
+  kKwFinal,
   kKwTrue,
   kKwFalse,
   kKwNull,

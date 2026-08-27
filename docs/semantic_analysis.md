@@ -55,6 +55,18 @@ locations, and `Length` is a read-only `int32` value.
 The error type is a recovery value. It is compatible with every type solely to
 prevent one failure from producing unrelated diagnostics.
 
+`final` is stored on semantic symbols rather than semantic types. It prevents
+rebinding fields, parameters, locals, and iteration variables without changing
+the underlying value type. Final locals require initializers; `var` locals
+infer the initializer's exact canonical type and reject missing, null-only, or
+void initializers.
+
+Final fields may use declaration initializers or direct assignments in their
+defining constructors. Constructor analysis tracks definite initialization
+through branches and early returns, rejects repeated or loop-based writes, and
+rejects reads before initialization. Every constructor must initialize each
+otherwise-uninitialized final field exactly once.
+
 ## Binding and checking
 
 Names are resolved from the innermost lexical scope outward, followed by the
@@ -86,6 +98,7 @@ The checker currently validates:
 - boolean `if` and `while` conditions
 - `break` and `continue` placement inside loops
 - inferred or explicitly typed array iteration declarations
+- final binding assignment and final field definite initialization
 - member access and visibility
 - homogeneous array literals, indexing, assignment, and `Length`
 - exact overload and constructor selection

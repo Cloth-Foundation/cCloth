@@ -1,0 +1,16 @@
+final String Label = "stage 12.1";
+final int32 Code;
+
+FinalBindings(int32 code) {
+    Code = code;
+}
+
+func Show(): void {
+    println(Label);
+    println(Code);
+}
+
+func Main(): void {
+    final var value = FinalBindings(12);
+    value.Show();
+}

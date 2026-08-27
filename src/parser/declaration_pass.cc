@@ -75,7 +75,8 @@ DeclarationPassResult DeclarationPass::run() {
                peek(1).kind == TokenKind::kLeftParen) {
       saw_member = true;
       parse_constructor();
-    } else if (can_start_type(current().kind)) {
+    } else if (current().kind == TokenKind::kKwFinal ||
+               can_start_type(current().kind)) {
       saw_member = true;
       parse_field();
     } else {
@@ -169,6 +170,7 @@ std::vector<ParameterSymbol> DeclarationPass::parse_parameters(
   while (!at_end() && current().kind != TokenKind::kRightParen &&
          current().kind != TokenKind::kLeftBrace) {
     const std::size_t parameter_begin = current_;
+    const bool is_final = match(TokenKind::kKwFinal);
     auto type = parse_type();
     if (!type) {
       while (!at_end() && current().kind != TokenKind::kComma &&
@@ -201,7 +203,8 @@ std::vector<ParameterSymbol> DeclarationPass::parse_parameters(
     const Token& name = advance();
     parameters.push_back(ParameterSymbol{
         *type, name.lexeme,
-        SourceRange{tokens_[parameter_begin].range.begin, name.range.end}});
+        SourceRange{tokens_[parameter_begin].range.begin, name.range.end},
+        is_final});
 
     if (match(TokenKind::kComma)) {
       if (current().kind == TokenKind::kRightParen) {
@@ -214,7 +217,8 @@ std::vector<ParameterSymbol> DeclarationPass::parse_parameters(
       diagnostics_.error(current().range,
                          "expected ',' or ')' after parameter");
       is_valid_ = false;
-      if (can_start_type(current().kind)) {
+      if (current().kind == TokenKind::kKwFinal ||
+          can_start_type(current().kind)) {
         continue;
       }
       while (!at_end() && current().kind != TokenKind::kComma &&
@@ -267,6 +271,7 @@ std::optional<TokenIndexRange> DeclarationPass::locate_body(
 void DeclarationPass::parse_field() {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
   const std::size_t begin = current_;
+  const bool is_final = match(TokenKind::kKwFinal);
   auto type = parse_type();
   if (!type) {
     synchronize_member();
@@ -299,6 +304,8 @@ void DeclarationPass::parse_field() {
           (current().kind == TokenKind::kSemicolon ||
            current().kind == TokenKind::kKwFunc ||
            is_nested_type_keyword(current().kind) ||
+           (current().kind == TokenKind::kKwFinal &&
+            can_start_type(peek(1).kind)) ||
            (current_ != initializer_begin && can_start_type(current().kind) &&
             peek(1).kind == TokenKind::kIdentifier))) {
         break;
@@ -329,6 +336,7 @@ void DeclarationPass::parse_field() {
                       {},
                       *type,
                       declaration_valid};
+  symbol.is_final = is_final;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kField, symbol_index,
                                     begin, initializer, std::nullopt, range,
@@ -581,7 +589,8 @@ bool DeclarationPass::has_duplicate(const MemberSymbol& symbol) {
 bool DeclarationPass::looks_like_member_start(
     std::size_t index) const noexcept {
   const TokenKind kind = tokens_[index].kind;
-  if (kind == TokenKind::kKwFunc || is_nested_type_keyword(kind)) {
+  if (kind == TokenKind::kKwFunc || kind == TokenKind::kKwFinal ||
+      is_nested_type_keyword(kind)) {
     return true;
   }
   if (!can_start_type(kind)) {

@@ -36,6 +36,10 @@ references are opaque; the contract does not expose a native C++ object or
 commit the future garbage collector to non-moving addresses. Array element
 types remain structural semantic data and use an `a` prefix in mangled names.
 
+`final` is a source binding contract and has no ABI representation. It does not
+change field layout, parameter types, return types, overload identity, or
+mangled names.
+
 ## File-class objects
 
 Every file-class object begins with two opaque, reference-sized runtime words.

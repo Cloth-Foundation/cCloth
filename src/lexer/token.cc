@@ -140,6 +140,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "var";
     case TokenKind::kKwConst:
       return "const";
+    case TokenKind::kKwFinal:
+      return "final";
     case TokenKind::kKwTrue:
       return "true";
     case TokenKind::kKwFalse:

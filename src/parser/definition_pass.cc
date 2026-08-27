@@ -102,13 +102,20 @@ bool DefinitionPass::expect(TokenKind kind, std::string_view message) {
 }
 
 bool DefinitionPass::is_local_variable_start() const noexcept {
-  if (!can_start_type(current().kind)) {
+  std::size_t lookahead = 0;
+  if (peek(lookahead).kind == TokenKind::kKwFinal) {
+    ++lookahead;
+  }
+  if (peek(lookahead).kind == TokenKind::kKwVar) {
+    return peek(lookahead + 1).kind == TokenKind::kIdentifier;
+  }
+  if (!can_start_type(peek(lookahead).kind)) {
     return false;
   }
-  return peek(1).kind == TokenKind::kIdentifier ||
-         (peek(1).kind == TokenKind::kLeftBracket &&
-          peek(2).kind == TokenKind::kRightBracket &&
-          peek(3).kind == TokenKind::kIdentifier);
+  return peek(lookahead + 1).kind == TokenKind::kIdentifier ||
+         (peek(lookahead + 1).kind == TokenKind::kLeftBracket &&
+          peek(lookahead + 2).kind == TokenKind::kRightBracket &&
+          peek(lookahead + 3).kind == TokenKind::kIdentifier);
 }
 
 TypeSyntax DefinitionPass::parse_type() {
@@ -154,7 +161,8 @@ void DefinitionPass::build_field(const MemberOutline& outline,
       symbol.is_valid && diagnostics_.diagnostics().size() == diagnostic_count;
   const std::size_t index = file_class_.fields.size();
   file_class_.fields.push_back(FieldDecl{type, symbol.name, symbol.visibility,
-                                         initializer, outline.range, is_valid});
+                                         initializer, outline.range, is_valid,
+                                         symbol.is_final});
   file_class_.member_order.push_back(
       MemberReference{DeclarationKind::kField, index});
   file_class_.is_valid = file_class_.is_valid && is_valid;
@@ -211,8 +219,8 @@ std::vector<ParameterDecl> DefinitionPass::copy_parameters(
   std::vector<ParameterDecl> parameters;
   parameters.reserve(symbol.parameters.size());
   for (const ParameterSymbol& parameter : symbol.parameters) {
-    parameters.push_back(
-        ParameterDecl{parameter.type, parameter.name, parameter.range});
+    parameters.push_back(ParameterDecl{parameter.type, parameter.name,
+                                       parameter.range, parameter.is_final});
   }
   return parameters;
 }
@@ -276,7 +284,12 @@ StatementId DefinitionPass::parse_statement() {
 }
 
 StatementId DefinitionPass::parse_local_variable() {
-  const TypeSyntax type = parse_type();
+  const SourceLocation begin = current().range.begin;
+  const bool is_final = match(TokenKind::kKwFinal);
+  std::optional<TypeSyntax> type;
+  if (!match(TokenKind::kKwVar)) {
+    type = parse_type();
+  }
   const Token& name = advance();
   std::optional<ExpressionId> initializer;
   if (match(TokenKind::kEqual)) {
@@ -292,9 +305,9 @@ StatementId DefinitionPass::parse_local_variable() {
                        "expected ';' after local variable declaration");
   }
 
-  const SourceRange range{type.range.begin, end};
-  return file_class_.storage.add_statement(
-      Statement{range, LocalVariableStatement{type, name.lexeme, initializer}});
+  const SourceRange range{begin, end};
+  return file_class_.storage.add_statement(Statement{
+      range, LocalVariableStatement{type, name.lexeme, initializer, is_final}});
 }
 
 StatementId DefinitionPass::parse_return_statement() {
@@ -371,14 +384,16 @@ StatementId DefinitionPass::parse_for_statement() {
   expect(TokenKind::kLeftParen, "expected '(' after 'for'");
 
   const SourceLocation variable_begin = current().range.begin;
+  const bool is_final = match(TokenKind::kKwFinal);
   std::optional<TypeSyntax> type;
   if (match(TokenKind::kKwVar)) {
     // The element type is inferred during semantic analysis.
   } else if (can_start_type(current().kind)) {
     type = parse_type();
   } else {
-    diagnostics_.error(current().range,
-                       "expected 'var' or an explicit type in for loop");
+    diagnostics_.error(
+        current().range,
+        "expected 'var' or an explicit type in for loop declaration");
   }
 
   std::string_view name = "<invalid>";
@@ -406,9 +421,10 @@ StatementId DefinitionPass::parse_for_statement() {
   return file_class_.storage.add_statement(Statement{
       SourceRange{keyword.range.begin,
                   file_class_.storage.block(body).range.end},
-      ForStatement{ForVariableDecl{type, name,
-                                   SourceRange{variable_begin, variable_end}},
-                   iterable, body}});
+      ForStatement{
+          ForVariableDecl{type, name, SourceRange{variable_begin, variable_end},
+                          is_final},
+          iterable, body}});
 }
 
 StatementId DefinitionPass::parse_loop_control_statement() {

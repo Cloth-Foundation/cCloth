@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 11.
+This document defines the syntax implemented through Stage 12.1.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -50,7 +50,7 @@ member_declaration
     | constructor_declaration ;
 
 field_declaration
-    = type identifier [ "=" expression ] ";" ;
+    = [ "final" ] type identifier [ "=" expression ] ";" ;
 
 function_declaration
     = "func" identifier
@@ -71,7 +71,7 @@ parameter_list
     = parameter { "," parameter } ;
 
 parameter
-    = type identifier ;
+    = [ "final" ] type identifier ;
 
 type
     = element_type [ "[" "]" ] ;
@@ -119,7 +119,8 @@ statement
     | block ;
 
 local_variable_statement
-    = type identifier [ "=" expression ] ";" ;
+    = [ "final" ] ( type | "var" ) identifier
+      [ "=" expression ] ";" ;
 
 return_statement
     = "return" [ expression ] ";" ;
@@ -134,8 +135,7 @@ for_statement
     = "for" "(" iteration_declaration "in" expression ")" block ;
 
 iteration_declaration
-    = "var" identifier
-    | type identifier ;
+    = [ "final" ] ( "var" identifier | type identifier ) ;
 
 break_statement
     = "break" ";" ;
@@ -249,6 +249,10 @@ The declaration pass enforces these rules separately from the grammar:
 - Array types are one-dimensional; repeated `[]` suffixes are rejected.
 - A `for` iteration declaration uses either `var` inference or an explicit
   element type.
+- A `var` local requires an initializer. A final local also requires an
+  initializer.
+- A final field is initialized by its declaration or exactly once on every
+  constructor exit path.
 
 Type checking, assignment-target validation, return checking, and overload
 resolution are defined in [semantic_analysis.md](semantic_analysis.md).

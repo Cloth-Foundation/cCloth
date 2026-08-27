@@ -35,8 +35,11 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
         case DeclarationKind::kField: {
           const SemanticSymbol& symbol =
               semantics.symbol(file.fields.at(reference.index).symbol);
-          output << "|- Field " << symbol.name << ": "
-                 << semantics.type(symbol.type).name << " ["
+          output << "|- Field " << symbol.name << ": ";
+          if (symbol.is_final) {
+            output << "final ";
+          }
+          output << semantics.type(symbol.type).name << " ["
                  << visibility_name(symbol.visibility) << "]\n";
           break;
         }

@@ -80,8 +80,11 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
         case DeclarationKind::kField: {
           const MirField& field = file.fields.at(member.index);
           const SemanticSymbol& symbol = semantics.symbol(field.symbol);
-          output << "|- Field " << symbol.name << ": "
-                 << semantics.type(symbol.type).name;
+          output << "|- Field " << symbol.name << ": ";
+          if (symbol.is_final) {
+            output << "final ";
+          }
+          output << semantics.type(symbol.type).name;
           if (field.initializer) {
             output << " [initializer]\n";
             print_body(*field.initializer, output);

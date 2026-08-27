@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 11 callable contracts
+# Cloth compiler - Stage 12.1 final bindings
 
-This repository contains the deterministic Stage 11 compiler core for Cloth
+This repository contains the deterministic Stage 12.1 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -240,6 +240,7 @@ docs/array_iteration.md   Implemented Stage 10.0 iteration contract
 docs/testing.md           Stage 10.1 test and diagnostic-build contract
 docs/printing_and_object_representation.md Stage 10.5 output contract
 docs/void_and_callable_contracts.md Stage 11 void contract
+docs/final_bindings.md   Stage 12.1 single-assignment contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -321,6 +322,11 @@ Stage 11 adds explicit `void`, defaults omitted function returns to the same
 canonical type, and prevents void calls from being used as values. It preserves
 valueless fallthrough and lowers explicit and implicit forms identically. See
 [docs/void_and_callable_contracts.md](docs/void_and_callable_contracts.md).
+
+Stage 12.1 adds `final` fields and bindings, inferred `var` locals, and
+constructor-aware definite initialization. Final affects rebinding rather than
+object mutability and has no ABI representation. See
+[docs/final_bindings.md](docs/final_bindings.md).
 
 ## Extending the lexer
 

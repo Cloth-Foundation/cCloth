@@ -100,11 +100,12 @@ void single_identifier(TestContext& test) {
 
 void keywords_versus_identifiers(TestContext& test) {
   const LexedSource source{
-      "func function integer intValue functionName return"};
+      "func function integer intValue functionName return final finalize"};
   expect_kinds(test, source,
                {cloth::TokenKind::kKwFunc, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kIdentifier, cloth::TokenKind::kKwReturn,
+                cloth::TokenKind::kKwFinal, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kEof});
 }
 

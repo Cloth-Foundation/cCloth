@@ -175,6 +175,154 @@ void void_callable_contract(TestContext& test) {
               "invalid void use caused an internal compiler diagnostic");
 }
 
+void final_binding_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("FinalBindings.co",
+            "final int32 Code;\n"
+            "final String Label = \"cloth\";\n"
+            "FinalBindings(final bool alternate, int32 code) {\n"
+            "  if (alternate) { Code = code; } "
+            "else { self.Code = code + 1; }\n"
+            "}\n"
+            "func Read(final int32 input, int32[] values): int32 {\n"
+            "  final var copy = input;\n"
+            "  final int32 result = copy;\n"
+            "  final var mutableContents = [1, 2];\n"
+            "  mutableContents[0] = 3;\n"
+            "  for (final var value in values) { println(value); }\n"
+            "  return result;\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid final bindings produced semantic errors");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::FileSemantics& file = semantics.file(cloth::FileId{0});
+  test.expect(semantics.symbol(file.fields[0]).is_final &&
+                  semantics.symbol(file.fields[1]).is_final,
+              "final field metadata was not preserved");
+  const cloth::SemanticSymbol& constructor =
+      semantics.symbol(file.constructors[0]);
+  const cloth::SemanticSymbol& function = semantics.symbol(file.functions[0]);
+  test.expect(!constructor.parameter_symbols.empty() &&
+                  semantics.symbol(constructor.parameter_symbols[0]).is_final,
+              "final constructor parameter metadata was not preserved");
+  test.expect(!function.parameter_symbols.empty() &&
+                  semantics.symbol(function.parameter_symbols[0]).is_final,
+              "final function parameter metadata was not preserved");
+
+  bool found_inferred_final = false;
+  bool found_final_iteration_binding = false;
+  for (const cloth::SemanticSymbol& symbol : semantics.symbols()) {
+    found_inferred_final =
+        found_inferred_final ||
+        (symbol.kind == cloth::SymbolKind::kLocal && symbol.name == "copy" &&
+         symbol.is_final &&
+         semantics.type(symbol.type).kind == cloth::TypeKind::kInt32);
+    found_final_iteration_binding = found_final_iteration_binding ||
+                                    (symbol.kind == cloth::SymbolKind::kLocal &&
+                                     symbol.name == "value" && symbol.is_final);
+  }
+  test.expect(found_inferred_final,
+              "final var did not infer and retain its canonical type");
+  test.expect(found_final_iteration_binding,
+              "final for binding metadata was not preserved");
+
+  AnalyzedCompilation invalid;
+  invalid.add("InvalidFinal.co",
+              "final int32 Initialized = 1;\n"
+              "final int32 Missing;\n"
+              "InvalidFinal(bool assign, int32 value) {\n"
+              "  int32 early = Missing;\n"
+              "  if (assign) { Missing = value; }\n"
+              "  Initialized = value;\n"
+              "}\n"
+              "func Mutate(final int32 parameter, int32[] values) {\n"
+              "  final int32 local = 1;\n"
+              "  local = 2;\n"
+              "  parameter = 3;\n"
+              "  for (final var element in values) { element = 4; }\n"
+              "  Missing = 5;\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic(
+                  "final field 'Missing' is read before it is initialized"),
+              "read-before-initialization was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "final field 'Initialized' may only be initialized once"),
+              "second final field initialization was accepted");
+  test.expect(
+      invalid.has_diagnostic(
+          "constructor exits before final field 'Missing' is initialized"),
+      "partial branch initialization was accepted");
+  test.expect(invalid.has_diagnostic("cannot assign to final local 'local'"),
+              "final local reassignment was accepted");
+  test.expect(
+      invalid.has_diagnostic("cannot assign to final parameter 'parameter'"),
+      "final parameter reassignment was accepted");
+  test.expect(invalid.has_diagnostic("cannot assign to final local 'element'"),
+              "final iteration binding reassignment was accepted");
+  test.expect(invalid.has_diagnostic("cannot assign to final field 'Missing'"),
+              "final field assignment outside construction was accepted");
+
+  AnalyzedCompilation loop;
+  loop.add("LoopFinal.co",
+           "final int32 Value;\n"
+           "LoopFinal(bool repeat) {\n"
+           "  while (repeat) { Value = 1; }\n"
+           "}\n");
+  loop.analyze();
+  test.expect(loop.has_diagnostic(
+                  "final field 'Value' cannot be initialized inside a loop"),
+              "loop-based final field initialization was accepted");
+
+  AnalyzedCompilation early_return;
+  early_return.add("EarlyReturn.co",
+                   "final int32 Value;\n"
+                   "EarlyReturn(bool stop) {\n"
+                   "  if (stop) { return; }\n"
+                   "  Value = 1;\n"
+                   "}\n");
+  early_return.analyze();
+  test.expect(
+      early_return.has_diagnostic(
+          "constructor exits before final field 'Value' is initialized"),
+      "early constructor return bypassed final initialization");
+
+  AnalyzedCompilation missing_constructor;
+  missing_constructor.add("MissingConstructor.co", "final int32 Value;\n");
+  missing_constructor.analyze();
+  test.expect(missing_constructor.has_diagnostic(
+                  "requires an initializer or a constructor"),
+              "uninitialized final field without a constructor was accepted");
+
+  AnalyzedCompilation initializer_order;
+  initializer_order.add("InitializerOrder.co",
+                        "final int32 First = Second;\n"
+                        "final int32 Second = 2;\n");
+  initializer_order.analyze();
+  test.expect(initializer_order.has_diagnostic(
+                  "final field 'Second' is read before it is initialized"),
+              "final field initializer order was not enforced");
+
+  AnalyzedCompilation invalid_inference;
+  invalid_inference.add("Inference.co",
+                        "func Bad() {\n"
+                        "  var missing;\n"
+                        "  final var alsoMissing;\n"
+                        "  var unknown = null;\n"
+                        "}\n");
+  invalid_inference.analyze();
+  test.expect(invalid_inference.has_diagnostic(
+                  "inferred local 'missing' requires an initializer"),
+              "var without an initializer was accepted");
+  test.expect(invalid_inference.has_diagnostic(
+                  "final local 'alsoMissing' requires an initializer"),
+              "final local without an initializer was accepted");
+  test.expect(invalid_inference.has_diagnostic("from null"),
+              "null-only local inference was accepted");
+}
+
 void core_print_intrinsic(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("HelloWorld.co",
@@ -778,6 +926,7 @@ int main() {
   const std::vector<TestCase> tests{
       {"core types and typed HIR", core_types_and_typed_hir},
       {"void callable contract", void_callable_contract},
+      {"final binding contract", final_binding_contract},
       {"core print intrinsic", core_print_intrinsic},
       {"cross-file binding", cross_file_binding},
       {"package imports", package_imports},

@@ -155,10 +155,10 @@ void imports(TestContext& test) {
 void fields_and_visibility(TestContext& test) {
   const ParsedSource source{"Fields.co",
                             "String Name;\nint32 id;\nbool active = true;\n"
-                            "int32 _cache;\n"};
+                            "int32 _cache;\nfinal int32 Version = 1;\n"};
   test.expect(error_count(source) == 0, "valid fields should parse");
-  test.expect(source.ast().fields.size() == 4, "wrong field count");
-  if (source.ast().fields.size() != 4) {
+  test.expect(source.ast().fields.size() == 5, "wrong field count");
+  if (source.ast().fields.size() != 5) {
     return;
   }
   test.expect(
@@ -182,6 +182,9 @@ void fields_and_visibility(TestContext& test) {
   }
   test.expect(source.ast().fields[3].visibility == cloth::Visibility::kPrivate,
               "underscore field should be private");
+  test.expect(source.ast().fields[4].is_final &&
+                  source.ast().fields[4].name == "Version",
+              "final field modifier was not retained");
 
   const ParsedSource private_class{"user.co", ""};
   test.expect(private_class.ast().visibility == cloth::Visibility::kPrivate,
@@ -189,10 +192,11 @@ void fields_and_visibility(TestContext& test) {
 }
 
 void functions(TestContext& test) {
-  const ParsedSource source{"Functions.co",
-                            "func shutdown() {}\n"
-                            "func Add(int a, int b): int { return a + b; }\n"
-                            "func Flush(): void { return; }\n"};
+  const ParsedSource source{
+      "Functions.co",
+      "func shutdown() {}\n"
+      "func Add(final int a, int b): int { return a + b; }\n"
+      "func Flush(): void { return; }\n"};
   test.expect(error_count(source) == 0, "valid functions should parse");
   test.expect(source.ast().functions.size() == 3, "wrong function count");
   if (source.ast().functions.size() != 3) {
@@ -207,6 +211,8 @@ void functions(TestContext& test) {
 
   const cloth::FunctionDecl& add = source.ast().functions[1];
   test.expect(add.parameters.size() == 2, "func parameters were lost");
+  test.expect(add.parameters[0].is_final && !add.parameters[1].is_final,
+              "final parameter modifier was not retained");
   test.expect(add.return_type && add.return_type->name == "int",
               "func return type is wrong");
   test.expect(add.visibility == cloth::Visibility::kPublic,
@@ -367,7 +373,7 @@ void expressions_and_if_statement(TestContext& test) {
   const ParsedSource source{
       "Expressions.co",
       "func Check(int x): bool {\n"
-      "  int value = x + 1 * 2;\n"
+      "  final var value = x + 1 * 2;\n"
       "  if (value > 0) { return true; } else { return false; }\n"
       "}\n"};
   test.expect(error_count(source) == 0,
@@ -389,6 +395,9 @@ void expressions_and_if_statement(TestContext& test) {
       std::get_if<cloth::LocalVariableStatement>(&local.data);
   test.expect(local_data != nullptr && local_data->initializer.has_value(),
               "local variable initializer is missing");
+  test.expect(
+      local_data != nullptr && local_data->is_final && !local_data->type,
+      "final inferred local declaration was not retained");
   if (local_data != nullptr && local_data->initializer) {
     const cloth::Expression& addition =
         source.ast().storage.expression(*local_data->initializer);
@@ -443,11 +452,12 @@ void while_break_and_continue(TestContext& test) {
 }
 
 void for_iteration_declarations(TestContext& test) {
-  const ParsedSource source{"Iteration.co",
-                            "func Visit(int32[] values) {\n"
-                            "  for (var inferred in values) { continue; }\n"
-                            "  for (int32 explicitValue in values) { break; }\n"
-                            "}\n"};
+  const ParsedSource source{
+      "Iteration.co",
+      "func Visit(int32[] values) {\n"
+      "  for (final var inferred in values) { continue; }\n"
+      "  for (int32 explicitValue in values) { break; }\n"
+      "}\n"};
   test.expect(error_count(source) == 0,
               "valid for iteration declarations did not parse");
   const cloth::Block& body =
@@ -462,7 +472,8 @@ void for_iteration_declarations(TestContext& test) {
   const auto* explicit_loop = std::get_if<cloth::ForStatement>(
       &source.ast().storage.statement(body.statements[1]).data);
   test.expect(inferred != nullptr && !inferred->variable.type &&
-                  inferred->variable.name == "inferred",
+                  inferred->variable.name == "inferred" &&
+                  inferred->variable.is_final,
               "var iteration declaration was not retained");
   test.expect(explicit_loop != nullptr && explicit_loop->variable.type &&
                   explicit_loop->variable.type->name == "int32" &&
