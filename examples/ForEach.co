@@ -1,0 +1,22 @@
+func Main() {
+    int32[] values = [1, 2, 3, 4, 5];
+    int32 total = 0;
+
+    for (var value in values) {
+        if (value == 3) {
+            continue;
+        }
+        total = total + value;
+    }
+
+    print(total);
+    print("\n");
+
+    for (int32 value in values) {
+        if (value == 4) {
+            break;
+        }
+        print(value);
+    }
+    print("\n");
+}

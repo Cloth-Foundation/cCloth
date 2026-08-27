@@ -77,6 +77,7 @@ The checker currently validates:
 - unary and binary operator operand types
 - boolean `if` and `while` conditions
 - `break` and `continue` placement inside loops
+- inferred or explicitly typed array iteration declarations
 - member access and visibility
 - homogeneous array literals, indexing, assignment, and `Length`
 - exact overload and constructor selection
@@ -87,6 +88,13 @@ User-defined conversions, numeric promotions, inheritance, traits, generics,
 first-class function values, and implicit default constructors are deferred.
 Complete return-path and reachability checks are performed by the Stage 3.0
 control-flow analysis after HIR verification.
+
+A `for` iterable is checked before its loop binding enters scope. Arrays expose
+their canonical element type to the binding. `var` adopts that type; an
+explicit declaration uses ordinary assignment compatibility. The binding is a
+mutable local visible only in the loop body. Because an array may be empty, a
+return from every iteration body does not by itself complete a function's
+return paths.
 
 ## Typed HIR
 

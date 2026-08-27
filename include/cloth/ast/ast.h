@@ -138,6 +138,18 @@ struct WhileStatement {
   BlockId body;
 };
 
+struct ForVariableDecl {
+  std::optional<TypeSyntax> type;
+  std::string_view name;
+  SourceRange range;
+};
+
+struct ForStatement {
+  ForVariableDecl variable;
+  ExpressionId iterable;
+  BlockId body;
+};
+
 struct BreakStatement {};
 
 struct ContinueStatement {};
@@ -148,7 +160,7 @@ struct NestedBlockStatement {
 
 using StatementData =
     std::variant<InvalidStatement, LocalVariableStatement, ReturnStatement,
-                 ExpressionStatement, IfStatement, WhileStatement,
+                 ExpressionStatement, IfStatement, WhileStatement, ForStatement,
                  BreakStatement, ContinueStatement, NestedBlockStatement>;
 
 struct Statement {

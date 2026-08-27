@@ -435,6 +435,34 @@ void while_break_and_continue(TestContext& test) {
               "break AST node is missing");
 }
 
+void for_iteration_declarations(TestContext& test) {
+  const ParsedSource source{"Iteration.co",
+                            "func Visit(int32[] values) {\n"
+                            "  for (var inferred in values) { continue; }\n"
+                            "  for (int32 explicitValue in values) { break; }\n"
+                            "}\n"};
+  test.expect(error_count(source) == 0,
+              "valid for iteration declarations did not parse");
+  const cloth::Block& body =
+      source.ast().storage.block(source.ast().functions[0].body);
+  test.expect(body.statements.size() == 2,
+              "for loops have the wrong statement count");
+  if (body.statements.size() != 2) {
+    return;
+  }
+  const auto* inferred = std::get_if<cloth::ForStatement>(
+      &source.ast().storage.statement(body.statements[0]).data);
+  const auto* explicit_loop = std::get_if<cloth::ForStatement>(
+      &source.ast().storage.statement(body.statements[1]).data);
+  test.expect(inferred != nullptr && !inferred->variable.type &&
+                  inferred->variable.name == "inferred",
+              "var iteration declaration was not retained");
+  test.expect(explicit_loop != nullptr && explicit_loop->variable.type &&
+                  explicit_loop->variable.type->name == "int32" &&
+                  explicit_loop->variable.name == "explicitValue",
+              "explicit iteration declaration was not retained");
+}
+
 void calls_members_and_assignment(TestContext& test) {
   const ParsedSource source{
       "Calls.co",
@@ -659,6 +687,7 @@ int main() {
       {"deferred nested type recover", deferred_nested_type_recover},
       {"expressions and if statement", expressions_and_if_statement},
       {"while, break, and continue", while_break_and_continue},
+      {"for iteration declarations", for_iteration_declarations},
       {"calls, members, and assignment", calls_members_and_assignment},
       {"arrays", arrays},
       {"missing statement semicolon recover",

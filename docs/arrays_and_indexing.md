@@ -45,6 +45,6 @@ edges later without changing Cloth source or MIR semantics.
 ## Deferred work
 
 Stage 9.0 deliberately defers multidimensional syntax, resizable lists, slices,
-array covariance, deep equality, contextual empty literals, and `for`
-iteration. A future `for` design can build on the concrete `Length` and indexed
-access semantics established here.
+array covariance, deep equality, and contextual empty literals. Stage 10.0
+builds array `for` iteration on the concrete `Length` and indexed-access
+semantics established here.

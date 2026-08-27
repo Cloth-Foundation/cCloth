@@ -634,6 +634,52 @@ class SemanticAnalyzer {
       --loop_depth_;
       return false;
     }
+    if (const auto* for_statement =
+            std::get_if<ForStatement>(&statement.data)) {
+      const ExpressionState iterable =
+          analyze_expression(for_statement->iterable);
+      check_value(iterable, expression_range(for_statement->iterable));
+
+      TypeId element_type = model_.error_type();
+      if (iterable.type != model_.error_type()) {
+        const SemanticType& type = model_.type(iterable.type);
+        if (type.kind == TypeKind::kArray && type.element_type) {
+          element_type = *type.element_type;
+        } else {
+          diagnostics_.error(expression_range(for_statement->iterable),
+                             "type '" + type.name + "' is not iterable");
+        }
+      }
+
+      TypeId variable_type = element_type;
+      if (for_statement->variable.type) {
+        variable_type =
+            resolve_type(*for_statement->variable.type, current_file_);
+        check_assignment(variable_type, element_type,
+                         for_statement->variable.range,
+                         "for iteration variable");
+      }
+      const SymbolId symbol = model_.add_symbol(
+          SemanticSymbol{SymbolKind::kLocal,
+                         std::string{for_statement->variable.name},
+                         variable_type,
+                         {},
+                         Visibility::kPrivate,
+                         current_file_,
+                         for_statement->variable.range,
+                         variable_type != model_.error_type()});
+      model_.mutable_file(current_file_).statement_symbols.at(id.value) =
+          symbol;
+
+      push_scope();
+      bind_name(for_statement->variable.name, symbol,
+                for_statement->variable.range);
+      ++loop_depth_;
+      static_cast<void>(analyze_block(for_statement->body, false));
+      --loop_depth_;
+      pop_scope();
+      return false;
+    }
     if (std::holds_alternative<BreakStatement>(statement.data)) {
       if (loop_depth_ == 0) {
         diagnostics_.error(statement.range,

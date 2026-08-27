@@ -41,6 +41,13 @@ loops always resolve control statements to the innermost loop. A literal
 `while (true)` cannot fall through unless its body contains a reachable
 `break`.
 
+An array `for` loop evaluates its iterable once, then lowers to condition, body,
+latch, and exit blocks. A body entry performs a checked element load and stores
+the value into the iteration local. Fallthrough and `continue` target the latch,
+which increments an `int32` phi index before returning to the condition.
+`break` targets the exit directly. This shape prevents `continue` from skipping
+the hidden increment.
+
 ## MIR structure
 
 Every callable and field initializer owns a `MirBody`. IDs for basic blocks and

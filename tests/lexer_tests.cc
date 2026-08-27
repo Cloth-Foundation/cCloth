@@ -158,6 +158,14 @@ void import_keywords(TestContext& test) {
                 cloth::TokenKind::kEof});
 }
 
+void iteration_keywords(TestContext& test) {
+  const LexedSource source{"for var value in values"};
+  expect_kinds(test, source,
+               {cloth::TokenKind::kKwFor, cloth::TokenKind::kKwVar,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kKwIn,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kEof});
+}
+
 void operators_and_longest_match(TestContext& test) {
   const LexedSource source{
       "+ - * / % = == != < <= > >= && || ! & | ^ ~ ++ -- += -= *= "
@@ -319,6 +327,7 @@ int main() {
       {"numeric literals", numeric_literals},
       {"punctuation", punctuation},
       {"import keywords", import_keywords},
+      {"iteration keywords", iteration_keywords},
       {"operators and longest match", operators_and_longest_match},
       {"comments are skipped", comments_are_skipped},
       {"unterminated block comment", unterminated_block_comment},

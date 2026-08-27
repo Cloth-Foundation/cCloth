@@ -262,6 +262,9 @@ StatementId DefinitionPass::parse_statement() {
   if (current().kind == TokenKind::kKwWhile) {
     return parse_while_statement();
   }
+  if (current().kind == TokenKind::kKwFor) {
+    return parse_for_statement();
+  }
   if (current().kind == TokenKind::kKwBreak ||
       current().kind == TokenKind::kKwContinue) {
     return parse_loop_control_statement();
@@ -363,6 +366,51 @@ StatementId DefinitionPass::parse_while_statement() {
                 WhileStatement{condition, body}});
 }
 
+StatementId DefinitionPass::parse_for_statement() {
+  const Token& keyword = advance();
+  expect(TokenKind::kLeftParen, "expected '(' after 'for'");
+
+  const SourceLocation variable_begin = current().range.begin;
+  std::optional<TypeSyntax> type;
+  if (match(TokenKind::kKwVar)) {
+    // The element type is inferred during semantic analysis.
+  } else if (can_start_type(current().kind)) {
+    type = parse_type();
+  } else {
+    diagnostics_.error(current().range,
+                       "expected 'var' or an explicit type in for loop");
+  }
+
+  std::string_view name = "<invalid>";
+  SourceLocation variable_end = current().range.begin;
+  if (current().kind == TokenKind::kIdentifier) {
+    const Token& name_token = advance();
+    name = name_token.lexeme;
+    variable_end = name_token.range.end;
+  } else {
+    diagnostics_.error(current().range, "expected iteration variable name");
+  }
+
+  expect(TokenKind::kKwIn, "expected 'in' after iteration variable");
+  const ExpressionId iterable = parse_expression();
+  expect(TokenKind::kRightParen, "expected ')' after for iterable");
+
+  BlockId body = file_class_.storage.add_block(
+      Block{point_range(current().range.begin), {}, false});
+  if (current().kind == TokenKind::kLeftBrace) {
+    body = parse_block();
+  } else {
+    diagnostics_.error(current().range, "expected '{' to begin for body");
+  }
+
+  return file_class_.storage.add_statement(Statement{
+      SourceRange{keyword.range.begin,
+                  file_class_.storage.block(body).range.end},
+      ForStatement{ForVariableDecl{type, name,
+                                   SourceRange{variable_begin, variable_end}},
+                   iterable, body}});
+}
+
 StatementId DefinitionPass::parse_loop_control_statement() {
   const Token& keyword = advance();
   SourceLocation end = keyword.range.end;
@@ -402,6 +450,7 @@ void DefinitionPass::synchronize_statement() {
     if (current().kind == TokenKind::kKwReturn ||
         current().kind == TokenKind::kKwIf ||
         current().kind == TokenKind::kKwWhile ||
+        current().kind == TokenKind::kKwFor ||
         current().kind == TokenKind::kKwBreak ||
         current().kind == TokenKind::kKwContinue ||
         current().kind == TokenKind::kLeftBrace || is_local_variable_start()) {

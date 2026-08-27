@@ -513,6 +513,62 @@ void array_semantics(TestContext& test) {
               "non-array value was indexable");
 }
 
+void for_iteration_semantics(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Iteration.co",
+            "func Sum(int32[] values): int32 {\n"
+            "  int32 total = 0;\n"
+            "  for (var value in values) {\n"
+            "    value = value + 1;\n"
+            "    total = total + value;\n"
+            "  }\n"
+            "  for (int32 value in values) { total = total + value; }\n"
+            "  return total;\n"
+            "}\n");
+  valid.analyze();
+  test.expect(valid.error_count() == 0,
+              "valid for iteration produced semantic errors");
+  bool found_for = false;
+  for (const cloth::HirStatement& statement :
+       valid.result->hir.storage.statements()) {
+    const auto* loop = std::get_if<cloth::HirForStatement>(&statement.data);
+    if (loop != nullptr && loop->variable) {
+      found_for = true;
+      test.expect(valid.result->semantics.symbol(*loop->variable).type ==
+                      valid.result->semantics.find_type("int32"),
+                  "inferred iteration variable has the wrong type");
+    }
+  }
+  test.expect(found_for, "typed HIR has no for statement");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadIteration.co",
+              "func Bad(): int32 {\n"
+              "  int32[] values = [1, 2];\n"
+              "  for (bool value in values) {}\n"
+              "  for (var item in 1) {}\n"
+              "  return value;\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic(
+                  "for iteration variable has type 'int32'; expected 'bool'"),
+              "mismatched explicit iteration type was accepted");
+  test.expect(invalid.has_diagnostic("type 'int32' is not iterable"),
+              "non-array iterable was accepted");
+  test.expect(invalid.has_diagnostic("unknown name 'value'"),
+              "iteration variable escaped its loop scope");
+
+  AnalyzedCompilation return_path;
+  return_path.add("ReturnPath.co",
+                  "func First(int32[] values): int32 {\n"
+                  "  for (var value in values) { return value; }\n"
+                  "}\n");
+  return_path.analyze();
+  test.expect(
+      return_path.has_diagnostic("does not return a value on every path"),
+      "possibly empty for loop was treated as a guaranteed return");
+}
+
 void instance_member_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("User.co", "String Name;\n");
@@ -574,6 +630,7 @@ int main() {
       {"null assignability", null_assignability},
       {"assignment requires location", assignment_requires_location},
       {"array semantics", array_semantics},
+      {"for iteration semantics", for_iteration_semantics},
       {"instance member binding", instance_member_binding},
       {"deterministic diagnostics", deterministic_diagnostics},
   };

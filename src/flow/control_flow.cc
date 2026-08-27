@@ -71,6 +71,11 @@ class CallableAnalyzer {
       return FlowResult{
           !is_true(while_statement->condition) || body_flow.has_break, false};
     }
+    if (const auto* for_statement =
+            std::get_if<HirForStatement>(&statement.data)) {
+      static_cast<void>(analyze_block(for_statement->body));
+      return FlowResult{};
+    }
     if (const auto* nested =
             std::get_if<HirNestedBlockStatement>(&statement.data)) {
       return analyze_block(nested->block);

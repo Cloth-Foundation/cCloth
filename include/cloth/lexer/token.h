@@ -69,6 +69,7 @@ enum class TokenKind {
   kKwElse,
   kKwWhile,
   kKwFor,
+  kKwIn,
   kKwBreak,
   kKwContinue,
   kKwStruct,

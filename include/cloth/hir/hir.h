@@ -135,6 +135,12 @@ struct HirWhileStatement {
   HirBlockId body;
 };
 
+struct HirForStatement {
+  std::optional<SymbolId> variable;
+  HirExpressionId iterable;
+  HirBlockId body;
+};
+
 struct HirBreakStatement {};
 
 struct HirContinueStatement {};
@@ -146,7 +152,7 @@ struct HirNestedBlockStatement {
 using HirStatementData =
     std::variant<HirInvalidStatement, HirLocalStatement, HirReturnStatement,
                  HirExpressionStatement, HirIfStatement, HirWhileStatement,
-                 HirBreakStatement, HirContinueStatement,
+                 HirForStatement, HirBreakStatement, HirContinueStatement,
                  HirNestedBlockStatement>;
 
 struct HirStatement {

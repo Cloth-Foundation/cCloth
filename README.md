@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 9.0 arrays and indexing
+# Cloth compiler - Stage 10.0 array iteration
 
-This repository contains the deterministic Stage 9.0 compiler core for Cloth
+This repository contains the deterministic Stage 10.0 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -9,10 +9,10 @@ prints readable token, AST, HIR, MIR, and ABI summaries or emits a standalone
 LLVM module or builds a native x86-64 executable. Errors are collected with
 source ranges.
 
-The project includes structured `while`, `break`, and `continue` control flow,
-fixed-length mutable arrays with checked indexing, and a minimal native runtime
-for allocation, strings, null checks, and typed `print` overloads for `String`,
-`int32`, and `bool`. It intentionally
+The project includes structured `while` and array `for` iteration, `break` and
+`continue` control flow, fixed-length mutable arrays with checked indexing, and
+a minimal native runtime for allocation, strings, null checks, and typed
+`print` overloads for `String`, `int32`, and `bool`. It intentionally
 contains no garbage collector, virtual machine, standard library, debugger, or
 external package registry. LLVM IR emission has no link-time dependency on LLVM
 libraries.
@@ -95,6 +95,18 @@ The Stage 9 array example sums a collection through `Length` and indexing:
 ./array-sum
 ```
 
+Stage 10 adds inferred and explicitly typed iteration declarations:
+
+```sh
+./build/clothc --build=for-each examples/ForEach.co
+./for-each
+```
+
+```cloth
+for (var value in values) { ... }
+for (int32 value in values) { ... }
+```
+
 A project uses an empty or metadata-only `cloth.toml` and a `src/` directory.
 Compile only its entry file; imports and same-package sources are discovered:
 
@@ -140,16 +152,16 @@ ctest --test-dir build --build-config Debug --output-on-failure
 
 The internal test executables use no external test framework. Lexer coverage
 includes tokens, comments, literals, operators, invalid input, ranges, and EOF.
-Parser coverage includes imports, declarations, arrays, visibility,
-constructors, overload candidates, statements, expressions, source ranges, and
-recovery.
+Parser coverage includes imports, declarations, arrays, `for` bindings,
+visibility, constructors, overload candidates, statements, expressions, source
+ranges, and recovery.
 Semantic coverage includes package and cross-file binding, aliases, wildcards,
 privacy, core types, exact overload and constructor resolution, lexical scopes,
 type checking, array inference and access, return paths, portable file-name
 collisions, typed HIR, and deterministic diagnostics. MIR coverage
 includes branches, fallthrough joins, structured loop edges, short-circuit phi
-nodes, dead blocks, field initializers, array operations, explicit conversions,
-receivers, and verifier failures.
+nodes, dead blocks, field initializers, array operations, iteration latches,
+explicit conversions, receivers, and verifier failures.
 ABI coverage includes primitive and reference layouts, class padding, both
 target widths, receiver slots, constructor returns, linkage, mangling, and
 verifier failures.
@@ -221,6 +233,7 @@ docs/llvm_backend.md     Implemented Stage 5.0 LLVM lowering contract
 docs/native_runtime.md   Implemented Stage 6.0 native execution contract
 docs/packages_and_imports.md Implemented Stage 8.0 package graph contract
 docs/arrays_and_indexing.md Implemented Stage 9.0 array contract
+docs/array_iteration.md   Implemented Stage 10.0 iteration contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -280,6 +293,11 @@ Stage 9 adds homogeneous `T[]` references, array literals, mutable checked
 indexing, and the public `Length` member. Arrays lower through explicit HIR and
 MIR nodes to a garbage-collector-ready runtime boundary. See
 [docs/arrays_and_indexing.md](docs/arrays_and_indexing.md).
+
+Stage 10 adds `for (declaration in expression)` over arrays. The loop binding
+may infer its element type with `var` or state it explicitly. Lowering evaluates
+the iterable once and uses a dedicated latch so `continue` always advances the
+hidden index. See [docs/array_iteration.md](docs/array_iteration.md).
 
 ## Extending the lexer
 

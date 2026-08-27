@@ -161,11 +161,22 @@ linked into the compiler process or invoked as external tooling.
 
 ## Structured loops
 
-`while` is Cloth's first loop form. Its condition must be `bool`, and its body
-must be braced. `break` exits the innermost loop and `continue` re-evaluates its
-condition. Both control statements are errors outside a loop. This small core
-is sufficient to express general iteration without committing to `for` syntax
-or iterator protocols prematurely.
+`while` conditions must be `bool`, and loop bodies must be braced. `break` exits
+the innermost loop. In a `while`, `continue` re-evaluates the condition. Both
+control statements are errors outside a loop.
+
+Array iteration uses a declaration followed by `in`:
+
+```cloth
+for (var value in values) { ... }
+for (int32 value in values) { ... }
+```
+
+`var` infers the exact element type; an explicit type must accept the element
+type. The iterable expression is evaluated once. The loop binding is a mutable
+local copy scoped to the body, so reassigning it does not write the array.
+`continue` advances the hidden index before rechecking the loop condition.
+Future iteration protocols must preserve this source contract.
 
 ## Arrays
 

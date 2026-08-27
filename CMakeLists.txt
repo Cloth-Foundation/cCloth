@@ -334,6 +334,29 @@ if(BUILD_TESTING)
         set_tests_properties(cloth_array_bounds PROPERTIES
             DEPENDS cloth_cli_build_array_bounds
         )
+
+        if(WIN32)
+            set(CLOTH_TEST_FOR_EACH_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth for each.exe")
+        else()
+            set(CLOTH_TEST_FOR_EACH_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth for each")
+        endif()
+        add_test(
+            NAME cloth_cli_build_for_each
+            COMMAND clothc "--build=${CLOTH_TEST_FOR_EACH_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/examples/ForEach.co
+        )
+        add_test(
+            NAME cloth_for_each
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_FOR_EACH_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/for_each.txt"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_for_each PROPERTIES
+            DEPENDS cloth_cli_build_for_each
+        )
     endif()
     add_test(
         NAME cloth_cli_lexical_error

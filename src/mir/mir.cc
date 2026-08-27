@@ -192,6 +192,11 @@ class BodyBuilder {
       lower_while(*while_statement, statement.range);
       return;
     }
+    if (const auto* for_statement =
+            std::get_if<HirForStatement>(&statement.data)) {
+      lower_for(*for_statement, statement.range);
+      return;
+    }
     if (std::holds_alternative<HirBreakStatement>(statement.data)) {
       if (!loop_targets_.empty()) {
         jump_to(loop_targets_.back().break_target, statement.range);
@@ -310,6 +315,69 @@ class BodyBuilder {
       jump_to(condition_block, range);
     }
     loop_targets_.pop_back();
+    current_block_ = exit_block;
+  }
+
+  void lower_for(const HirForStatement& for_statement, SourceRange range) {
+    const HirExpression& iterable =
+        hir_.storage.expression(for_statement.iterable);
+    const MirValueId array =
+        require_value(lower_expression(for_statement.iterable), iterable.type,
+                      iterable.range);
+    const TypeId int32_type = *semantics_.find_type("int32");
+    const MirValueId zero = emit_value(
+        int32_type, range, MirLiteralInstruction{LiteralKind::kInteger, "0"});
+    const MirBlockId preheader = *current_block_;
+
+    const MirBlockId condition_block = add_block(true);
+    const MirBlockId body_block = add_block(true);
+    const MirBlockId latch_block = add_block(true);
+    const MirBlockId exit_block = add_block(true);
+    jump_to(condition_block, range);
+
+    current_block_ = condition_block;
+    const MirValueId index =
+        emit_value(int32_type, range,
+                   MirPhiInstruction{{MirPhiIncoming{preheader, zero}}});
+    const std::size_t phi_instruction =
+        body_.blocks[condition_block.value].instructions.size() - 1;
+    const MirValueId length =
+        emit_value(int32_type, range, MirArrayLengthInstruction{array});
+    const MirValueId condition =
+        emit_value(semantics_.bool_type(), range,
+                   MirBinaryInstruction{index, TokenKind::kLess, length});
+    terminate(MirBranchTerminator{condition, body_block, exit_block}, range);
+
+    current_block_ = body_block;
+    if (for_statement.variable) {
+      const TypeId element_type =
+          semantics_.symbol(*for_statement.variable).type;
+      const MirValueId element = emit_value(
+          element_type, range, MirArrayLoadInstruction{array, index});
+      emit_void(range,
+                MirDeclareLocalInstruction{*for_statement.variable, element});
+    } else {
+      emit_void(range, MirInvalidInstruction{});
+    }
+
+    loop_targets_.push_back(LoopTargets{latch_block, exit_block});
+    lower_block(for_statement.body);
+    if (current_block_) {
+      jump_to(latch_block, range);
+    }
+    loop_targets_.pop_back();
+
+    current_block_ = latch_block;
+    const MirValueId one = emit_value(
+        int32_type, range, MirLiteralInstruction{LiteralKind::kInteger, "1"});
+    const MirValueId next_index = emit_value(
+        int32_type, range, MirBinaryInstruction{index, TokenKind::kPlus, one});
+    jump_to(condition_block, range);
+
+    MirInstruction& instruction =
+        body_.blocks[condition_block.value].instructions[phi_instruction];
+    auto& phi = std::get<MirPhiInstruction>(instruction.data);
+    phi.incoming.push_back(MirPhiIncoming{latch_block, next_index});
     current_block_ = exit_block;
   }
 
@@ -626,7 +694,32 @@ class BodyBuilder {
         terminated_[index] = true;
       }
     }
+    update_reachability();
     current_block_.reset();
+  }
+
+  void update_reachability() {
+    for (MirBasicBlock& block : body_.blocks) {
+      block.is_reachable = false;
+    }
+    std::vector<MirBlockId> worklist{body_.entry};
+    while (!worklist.empty()) {
+      const MirBlockId block_id = worklist.back();
+      worklist.pop_back();
+      MirBasicBlock& block = body_.blocks[block_id.value];
+      if (block.is_reachable) {
+        continue;
+      }
+      block.is_reachable = true;
+      if (const auto* jump =
+              std::get_if<MirJumpTerminator>(&block.terminator.data)) {
+        worklist.push_back(jump->target);
+      } else if (const auto* branch =
+                     std::get_if<MirBranchTerminator>(&block.terminator.data)) {
+        worklist.push_back(branch->then_block);
+        worklist.push_back(branch->else_block);
+      }
+    }
   }
 
   const HirModule& hir_;

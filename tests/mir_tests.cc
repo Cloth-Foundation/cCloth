@@ -364,6 +364,34 @@ void array_instructions(TestContext& test) {
               "array Length was not lowered explicitly");
 }
 
+void for_iteration_control_flow(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Iteration.co",
+                  "func Sum(int32[] values): int32 {\n"
+                  "  int32 total = 0;\n"
+                  "  for (var value in values) {\n"
+                  "    if (value == 2) { continue; }\n"
+                  "    total = total + value;\n"
+                  "  }\n"
+                  "  return total;\n"
+                  "}\n");
+  compilation.compile();
+
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  test.expect(compilation.result->is_valid,
+              "valid for loop failed MIR verification");
+  test.expect(body_has_instruction<cloth::MirPhiInstruction>(body),
+              "for index is not represented by a phi value");
+  test.expect(body_has_instruction<cloth::MirArrayLengthInstruction>(body) &&
+                  body_has_instruction<cloth::MirArrayLoadInstruction>(body),
+              "for loop does not use explicit array operations");
+  test.expect(body_has_instruction<cloth::MirDeclareLocalInstruction>(body),
+              "iteration variable was not declared in MIR");
+  test.expect(body.blocks.size() >= 7,
+              "for loop did not create condition, body, latch, and exit flow");
+}
+
 void nullable_conversion(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co", "");
@@ -480,6 +508,7 @@ int main() {
       {"field initializer body", field_initializer_body},
       {"member store", member_store},
       {"array instructions", array_instructions},
+      {"for iteration control flow", for_iteration_control_flow},
       {"nullable conversion", nullable_conversion},
       {"call receivers", call_receivers},
       {"verifiers reject corruption", verifiers_reject_corruption},

@@ -19,6 +19,7 @@ constexpr std::array kKeywords{
     Keyword{"else", TokenKind::kKwElse},
     Keyword{"while", TokenKind::kKwWhile},
     Keyword{"for", TokenKind::kKwFor},
+    Keyword{"in", TokenKind::kKwIn},
     Keyword{"break", TokenKind::kKwBreak},
     Keyword{"continue", TokenKind::kKwContinue},
     Keyword{"struct", TokenKind::kKwStruct},

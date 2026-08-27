@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 9.0.
+This document defines the syntax implemented through Stage 10.0.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -104,6 +104,7 @@ statement
     | return_statement
     | if_statement
     | while_statement
+    | for_statement
     | break_statement
     | continue_statement
     | expression_statement
@@ -121,6 +122,13 @@ if_statement
 while_statement
     = "while" "(" expression ")" block ;
 
+for_statement
+    = "for" "(" iteration_declaration "in" expression ")" block ;
+
+iteration_declaration
+    = "var" identifier
+    | type identifier ;
+
 break_statement
     = "break" ";" ;
 
@@ -132,8 +140,8 @@ expression_statement
 ```
 
 Braces and semicolons shown above are mandatory. `break` and `continue` are
-valid only inside a `while` body. `for` loops and nested type declarations
-inside blocks remain deferred.
+valid only inside a `while` or `for` body. Nested type declarations inside
+blocks remain deferred.
 
 ## Expressions
 
@@ -231,6 +239,8 @@ The declaration pass enforces these rules separately from the grammar:
 - Member declaration order does not affect declaration availability.
 - Import paths are identifier sequences rather than string literals.
 - Array types are one-dimensional; repeated `[]` suffixes are rejected.
+- A `for` iteration declaration uses either `var` inference or an explicit
+  element type.
 
 Type checking, assignment-target validation, return checking, and overload
 resolution are defined in [semantic_analysis.md](semantic_analysis.md).

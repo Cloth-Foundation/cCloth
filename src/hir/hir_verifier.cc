@@ -108,6 +108,11 @@ class HirVerifier {
                      std::get_if<HirWhileStatement>(&statement.data)) {
         verify_expression(while_statement->condition, statement.range);
         verify_block(while_statement->body, statement.range);
+      } else if (const auto* for_statement =
+                     std::get_if<HirForStatement>(&statement.data)) {
+        verify_optional_symbol(for_statement->variable, statement.range);
+        verify_expression(for_statement->iterable, statement.range);
+        verify_block(for_statement->body, statement.range);
       } else if (const auto* nested =
                      std::get_if<HirNestedBlockStatement>(&statement.data)) {
         verify_block(nested->block, statement.range);

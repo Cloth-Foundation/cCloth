@@ -118,6 +118,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "while";
     case TokenKind::kKwFor:
       return "for";
+    case TokenKind::kKwIn:
+      return "in";
     case TokenKind::kKwBreak:
       return "break";
     case TokenKind::kKwContinue:

@@ -210,6 +210,11 @@ class Lowerer {
                    std::get_if<WhileStatement>(&syntax.data)) {
       data = HirWhileStatement{expression(while_statement->condition),
                                block(while_statement->body)};
+    } else if (const auto* for_statement =
+                   std::get_if<ForStatement>(&syntax.data)) {
+      data = HirForStatement{
+          semantics_.file(current_file_).statement_symbols.at(id.value),
+          expression(for_statement->iterable), block(for_statement->body)};
     } else if (std::holds_alternative<BreakStatement>(syntax.data)) {
       data = HirBreakStatement{};
     } else if (std::holds_alternative<ContinueStatement>(syntax.data)) {
