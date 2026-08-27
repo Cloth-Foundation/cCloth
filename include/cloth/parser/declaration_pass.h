@@ -30,6 +30,7 @@ struct MemberOutline {
 
 struct DeclarationPassResult {
   FileClassSymbols symbols;
+  std::vector<ImportDecl> imports;
   std::vector<MemberOutline> outlines;
   bool is_valid{true};
 };
@@ -57,6 +58,7 @@ class DeclarationPass {
   void parse_field();
   void parse_function();
   void parse_constructor();
+  void parse_import();
   void skip_deferred_nested_type();
   void synchronize_member();
 
@@ -70,6 +72,7 @@ class DeclarationPass {
   std::span<const Token> tokens_;
   DiagnosticEngine& diagnostics_;
   FileClassSymbols symbols_;
+  std::vector<ImportDecl> imports_;
   std::vector<MemberOutline> outlines_;
   std::size_t current_{0};
   bool is_valid_{true};

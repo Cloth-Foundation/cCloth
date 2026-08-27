@@ -90,6 +90,10 @@ ExpressionId ExpressionParser::parse_postfix_expression() {
       expression = parse_call_expression(expression);
       continue;
     }
+    if (current().kind == TokenKind::kLeftBracket) {
+      expression = parse_index_expression(expression);
+      continue;
+    }
     if (match(TokenKind::kDot)) {
       if (current().kind != TokenKind::kIdentifier) {
         diagnostics_.error(current().range, "expected member name after '.'");
@@ -117,6 +121,10 @@ ExpressionId ExpressionParser::parse_primary_expression() {
   if (match(TokenKind::kIdentifier)) {
     return storage_.add_expression(
         Expression{token.range, IdentifierExpression{token.lexeme}});
+  }
+
+  if (token.kind == TokenKind::kLeftBracket) {
+    return parse_array_literal_expression();
   }
 
   LiteralKind literal_kind = LiteralKind::kInteger;
@@ -168,6 +176,7 @@ ExpressionId ExpressionParser::parse_primary_expression() {
   diagnostics_.error(token.range, "expected expression");
   if (token.kind != TokenKind::kSemicolon &&
       token.kind != TokenKind::kRightParen && token.kind != TokenKind::kComma &&
+      token.kind != TokenKind::kRightBracket &&
       token.kind != TokenKind::kRightBrace) {
     advance();
   }
@@ -204,6 +213,59 @@ ExpressionId ExpressionParser::parse_call_expression(ExpressionId callee) {
   }
   return storage_.add_expression(Expression{
       SourceRange{begin, end}, CallExpression{callee, std::move(arguments)}});
+}
+
+ExpressionId ExpressionParser::parse_array_literal_expression() {
+  const SourceLocation begin = advance().range.begin;
+  std::vector<ExpressionId> elements;
+  while (!at_limit() && current().kind != TokenKind::kRightBracket) {
+    elements.push_back(parse_expression());
+    if (match(TokenKind::kComma)) {
+      if (current().kind == TokenKind::kRightBracket) {
+        diagnostics_.error(current().range, "expected array element after ','");
+      }
+      continue;
+    }
+    if (current().kind != TokenKind::kRightBracket) {
+      diagnostics_.error(current().range,
+                         "expected ',' or ']' after array element");
+      while (!at_limit() && current().kind != TokenKind::kComma &&
+             current().kind != TokenKind::kRightBracket) {
+        advance();
+      }
+      match(TokenKind::kComma);
+    }
+  }
+
+  SourceLocation end = current().range.begin;
+  if (match(TokenKind::kRightBracket)) {
+    end = tokens_[current_ - 1].range.end;
+  } else {
+    diagnostics_.error(current().range, "expected ']' after array literal");
+  }
+  return storage_.add_expression(Expression{
+      SourceRange{begin, end}, ArrayLiteralExpression{std::move(elements)}});
+}
+
+ExpressionId ExpressionParser::parse_index_expression(ExpressionId object) {
+  const SourceLocation begin = expression_range(object).begin;
+  advance();
+  ExpressionId index =
+      make_invalid_expression(point_range(current().range.begin));
+  if (current().kind == TokenKind::kRightBracket) {
+    diagnostics_.error(current().range, "expected index expression after '['");
+  } else {
+    index = parse_expression();
+  }
+
+  SourceLocation end = expression_range(index).end;
+  if (match(TokenKind::kRightBracket)) {
+    end = tokens_[current_ - 1].range.end;
+  } else {
+    diagnostics_.error(current().range, "expected ']' after index expression");
+  }
+  return storage_.add_expression(
+      Expression{SourceRange{begin, end}, IndexExpression{object, index}});
 }
 
 ExpressionId ExpressionParser::make_invalid_expression(SourceRange range) {

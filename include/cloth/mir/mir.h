@@ -59,6 +59,26 @@ struct MirStoreMemberInstruction {
   MirValueId value;
 };
 
+struct MirArrayLiteralInstruction {
+  TypeId element_type;
+  std::vector<MirValueId> elements;
+};
+
+struct MirArrayLoadInstruction {
+  MirValueId array;
+  MirValueId index;
+};
+
+struct MirArrayStoreInstruction {
+  MirValueId array;
+  MirValueId index;
+  MirValueId value;
+};
+
+struct MirArrayLengthInstruction {
+  MirValueId array;
+};
+
 struct MirUnaryInstruction {
   TokenKind operation;
   MirValueId operand;
@@ -101,7 +121,9 @@ using MirInstructionData =
     std::variant<MirInvalidInstruction, MirLiteralInstruction,
                  MirLoadSymbolInstruction, MirDeclareLocalInstruction,
                  MirStoreSymbolInstruction, MirLoadMemberInstruction,
-                 MirStoreMemberInstruction, MirUnaryInstruction,
+                 MirStoreMemberInstruction, MirArrayLiteralInstruction,
+                 MirArrayLoadInstruction, MirArrayStoreInstruction,
+                 MirArrayLengthInstruction, MirUnaryInstruction,
                  MirBinaryInstruction, MirConvertInstruction,
                  MirCallInstruction, MirPhiInstruction>;
 

@@ -21,9 +21,12 @@ ParseResult Parser::parse() {
     FileClassSymbols symbols{std::string{source_.stem()},
                              infer_visibility(source_.stem()), range};
     FileClassDecl file_class{std::string{source_.stem()},
+                             {},
+                             std::string{source_.stem()},
                              source_.display_path(),
                              infer_visibility(source_.stem()),
                              range,
+                             {},
                              {},
                              {},
                              {},
@@ -35,10 +38,13 @@ ParseResult Parser::parse() {
 
   DeclarationPassResult declarations =
       DeclarationPass{source_, tokens_, diagnostics_}.run();
-  FileClassDecl file_class =
-      DefinitionPass{source_, tokens_, declarations.symbols,
-                     declarations.outlines, diagnostics_}
-          .run();
+  FileClassDecl file_class = DefinitionPass{source_,
+                                            tokens_,
+                                            declarations.symbols,
+                                            declarations.imports,
+                                            declarations.outlines,
+                                            diagnostics_}
+                                 .run();
   file_class.is_valid = file_class.is_valid && declarations.is_valid;
   const bool is_valid = file_class.is_valid && !diagnostics_.has_errors();
   return ParseResult{std::move(file_class), std::move(declarations.symbols),

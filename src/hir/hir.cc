@@ -138,7 +138,16 @@ class Lowerer {
                                      expression(assignment->value)};
     } else if (const auto* member =
                    std::get_if<MemberAccessExpression>(&syntax.data)) {
-      data = HirMemberExpression{expression(member->object), semantic.symbol};
+      const TypeId object_type = semantics_.file(current_file_)
+                                     .expressions.at(member->object.value)
+                                     .type;
+      if (semantics_.type(object_type).kind == TypeKind::kArray &&
+          member->member == "Length" &&
+          semantic.type != semantics_.error_type()) {
+        data = HirArrayLengthExpression{expression(member->object)};
+      } else {
+        data = HirMemberExpression{expression(member->object), semantic.symbol};
+      }
     } else if (const auto* call = std::get_if<CallExpression>(&syntax.data)) {
       std::vector<HirExpressionId> arguments;
       arguments.reserve(call->arguments.size());
@@ -147,6 +156,20 @@ class Lowerer {
       }
       data = HirCallExpression{expression(call->callee), semantic.symbol,
                                std::move(arguments)};
+    } else if (const auto* array =
+                   std::get_if<ArrayLiteralExpression>(&syntax.data)) {
+      std::vector<HirExpressionId> elements;
+      elements.reserve(array->elements.size());
+      for (const ExpressionId element : array->elements) {
+        elements.push_back(expression(element));
+      }
+      const SemanticType& type = semantics_.type(semantic.type);
+      data = HirArrayLiteralExpression{
+          type.element_type.value_or(semantics_.error_type()),
+          std::move(elements)};
+    } else if (const auto* index = std::get_if<IndexExpression>(&syntax.data)) {
+      data = HirIndexExpression{expression(index->object),
+                                expression(index->index)};
     } else if (const auto* grouped =
                    std::get_if<ParenthesizedExpression>(&syntax.data)) {
       data = HirGroupedExpression{expression(grouped->expression)};

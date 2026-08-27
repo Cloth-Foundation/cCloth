@@ -340,6 +340,30 @@ void member_store(TestContext& test) {
               "member assignment is not an explicit store");
 }
 
+void array_instructions(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Arrays.co",
+                  "func Sum(): int32 {\n"
+                  "  int32[] values = [1, 2, 3];\n"
+                  "  values[1] = 4;\n"
+                  "  return values.Length + values[0];\n"
+                  "}\n");
+  compilation.compile();
+
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  test.expect(compilation.result->is_valid,
+              "valid arrays failed MIR verification");
+  test.expect(body_has_instruction<cloth::MirArrayLiteralInstruction>(body),
+              "array literal was not lowered explicitly");
+  test.expect(body_has_instruction<cloth::MirArrayStoreInstruction>(body),
+              "array assignment was not lowered explicitly");
+  test.expect(body_has_instruction<cloth::MirArrayLoadInstruction>(body),
+              "array indexing was not lowered explicitly");
+  test.expect(body_has_instruction<cloth::MirArrayLengthInstruction>(body),
+              "array Length was not lowered explicitly");
+}
+
 void nullable_conversion(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co", "");
@@ -455,6 +479,7 @@ int main() {
       {"no-value fallthrough", no_value_fallthrough},
       {"field initializer body", field_initializer_body},
       {"member store", member_store},
+      {"array instructions", array_instructions},
       {"nullable conversion", nullable_conversion},
       {"call receivers", call_receivers},
       {"verifiers reject corruption", verifiers_reject_corruption},

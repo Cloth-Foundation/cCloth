@@ -1,0 +1,3 @@
+func Marker(): int32 {
+    return 0;
+}

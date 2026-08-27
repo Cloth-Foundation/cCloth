@@ -56,6 +56,7 @@ add_library(cloth_compiler
     src/parser/definition_pass.cc
     src/parser/expression_parser.cc
     src/parser/parser.cc
+    src/project/project_layout.cc
     src/sema/file_class_symbols.cc
     src/sema/semantic_analyzer.cc
     src/sema/semantic_model.cc
@@ -152,6 +153,13 @@ if(BUILD_TESTING)
     target_link_libraries(cloth_parser_tests PRIVATE cloth_compiler)
     cloth_enable_warnings(cloth_parser_tests)
     add_test(NAME cloth_parser_tests COMMAND cloth_parser_tests)
+    add_executable(cloth_project_tests tests/project_tests.cc)
+    target_link_libraries(cloth_project_tests PRIVATE cloth_compiler)
+    target_compile_definitions(cloth_project_tests PRIVATE
+        CLOTH_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+    cloth_enable_warnings(cloth_project_tests)
+    add_test(NAME cloth_project_tests COMMAND cloth_project_tests)
     add_executable(cloth_sema_tests tests/sema_tests.cc)
     target_link_libraries(cloth_sema_tests PRIVATE cloth_compiler)
     cloth_enable_warnings(cloth_sema_tests)
@@ -255,6 +263,76 @@ if(BUILD_TESTING)
         )
         set_tests_properties(cloth_print_values PROPERTIES
             DEPENDS cloth_cli_build_print_values
+        )
+
+        if(WIN32)
+            set(CLOTH_TEST_IMPORT_PROJECT_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth import project.exe")
+        else()
+            set(CLOTH_TEST_IMPORT_PROJECT_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth import project")
+        endif()
+        add_test(
+            NAME cloth_cli_build_import_project
+            COMMAND clothc
+                    "--build=${CLOTH_TEST_IMPORT_PROJECT_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/projects/imports/src/Main.co
+        )
+        add_test(
+            NAME cloth_import_project
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_IMPORT_PROJECT_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/import_project.txt"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_import_project PROPERTIES
+            DEPENDS cloth_cli_build_import_project
+        )
+
+        if(WIN32)
+            set(CLOTH_TEST_ARRAY_SUM_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth array sum.exe")
+        else()
+            set(CLOTH_TEST_ARRAY_SUM_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth array sum")
+        endif()
+        add_test(
+            NAME cloth_cli_build_array_sum
+            COMMAND clothc "--build=${CLOTH_TEST_ARRAY_SUM_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/examples/ArraySum.co
+        )
+        add_test(
+            NAME cloth_array_sum
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_ARRAY_SUM_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/array_sum.txt"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_array_sum PROPERTIES
+            DEPENDS cloth_cli_build_array_sum
+        )
+
+        if(WIN32)
+            set(CLOTH_TEST_ARRAY_BOUNDS_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth array bounds.exe")
+        else()
+            set(CLOTH_TEST_ARRAY_BOUNDS_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth array bounds")
+        endif()
+        add_test(
+            NAME cloth_cli_build_array_bounds
+            COMMAND clothc "--build=${CLOTH_TEST_ARRAY_BOUNDS_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ArrayBounds.co
+        )
+        add_test(
+            NAME cloth_array_bounds
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_ARRAY_BOUNDS_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED_ERROR=array index is out of bounds"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_failure.cmake
+        )
+        set_tests_properties(cloth_array_bounds PROPERTIES
+            DEPENDS cloth_cli_build_array_bounds
         )
     endif()
     add_test(

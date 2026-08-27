@@ -1,0 +1,4 @@
+func Main() {
+    int32[] values = [1];
+    print(values[1]);
+}

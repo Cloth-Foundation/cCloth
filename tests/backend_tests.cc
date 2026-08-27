@@ -132,6 +132,31 @@ void object_construction(TestContext& test) {
               "field access does not use its verified ABI offset");
 }
 
+void arrays(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Arrays.co",
+              "func Sum(): int32 {\n"
+              "  int32[] values = [1, 2, 3];\n"
+              "  String[] labels = [\"cloth\"];\n"
+              "  values[1] = 4;\n"
+              "  return values.Length + values[0];\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(), "array module failed to emit");
+  test.expect(sources.contains(
+                  "call ptr @cloth_rt_array_alloc(i32 3, i64 4, i64 4, i8 0)"),
+              "array allocation lost its element layout");
+  test.expect(sources.contains(
+                  "call ptr @cloth_rt_array_alloc(i32 1, i64 8, i64 8, i8 1)"),
+              "reference array allocation lost collector metadata");
+  test.expect(sources.contains("call ptr @cloth_rt_array_element(ptr ") &&
+                  sources.contains("call i32 @cloth_rt_array_length(ptr "),
+              "checked array access runtime calls are missing");
+  test.expect(sources.contains("store i32 4, ptr %addr"),
+              "array element store was not emitted");
+}
+
 void call_receivers(TestContext& test) {
   CompiledSources sources;
   sources.add("User.co",
@@ -273,6 +298,7 @@ int main() {
       {"target header", target_header},
       {"arithmetic and control flow", arithmetic_and_control_flow},
       {"object construction", object_construction},
+      {"arrays", arrays},
       {"call receivers", call_receivers},
       {"wasm32 module", wasm32_module},
       {"print and native entry point", print_and_native_entry_point},

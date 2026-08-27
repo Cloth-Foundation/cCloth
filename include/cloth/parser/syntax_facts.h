@@ -17,6 +17,7 @@ namespace cloth {
     case TokenKind::kKwUint16:
     case TokenKind::kKwUint32:
     case TokenKind::kKwUint64:
+    case TokenKind::kKwFloat:
     case TokenKind::kKwFloat32:
     case TokenKind::kKwFloat64:
     case TokenKind::kKwBool:

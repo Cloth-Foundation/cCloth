@@ -238,6 +238,60 @@ class MirVerifier {
       verify_value_type(store->value,
                         symbol_type(store->member, semantics_.error_type()),
                         value_types, instruction.range);
+    } else if (const auto* array =
+                   std::get_if<MirArrayLiteralInstruction>(&instruction.data)) {
+      verify_type(array->element_type, instruction.range);
+      require_result(instruction);
+      if (instruction.type.value < semantics_.types().size()) {
+        const SemanticType& type = semantics_.type(instruction.type);
+        if (type.kind != TypeKind::kArray ||
+            type.element_type != array->element_type) {
+          report(instruction.range,
+                 "array literal result does not match its element type");
+        }
+      }
+      for (const MirValueId element : array->elements) {
+        verify_value(element, value_types, instruction.range);
+        verify_value_type(element, array->element_type, value_types,
+                          instruction.range);
+      }
+    } else if (const auto* load =
+                   std::get_if<MirArrayLoadInstruction>(&instruction.data)) {
+      verify_value(load->array, value_types, instruction.range);
+      verify_value(load->index, value_types, instruction.range);
+      verify_value_type(load->index, *semantics_.find_type("int32"),
+                        value_types, instruction.range);
+      require_result(instruction);
+      const std::optional<TypeId> element =
+          array_element_type(load->array, value_types, instruction.range);
+      if (element && instruction.type != *element &&
+          instruction.type != semantics_.error_type()) {
+        report(instruction.range,
+               "array load result does not match its element type");
+      }
+    } else if (const auto* store =
+                   std::get_if<MirArrayStoreInstruction>(&instruction.data)) {
+      verify_value(store->array, value_types, instruction.range);
+      verify_value(store->index, value_types, instruction.range);
+      verify_value(store->value, value_types, instruction.range);
+      verify_value_type(store->index, *semantics_.find_type("int32"),
+                        value_types, instruction.range);
+      require_no_result(instruction);
+      const std::optional<TypeId> element =
+          array_element_type(store->array, value_types, instruction.range);
+      if (element) {
+        verify_value_type(store->value, *element, value_types,
+                          instruction.range);
+      }
+    } else if (const auto* length =
+                   std::get_if<MirArrayLengthInstruction>(&instruction.data)) {
+      verify_value(length->array, value_types, instruction.range);
+      static_cast<void>(
+          array_element_type(length->array, value_types, instruction.range));
+      require_result(instruction);
+      if (instruction.type != *semantics_.find_type("int32")) {
+        report(instruction.range, "array length does not have type int32");
+      }
     } else if (const auto* unary =
                    std::get_if<MirUnaryInstruction>(&instruction.data)) {
       verify_value(unary->operand, value_types, instruction.range);
@@ -399,7 +453,24 @@ class MirVerifier {
       return false;
     }
     const TypeKind kind = semantics_.type(type).kind;
-    return kind == TypeKind::kString || kind == TypeKind::kFileClass;
+    return kind == TypeKind::kString || kind == TypeKind::kFileClass ||
+           kind == TypeKind::kArray;
+  }
+
+  std::optional<TypeId> array_element_type(
+      MirValueId array, const std::vector<std::optional<TypeId>>& value_types,
+      SourceRange range) {
+    const std::optional<TypeId> array_type =
+        known_value_type(array, value_types);
+    if (!array_type || array_type->value >= semantics_.types().size()) {
+      return std::nullopt;
+    }
+    const SemanticType& type = semantics_.type(*array_type);
+    if (type.kind != TypeKind::kArray || !type.element_type) {
+      report(range, "array instruction consumes a non-array value");
+      return std::nullopt;
+    }
+    return type.element_type;
   }
 
   void verify_symbol_type(SymbolId symbol, TypeId type, SourceRange range) {

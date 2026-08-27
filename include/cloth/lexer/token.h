@@ -25,6 +25,7 @@ enum class TokenKind {
   kComma,
   kSemicolon,
   kColon,
+  kColonColon,
   kDot,
   kQuestion,
 
@@ -84,6 +85,7 @@ enum class TokenKind {
   kKwExtern,
   kKwUnsafe,
   kKwImport,
+  kKwAs,
   kKwModule,
   kKwMatch,
   kKwInt,
@@ -96,6 +98,7 @@ enum class TokenKind {
   kKwUint16,
   kKwUint32,
   kKwUint64,
+  kKwFloat,
   kKwFloat32,
   kKwFloat64,
   kKwBool,

@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 7.0.
+This document defines the syntax implemented through Stage 9.0.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -33,7 +33,16 @@ by the lexer. Keywords cannot be used as identifiers.
 
 ```ebnf
 compilation_unit
-    = { member_declaration } ;
+    = { import_declaration } { member_declaration } ;
+
+import_declaration
+    = "import" identifier [ "as" identifier ] ";"
+    | "import" package_path "::" identifier
+      [ "as" identifier ] ";"
+    | "import" package_path "." "*" ";" ;
+
+package_path
+    = identifier { "." identifier } ;
 
 member_declaration
     = field_declaration
@@ -61,6 +70,9 @@ parameter
     = type identifier ;
 
 type
+    = element_type [ "[" "]" ] ;
+
+element_type
     = primitive_type
     | named_type ;
 
@@ -68,7 +80,7 @@ primitive_type
     = "bool" | "byte" | "char"
     | "int" | "int8" | "int16" | "int32" | "int64"
     | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
-    | "float32" | "float64" ;
+    | "float" | "float32" | "float64" ;
 
 named_type
     = identifier ;
@@ -76,6 +88,10 @@ named_type
 
 `struct`, `class`, and `enum` are reserved as possible nested-type declaration
 starters, but Stage 1.0 diagnoses them as unsupported.
+
+Imports must precede every member declaration. A `module` declaration is not
+part of Cloth: the source path relative to the project source root supplies the
+package identity.
 
 ## Statements
 
@@ -116,8 +132,8 @@ expression_statement
 ```
 
 Braces and semicolons shown above are mandatory. `break` and `continue` are
-valid only inside a `while` body. `for` loops and declarations inside blocks
-remain deferred.
+valid only inside a `while` body. `for` loops and nested type declarations
+inside blocks remain deferred.
 
 ## Expressions
 
@@ -156,7 +172,7 @@ unary_expression
 
 postfix_expression
     = primary_expression
-      { call_suffix | member_suffix } ;
+      { call_suffix | member_suffix | index_suffix } ;
 
 call_suffix
     = "(" [ argument_list ] ")" ;
@@ -167,6 +183,12 @@ argument_list
 member_suffix
     = "." identifier ;
 
+index_suffix
+    = "[" expression "]" ;
+
+array_literal
+    = "[" [ expression { "," expression } ] "]" ;
+
 primary_expression
     = identifier
     | integer_literal
@@ -176,6 +198,7 @@ primary_expression
     | "true"
     | "false"
     | "null"
+    | array_literal
     | "(" expression ")" ;
 ```
 
@@ -191,7 +214,7 @@ The precedence table, from lowest to highest, is:
 | 6          | `+`, `-`                 | left          |
 | 7          | `*`, `/`, `%`            | left          |
 | 8          | prefix `!`, `+`, `-`, `~`| right         |
-| 9          | calls and member access  | left          |
+| 9          | calls, members, indexing | left          |
 
 Stage 1.0 deliberately defers compound assignment, increment/decrement,
 bitwise binary operators, and shifts even though the lexer recognizes them.
@@ -206,7 +229,10 @@ The declaration pass enforces these rules separately from the grammar:
 - Constructors inherit file-class visibility.
 - Conflicting fields and exact duplicate callable signatures are rejected.
 - Member declaration order does not affect declaration availability.
+- Import paths are identifier sequences rather than string literals.
+- Array types are one-dimensional; repeated `[]` suffixes are rejected.
 
-Stage 2.0 module-set lookup, type checking, assignment-target validation, return
-checking, and overload resolution are defined in
-[semantic_analysis.md](semantic_analysis.md).
+Type checking, assignment-target validation, return checking, and overload
+resolution are defined in [semantic_analysis.md](semantic_analysis.md).
+Package discovery and import binding are defined in
+[packages_and_imports.md](packages_and_imports.md).

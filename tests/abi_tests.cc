@@ -149,6 +149,48 @@ void deterministic_mangling(TestContext& test) {
               "overloads have colliding mangled names");
 }
 
+void array_abi(TestContext& test) {
+  const CompiledSource source{
+      "func First(int32[] values): int32 { return values[0]; }\n"};
+  const cloth::SemanticModel& semantics = source.result->semantics;
+  const cloth::AbiCallable& callable = source.result->abi.files[0].functions[0];
+  const cloth::TypeId array_type =
+      semantics.symbol(callable.symbol).parameter_types[0];
+  const cloth::AbiTypeLayout& layout =
+      source.result->abi.types[array_type.value];
+
+  test.expect(source.result->is_valid, "valid array ABI failed verification");
+  test.expect(layout.kind == cloth::AbiTypeKind::kReference &&
+                  layout.storage == cloth::SizeAlignment{8, 8},
+              "array ABI is not an opaque reference");
+  test.expect(callable.mangled_name.find("_ai32") != std::string::npos,
+              "array parameter has no structural type encoding");
+}
+
+void package_qualified_mangling(TestContext& test) {
+  cloth::Compilation compilation;
+  compilation.add_source(
+      cloth::SourceFile::from_memory("left/User.co",
+                                     "func Make(): int { return 1; }\n"),
+      "left");
+  compilation.add_source(
+      cloth::SourceFile::from_memory("right/User.co",
+                                     "func Make(): int { return 2; }\n"),
+      "right");
+  cloth::DiagnosticEngine diagnostics;
+  const cloth::CompilationResult result = compilation.analyze(diagnostics);
+
+  test.expect(result.is_valid,
+              "equal class stems in different packages were rejected");
+  const std::string& left = result.abi.files[0].functions[0].mangled_name;
+  const std::string& right = result.abi.files[1].functions[0].mangled_name;
+  test.expect(left != right,
+              "package-qualified callables have colliding names");
+  test.expect(left.find("left.User") != std::string::npos &&
+                  right.find("right.User") != std::string::npos,
+              "mangled names do not retain qualified class identity");
+}
+
 void verifier_rejects_layout_corruption(TestContext& test) {
   const CompiledSource source{"int64 Wide;\n"};
   cloth::AbiModule broken = source.result->abi;
@@ -199,6 +241,8 @@ int main() {
       {"wasm32 layout", wasm32_layout},
       {"callable ABI", callable_abi},
       {"deterministic mangling", deterministic_mangling},
+      {"array ABI", array_abi},
+      {"package-qualified mangling", package_qualified_mangling},
       {"verifier rejects layout corruption",
        verifier_rejects_layout_corruption},
       {"verifier rejects invalid target", verifier_rejects_invalid_target},

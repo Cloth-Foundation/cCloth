@@ -2,3 +2,6 @@
 /.cache/
 /.vscode/*.log
 compile_commands.json
+
+.idea/
+cmake-build-debug/

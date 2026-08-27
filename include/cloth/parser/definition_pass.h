@@ -19,6 +19,7 @@ class DefinitionPass {
  public:
   DefinitionPass(const SourceFile& source, std::span<const Token> tokens,
                  const FileClassSymbols& symbols,
+                 std::span<const ImportDecl> imports,
                  std::span<const MemberOutline> outlines,
                  DiagnosticEngine& diagnostics);
 
@@ -31,6 +32,8 @@ class DefinitionPass {
   const Token& advance() noexcept;
   bool match(TokenKind kind) noexcept;
   bool expect(TokenKind kind, std::string_view message);
+  [[nodiscard]] bool is_local_variable_start() const noexcept;
+  [[nodiscard]] TypeSyntax parse_type();
 
   void build_field(const MemberOutline& outline, const MemberSymbol& symbol);
   void build_function(const MemberOutline& outline, const MemberSymbol& symbol);
@@ -54,6 +57,7 @@ class DefinitionPass {
 
   std::span<const Token> tokens_;
   const FileClassSymbols& symbols_;
+  std::span<const ImportDecl> imports_;
   std::span<const MemberOutline> outlines_;
   DiagnosticEngine& diagnostics_;
   FileClassDecl file_class_;

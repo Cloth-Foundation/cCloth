@@ -15,8 +15,10 @@ namespace {
 struct LoweredLocation {
   std::optional<SymbolId> symbol;
   std::optional<MirValueId> object;
+  std::optional<MirValueId> index;
   TypeId type;
   bool is_member{false};
+  bool is_array_element{false};
 };
 
 struct LoopTargets {
@@ -148,7 +150,8 @@ class BodyBuilder {
 
   bool is_reference(TypeId type) const {
     const TypeKind kind = semantics_.type(type).kind;
-    return kind == TypeKind::kString || kind == TypeKind::kFileClass;
+    return kind == TypeKind::kString || kind == TypeKind::kFileClass ||
+           kind == TypeKind::kArray;
   }
 
   void lower_block(HirBlockId id) {
@@ -360,6 +363,38 @@ class BodyBuilder {
     if (const auto* call = std::get_if<HirCallExpression>(&expression.data)) {
       return lower_call(*call, expression);
     }
+    if (const auto* array =
+            std::get_if<HirArrayLiteralExpression>(&expression.data)) {
+      std::vector<MirValueId> elements;
+      elements.reserve(array->elements.size());
+      for (const HirExpressionId element_id : array->elements) {
+        const HirExpression& element = hir_.storage.expression(element_id);
+        MirValueId value = require_value(lower_expression(element_id),
+                                         element.type, element.range);
+        elements.push_back(coerce(value, array->element_type, element.range));
+      }
+      return emit_value(
+          expression.type, expression.range,
+          MirArrayLiteralInstruction{array->element_type, std::move(elements)});
+    }
+    if (const auto* index = std::get_if<HirIndexExpression>(&expression.data)) {
+      const HirExpression& object = hir_.storage.expression(index->object);
+      const HirExpression& subscript = hir_.storage.expression(index->index);
+      const MirValueId array = require_value(lower_expression(index->object),
+                                             object.type, object.range);
+      const MirValueId lowered_index = require_value(
+          lower_expression(index->index), subscript.type, subscript.range);
+      return emit_value(expression.type, expression.range,
+                        MirArrayLoadInstruction{array, lowered_index});
+    }
+    if (const auto* length =
+            std::get_if<HirArrayLengthExpression>(&expression.data)) {
+      const HirExpression& array = hir_.storage.expression(length->array);
+      const MirValueId value = require_value(lower_expression(length->array),
+                                             array.type, array.range);
+      return emit_value(expression.type, expression.range,
+                        MirArrayLengthInstruction{value});
+    }
     const auto& grouped = std::get<HirGroupedExpression>(expression.data);
     return lower_expression(grouped.expression);
   }
@@ -407,6 +442,12 @@ class BodyBuilder {
     MirValueId value = require_value(lower_expression(assignment.value),
                                      value_syntax.type, value_syntax.range);
     value = coerce(value, location.type, value_syntax.range);
+    if (location.is_array_element && location.object && location.index) {
+      emit_void(
+          expression.range,
+          MirArrayStoreInstruction{*location.object, *location.index, value});
+      return value;
+    }
     if (!location.symbol) {
       emit_void(expression.range, MirInvalidInstruction{});
       return invalid_value(expression.range);
@@ -434,12 +475,20 @@ class BodyBuilder {
           semantics_.symbol(symbol_expression->symbol);
       if (symbol.kind == SymbolKind::kField) {
         return LoweredLocation{symbol_expression->symbol,
-                               emit_self(expression.range), symbol.type, true};
+                               emit_self(expression.range),
+                               std::nullopt,
+                               symbol.type,
+                               true,
+                               false};
       }
       if (symbol.kind == SymbolKind::kParameter ||
           symbol.kind == SymbolKind::kLocal) {
-        return LoweredLocation{symbol_expression->symbol, std::nullopt,
-                               symbol.type, false};
+        return LoweredLocation{symbol_expression->symbol,
+                               std::nullopt,
+                               std::nullopt,
+                               symbol.type,
+                               false,
+                               false};
       }
     }
     if (const auto* member =
@@ -448,15 +497,29 @@ class BodyBuilder {
           lower_expression(member->object),
           hir_.storage.expression(member->object).type, expression.range);
       if (member->member) {
-        return LoweredLocation{member->member, object,
-                               semantics_.symbol(*member->member).type, true};
+        return LoweredLocation{
+            member->member, object,
+            std::nullopt,   semantics_.symbol(*member->member).type,
+            true,           false};
       }
       return LoweredLocation{std::nullopt, std::nullopt,
-                             semantics_.error_type(), false};
+                             std::nullopt, semantics_.error_type(),
+                             false,        false};
+    }
+    if (const auto* index = std::get_if<HirIndexExpression>(&expression.data)) {
+      const HirExpression& object = hir_.storage.expression(index->object);
+      const HirExpression& subscript = hir_.storage.expression(index->index);
+      const MirValueId array = require_value(lower_expression(index->object),
+                                             object.type, object.range);
+      const MirValueId lowered_index = require_value(
+          lower_expression(index->index), subscript.type, subscript.range);
+      return LoweredLocation{std::nullopt,    array, lowered_index,
+                             expression.type, false, true};
     }
     static_cast<void>(lower_expression(id));
-    return LoweredLocation{std::nullopt, std::nullopt, semantics_.error_type(),
-                           false};
+    return LoweredLocation{std::nullopt, std::nullopt,
+                           std::nullopt, semantics_.error_type(),
+                           false,        false};
   }
 
   std::optional<MirValueId> lower_call(const HirCallExpression& call,

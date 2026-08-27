@@ -14,8 +14,10 @@
 #include "cloth/target/data_layout.h"
 
 #include <cstddef>
+#include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace cloth {
@@ -34,7 +36,9 @@ class Compilation {
   Compilation();
   explicit Compilation(TargetDataLayout target);
 
-  void add_source(SourceFile source);
+  void set_source_root(std::filesystem::path source_root,
+                       bool discover_package_sources = false);
+  void add_source(SourceFile source, std::string package_name = {});
   // Source ranges in the result refer to source storage owned here.
   [[nodiscard]] CompilationResult analyze(DiagnosticEngine& diagnostics);
 
@@ -47,11 +51,17 @@ class Compilation {
  private:
   struct Unit {
     SourceFile source;
+    std::string package_name;
+    std::string qualified_name;
     std::vector<Token> tokens;
     std::optional<ParseResult> parse_result;
   };
 
+  void prepare_source_graph(DiagnosticEngine& diagnostics);
+
   std::vector<Unit> units_;
+  std::optional<std::filesystem::path> source_root_;
+  bool discover_package_sources_{false};
   TargetDataLayout target_;
 };
 

@@ -111,16 +111,17 @@ void keywords_versus_identifiers(TestContext& test) {
 void primitive_keywords(TestContext& test) {
   const LexedSource source{
       "int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 "
-      "float32 float64 bool char byte"};
+      "float float32 float64 bool char byte"};
   expect_kinds(test, source,
                {cloth::TokenKind::kKwInt, cloth::TokenKind::kKwInt8,
                 cloth::TokenKind::kKwInt16, cloth::TokenKind::kKwInt32,
                 cloth::TokenKind::kKwInt64, cloth::TokenKind::kKwUint,
                 cloth::TokenKind::kKwUint8, cloth::TokenKind::kKwUint16,
                 cloth::TokenKind::kKwUint32, cloth::TokenKind::kKwUint64,
-                cloth::TokenKind::kKwFloat32, cloth::TokenKind::kKwFloat64,
-                cloth::TokenKind::kKwBool, cloth::TokenKind::kKwChar,
-                cloth::TokenKind::kKwByte, cloth::TokenKind::kEof});
+                cloth::TokenKind::kKwFloat, cloth::TokenKind::kKwFloat32,
+                cloth::TokenKind::kKwFloat64, cloth::TokenKind::kKwBool,
+                cloth::TokenKind::kKwChar, cloth::TokenKind::kKwByte,
+                cloth::TokenKind::kEof});
 }
 
 void numeric_literals(TestContext& test) {
@@ -137,14 +138,24 @@ void numeric_literals(TestContext& test) {
 }
 
 void punctuation(TestContext& test) {
-  const LexedSource source{"(){}[],;:.?"};
+  const LexedSource source{"(){}[],;::: .?"};
   expect_kinds(test, source,
                {cloth::TokenKind::kLeftParen, cloth::TokenKind::kRightParen,
                 cloth::TokenKind::kLeftBrace, cloth::TokenKind::kRightBrace,
                 cloth::TokenKind::kLeftBracket, cloth::TokenKind::kRightBracket,
                 cloth::TokenKind::kComma, cloth::TokenKind::kSemicolon,
-                cloth::TokenKind::kColon, cloth::TokenKind::kDot,
-                cloth::TokenKind::kQuestion, cloth::TokenKind::kEof});
+                cloth::TokenKind::kColonColon, cloth::TokenKind::kColon,
+                cloth::TokenKind::kDot, cloth::TokenKind::kQuestion,
+                cloth::TokenKind::kEof});
+}
+
+void import_keywords(TestContext& test) {
+  const LexedSource source{"import package::Type as Alias"};
+  expect_kinds(test, source,
+               {cloth::TokenKind::kKwImport, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kColonColon, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kKwAs, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kEof});
 }
 
 void operators_and_longest_match(TestContext& test) {
@@ -307,6 +318,7 @@ int main() {
       {"primitive keywords", primitive_keywords},
       {"numeric literals", numeric_literals},
       {"punctuation", punctuation},
+      {"import keywords", import_keywords},
       {"operators and longest match", operators_and_longest_match},
       {"comments are skipped", comments_are_skipped},
       {"unterminated block comment", unterminated_block_comment},

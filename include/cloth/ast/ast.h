@@ -37,6 +37,7 @@ struct TypeSyntax {
   std::string_view name;
   bool is_primitive;
   SourceRange range;
+  bool is_array{false};
 };
 
 enum class LiteralKind {
@@ -86,6 +87,15 @@ struct CallExpression {
   std::vector<ExpressionId> arguments;
 };
 
+struct ArrayLiteralExpression {
+  std::vector<ExpressionId> elements;
+};
+
+struct IndexExpression {
+  ExpressionId object;
+  ExpressionId index;
+};
+
 struct ParenthesizedExpression {
   ExpressionId expression;
 };
@@ -93,8 +103,8 @@ struct ParenthesizedExpression {
 using ExpressionData =
     std::variant<InvalidExpression, IdentifierExpression, LiteralExpression,
                  UnaryExpression, BinaryExpression, AssignmentExpression,
-                 MemberAccessExpression, CallExpression,
-                 ParenthesizedExpression>;
+                 MemberAccessExpression, CallExpression, ArrayLiteralExpression,
+                 IndexExpression, ParenthesizedExpression>;
 
 struct Expression {
   SourceRange range;
@@ -221,11 +231,28 @@ struct MemberReference {
                          const MemberReference&) = default;
 };
 
+enum class ImportKind {
+  kType,
+  kWildcard,
+};
+
+struct ImportDecl {
+  ImportKind kind;
+  std::string package_name;
+  std::string type_name;
+  std::string local_name;
+  SourceRange range;
+  bool is_valid{true};
+};
+
 struct FileClassDecl {
   std::string name;
+  std::string package_name;
+  std::string qualified_name;
   std::string_view source_path;
   Visibility visibility;
   SourceRange range;
+  std::vector<ImportDecl> imports;
   AstStorage storage;
   std::vector<FieldDecl> fields;
   std::vector<FunctionDecl> functions;

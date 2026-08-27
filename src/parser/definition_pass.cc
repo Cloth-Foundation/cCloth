@@ -18,16 +18,21 @@ SourceRange range_ending_at(SourceRange begin, SourceLocation end) noexcept {
 DefinitionPass::DefinitionPass(const SourceFile& source,
                                std::span<const Token> tokens,
                                const FileClassSymbols& symbols,
+                               std::span<const ImportDecl> imports,
                                std::span<const MemberOutline> outlines,
                                DiagnosticEngine& diagnostics)
     : tokens_(tokens),
       symbols_(symbols),
+      imports_(imports),
       outlines_(outlines),
       diagnostics_(diagnostics),
       file_class_{symbols.name(),
+                  {},
+                  symbols.name(),
                   source.display_path(),
                   symbols.visibility(),
                   symbols.range(),
+                  std::vector<ImportDecl>{imports.begin(), imports.end()},
                   {},
                   {},
                   {},
@@ -94,6 +99,37 @@ bool DefinitionPass::expect(TokenKind kind, std::string_view message) {
   }
   diagnostics_.error(current().range, std::string{message});
   return false;
+}
+
+bool DefinitionPass::is_local_variable_start() const noexcept {
+  if (!can_start_type(current().kind)) {
+    return false;
+  }
+  return peek(1).kind == TokenKind::kIdentifier ||
+         (peek(1).kind == TokenKind::kLeftBracket &&
+          peek(2).kind == TokenKind::kRightBracket &&
+          peek(3).kind == TokenKind::kIdentifier);
+}
+
+TypeSyntax DefinitionPass::parse_type() {
+  const Token& token = advance();
+  SourceRange range = token.range;
+  bool is_array = false;
+  while (match(TokenKind::kLeftBracket)) {
+    if (is_array) {
+      diagnostics_.error(tokens_[current_ - 1].range,
+                         "multidimensional array types are not supported");
+    }
+    is_array = true;
+    if (match(TokenKind::kRightBracket)) {
+      range.end = tokens_[current_ - 1].range.end;
+    } else {
+      diagnostics_.error(current().range, "expected ']' in array type");
+      break;
+    }
+  }
+  return TypeSyntax{token.lexeme, is_primitive_type(token.kind), range,
+                    is_array};
 }
 
 void DefinitionPass::build_field(const MemberOutline& outline,
@@ -230,17 +266,14 @@ StatementId DefinitionPass::parse_statement() {
       current().kind == TokenKind::kKwContinue) {
     return parse_loop_control_statement();
   }
-  if (can_start_type(current().kind) &&
-      peek(1).kind == TokenKind::kIdentifier) {
+  if (is_local_variable_start()) {
     return parse_local_variable();
   }
   return parse_expression_statement();
 }
 
 StatementId DefinitionPass::parse_local_variable() {
-  const Token& type_token = advance();
-  const TypeSyntax type{type_token.lexeme, is_primitive_type(type_token.kind),
-                        type_token.range};
+  const TypeSyntax type = parse_type();
   const Token& name = advance();
   std::optional<ExpressionId> initializer;
   if (match(TokenKind::kEqual)) {
@@ -256,7 +289,7 @@ StatementId DefinitionPass::parse_local_variable() {
                        "expected ';' after local variable declaration");
   }
 
-  const SourceRange range{type_token.range.begin, end};
+  const SourceRange range{type.range.begin, end};
   return file_class_.storage.add_statement(
       Statement{range, LocalVariableStatement{type, name.lexeme, initializer}});
 }
@@ -371,9 +404,7 @@ void DefinitionPass::synchronize_statement() {
         current().kind == TokenKind::kKwWhile ||
         current().kind == TokenKind::kKwBreak ||
         current().kind == TokenKind::kKwContinue ||
-        current().kind == TokenKind::kLeftBrace ||
-        (can_start_type(current().kind) &&
-         peek(1).kind == TokenKind::kIdentifier)) {
+        current().kind == TokenKind::kLeftBrace || is_local_variable_start()) {
       return;
     }
     advance();

@@ -21,6 +21,13 @@ struct ClothString {
   std::size_t size;
 };
 
+struct ClothArray {
+  void* data;
+  std::size_t length;
+  std::size_t element_size;
+  bool contains_references;
+};
+
 [[noreturn]] void runtime_failure(std::string_view message) noexcept {
   constexpr std::string_view kPrefix = "cloth runtime error: ";
   static_cast<void>(std::fwrite(kPrefix.data(), 1, kPrefix.size(), stderr));
@@ -91,6 +98,65 @@ extern "C" void* cloth_rt_string_literal(const void* data,
   }
   *string = ClothString{static_cast<const char*>(data), string_size};
   return string;
+}
+
+extern "C" void* cloth_rt_array_alloc(
+    std::int32_t length, std::uint64_t element_size,
+    std::uint64_t element_alignment,
+    std::uint8_t contains_references) noexcept {
+  if (length < 0) {
+    runtime_failure("array length is negative");
+  }
+  if (element_size == 0) {
+    runtime_failure("array element size is zero");
+  }
+  if (!is_power_of_two(element_alignment)) {
+    runtime_failure("invalid array element alignment");
+  }
+  if (contains_references > 1) {
+    runtime_failure("invalid array reference metadata");
+  }
+
+  const std::size_t native_length = static_cast<std::size_t>(length);
+  const std::size_t native_element_size =
+      native_size(element_size, "array element is too large");
+  if (native_length >
+      std::numeric_limits<std::size_t>::max() / native_element_size) {
+    runtime_failure("array allocation is too large");
+  }
+  auto* array = static_cast<ClothArray*>(std::malloc(sizeof(ClothArray)));
+  if (array == nullptr) {
+    runtime_failure("array header allocation failed");
+  }
+  array->data = cloth_rt_alloc(
+      static_cast<std::uint64_t>(native_length * native_element_size),
+      element_alignment);
+  array->length = native_length;
+  array->element_size = native_element_size;
+  array->contains_references = contains_references != 0;
+  return array;
+}
+
+extern "C" std::int32_t cloth_rt_array_length(const void* value) noexcept {
+  if (value == nullptr) {
+    runtime_failure("null array");
+  }
+  const auto& array = *static_cast<const ClothArray*>(value);
+  return static_cast<std::int32_t>(array.length);
+}
+
+extern "C" void* cloth_rt_array_element(void* value,
+                                        std::int32_t index) noexcept {
+  if (value == nullptr) {
+    runtime_failure("null array");
+  }
+  auto& array = *static_cast<ClothArray*>(value);
+  if (index < 0 || static_cast<std::size_t>(index) >= array.length) {
+    runtime_failure("array index is out of bounds");
+  }
+  return static_cast<void*>(static_cast<std::byte*>(array.data) +
+                            static_cast<std::size_t>(index) *
+                                array.element_size);
 }
 
 extern "C" void cloth_rt_require_receiver(const void* receiver) noexcept {

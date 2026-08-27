@@ -1,0 +1,3 @@
+func Get(): int32 {
+    return 8;
+}

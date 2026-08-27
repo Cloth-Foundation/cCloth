@@ -32,6 +32,12 @@ Field access uses byte-addressed `getelementptr i8` with the exact offset from
 the Stage 4 class layout. LLVM does not independently reconstruct Cloth object
 layout.
 
+Arrays lower as opaque pointers. Literal allocation passes the element count,
+verified ABI size and alignment, and reference-content metadata to the runtime.
+Every indexed load or store obtains its address through the checked runtime
+access function. `Length` is likewise a runtime query, keeping the array header
+opaque to generated code.
+
 ## Control flow and expressions
 
 Each MIR basic block becomes one LLVM basic block. Jumps, branches, returns,
@@ -57,11 +63,14 @@ return the object.
 
 ## Runtime boundary
 
-Generated modules declare six runtime functions:
+Generated modules declare nine runtime functions:
 
 ```llvm
 declare ptr @cloth_rt_alloc(i64, i64)
 declare ptr @cloth_rt_string_literal(ptr, i64)
+declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)
+declare i32 @cloth_rt_array_length(ptr)
+declare ptr @cloth_rt_array_element(ptr, i32)
 declare void @cloth_rt_require_receiver(ptr)
 declare void @cloth_rt_print(ptr)
 declare void @cloth_rt_print_i32(i32)
@@ -72,6 +81,8 @@ declare void @cloth_rt_print_bool(i8)
 zero-initialized storage or terminates through the runtime failure path.
 `cloth_rt_string_literal` constructs or interns an opaque Cloth string from
 immutable bytes.
+The array calls allocate typed element storage, query its fixed length, and
+perform null and bounds checked element addressing.
 `cloth_rt_require_receiver` returns for a non-null reference and traps through
 the runtime null-reference path otherwise.
 The print functions write a `String`, signed `int32`, or lowercase `bool`

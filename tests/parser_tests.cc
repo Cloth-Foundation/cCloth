@@ -113,6 +113,45 @@ void parser_requires_eof(TestContext& test) {
               "invalid parser input did not produce a diagnostic");
 }
 
+void imports(TestContext& test) {
+  const ParsedSource source{"Imports.co",
+                            "import my.location::Example;\n"
+                            "import my.location.*;\n"
+                            "import tools::Example as ToolExample;\n"
+                            "import RootType;\n"
+                            "func Main() {}\n"};
+
+  test.expect(error_count(source) == 0, "valid imports did not parse");
+  test.expect(source.ast().imports.size() == 4, "wrong import count");
+  if (source.ast().imports.size() != 4) {
+    return;
+  }
+  const cloth::ImportDecl& exact = source.ast().imports[0];
+  test.expect(exact.kind == cloth::ImportKind::kType &&
+                  exact.package_name == "my.location" &&
+                  exact.type_name == "Example" && exact.local_name == "Example",
+              "qualified type import was parsed incorrectly");
+  const cloth::ImportDecl& wildcard = source.ast().imports[1];
+  test.expect(wildcard.kind == cloth::ImportKind::kWildcard &&
+                  wildcard.package_name == "my.location",
+              "wildcard import was parsed incorrectly");
+  test.expect(source.ast().imports[2].local_name == "ToolExample",
+              "import alias was not retained");
+  test.expect(source.ast().imports[3].package_name.empty() &&
+                  source.ast().imports[3].type_name == "RootType",
+              "root-package import was parsed incorrectly");
+
+  const ParsedSource invalid{"InvalidImports.co",
+                             "func Main() {}\n"
+                             "import late::Type;\n"
+                             "module duplicated;\n"};
+  test.expect(
+      has_diagnostic(invalid, "imports must appear before member declarations"),
+      "late import was accepted");
+  test.expect(has_diagnostic(invalid, "module declarations are unnecessary"),
+              "module declaration did not explain path-derived packages");
+}
+
 void fields_and_visibility(TestContext& test) {
   const ParsedSource source{"Fields.co",
                             "String Name;\nint32 id;\nbool active = true;\n"
@@ -419,6 +458,43 @@ void calls_members_and_assignment(TestContext& test) {
   }
 }
 
+void arrays(TestContext& test) {
+  const ParsedSource source{"Arrays.co",
+                            "int32[] Values = [1, 2, 3];\n"
+                            "func Read(int32[] values): int32 {\n"
+                            "  values[0] = 4;\n"
+                            "  return values[0];\n"
+                            "}\n"};
+  test.expect(error_count(source) == 0, "valid array syntax did not parse");
+  test.expect(
+      source.ast().fields.size() == 1 && source.ast().fields[0].type.is_array,
+      "array field type was not retained");
+  if (source.ast().fields.empty() || !source.ast().fields[0].initializer) {
+    test.expect(false, "array field initializer is missing");
+    return;
+  }
+  const cloth::Expression& literal =
+      source.ast().storage.expression(*source.ast().fields[0].initializer);
+  const auto* array = std::get_if<cloth::ArrayLiteralExpression>(&literal.data);
+  test.expect(array != nullptr && array->elements.size() == 3,
+              "array literal AST node is wrong");
+
+  const cloth::Block& body =
+      source.ast().storage.block(source.ast().functions[0].body);
+  const auto* statement = std::get_if<cloth::ExpressionStatement>(
+      &source.ast().storage.statement(body.statements[0]).data);
+  if (statement == nullptr) {
+    test.expect(false, "array assignment statement is missing");
+    return;
+  }
+  const auto* assignment = std::get_if<cloth::AssignmentExpression>(
+      &source.ast().storage.expression(statement->expression).data);
+  test.expect(assignment != nullptr &&
+                  std::holds_alternative<cloth::IndexExpression>(
+                      source.ast().storage.expression(assignment->target).data),
+              "indexed assignment target was not retained");
+}
+
 void missing_statement_semicolon_recover(TestContext& test) {
   const ParsedSource source{"Statements.co",
                             "func Values(): int { return 1 return 2; }\n"};
@@ -565,6 +641,7 @@ int main() {
   const std::vector<TestCase> tests{
       {"empty source", empty_source},
       {"parser requires eof", parser_requires_eof},
+      {"imports", imports},
       {"fields and visibility", fields_and_visibility},
       {"functions", functions},
       {"legacy function keyword rejected", legacy_function_keyword_rejected},
@@ -583,6 +660,7 @@ int main() {
       {"expressions and if statement", expressions_and_if_statement},
       {"while, break, and continue", while_break_and_continue},
       {"calls, members, and assignment", calls_members_and_assignment},
+      {"arrays", arrays},
       {"missing statement semicolon recover",
        missing_statement_semicolon_recover},
       {"mandatory if braces", mandatory_if_braces},

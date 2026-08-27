@@ -35,6 +35,7 @@ constexpr std::array kKeywords{
     Keyword{"extern", TokenKind::kKwExtern},
     Keyword{"unsafe", TokenKind::kKwUnsafe},
     Keyword{"import", TokenKind::kKwImport},
+    Keyword{"as", TokenKind::kKwAs},
     Keyword{"module", TokenKind::kKwModule},
     Keyword{"match", TokenKind::kKwMatch},
     Keyword{"int", TokenKind::kKwInt},
@@ -47,6 +48,7 @@ constexpr std::array kKeywords{
     Keyword{"uint16", TokenKind::kKwUint16},
     Keyword{"uint32", TokenKind::kKwUint32},
     Keyword{"uint64", TokenKind::kKwUint64},
+    Keyword{"float", TokenKind::kKwFloat},
     Keyword{"float32", TokenKind::kKwFloat32},
     Keyword{"float64", TokenKind::kKwFloat64},
     Keyword{"bool", TokenKind::kKwBool},
@@ -152,7 +154,7 @@ std::vector<Token> Lexer::lex() {
         add(TokenKind::kSemicolon);
         break;
       case ':':
-        add(TokenKind::kColon);
+        add(match(':') ? TokenKind::kColonColon : TokenKind::kColon);
         break;
       case '.':
         add(TokenKind::kDot);

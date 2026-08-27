@@ -62,6 +62,19 @@ class HirVerifier {
         for (const HirExpressionId argument : call->arguments) {
           verify_expression(argument, expression.range);
         }
+      } else if (const auto* array =
+                     std::get_if<HirArrayLiteralExpression>(&expression.data)) {
+        verify_type(array->element_type, expression.range);
+        for (const HirExpressionId element : array->elements) {
+          verify_expression(element, expression.range);
+        }
+      } else if (const auto* index =
+                     std::get_if<HirIndexExpression>(&expression.data)) {
+        verify_expression(index->object, expression.range);
+        verify_expression(index->index, expression.range);
+      } else if (const auto* length =
+                     std::get_if<HirArrayLengthExpression>(&expression.data)) {
+        verify_expression(length->array, expression.range);
       } else if (const auto* grouped =
                      std::get_if<HirGroupedExpression>(&expression.data)) {
         verify_expression(grouped->expression, expression.range);

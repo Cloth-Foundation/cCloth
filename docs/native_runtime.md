@@ -3,7 +3,8 @@
 Stage 6.0 turns a verified Cloth compilation into a native x86-64 executable.
 It keeps LLVM behind an external tool boundary and gives the first core
 operation, `print(String)`, a typed language and runtime contract. Stage 7.0
-extends that contract with exact `int32` and `bool` output.
+extends that contract with exact `int32` and `bool` output. Stage 9.0 adds
+fixed-length array allocation and checked access.
 
 ## Source contract
 
@@ -34,11 +35,15 @@ class receiver, matching ordinary class-qualified call semantics.
 
 ## Runtime ABI
 
-The static Cloth runtime implements six C-linkage functions:
+The static Cloth runtime implements nine C-linkage functions:
 
 ```text
 cloth_rt_alloc(size, alignment) -> reference
 cloth_rt_string_literal(data, size) -> String
+cloth_rt_array_alloc(length, element_size, element_alignment,
+                     contains_references) -> array
+cloth_rt_array_length(array) -> int32
+cloth_rt_array_element(array, index) -> element address
 cloth_rt_require_receiver(reference)
 cloth_rt_print(String)
 cloth_rt_print_i32(int32)
@@ -49,6 +54,11 @@ Object allocation honors the verified ABI size and alignment and zeroes the
 storage. A runtime string is currently an opaque byte pointer and length. Its
 representation is deliberately absent from generated LLVM IR so interning and
 garbage collection can replace the initial allocation strategy later.
+
+An array header records its fixed length, element size, payload address, and
+whether elements are references. Payload storage is zero-initialized and
+properly aligned. Null access, negative indices, and indices greater than or
+equal to `Length` terminate through the runtime failure path.
 
 Runtime contract violations write a concise message to standard error and
 terminate the process. There is no recovery or exception ABI yet.

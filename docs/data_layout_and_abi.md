@@ -22,14 +22,15 @@ their target representation changes.
 ## Primitive representation
 
 Fixed-width integer and floating-point names retain their declared bit widths.
-`int` and `uint` remain aliases of `int32` and `uint32`. `byte`, `int8`, and
-`uint8` occupy one byte. `char` is a 32-bit value. `bool` has one-bit value
-semantics and one-byte storage.
+`int`, `uint`, and `float` remain aliases of `int32`, `uint32`, and `float32`.
+`byte`, `int8`, and `uint8` occupy one byte. `char` is a 32-bit value. `bool`
+has one-bit value semantics and one-byte storage.
 
-`String`, file classes, and `null` use the target reference representation. A
-reference has the target pointer size and alignment. ABI references are opaque;
-the contract does not expose a native C++ object or commit the future garbage
-collector to non-moving addresses.
+`String`, file classes, arrays, and `null` use the target reference
+representation. A reference has the target pointer size and alignment. ABI
+references are opaque; the contract does not expose a native C++ object or
+commit the future garbage collector to non-moving addresses. Array element
+types remain structural semantic data and use an `a` prefix in mangled names.
 
 ## File-class objects
 
@@ -68,9 +69,10 @@ convention so LLVM and non-Cloth tooling have a stable interoperability point.
 ## Mangling
 
 Callable symbols use the ABI-versioned `_C1` prefix. The encoding includes
-callable kind, length-prefixed file-class and member names, parameter count, and
-canonical parameter types. Return types are omitted because Cloth does not
-overload on a return type.
+callable kind, length-prefixed qualified file-class and member names, parameter
+count, and canonical parameter types. Return types are omitted because Cloth
+does not overload on a return type. Package qualification prevents equal class
+stems in different packages from producing the same native symbol.
 
 For example:
 

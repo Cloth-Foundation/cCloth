@@ -34,7 +34,7 @@ User(String name, int32 id) {
 ```
 
 The parser must diagnose a file name that cannot form a valid Cloth type name.
-Module and directory naming rules remain to be specified.
+Package directory components follow the same identifier grammar.
 
 ## Capitalization and visibility
 
@@ -48,9 +48,9 @@ character of a declaration name:
 This rule applies to implicit file classes and their fields, functions, and
 nested types. It does not apply to local variables or parameters because those
 names are not exported across an access boundary. Public declarations may be
-referenced from other file classes, subject to the future module and import
-rules. Private declarations are visible only within their defining file class
-and its nested scopes.
+referenced from other file classes through same-package lookup or imports.
+Private declarations are visible only within their defining file class and its
+nested scopes.
 
 ```text
 // User.co defines the public class User.
@@ -65,21 +65,23 @@ An implicit class receives its visibility from the source file stem, so
 and inherits the class visibility. Until Cloth defines Unicode identifier
 rules, only ASCII letter case participates in visibility.
 
-For portable builds, a module must not contain source files whose stems differ
-only by letter case. The compiler must diagnose these collisions
-deterministically even on a case-sensitive host file system.
+For portable builds, a source graph must not contain qualified file-class
+identities that differ only by letter case. The compiler diagnoses these
+collisions deterministically even on a case-sensitive host file system.
 
 ## Core semantic rules
 
-Compilation is performed over an explicit set of source files. Every file class
-is registered before member signatures, and every member signature is registered
-before executable definitions are checked. This preserves forward references
-without making meaning depend on input order.
+Compilation closes the entry files' package and import graph before semantic
+analysis. Every file class is registered before member signatures, and every
+member signature is registered before executable definitions are checked. This
+preserves forward and cyclic references without making meaning depend on
+discovery order.
 
-`int` and `uint` are portable aliases of `int32` and `uint32`. `String` is a
-core reference type. General implicit numeric conversions are not part of the
-initial language; overload selection uses exact canonical parameter types. The
-null value is assignable only to reference types.
+`int`, `uint`, and `float` are portable aliases of `int32`, `uint32`, and
+`float32`. `String` is a core reference type. General implicit numeric
+conversions are not part of the initial language; overload selection uses exact
+canonical parameter types. The null value is assignable only to reference
+types.
 
 Lexical scopes contain `self`, parameters, and locals. A nested block may shadow
 an outer name, but declarations in the same scope may not collide. Public
@@ -106,6 +108,25 @@ exposing allocation details as language or compiler identities.
 Semantic model and HIR identities are stable numeric handles. Their allocation
 strategy is likewise not part of the language contract and may move to managed
 storage later.
+
+## Path-derived packages
+
+Cloth has no `module` or `package` declaration. A file's directory relative to
+the project source root is its package, and its stem remains its implicit class
+name. For example, `src/models/User.co` has the stable identity `models.User`.
+
+Imports use identifiers rather than filesystem strings:
+
+```cloth
+import models::User;
+import services.api::*;
+import legacy::User as LegacyUser;
+```
+
+Dots traverse package directories, `::` selects one file class, and a terminal
+`.*` imports every public file class directly in a package. Imports are
+file-scoped, non-transitive, and order-independent. Cycles are permitted because
+the complete source graph is closed before declarations and bodies are checked.
 
 ## Explicit control flow
 
@@ -145,6 +166,19 @@ must be braced. `break` exits the innermost loop and `continue` re-evaluates its
 condition. Both control statements are errors outside a loop. This small core
 is sufficient to express general iteration without committing to `for` syntax
 or iterator protocols prematurely.
+
+## Arrays
+
+`T[]` is a homogeneous, fixed-length reference collection with mutable
+elements. Array literals evaluate their elements from left to right and infer
+one exact element type. Empty and null-only literals require future contextual
+typing and are currently rejected. `array[index]` accepts only `int32`, and
+both reads and writes perform runtime null and bounds checks. `Length` is a
+public read-only `int32` member. Array equality compares reference identity.
+
+The array runtime stores element layout and whether elements contain references
+without exposing that representation to source or LLVM IR. This is the first
+collection boundary designed for a future tracing collector.
 
 ## Core output and native entry point
 

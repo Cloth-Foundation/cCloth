@@ -36,9 +36,11 @@ class TestContext {
 
 class AnalyzedCompilation {
  public:
-  void add(std::filesystem::path path, std::string text) {
+  void add(std::filesystem::path path, std::string text,
+           std::string package_name = {}) {
     compilation_.add_source(
-        cloth::SourceFile::from_memory(std::move(path), std::move(text)));
+        cloth::SourceFile::from_memory(std::move(path), std::move(text)),
+        std::move(package_name));
   }
 
   void analyze() { result.emplace(compilation_.analyze(diagnostics)); }
@@ -79,6 +81,7 @@ void core_types_and_typed_hir(TestContext& test) {
   compilation.add("Values.co",
                   "int count = 1;\n"
                   "String Label = \"cloth\";\n"
+                  "float ratio;\n"
                   "func IsPositive(int value): bool {\n"
                   "  int copy = value;\n"
                   "  if (copy > 0) { return true; } "
@@ -95,10 +98,15 @@ void core_types_and_typed_hir(TestContext& test) {
               "portable int alias does not resolve to int32");
   test.expect(semantics.find_type("uint") == semantics.find_type("uint32"),
               "portable uint alias does not resolve to uint32");
+  test.expect(semantics.find_type("float") == semantics.find_type("float32"),
+              "portable float alias does not resolve to float32");
   const cloth::FileSemantics& file = semantics.file(cloth::FileId{0});
   test.expect(
       semantics.type(semantics.symbol(file.fields[0]).type).name == "int32",
       "field type was not canonicalized");
+  test.expect(
+      semantics.type(semantics.symbol(file.fields[2]).type).name == "float32",
+      "float field type was not canonicalized to float32");
   test.expect(compilation.result->hir.storage.expressions().size() ==
                   compilation.syntax_file(0).storage.expressions().size(),
               "HIR did not retain every typed expression");
@@ -172,6 +180,59 @@ void cross_file_binding(TestContext& test) {
     }
   }
   test.expect(found_call, "HIR call does not contain its bound function");
+}
+
+void package_imports(TestContext& test) {
+  AnalyzedCompilation compilation;
+  compilation.add("app/Main.co",
+                  "import models::User as ModelUser;\n"
+                  "import services.*;\n"
+                  "func Load(): ModelUser { return Factory.Make(); }\n"
+                  "func Help(): int { return Helper.Value(); }\n",
+                  "app");
+  compilation.add("app/Helper.co", "func Value(): int { return 8; }\n", "app");
+  compilation.add("models/User.co", "", "models");
+  compilation.add("services/Factory.co",
+                  "import models::User;\n"
+                  "func Make(): User { return null; }\n",
+                  "services");
+  compilation.analyze();
+
+  test.expect(compilation.error_count() == 0,
+              "valid package imports produced semantic errors");
+  test.expect(compilation.result->is_valid,
+              "valid package compilation was marked invalid");
+
+  AnalyzedCompilation cyclic;
+  cyclic.add("alpha/A.co",
+             "import beta::B;\nfunc Other(): B { return null; }\n", "alpha");
+  cyclic.add("beta/B.co",
+             "import alpha::A;\nfunc Other(): A { return null; }\n", "beta");
+  cyclic.analyze();
+  test.expect(cyclic.error_count() == 0, "cyclic type imports were rejected");
+}
+
+void invalid_package_imports(TestContext& test) {
+  AnalyzedCompilation compilation;
+  compilation.add("app/Main.co",
+                  "import missing::Absent;\n"
+                  "import secrets::hidden;\n"
+                  "import left.*;\n"
+                  "import right.*;\n",
+                  "app");
+  compilation.add("secrets/hidden.co", "", "secrets");
+  compilation.add("left/Thing.co", "", "left");
+  compilation.add("right/Thing.co", "", "right");
+  compilation.analyze();
+
+  test.expect(compilation.has_diagnostic(
+                  "unknown imported file class 'missing.Absent'"),
+              "missing imported type was not diagnosed");
+  test.expect(
+      compilation.has_diagnostic("file class 'secrets.hidden' is private"),
+      "private imported type was not diagnosed");
+  test.expect(compilation.has_diagnostic("import name 'Thing' is ambiguous"),
+              "wildcard collision was not diagnosed");
 }
 
 void private_member_access(TestContext& test) {
@@ -408,6 +469,50 @@ void assignment_requires_location(TestContext& test) {
               "literal assignment target was accepted");
 }
 
+void array_semantics(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Arrays.co",
+            "func Sum(): int32 {\n"
+            "  int32[] values = [1, 2, 3];\n"
+            "  values[1] = 4;\n"
+            "  return values.Length + values[0];\n"
+            "}\n"
+            "func Empty(): int32[] { return null; }\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid array operations produced semantic errors");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::FileSemantics& file = semantics.file(cloth::FileId{0});
+  const cloth::TypeId return_type = semantics.symbol(file.functions[1]).type;
+  test.expect(semantics.type(return_type).kind == cloth::TypeKind::kArray &&
+                  semantics.type(return_type).element_type ==
+                      semantics.find_type("int32"),
+              "array return type was not canonicalized");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadArrays.co",
+              "func Bad() {\n"
+              "  int32[] empty = [];\n"
+              "  int32[] mixed = [1, true];\n"
+              "  int32 value = mixed[false];\n"
+              "  int32 missing = mixed.length;\n"
+              "  int32 scalar = 1;\n"
+              "  scalar[0] = value;\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic("cannot infer the element type"),
+              "empty array literal was accepted without context");
+  test.expect(invalid.has_diagnostic("array element has type 'bool'"),
+              "heterogeneous array literal was accepted");
+  test.expect(invalid.has_diagnostic("array index has type 'bool'"),
+              "non-int32 array index was accepted");
+  test.expect(invalid.has_diagnostic("has no member 'length'"),
+              "array Length casing was ignored");
+  test.expect(invalid.has_diagnostic("cannot be indexed"),
+              "non-array value was indexable");
+}
+
 void instance_member_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("User.co", "String Name;\n");
@@ -452,6 +557,8 @@ int main() {
       {"core types and typed HIR", core_types_and_typed_hir},
       {"core print intrinsic", core_print_intrinsic},
       {"cross-file binding", cross_file_binding},
+      {"package imports", package_imports},
+      {"invalid package imports", invalid_package_imports},
       {"private member access", private_member_access},
       {"private file class access", private_file_class_access},
       {"unknown types and names", unknown_types_and_names},
@@ -466,6 +573,7 @@ int main() {
       {"case collision", case_collision},
       {"null assignability", null_assignability},
       {"assignment requires location", assignment_requires_location},
+      {"array semantics", array_semantics},
       {"instance member binding", instance_member_binding},
       {"deterministic diagnostics", deterministic_diagnostics},
   };

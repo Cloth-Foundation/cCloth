@@ -53,12 +53,15 @@ of these terminators:
 - return with an optional value
 - unreachable
 
-Instructions represent literals, symbol and member loads/stores, local
-declarations, unary and binary operations, calls, explicit conversions, and phi
-values. Source ranges, `TypeId`, and `SymbolId` identities survive lowering.
+Instructions represent literals, symbol and member loads/stores, array
+allocation/load/store/length operations, local declarations, unary and binary
+operations, calls, explicit conversions, and phi values. Source ranges,
+`TypeId`, and `SymbolId` identities survive lowering.
 
-Evaluation is left-to-right. Structured loops use the same explicit jump and
-branch terminators as other control flow. Instance-qualified calls carry an explicit
+Evaluation is left-to-right. Array element operands are evaluated before the
+array instruction, and indexed assignment evaluates the array and index before
+the assigned value. Structured loops use the same explicit jump and branch
+terminators as other control flow. Instance-qualified calls carry an explicit
 receiver; file-class-qualified calls do not. Nullable-to-reference coercion is
 an explicit MIR conversion. `&&` and `||` lower to branches and a typed phi
 value, preserving short-circuit behavior.

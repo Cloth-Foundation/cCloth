@@ -20,7 +20,9 @@ bool same_signature(const MemberSymbol& left,
     return false;
   }
   for (std::size_t index = 0; index < left.parameters.size(); ++index) {
-    if (left.parameters[index].type.name != right.parameters[index].type.name) {
+    if (left.parameters[index].type.name != right.parameters[index].type.name ||
+        left.parameters[index].type.is_array !=
+            right.parameters[index].type.is_array) {
       return false;
     }
   }
@@ -46,16 +48,35 @@ DeclarationPassResult DeclarationPass::run() {
     is_valid_ = false;
   }
 
+  bool saw_member = false;
   while (!at_end()) {
     const std::size_t before = current_;
-    if (current().kind == TokenKind::kKwFunc) {
+    if (current().kind == TokenKind::kKwImport) {
+      if (saw_member) {
+        diagnostics_.error(current().range,
+                           "imports must appear before member declarations");
+        is_valid_ = false;
+      }
+      parse_import();
+    } else if (current().kind == TokenKind::kKwModule) {
+      diagnostics_.error(
+          current().range,
+          "module declarations are unnecessary; the source path defines the "
+          "package");
+      is_valid_ = false;
+      synchronize_member();
+    } else if (current().kind == TokenKind::kKwFunc) {
+      saw_member = true;
       parse_function();
     } else if (is_nested_type_keyword(current().kind)) {
+      saw_member = true;
       skip_deferred_nested_type();
     } else if (current().kind == TokenKind::kIdentifier &&
                peek(1).kind == TokenKind::kLeftParen) {
+      saw_member = true;
       parse_constructor();
     } else if (can_start_type(current().kind)) {
+      saw_member = true;
       parse_field();
     } else {
       diagnostics_.error(
@@ -70,8 +91,8 @@ DeclarationPassResult DeclarationPass::run() {
     }
   }
 
-  return DeclarationPassResult{std::move(symbols_), std::move(outlines_),
-                               is_valid_};
+  return DeclarationPassResult{std::move(symbols_), std::move(imports_),
+                               std::move(outlines_), is_valid_};
 }
 
 bool DeclarationPass::at_end() const noexcept {
@@ -113,7 +134,25 @@ std::optional<TypeSyntax> DeclarationPass::parse_type() {
     return std::nullopt;
   }
   const Token& token = advance();
-  return TypeSyntax{token.lexeme, is_primitive_type(token.kind), token.range};
+  SourceRange range = token.range;
+  bool is_array = false;
+  while (match(TokenKind::kLeftBracket)) {
+    if (is_array) {
+      diagnostics_.error(tokens_[current_ - 1].range,
+                         "multidimensional array types are not supported");
+      is_valid_ = false;
+    }
+    is_array = true;
+    if (match(TokenKind::kRightBracket)) {
+      range.end = tokens_[current_ - 1].range.end;
+    } else {
+      diagnostics_.error(current().range, "expected ']' in array type");
+      is_valid_ = false;
+      break;
+    }
+  }
+  return TypeSyntax{token.lexeme, is_primitive_type(token.kind), range,
+                    is_array};
 }
 
 std::vector<ParameterSymbol> DeclarationPass::parse_parameters(
@@ -362,6 +401,116 @@ void DeclarationPass::parse_constructor() {
                                     declaration_valid});
 }
 
+void DeclarationPass::parse_import() {
+  const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
+  const Token& keyword = advance();
+  std::vector<std::string_view> package_segments;
+  std::string type_name;
+  std::string local_name;
+  ImportKind kind = ImportKind::kType;
+
+  if (current().kind != TokenKind::kIdentifier) {
+    diagnostics_.error(current().range,
+                       "expected a package or type name after 'import'");
+    is_valid_ = false;
+  } else {
+    const Token& first = advance();
+    if (match(TokenKind::kColonColon)) {
+      package_segments.push_back(first.lexeme);
+      if (current().kind == TokenKind::kIdentifier) {
+        type_name = std::string{advance().lexeme};
+      } else {
+        diagnostics_.error(current().range, "expected a type name after '::'");
+        is_valid_ = false;
+      }
+    } else if (match(TokenKind::kDot)) {
+      package_segments.push_back(first.lexeme);
+      while (!at_end()) {
+        if (match(TokenKind::kStar)) {
+          kind = ImportKind::kWildcard;
+          break;
+        }
+        if (current().kind != TokenKind::kIdentifier) {
+          diagnostics_.error(current().range,
+                             "expected a package name or '*' after '.'");
+          is_valid_ = false;
+          break;
+        }
+        package_segments.push_back(advance().lexeme);
+        if (match(TokenKind::kColonColon)) {
+          if (current().kind == TokenKind::kIdentifier) {
+            type_name = std::string{advance().lexeme};
+          } else {
+            diagnostics_.error(current().range,
+                               "expected a type name after '::'");
+            is_valid_ = false;
+          }
+          break;
+        }
+        if (!match(TokenKind::kDot)) {
+          diagnostics_.error(
+              current().range,
+              "expected '::' for a type or '.*' for a wildcard import");
+          is_valid_ = false;
+          break;
+        }
+      }
+    } else {
+      type_name = std::string{first.lexeme};
+    }
+  }
+
+  if (kind == ImportKind::kType && match(TokenKind::kKwAs)) {
+    if (current().kind == TokenKind::kIdentifier) {
+      local_name = std::string{advance().lexeme};
+    } else {
+      diagnostics_.error(current().range, "expected an alias name after 'as'");
+      is_valid_ = false;
+    }
+  } else if (kind == ImportKind::kWildcard &&
+             current().kind == TokenKind::kKwAs) {
+    diagnostics_.error(current().range,
+                       "wildcard imports cannot have an alias");
+    is_valid_ = false;
+    advance();
+    if (current().kind == TokenKind::kIdentifier) {
+      advance();
+    }
+  }
+
+  SourceLocation end = current().range.begin;
+  if (match(TokenKind::kSemicolon)) {
+    end = tokens_[current_ - 1].range.end;
+  } else {
+    diagnostics_.error(current().range, "expected ';' after import");
+    is_valid_ = false;
+    while (!at_end() && !match(TokenKind::kSemicolon)) {
+      advance();
+    }
+    if (current_ != 0) {
+      end = tokens_[current_ - 1].range.end;
+    }
+  }
+
+  std::string package_name;
+  for (const std::string_view segment : package_segments) {
+    if (!package_name.empty()) {
+      package_name += '.';
+    }
+    package_name += segment;
+  }
+  if (local_name.empty()) {
+    local_name = type_name;
+  }
+  const bool import_valid =
+      diagnostics_.diagnostics().size() == diagnostic_count &&
+      (kind == ImportKind::kWildcard || !type_name.empty());
+  imports_.push_back(ImportDecl{kind, std::move(package_name),
+                                std::move(type_name), std::move(local_name),
+                                SourceRange{keyword.range.begin, end},
+                                import_valid});
+}
+
 void DeclarationPass::skip_deferred_nested_type() {
   diagnostics_.error(
       current().range,
@@ -443,6 +592,10 @@ bool DeclarationPass::looks_like_member_start(
     return false;
   }
   return tokens_[next].kind == TokenKind::kIdentifier ||
+         (tokens_[next].kind == TokenKind::kLeftBracket &&
+          next + 2 < tokens_.size() &&
+          tokens_[next + 1].kind == TokenKind::kRightBracket &&
+          tokens_[next + 2].kind == TokenKind::kIdentifier) ||
          (kind == TokenKind::kIdentifier &&
           tokens_[next].kind == TokenKind::kLeftParen);
 }

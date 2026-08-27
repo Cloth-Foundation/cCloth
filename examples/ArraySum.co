@@ -1,0 +1,13 @@
+func Main() {
+    int32[] values = [1, 2, 3, 4, 5];
+    int32 index = 0;
+    int32 total = 0;
+
+    while (index < values.Length) {
+        total = total + values[index];
+        index = index + 1;
+    }
+
+    print(total);
+    print("\n");
+}

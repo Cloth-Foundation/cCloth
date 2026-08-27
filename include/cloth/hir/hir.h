@@ -77,6 +77,20 @@ struct HirCallExpression {
   std::vector<HirExpressionId> arguments;
 };
 
+struct HirArrayLiteralExpression {
+  TypeId element_type;
+  std::vector<HirExpressionId> elements;
+};
+
+struct HirIndexExpression {
+  HirExpressionId object;
+  HirExpressionId index;
+};
+
+struct HirArrayLengthExpression {
+  HirExpressionId array;
+};
+
 struct HirGroupedExpression {
   HirExpressionId expression;
 };
@@ -85,7 +99,9 @@ using HirExpressionData =
     std::variant<HirInvalidExpression, HirLiteralExpression,
                  HirSymbolExpression, HirTypeExpression, HirUnaryExpression,
                  HirBinaryExpression, HirAssignmentExpression,
-                 HirMemberExpression, HirCallExpression, HirGroupedExpression>;
+                 HirMemberExpression, HirCallExpression,
+                 HirArrayLiteralExpression, HirIndexExpression,
+                 HirArrayLengthExpression, HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;

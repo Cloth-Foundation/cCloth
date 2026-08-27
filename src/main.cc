@@ -7,6 +7,7 @@
 #include "cloth/hir/hir_printer.h"
 #include "cloth/lexer/token.h"
 #include "cloth/mir/mir_printer.h"
+#include "cloth/project/project_layout.h"
 #include "cloth/source/source_file.h"
 #include "cloth/target/data_layout.h"
 
@@ -175,7 +176,16 @@ int main(int argc, char* argv[]) {
     return 2;
   }
 
+  const auto project_layout =
+      cloth::discover_project_layout(source_paths.front());
+  if (!project_layout) {
+    std::cerr << "clothc: error: " << project_layout.error() << '\n';
+    return 2;
+  }
+
   cloth::Compilation compilation{std::move(target)};
+  compilation.set_source_root(project_layout->source_root,
+                              project_layout->manifest_path.has_value());
   for (const std::filesystem::path& source_path : source_paths) {
     auto source_result = cloth::SourceFile::load(source_path);
     if (!source_result) {

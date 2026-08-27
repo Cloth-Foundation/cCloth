@@ -19,11 +19,13 @@ SemanticModel::SemanticModel() {
   static_cast<void>(add_type(SemanticType{TypeKind::kUint16, "uint16", {}}));
   const TypeId uint32 = add_type(SemanticType{TypeKind::kUint32, "uint32", {}});
   static_cast<void>(add_type(SemanticType{TypeKind::kUint64, "uint64", {}}));
-  static_cast<void>(add_type(SemanticType{TypeKind::kFloat32, "float32", {}}));
+  const TypeId float32 =
+      add_type(SemanticType{TypeKind::kFloat32, "float32", {}});
   static_cast<void>(add_type(SemanticType{TypeKind::kFloat64, "float64", {}}));
   string_type_ = add_type(SemanticType{TypeKind::kString, "String", {}});
   add_type_alias("int", int32);
   add_type_alias("uint", uint32);
+  add_type_alias("float", float32);
 
   const SourceLocation core_location{"<core>"};
   static_cast<void>(add_symbol(SemanticSymbol{
@@ -79,6 +81,19 @@ TypeId SemanticModel::add_type(SemanticType type) {
   type_names_.push_back(TypeName{type.name, id});
   types_.push_back(std::move(type));
   return id;
+}
+
+TypeId SemanticModel::get_array_type(TypeId element_type) {
+  for (std::size_t index = 0; index < types_.size(); ++index) {
+    const SemanticType& type = types_[index];
+    if (type.kind == TypeKind::kArray && type.element_type == element_type) {
+      return TypeId{index};
+    }
+  }
+  return add_type(SemanticType{TypeKind::kArray,
+                               types_.at(element_type.value).name + "[]",
+                               {},
+                               element_type});
 }
 
 void SemanticModel::add_type_alias(std::string name, TypeId type) {
@@ -189,6 +204,8 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
       return "String";
     case TypeKind::kFileClass:
       return "file class";
+    case TypeKind::kArray:
+      return "array";
   }
   return "unknown";
 }

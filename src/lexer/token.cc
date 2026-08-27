@@ -34,6 +34,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "semicolon";
     case TokenKind::kColon:
       return "colon";
+    case TokenKind::kColonColon:
+      return "colon_colon";
     case TokenKind::kDot:
       return "dot";
     case TokenKind::kQuestion:
@@ -148,6 +150,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "unsafe";
     case TokenKind::kKwImport:
       return "import";
+    case TokenKind::kKwAs:
+      return "as";
     case TokenKind::kKwModule:
       return "module";
     case TokenKind::kKwMatch:
@@ -172,6 +176,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "uint32";
     case TokenKind::kKwUint64:
       return "uint64";
+    case TokenKind::kKwFloat:
+      return "float";
     case TokenKind::kKwFloat32:
       return "float32";
     case TokenKind::kKwFloat64:

@@ -1,19 +1,21 @@
-# Cloth compiler - Stage 7.0 structured loops
+# Cloth compiler - Stage 9.0 arrays and indexing
 
-This repository contains the deterministic Stage 7.0 compiler core for Cloth
-source files (`.co`). It lexes and parses an explicit compilation set, binds
-implicit file classes and their members, checks types and visibility, verifies
-typed HIR, analyzes control flow, and lowers executable definitions to
+This repository contains the deterministic Stage 9.0 compiler core for Cloth
+source files (`.co`). It discovers a path-derived package graph, lexes and
+parses its implicit file classes, checks imports, arrays, types, and visibility,
+verifies typed HIR, analyzes control flow, and lowers executable definitions to
 target-independent MIR, a verified target ABI, and textual LLVM IR. The driver
 prints readable token, AST, HIR, MIR, and ABI summaries or emits a standalone
 LLVM module or builds a native x86-64 executable. Errors are collected with
 source ranges.
 
-The project includes structured `while`, `break`, and `continue` control flow
-and a minimal native runtime for allocation, strings, null receiver checks, and
-typed `print` overloads for `String`, `int32`, and `bool`. It intentionally
+The project includes structured `while`, `break`, and `continue` control flow,
+fixed-length mutable arrays with checked indexing, and a minimal native runtime
+for allocation, strings, null checks, and typed `print` overloads for `String`,
+`int32`, and `bool`. It intentionally
 contains no garbage collector, virtual machine, standard library, debugger, or
-package system. LLVM IR emission has no link-time dependency on LLVM libraries.
+external package registry. LLVM IR emission has no link-time dependency on LLVM
+libraries.
 
 ## Requirements
 
@@ -86,6 +88,30 @@ The Stage 7 loop and typed-output example is FizzBuzz:
 ./fizzbuzz
 ```
 
+The Stage 9 array example sums a collection through `Length` and indexing:
+
+```sh
+./build/clothc --build=array-sum examples/ArraySum.co
+./array-sum
+```
+
+A project uses an empty or metadata-only `cloth.toml` and a `src/` directory.
+Compile only its entry file; imports and same-package sources are discovered:
+
+```sh
+./build/clothc --build=imports \
+  tests/projects/imports/src/Main.co
+./imports
+```
+
+Imports are identifier paths rather than strings:
+
+```cloth
+import models::User;
+import services.api::*;
+import legacy::User as LegacyUser;
+```
+
 Visual Studio and other multi-configuration generators may place the binary in
 `build/Debug`. The portable CMake target below builds the executable and runs
 the example regardless of its output directory:
@@ -114,23 +140,25 @@ ctest --test-dir build --build-config Debug --output-on-failure
 
 The internal test executables use no external test framework. Lexer coverage
 includes tokens, comments, literals, operators, invalid input, ranges, and EOF.
-Parser coverage includes declarations, visibility, constructors, overload
-candidates, statements, expressions, source ranges, and recovery. Semantic
-coverage includes cross-file binding, privacy, core types, exact overload and
-constructor resolution, lexical scopes, type checking, return paths, portable
-file-name collisions, typed HIR, and deterministic diagnostics. MIR coverage
+Parser coverage includes imports, declarations, arrays, visibility,
+constructors, overload candidates, statements, expressions, source ranges, and
+recovery.
+Semantic coverage includes package and cross-file binding, aliases, wildcards,
+privacy, core types, exact overload and constructor resolution, lexical scopes,
+type checking, array inference and access, return paths, portable file-name
+collisions, typed HIR, and deterministic diagnostics. MIR coverage
 includes branches, fallthrough joins, structured loop edges, short-circuit phi
-nodes, dead blocks, field initializers, explicit conversions, receivers, and
-verifier failures.
+nodes, dead blocks, field initializers, array operations, explicit conversions,
+receivers, and verifier failures.
 ABI coverage includes primitive and reference layouts, class padding, both
 target widths, receiver slots, constructor returns, linkage, mangling, and
 verifier failures.
 Backend coverage includes arithmetic, short-circuit branches, phi values,
-objects, field initializers, receiver forms, constructors, typed output, and
-wasm32.
+objects, arrays, field initializers, receiver forms, constructors, typed output,
+and wasm32.
 When `opt` is available, CTest also verifies an emitted module with LLVM itself.
-When `llc` is available, CTest builds and executes both native examples. The
-FizzBuzz test compares all output exactly against a golden file.
+When `llc` is available, CTest builds and executes the native examples and the
+multi-package project. Their output is compared exactly against golden files.
 
 ## VS Code
 
@@ -178,9 +206,10 @@ include/cloth/          Public compiler interfaces
   abi/                  Object layout, signatures, linkage, and mangling
   backend/              LLVM IR emission
   compiler/             Multi-file compilation orchestration
+  project/              Project-root and source-root discovery
   runtime/              Native runtime ABI interface
 src/                    Implementations and the clothc driver
-runtime/                Native allocation, strings, traps, and output
+runtime/                Native object/array allocation, traps, and output
 tests/                  Deterministic lexer, parser, and semantic tests
 examples/               Native and cross-file language examples
 docs/language_design.md Stable language and compiler design constraints
@@ -190,6 +219,8 @@ docs/control_flow_and_mir.md Implemented Stage 3.0 IR contract
 docs/data_layout_and_abi.md Implemented Stage 4.0 ABI contract
 docs/llvm_backend.md     Implemented Stage 5.0 LLVM lowering contract
 docs/native_runtime.md   Implemented Stage 6.0 native execution contract
+docs/packages_and_imports.md Implemented Stage 8.0 package graph contract
+docs/arrays_and_indexing.md Implemented Stage 9.0 array contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -239,6 +270,16 @@ LLVM object emission plus the configured host linker. Stage 7 adds structured
 loops and `String`, `int32`, and `bool` output overloads, making FizzBuzz the
 first complete control-flow example. See
 [docs/native_runtime.md](docs/native_runtime.md).
+
+Stage 8 derives package identities from paths, discovers projects through
+`cloth.toml`, closes the source graph recursively, and implements explicit,
+wildcard, aliased, same-package, and cyclic imports. See
+[docs/packages_and_imports.md](docs/packages_and_imports.md).
+
+Stage 9 adds homogeneous `T[]` references, array literals, mutable checked
+indexing, and the public `Length` member. Arrays lower through explicit HIR and
+MIR nodes to a garbage-collector-ready runtime boundary. See
+[docs/arrays_and_indexing.md](docs/arrays_and_indexing.md).
 
 ## Extending the lexer
 

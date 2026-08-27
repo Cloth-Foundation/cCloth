@@ -53,12 +53,14 @@ enum class TypeKind {
   kFloat64,
   kString,
   kFileClass,
+  kArray,
 };
 
 struct SemanticType {
   TypeKind kind;
   std::string name;
   std::optional<FileId> file;
+  std::optional<TypeId> element_type{};
 };
 
 enum class SymbolKind {
@@ -148,6 +150,7 @@ class SemanticModel {
   };
 
   [[nodiscard]] TypeId add_type(SemanticType type);
+  [[nodiscard]] TypeId get_array_type(TypeId element_type);
   void add_type_alias(std::string name, TypeId type);
   [[nodiscard]] SymbolId add_symbol(SemanticSymbol symbol);
   [[nodiscard]] FileId add_file(FileSemantics file);

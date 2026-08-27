@@ -128,6 +128,18 @@ class BodyEmitter {
   void emit_member_store(const MirInstruction& instruction,
                          const MirStoreMemberInstruction& store,
                          std::ostringstream& output);
+  void emit_array_literal(const MirInstruction& instruction,
+                          const MirArrayLiteralInstruction& array,
+                          std::ostringstream& output);
+  void emit_array_load(const MirInstruction& instruction,
+                       const MirArrayLoadInstruction& load,
+                       std::ostringstream& output);
+  void emit_array_store(const MirInstruction& instruction,
+                        const MirArrayStoreInstruction& store,
+                        std::ostringstream& output);
+  void emit_array_length(const MirInstruction& instruction,
+                         const MirArrayLengthInstruction& length,
+                         std::ostringstream& output);
   void emit_unary(const MirInstruction& instruction,
                   const MirUnaryInstruction& unary, std::ostringstream& output);
   void emit_binary(const MirInstruction& instruction,
@@ -194,6 +206,9 @@ class ModuleEmitter {
            << "target triple = \"" << abi_.target.target_name << "\"\n\n"
            << "declare ptr @cloth_rt_alloc(i64, i64)\n"
            << "declare ptr @cloth_rt_string_literal(ptr, i64)\n"
+           << "declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)\n"
+           << "declare i32 @cloth_rt_array_length(ptr)\n"
+           << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
            << "declare void @cloth_rt_require_receiver(ptr)\n"
            << "declare void @cloth_rt_print(ptr)\n"
            << "declare void @cloth_rt_print_i32(i32)\n"
@@ -581,6 +596,18 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* store =
                  std::get_if<MirStoreMemberInstruction>(&instruction.data)) {
     emit_member_store(instruction, *store, output);
+  } else if (const auto* array =
+                 std::get_if<MirArrayLiteralInstruction>(&instruction.data)) {
+    emit_array_literal(instruction, *array, output);
+  } else if (const auto* load =
+                 std::get_if<MirArrayLoadInstruction>(&instruction.data)) {
+    emit_array_load(instruction, *load, output);
+  } else if (const auto* store =
+                 std::get_if<MirArrayStoreInstruction>(&instruction.data)) {
+    emit_array_store(instruction, *store, output);
+  } else if (const auto* length =
+                 std::get_if<MirArrayLengthInstruction>(&instruction.data)) {
+    emit_array_length(instruction, *length, output);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     emit_unary(instruction, *unary, output);
@@ -712,6 +739,64 @@ void BodyEmitter::emit_member_store(const MirInstruction& instruction,
          << "  store " << module_.llvm_type(field->type) << ' '
          << value(store.value) << ", ptr " << address << ", align "
          << module_.alignment(field->type) << '\n';
+}
+
+void BodyEmitter::emit_array_literal(const MirInstruction& instruction,
+                                     const MirArrayLiteralInstruction& array,
+                                     std::ostringstream& output) {
+  if (array.elements.size() >
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+    module_.report(instruction.range, "array literal has too many elements");
+    return;
+  }
+  const AbiTypeLayout& element =
+      module_.abi().types.at(array.element_type.value);
+  const std::uint8_t contains_references =
+      element.kind == AbiTypeKind::kReference ? 1 : 0;
+  output << "  " << result_name(instruction)
+         << " = call ptr @cloth_rt_array_alloc(i32 " << array.elements.size()
+         << ", i64 " << element.storage.size << ", i64 "
+         << element.storage.alignment << ", i8 "
+         << static_cast<unsigned int>(contains_references) << ")\n";
+  for (std::size_t index = 0; index < array.elements.size(); ++index) {
+    const std::string address = next_address();
+    output << "  " << address << " = call ptr @cloth_rt_array_element(ptr "
+           << result_name(instruction) << ", i32 " << index << ")\n"
+           << "  store " << module_.llvm_type(array.element_type) << ' '
+           << value(array.elements[index]) << ", ptr " << address << ", align "
+           << element.storage.alignment << '\n';
+  }
+}
+
+void BodyEmitter::emit_array_load(const MirInstruction& instruction,
+                                  const MirArrayLoadInstruction& load,
+                                  std::ostringstream& output) {
+  const std::string address = next_address();
+  output << "  " << address << " = call ptr @cloth_rt_array_element(ptr "
+         << value(load.array) << ", i32 " << value(load.index) << ")\n"
+         << "  " << result_name(instruction) << " = load "
+         << module_.llvm_type(instruction.type) << ", ptr " << address
+         << ", align " << module_.alignment(instruction.type) << '\n';
+}
+
+void BodyEmitter::emit_array_store(const MirInstruction&,
+                                   const MirArrayStoreInstruction& store,
+                                   std::ostringstream& output) {
+  const TypeId type = value_type(store.value);
+  const std::string address = next_address();
+  output << "  " << address << " = call ptr @cloth_rt_array_element(ptr "
+         << value(store.array) << ", i32 " << value(store.index) << ")\n"
+         << "  store " << module_.llvm_type(type) << ' ' << value(store.value)
+         << ", ptr " << address << ", align " << module_.alignment(type)
+         << '\n';
+}
+
+void BodyEmitter::emit_array_length(const MirInstruction& instruction,
+                                    const MirArrayLengthInstruction& length,
+                                    std::ostringstream& output) {
+  output << "  " << result_name(instruction)
+         << " = call i32 @cloth_rt_array_length(ptr " << value(length.array)
+         << ")\n";
 }
 
 void BodyEmitter::emit_unary(const MirInstruction& instruction,

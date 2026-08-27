@@ -1,0 +1,3 @@
+import nowhere::Missing;
+
+func Main() {}

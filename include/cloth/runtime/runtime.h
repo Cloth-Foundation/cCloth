@@ -9,6 +9,12 @@ extern "C" {
                                    std::uint64_t alignment) noexcept;
 [[nodiscard]] void* cloth_rt_string_literal(const void* data,
                                             std::uint64_t size) noexcept;
+[[nodiscard]] void* cloth_rt_array_alloc(
+    std::int32_t length, std::uint64_t element_size,
+    std::uint64_t element_alignment, std::uint8_t contains_references) noexcept;
+[[nodiscard]] std::int32_t cloth_rt_array_length(const void* array) noexcept;
+[[nodiscard]] void* cloth_rt_array_element(void* array,
+                                           std::int32_t index) noexcept;
 void cloth_rt_require_receiver(const void* receiver) noexcept;
 void cloth_rt_print(const void* string) noexcept;
 void cloth_rt_print_i32(std::int32_t value) noexcept;
