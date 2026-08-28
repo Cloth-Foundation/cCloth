@@ -115,18 +115,57 @@ int main() {
               "explicit collection left unreachable managed objects");
 
   ClothGcRootFrame string_frame{};
-  void* string_root = nullptr;
-  void** string_roots[]{&string_root};
-  cloth_rt_gc_push_frame(&string_frame, string_roots, 1);
-  constexpr std::string_view kMessage = "managed";
-  string_root = cloth_rt_string_literal(kMessage.data(), kMessage.size());
+  void* empty_string = nullptr;
+  void* unicode_string = nullptr;
+  void* left_string = nullptr;
+  void* right_string = nullptr;
+  void* joined_string = nullptr;
+  void* expected_string = nullptr;
+  void** string_roots[]{&empty_string, &unicode_string, &left_string,
+                        &right_string, &joined_string,  &expected_string};
+  cloth_rt_gc_push_frame(&string_frame, string_roots, 6);
+
+  empty_string = cloth_rt_string_literal(nullptr, 0);
+  constexpr char kUnicodeBytes[] = "\xC3\xA9\xF0\x9F\x99\x82";
+  unicode_string =
+      cloth_rt_string_literal(kUnicodeBytes, sizeof(kUnicodeBytes) - 1);
+  constexpr std::string_view kLeft = "Hello, ";
+  constexpr std::string_view kRight = "Cloth";
+  constexpr std::string_view kExpected = "Hello, Cloth";
+  left_string = cloth_rt_string_literal(kLeft.data(), kLeft.size());
+  right_string = cloth_rt_string_literal(kRight.data(), kRight.size());
+  joined_string = cloth_rt_string_concat(left_string, right_string);
+  expected_string = cloth_rt_string_literal(kExpected.data(), kExpected.size());
+
+  test.expect(cloth_rt_string_length(empty_string) == 0 &&
+                  cloth_rt_string_byte_length(empty_string) == 0 &&
+                  cloth_rt_string_is_empty(empty_string) == 1,
+              "empty string properties are wrong");
+  test.expect(cloth_rt_string_length(unicode_string) == 2 &&
+                  cloth_rt_string_byte_length(unicode_string) == 6 &&
+                  cloth_rt_string_is_empty(unicode_string) == 0,
+              "UTF-8 scalar and byte lengths are wrong");
+  test.expect(cloth_rt_string_length(joined_string) == 12 &&
+                  cloth_rt_string_byte_length(joined_string) == 12 &&
+                  cloth_rt_string_equal(joined_string, expected_string) == 1,
+              "string concatenation did not produce the expected value");
+  test.expect(cloth_rt_string_equal(expected_string, right_string) == 0 &&
+                  cloth_rt_string_equal(nullptr, nullptr) == 1 &&
+                  cloth_rt_string_equal(nullptr, expected_string) == 0,
+              "string content or nullable equality is wrong");
+
   cloth_rt_gc_collect();
-  test.expect(cloth_rt_gc_live_objects() == 1 && cloth_rt_gc_live_bytes() != 0,
-              "marking did not preserve a rooted String");
-  string_root = nullptr;
+  test.expect(cloth_rt_gc_live_objects() == 6 && cloth_rt_gc_live_bytes() != 0,
+              "marking did not preserve rooted strings");
+  empty_string = nullptr;
+  unicode_string = nullptr;
+  left_string = nullptr;
+  right_string = nullptr;
+  joined_string = nullptr;
+  expected_string = nullptr;
   cloth_rt_gc_collect();
   test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
-              "sweeping did not reclaim an unreachable String");
+              "sweeping did not reclaim borrowed and owned strings");
   cloth_rt_gc_pop_frame(&string_frame);
 
   ClothGcRootFrame array_frame{};
@@ -160,7 +199,7 @@ int main() {
               "explicit collection diagnostics were not updated");
 
   if (test.failures() == 0) {
-    std::cout << "6 tests passed\n";
+    std::cout << "7 tests passed\n";
     return 0;
   }
   return 1;

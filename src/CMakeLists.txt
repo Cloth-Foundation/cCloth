@@ -13,6 +13,7 @@ add_library(cloth_compiler
     hir/hir_printer.cc
     hir/hir_verifier.cc
     lexer/lexer.cc
+    lexer/literal.cc
     lexer/token.cc
     mir/mir.cc
     mir/mir_printer.cc

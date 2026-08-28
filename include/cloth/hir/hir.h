@@ -108,6 +108,17 @@ struct HirArrayLengthExpression {
   HirExpressionId array;
 };
 
+enum class StringProperty {
+  kLength,
+  kByteLength,
+  kIsEmpty,
+};
+
+struct HirStringPropertyExpression {
+  HirExpressionId string;
+  StringProperty property;
+};
+
 struct HirGroupedExpression {
   HirExpressionId expression;
 };
@@ -118,7 +129,7 @@ using HirExpressionData = std::variant<
     HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
     HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
     HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
-    HirGroupedExpression>;
+    HirStringPropertyExpression, HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;

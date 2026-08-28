@@ -70,9 +70,10 @@ program lifetime. A file-class descriptor address is the canonical type
 identity within the emitted module; its qualified name is stable diagnostic and
 display identity.
 
-String objects retain a pointer and length for compiler-emitted literal bytes.
-Those immutable bytes already have program lifetime and are not copied or freed
-with the managed string header. Array objects own a separately aligned,
+String objects retain a pointer, byte length, Unicode scalar count, and payload
+ownership flag. Literal bytes have program lifetime and are borrowed;
+concatenation bytes are owned and are freed with the managed string header.
+Array objects own a separately aligned,
 zero-initialized payload. Their managed byte count includes both the header and
 the logical payload size.
 
@@ -130,8 +131,9 @@ or writes it. Registry entries record the allocation address and complete
 managed size plus collector-only links and mark state.
 
 Managed allocation is the only automatic safepoint. Specifically,
-`cloth_rt_alloc`, `cloth_rt_string_literal`, and `cloth_rt_array_alloc` may
-collect before reserving new storage. Checks, printing, array access, root-frame
+`cloth_rt_alloc`, `cloth_rt_string_literal`, `cloth_rt_string_concat`, and
+`cloth_rt_array_alloc` may collect before reserving new storage. Checks,
+printing, array access, root-frame
 operations, and an ordinary call boundary do not independently collect; a
 callee can still reach a managed allocation safepoint. Before an allocation
 would cross the current heap threshold, the runtime stops the single Cloth
@@ -146,8 +148,8 @@ mutator and runs collection:
    element and enqueue its managed child. References not present in the registry
    are ignored safely.
 4. Sweep the registry, returning unmarked headers and registry entries to the
-   host allocator. Sweeping an array also releases its aligned payload. Clear
-   mark state on survivors.
+   host allocator. Sweeping an array releases its aligned payload, and sweeping
+   an owned string releases its UTF-8 buffer. Clear mark state on survivors.
 
 The uniform registry permits edges and cycles across all three kinds. Primitive
 arrays do not scan their payloads; reference arrays require pointer-sized,

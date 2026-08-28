@@ -477,6 +477,15 @@ class BodyBuilder {
       return emit_value(expression.type, expression.range,
                         MirArrayLengthInstruction{value});
     }
+    if (const auto* property =
+            std::get_if<HirStringPropertyExpression>(&expression.data)) {
+      const HirExpression& string = hir_.storage.expression(property->string);
+      const MirValueId value = require_value(lower_expression(property->string),
+                                             string.type, string.range);
+      return emit_value(
+          expression.type, expression.range,
+          MirStringPropertyInstruction{value, property->property});
+    }
     const auto& grouped = std::get<HirGroupedExpression>(expression.data);
     return lower_expression(grouped.expression);
   }

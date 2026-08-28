@@ -370,8 +370,8 @@ void field_initializer_body(TestContext& test) {
 void member_store(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co",
-                  "String Name;\n"
-                  "User(String name) { self.Name = name; }\n");
+                  "string Name;\n"
+                  "User(string name) { self.Name = name; }\n");
   compilation.compile();
 
   const cloth::MirBody& body =
@@ -404,6 +404,61 @@ void array_instructions(TestContext& test) {
               "array indexing was not lowered explicitly");
   test.expect(body_has_instruction<cloth::MirArrayLengthInstruction>(body),
               "array Length was not lowered explicitly");
+}
+
+void string_instructions(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Strings.co",
+                  "func Inspect(string left, string right): int32 {\n"
+                  "  string joined = left + right;\n"
+                  "  bool equal = joined == \"cloth\";\n"
+                  "  bool different = left != right;\n"
+                  "  bool empty = joined.IsEmpty;\n"
+                  "  if (equal && different && !empty) {\n"
+                  "    return joined.Length;\n"
+                  "  }\n"
+                  "  return joined.ByteLength;\n"
+                  "}\n");
+  compilation.compile();
+
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  test.expect(compilation.result->is_valid,
+              "valid string operations failed MIR verification");
+
+  bool found_length = false;
+  bool found_byte_length = false;
+  bool found_is_empty = false;
+  bool found_concat = false;
+  std::size_t equality_count = 0;
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* property =
+              std::get_if<cloth::MirStringPropertyInstruction>(
+                  &instruction.data)) {
+        found_length = found_length ||
+                       property->property == cloth::StringProperty::kLength;
+        found_byte_length =
+            found_byte_length ||
+            property->property == cloth::StringProperty::kByteLength;
+        found_is_empty = found_is_empty ||
+                         property->property == cloth::StringProperty::kIsEmpty;
+      }
+      if (const auto* binary =
+              std::get_if<cloth::MirBinaryInstruction>(&instruction.data)) {
+        found_concat =
+            found_concat || binary->operation == cloth::TokenKind::kPlus;
+        if (binary->operation == cloth::TokenKind::kEqualEqual ||
+            binary->operation == cloth::TokenKind::kBangEqual) {
+          ++equality_count;
+        }
+      }
+    }
+  }
+  test.expect(found_length && found_byte_length && found_is_empty,
+              "string properties were not lowered explicitly");
+  test.expect(found_concat && equality_count == 2,
+              "string value operators were not retained in MIR");
 }
 
 void for_iteration_control_flow(TestContext& test) {
@@ -587,9 +642,9 @@ void nullable_conversion(TestContext& test) {
 
 void nullable_narrowing_conversion(TestContext& test) {
   CompiledSources compilation;
-  compilation.add("User.co", "String Name = \"Ada\";\n");
+  compilation.add("User.co", "string Name = \"Ada\";\n");
   compilation.add("Flow.co",
-                  "func Read(User? value): String? {\n"
+                  "func Read(User? value): string? {\n"
                   "  if (value != null) { return value.Name; }\n"
                   "  return null;\n"
                   "}\n");
@@ -628,9 +683,9 @@ void nullable_narrowing_conversion(TestContext& test) {
 
 void null_ergonomics_lowering(TestContext& test) {
   CompiledSources compilation;
-  compilation.add("User.co", "String Name = \"Ada\";\n");
+  compilation.add("User.co", "string Name = \"Ada\";\n");
   compilation.add("NullErgonomics.co",
-                  "func Display(User? user): String {\n"
+                  "func Display(User? user): string {\n"
                   "  if (user) { return user.Name; }\n"
                   "  return user?.Name ?? \"Unknown\";\n"
                   "}\n"
@@ -822,6 +877,7 @@ int main() {
       {"field initializer body", field_initializer_body},
       {"member store", member_store},
       {"array instructions", array_instructions},
+      {"string instructions", string_instructions},
       {"for iteration control flow", for_iteration_control_flow},
       {"for terminating body reachability", for_terminating_body_reachability},
       {"nullable conversion", nullable_conversion},

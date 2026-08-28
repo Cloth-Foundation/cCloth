@@ -1,4 +1,4 @@
-static func Show(String? value) {
+static func Show(string? value) {
   if (value != null) {
     println(value);
   } else {

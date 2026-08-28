@@ -24,7 +24,7 @@ SemanticModel::SemanticModel() {
       add_type(SemanticType{TypeKind::kFloat32, "float32", {}});
   const TypeId float64 =
       add_type(SemanticType{TypeKind::kFloat64, "float64", {}});
-  string_type_ = add_type(SemanticType{TypeKind::kString, "String", {}});
+  string_type_ = add_type(SemanticType{TypeKind::kString, "string", {}});
   add_type_alias("int", int32);
   add_type_alias("uint", uint32);
   add_type_alias("float", float32);
@@ -220,7 +220,7 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
     case TypeKind::kFloat64:
       return "float64";
     case TypeKind::kString:
-      return "String";
+      return "string";
     case TypeKind::kFileClass:
       return "file class";
     case TypeKind::kArray:

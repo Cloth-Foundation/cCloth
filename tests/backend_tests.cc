@@ -124,10 +124,10 @@ void arithmetic_and_control_flow(TestContext& test) {
 void object_construction(TestContext& test) {
   CompiledSources sources;
   sources.add("Model.co",
-              "String Name = \"default\";\n"
+              "string Name = \"default\";\n"
               "int32 Count = 1;\n"
-              "Model(String name) { Name = name; }\n"
-              "func Get(): String { return Name; }\n");
+              "Model(string name) { Name = name; }\n"
+              "func Get(): string { return Name; }\n");
   sources.compile();
 
   test.expect(sources.llvm.has_value(), "object module failed to emit");
@@ -155,7 +155,7 @@ void arrays(TestContext& test) {
   sources.add("Arrays.co",
               "func Sum(): int32 {\n"
               "  int32[] values = [1, 2, 3];\n"
-              "  String[] labels = [\"cloth\"];\n"
+              "  string[] labels = [\"cloth\"];\n"
               "  values[1] = 4;\n"
               "  return values.Length + values[0];\n"
               "}\n");
@@ -173,6 +173,36 @@ void arrays(TestContext& test) {
               "checked array access runtime calls are missing");
   test.expect(sources.contains("store i32 4, ptr %addr"),
               "array element store was not emitted");
+}
+
+void strings(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Strings.co",
+              "func Inspect(string left, string right): int32 {\n"
+              "  string joined = left + right;\n"
+              "  println(joined == \"cloth\");\n"
+              "  println(left != right);\n"
+              "  println(joined.IsEmpty);\n"
+              "  return joined.Length + joined.ByteLength;\n"
+              "}\n"
+              "func Optional(string? left, string? right): bool {\n"
+              "  return left == right;\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(), "string module failed to emit");
+  test.expect(sources.contains("call ptr @cloth_rt_string_concat(ptr "),
+              "string concatenation did not use the runtime boundary");
+  test.expect(count_occurrences(sources.llvm ? sources.llvm->text : "",
+                                "call i8 @cloth_rt_string_equal(ptr ") == 3,
+              "string equality did not use content comparison");
+  test.expect(
+      sources.contains("call i32 @cloth_rt_string_length(ptr ") &&
+          sources.contains("call i32 @cloth_rt_string_byte_length(ptr ") &&
+          sources.contains("call i8 @cloth_rt_string_is_empty(ptr "),
+      "string properties did not use their runtime boundaries");
+  test.expect(sources.contains("icmp ne i8 "),
+              "runtime string booleans were not converted to LLVM i1");
 }
 
 void call_receivers(TestContext& test) {
@@ -229,9 +259,9 @@ void static_members(TestContext& test) {
 
 void null_ergonomics(TestContext& test) {
   CompiledSources sources;
-  sources.add("User.co", "String Name = \"Ada\";\n");
+  sources.add("User.co", "string Name = \"Ada\";\n");
   sources.add("NullErgonomics.co",
-              "func Display(User? user): String {\n"
+              "func Display(User? user): string {\n"
               "  return user?.Name ?? \"Unknown\";\n"
               "}\n"
               "func Assert(User? user): User { return user!; }\n");
@@ -251,14 +281,14 @@ void null_ergonomics(TestContext& test) {
 void gc_root_frames(TestContext& test) {
   CompiledSources sources;
   sources.add("Rooted.co",
-              "String Name;\n"
-              "Rooted(String name) { Name = name; }\n"
+              "string Name;\n"
+              "Rooted(string name) { Name = name; }\n"
               "func Choose(Rooted? value, bool keep): Rooted? {\n"
               "  Rooted? local = value;\n"
               "  if (keep) { return local; }\n"
               "  return null;\n"
               "}\n"
-              "static func Make(String name): Rooted {\n"
+              "static func Make(string name): Rooted {\n"
               "  return Rooted(name);\n"
               "}\n");
   sources.compile();
@@ -341,7 +371,7 @@ void wasm32_module(TestContext& test) {
   sources.add("Small.co",
               "int32 Value;\n"
               "Small() {}\n"
-              "func Count(String[] values): int32 {\n"
+              "func Count(string[] values): int32 {\n"
               "  int32 count = 0;\n"
               "  for (var value in values) { count = count + 1; }\n"
               "  return count;\n"
@@ -391,7 +421,7 @@ void print_and_native_entry_point(TestContext& test) {
   test.expect(sources.contains("declare void @cloth_rt_print(ptr)"),
               "print runtime boundary is missing");
   test.expect(sources.contains("call void @cloth_rt_print(ptr %v0)"),
-              "String print intrinsic was not lowered");
+              "string print intrinsic was not lowered");
   test.expect(sources.contains("call void @cloth_rt_print_i32(i32 7)"),
               "int32 print intrinsic was not lowered");
   test.expect(sources.contains("zext i1 true to i8") &&
@@ -493,6 +523,7 @@ int main() {
       {"arithmetic and control flow", arithmetic_and_control_flow},
       {"object construction", object_construction},
       {"arrays", arrays},
+      {"strings", strings},
       {"call receivers", call_receivers},
       {"static members", static_members},
       {"null ergonomics", null_ergonomics},

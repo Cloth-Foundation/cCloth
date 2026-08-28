@@ -15,7 +15,7 @@ Example(final int32 code) {
     Code = code;
 }
 
-func Read(final String name, int32[] values): void {
+func Read(final string name, int32[] values): void {
     final var copy = name;
     for (final var value in values) {
         println(value);

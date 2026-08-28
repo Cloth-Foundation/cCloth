@@ -1,0 +1,10 @@
+Hello, Cloth
+true
+true
+12
+12
+true
+2
+6
+3
+3

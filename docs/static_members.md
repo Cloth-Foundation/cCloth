@@ -8,7 +8,7 @@ default; `static` makes it belong to the implicit file class instead.
 Static functions use the same declaration syntax with one modifier:
 
 ```cloth
-static func Parse(String text): int32 {
+static func Parse(string text): int32 {
     return 0;
 }
 ```

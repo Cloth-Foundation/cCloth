@@ -41,6 +41,14 @@ void cloth_rt_gc_collect() noexcept;
 [[nodiscard]] std::uint64_t cloth_rt_gc_peak_live_bytes() noexcept;
 [[nodiscard]] void* cloth_rt_string_literal(const void* data,
                                             std::uint64_t size) noexcept;
+[[nodiscard]] void* cloth_rt_string_concat(const void* left,
+                                           const void* right) noexcept;
+[[nodiscard]] std::uint8_t cloth_rt_string_equal(const void* left,
+                                                 const void* right) noexcept;
+[[nodiscard]] std::int32_t cloth_rt_string_length(const void* value) noexcept;
+[[nodiscard]] std::int32_t cloth_rt_string_byte_length(
+    const void* value) noexcept;
+[[nodiscard]] std::uint8_t cloth_rt_string_is_empty(const void* value) noexcept;
 [[nodiscard]] void* cloth_rt_array_alloc(
     std::int32_t length, std::uint64_t element_size,
     std::uint64_t element_alignment, std::uint8_t contains_references) noexcept;

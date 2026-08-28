@@ -60,7 +60,7 @@ bool has_diagnostic(const cloth::DiagnosticEngine& diagnostics,
 }
 
 void x86_64_type_layout(TestContext& test) {
-  const CompiledSource source{"byte Small;\nint64 Wide;\nString? Name;\n"};
+  const CompiledSource source{"byte Small;\nint64 Wide;\nstring? Name;\n"};
   const cloth::CompilationResult& result = *source.result;
   const cloth::AbiModule& abi = result.abi;
   const cloth::TypeId bool_type = *result.semantics.find_type("bool");
@@ -78,7 +78,7 @@ void x86_64_type_layout(TestContext& test) {
 }
 
 void class_field_layout(TestContext& test) {
-  const CompiledSource source{"byte Small;\nint64 Wide;\nString? Name;\n"};
+  const CompiledSource source{"byte Small;\nint64 Wide;\nstring? Name;\n"};
   const cloth::AbiFileClass& file = source.result->abi.files[0];
   const cloth::AbiClassLayout& layout = file.layout;
 
@@ -100,7 +100,7 @@ void class_field_layout(TestContext& test) {
 }
 
 void wasm32_layout(TestContext& test) {
-  const CompiledSource source{"byte Small;\nint64 Wide;\nString? Name;\n",
+  const CompiledSource source{"byte Small;\nint64 Wide;\nstring? Name;\n",
                               cloth::TargetDataLayout::llvm_wasm32()};
   const cloth::AbiModule& abi = source.result->abi;
   const cloth::AbiClassLayout& layout = abi.files[0].layout;

@@ -1,4 +1,4 @@
-func Visit(String[] values) {
+func Visit(string[] values) {
     for (var value in values) {
         print(value);
     }

@@ -28,7 +28,7 @@ other files can reference `User` as a normal type.
 Constructors use the implicit class name:
 
 ```text
-User(String name, int32 id) {
+User(string name, int32 id) {
     // ...
 }
 ```
@@ -54,7 +54,7 @@ nested scopes.
 
 ```text
 // User.co defines the public class User.
-String Name;                       // Public field.
+string Name;                       // Public field.
 int32 id;                          // Private field.
 func Find(UserId id): User {}      // Public function.
 func validate(): bool {}           // Private function.
@@ -64,6 +64,11 @@ An implicit class receives its visibility from the source file stem, so
 `User.co` is public and `user.co` is private. A constructor uses the class name
 and inherits the class visibility. Until Cloth defines Unicode identifier
 rules, only ASCII letter case participates in visibility.
+
+Lowercase core type names such as `string`, `int32`, and `bool` are reserved
+language-provided names rather than declarations, so capitalization does not
+make them private. Uppercase names remain the user-defined type namespace;
+`String` and `string` are therefore distinct.
 
 For portable builds, a source graph must not contain qualified file-class
 identities that differ only by letter case. The compiler diagnoses these
@@ -78,7 +83,9 @@ preserves forward and cyclic references without making meaning depend on
 discovery order.
 
 `int`, `uint`, and `float` are portable aliases of `int32`, `uint32`, and
-`float32`. `String` is a core reference type. General implicit numeric
+`float32`. `string` is a core immutable UTF-8 reference type. Its `+` operator
+concatenates, `==` and `!=` compare content, and its read-only properties are
+`Length`, `ByteLength`, and `IsEmpty`. General implicit numeric
 conversions are not part of the initial language; overload selection uses exact
 canonical parameter types. References are non-null by default. `T?` is a
 distinct nullable reference type: `T` widens to `T?`, while `null` is assignable
@@ -269,8 +276,9 @@ change source semantics.
 
 The initial collector is single-mutator, stop-the-world, non-moving, and
 non-generational. Every managed allocation is an automatic safepoint. File
-classes, strings, and arrays share one managed registry; sweeping an array also
-releases its payload. Collection timing and heap thresholds are not observable
+classes, strings, and arrays share one managed registry; sweeping an array
+releases its payload, while sweeping a concatenated string releases its owned
+UTF-8 buffer. Collection timing and heap thresholds are not observable
 language semantics; programs must not depend on object addresses, allocation
 order, or reclamation timing.
 

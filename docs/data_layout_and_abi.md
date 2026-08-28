@@ -30,7 +30,7 @@ has one-bit value semantics and one-byte storage.
 no storage representation. An omitted function return annotation and explicit
 `: void` produce the same semantic and ABI return type.
 
-`String`, file classes, arrays, nullable wrappers, and `null` use the target
+`string`, file classes, arrays, nullable wrappers, and `null` use the target
 reference representation. A reference has the target pointer size and
 alignment. ABI references are opaque; the contract does not expose a native
 C++ object or commit the future garbage collector to non-moving addresses.
@@ -65,9 +65,13 @@ table and emits their literal value as constant global storage. Their `_C1S`
 name includes the qualified file class and field name. Static field linkage is
 still determined by capitalization.
 
-`String` and arrays remain opaque runtime types and do not use file-class field
+`string` and arrays remain opaque runtime types and do not use file-class field
 layout. Their private runtime representations begin with the same two-word
 managed header, but generated code accesses them only through runtime calls.
+String references retain identical ABI shape regardless of whether their UTF-8
+bytes are borrowed literal storage or an owned concatenation buffer. Lengths
+cross the runtime boundary as `int32`; equality results cross as `uint8` and
+lower to Cloth `bool` values.
 
 ## Callable ABI
 

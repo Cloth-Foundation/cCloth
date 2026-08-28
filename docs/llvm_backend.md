@@ -80,6 +80,11 @@ declare ptr @cloth_rt_alloc(ptr)
 declare void @cloth_rt_gc_push_frame(ptr, ptr, i64)
 declare void @cloth_rt_gc_pop_frame(ptr)
 declare ptr @cloth_rt_string_literal(ptr, i64)
+declare ptr @cloth_rt_string_concat(ptr, ptr)
+declare i8 @cloth_rt_string_equal(ptr, ptr)
+declare i32 @cloth_rt_string_length(ptr)
+declare i32 @cloth_rt_string_byte_length(ptr)
+declare i8 @cloth_rt_string_is_empty(ptr)
 declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)
 declare i32 @cloth_rt_array_length(ptr)
 declare ptr @cloth_rt_array_element(ptr, i32)
@@ -107,8 +112,10 @@ The descriptor supplies object kind, qualified name, verified size and
 alignment, and exact reference-field offsets. The runtime returns
 zero-initialized storage with that descriptor in its first header word or
 terminates through the runtime failure path.
-`cloth_rt_string_literal` constructs or interns an opaque Cloth string from
-immutable bytes.
+`cloth_rt_string_literal` constructs an opaque Cloth string over immutable
+program-lifetime bytes. Concatenation returns a new managed string with owned
+bytes. Equality compares byte content, and property calls expose cached scalar
+and byte lengths without revealing the runtime layout.
 The array calls allocate typed element storage, query its fixed length, and
 perform null and bounds checked element addressing.
 `cloth_rt_require_receiver` returns for a non-null reference and traps through
@@ -127,8 +134,9 @@ Stage 13.5 performs backward reference liveness over the MIR CFG. It clears
 temporary and parameter/local root slots after their last use and clears values
 retained only by another predecessor when control flow joins. A collecting call
 sees all of its reference operands rooted; result roots are populated before
-any source root is cleared. The managed allocation calls are the only automatic
-safepoints. Runtime checks, output, array access, and shadow-stack maintenance
+any source root is cleared. The managed allocation calls, including string
+concatenation, are the only automatic safepoints. Runtime checks, output, array
+access, and shadow-stack maintenance
 do not collect.
 
 ## Verification and deferred work

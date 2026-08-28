@@ -1,7 +1,7 @@
-String Name;
+string Name;
 int32 Reads;
 
-NullErgonomics(String name) {
+NullErgonomics(string name) {
   Name = name;
 }
 
@@ -10,15 +10,15 @@ func Maybe(): NullErgonomics? {
   return self;
 }
 
-static func Fallback(): String {
+static func Fallback(): string {
   println("fallback");
   return "Unknown";
 }
 
 static func Main() {
   NullErgonomics? user = NullErgonomics("Cloth");
-  String? name = user?.Name;
-  String display = user?.Name ?? Fallback();
+  string? name = user?.Name;
+  string display = user?.Name ?? Fallback();
   if (user) {
     println(display);
   }

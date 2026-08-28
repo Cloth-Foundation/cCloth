@@ -2,6 +2,7 @@
 
 #include "cloth/abi/abi.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
+#include "cloth/lexer/literal.h"
 #include "cloth/lexer/token.h"
 #include "cloth/mir/mir.h"
 #include "cloth/sema/semantic_model.h"
@@ -36,49 +37,12 @@ std::string field_initializer_name(std::string_view class_name,
   return "_C1I" + encode_name(class_name) + encode_name(field_name);
 }
 
-char decode_escape(char character) noexcept {
-  switch (character) {
-    case 'n':
-      return '\n';
-    case 'r':
-      return '\r';
-    case 't':
-      return '\t';
-    case '0':
-      return '\0';
-    case '\\':
-      return '\\';
-    case '\'':
-      return '\'';
-    case '"':
-      return '"';
-    default:
-      return character;
-  }
-}
-
-std::string decode_string(std::string_view lexeme) {
-  std::string value;
-  if (lexeme.size() < 2) {
-    return value;
-  }
-  for (std::size_t index = 1; index + 1 < lexeme.size(); ++index) {
-    if (lexeme[index] == '\\' && index + 2 < lexeme.size()) {
-      ++index;
-      value.push_back(decode_escape(lexeme[index]));
-    } else {
-      value.push_back(lexeme[index]);
-    }
-  }
-  return value;
-}
-
 std::uint32_t decode_character(std::string_view lexeme) noexcept {
   if (lexeme.size() < 3) {
     return 0;
   }
   const char value = lexeme[1] == '\\' && lexeme.size() >= 4
-                         ? decode_escape(lexeme[2])
+                         ? decode_escape_character(lexeme[2])
                          : lexeme[1];
   return static_cast<unsigned char>(value);
 }
@@ -181,6 +145,9 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* length =
                  std::get_if<MirArrayLengthInstruction>(&instruction.data)) {
     uses.push_back(length->array);
+  } else if (const auto* property =
+                 std::get_if<MirStringPropertyInstruction>(&instruction.data)) {
+    uses.push_back(property->string);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     uses.push_back(unary->operand);
@@ -302,6 +269,9 @@ class BodyEmitter {
   void emit_array_length(const MirInstruction& instruction,
                          const MirArrayLengthInstruction& length,
                          std::ostringstream& output);
+  void emit_string_property(const MirInstruction& instruction,
+                            const MirStringPropertyInstruction& property,
+                            std::ostringstream& output);
   void emit_unary(const MirInstruction& instruction,
                   const MirUnaryInstruction& unary, std::ostringstream& output);
   void emit_binary(const MirInstruction& instruction,
@@ -328,6 +298,7 @@ class BodyEmitter {
   [[nodiscard]] std::string argument_name(SymbolId symbol) const;
   [[nodiscard]] std::string gc_value_address(MirValueId value) const;
   [[nodiscard]] bool has_gc_symbol_root(SymbolId symbol) const noexcept;
+  [[nodiscard]] bool is_string_like(TypeId type) const noexcept;
   [[nodiscard]] bool has_receiver_root() const noexcept;
   [[nodiscard]] std::size_t gc_root_count() const noexcept;
   [[nodiscard]] std::string next_address();
@@ -392,6 +363,11 @@ class ModuleEmitter {
            << "declare void @cloth_rt_gc_push_frame(ptr, ptr, i64)\n"
            << "declare void @cloth_rt_gc_pop_frame(ptr)\n"
            << "declare ptr @cloth_rt_string_literal(ptr, i64)\n"
+           << "declare ptr @cloth_rt_string_concat(ptr, ptr)\n"
+           << "declare i8 @cloth_rt_string_equal(ptr, ptr)\n"
+           << "declare i32 @cloth_rt_string_length(ptr)\n"
+           << "declare i32 @cloth_rt_string_byte_length(ptr)\n"
+           << "declare i8 @cloth_rt_string_is_empty(ptr)\n"
            << "declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)\n"
            << "declare i32 @cloth_rt_array_length(ptr)\n"
            << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
@@ -1340,6 +1316,9 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* length =
                  std::get_if<MirArrayLengthInstruction>(&instruction.data)) {
     emit_array_length(instruction, *length, output);
+  } else if (const auto* property =
+                 std::get_if<MirStringPropertyInstruction>(&instruction.data)) {
+    emit_string_property(instruction, *property, output);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     emit_unary(instruction, *unary, output);
@@ -1386,7 +1365,7 @@ void BodyEmitter::emit_literal(const MirInstruction& instruction,
       break;
     }
     case LiteralKind::kString: {
-      const std::string decoded = decode_string(literal.lexeme);
+      const std::string decoded = decode_string_literal(literal.lexeme);
       const std::string global = module_.add_string_literal(decoded);
       output << "  " << result_name(instruction)
              << " = call ptr @cloth_rt_string_literal(ptr " << global
@@ -1508,6 +1487,31 @@ void BodyEmitter::emit_array_length(const MirInstruction& instruction,
          << ")\n";
 }
 
+void BodyEmitter::emit_string_property(
+    const MirInstruction& instruction,
+    const MirStringPropertyInstruction& property, std::ostringstream& output) {
+  const std::string operand = value(property.string);
+  switch (property.property) {
+    case StringProperty::kLength:
+      output << "  " << result_name(instruction)
+             << " = call i32 @cloth_rt_string_length(ptr " << operand << ")\n";
+      break;
+    case StringProperty::kByteLength:
+      output << "  " << result_name(instruction)
+             << " = call i32 @cloth_rt_string_byte_length(ptr " << operand
+             << ")\n";
+      break;
+    case StringProperty::kIsEmpty: {
+      const std::string raw_result = next_address();
+      output << "  " << raw_result
+             << " = call i8 @cloth_rt_string_is_empty(ptr " << operand << ")\n"
+             << "  " << result_name(instruction) << " = icmp ne i8 "
+             << raw_result << ", 0\n";
+      break;
+    }
+  }
+}
+
 void BodyEmitter::emit_unary(const MirInstruction& instruction,
                              const MirUnaryInstruction& unary,
                              std::ostringstream& output) {
@@ -1536,6 +1540,26 @@ void BodyEmitter::emit_binary(const MirInstruction& instruction,
                               std::ostringstream& output) {
   const TypeId operand_type = value_type(binary.left);
   const TypeKind kind = module_.semantics().type(operand_type).kind;
+  if (binary.operation == TokenKind::kPlus &&
+      operand_type == module_.semantics().string_type() &&
+      value_type(binary.right) == module_.semantics().string_type()) {
+    output << "  " << result_name(instruction)
+           << " = call ptr @cloth_rt_string_concat(ptr " << value(binary.left)
+           << ", ptr " << value(binary.right) << ")\n";
+    return;
+  }
+  if ((binary.operation == TokenKind::kEqualEqual ||
+       binary.operation == TokenKind::kBangEqual) &&
+      is_string_like(operand_type) &&
+      is_string_like(value_type(binary.right))) {
+    const std::string equal = next_address();
+    output << "  " << equal << " = call i8 @cloth_rt_string_equal(ptr "
+           << value(binary.left) << ", ptr " << value(binary.right) << ")\n"
+           << "  " << result_name(instruction) << " = icmp "
+           << (binary.operation == TokenKind::kEqualEqual ? "ne" : "eq")
+           << " i8 " << equal << ", 0\n";
+    return;
+  }
   const bool is_float =
       kind == TypeKind::kFloat32 || kind == TypeKind::kFloat64;
   const bool is_unsigned =
@@ -1804,6 +1828,20 @@ std::string BodyEmitter::gc_value_address(MirValueId value) const {
 bool BodyEmitter::has_gc_symbol_root(SymbolId symbol) const noexcept {
   return std::find(gc_symbol_roots_.begin(), gc_symbol_roots_.end(), symbol) !=
          gc_symbol_roots_.end();
+}
+
+bool BodyEmitter::is_string_like(TypeId type) const noexcept {
+  if (type.value >= module_.semantics().types().size()) {
+    return false;
+  }
+  const SemanticType& semantic_type = module_.semantics().type(type);
+  if (semantic_type.kind == TypeKind::kString) {
+    return true;
+  }
+  return semantic_type.kind == TypeKind::kNullable &&
+         semantic_type.element_type &&
+         module_.semantics().type(*semantic_type.element_type).kind ==
+             TypeKind::kString;
 }
 
 bool BodyEmitter::has_receiver_root() const noexcept {

@@ -29,7 +29,7 @@ The core type table contains:
 - `int8`, `int16`, `int32`, and `int64`
 - `uint8`, `uint16`, `uint32`, and `uint64`
 - `float32` and `float64`
-- `String`
+- `string`
 - `void`, plus internal error and null types
 - one named reference type for each valid file class
 - one canonical array reference type for each used element type
@@ -41,6 +41,14 @@ and `float32` respectively. Integer and floating literals have `int32` and
 implemented. References are non-null by default. `T?` is a distinct nullable
 wrapper, `T` widens to `T?`, and `null` is assignable only to `T?`. Nullable
 qualifiers are invalid on primitive and void types.
+
+`string` is a managed reference with immutable UTF-8 value semantics. String
+literals are decoded and validated as UTF-8 during semantic analysis. Exact
+`string + string` produces `string`; `==` and `!=` produce `bool` and use
+content equality. `Length` and `ByteLength` are read-only `int32` properties,
+and `IsEmpty` is a read-only `bool` property. Property names retain Cloth's
+case-sensitive spelling. Nullable strings must be narrowed before ordinary
+property access.
 
 An omitted function return annotation and explicit `: void` resolve to one
 canonical type. Void has no values or storage: it is rejected for fields,

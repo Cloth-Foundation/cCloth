@@ -120,6 +120,12 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gc_collections.txt
         EXACT
     )
+    cloth_add_native_output_test(string_values
+        OUTPUT "cloth string values"
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/StringValues.co
+        EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/string_values.txt
+        EXACT
+    )
     cloth_add_native_failure_test(null_assert_failure
         OUTPUT "cloth null assert failure"
         SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/NullAssertFailure.co

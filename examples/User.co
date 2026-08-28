@@ -1,7 +1,7 @@
-String Name;
+string Name;
 int32 id;
 
-User(String name, int32 id) {
+User(string name, int32 id) {
     self.Name = name;
     self.id = id;
 }

@@ -1,5 +1,6 @@
 #include "cloth/sema/semantic_analyzer.h"
 
+#include "cloth/lexer/literal.h"
 #include "cloth/lexer/token.h"
 #include "cloth/sema/field_initialization_analysis.h"
 
@@ -433,6 +434,13 @@ class SemanticAnalyzer {
     const std::optional<FileId> file =
         find_visible_file(current_file, syntax.name);
     if (!file) {
+      if (syntax.name == "String") {
+        diagnostics_.error(syntax.range,
+                           "unknown type 'String'; use the built-in type "
+                           "'string'");
+        model_.mutable_file(current_file).is_valid = false;
+        return model_.error_type();
+      }
       if (const std::optional<FileId> inaccessible =
               find_inaccessible_file(current_file, syntax.name)) {
         diagnostics_.error(syntax.range,
@@ -904,7 +912,7 @@ class SemanticAnalyzer {
       state = analyze_identifier(*identifier, expression.range);
     } else if (const auto* literal =
                    std::get_if<LiteralExpression>(&expression.data)) {
-      state = analyze_literal(*literal);
+      state = analyze_literal(*literal, expression.range);
     } else if (const auto* unary =
                    std::get_if<UnaryExpression>(&expression.data)) {
       state = analyze_unary(*unary, expression.range);
@@ -1006,7 +1014,8 @@ class SemanticAnalyzer {
     return ExpressionState{model_.error_type()};
   }
 
-  ExpressionState analyze_literal(const LiteralExpression& literal) const {
+  ExpressionState analyze_literal(const LiteralExpression& literal,
+                                  SourceRange range) {
     switch (literal.kind) {
       case LiteralKind::kInteger:
         return ExpressionState{*model_.find_type("int"), ValueCategory::kValue};
@@ -1014,6 +1023,10 @@ class SemanticAnalyzer {
         return ExpressionState{*model_.find_type("float64"),
                                ValueCategory::kValue};
       case LiteralKind::kString:
+        if (!utf8_scalar_count(decode_string_literal(literal.lexeme))) {
+          diagnostics_.error(range, "string literal is not valid UTF-8");
+          return ExpressionState{model_.error_type()};
+        }
         return ExpressionState{model_.string_type(), ValueCategory::kValue};
       case LiteralKind::kCharacter:
         return ExpressionState{*model_.find_type("char"),
@@ -1156,6 +1169,11 @@ class SemanticAnalyzer {
 
     switch (binary.operation) {
       case TokenKind::kPlus:
+        if (left.type == model_.string_type() &&
+            right.type == model_.string_type()) {
+          return ExpressionState{model_.string_type(), ValueCategory::kValue};
+        }
+        [[fallthrough]];
       case TokenKind::kMinus:
       case TokenKind::kStar:
       case TokenKind::kSlash:
@@ -1517,6 +1535,18 @@ class SemanticAnalyzer {
                                     std::string{member.member} + "'");
       return ExpressionState{model_.error_type()};
     }
+    if (object_type.kind == TypeKind::kString) {
+      if (member.member == "Length" || member.member == "ByteLength") {
+        return ExpressionState{*model_.find_type("int32"),
+                               ValueCategory::kValue};
+      }
+      if (member.member == "IsEmpty") {
+        return ExpressionState{model_.bool_type(), ValueCategory::kValue};
+      }
+      diagnostics_.error(
+          range, "string has no member '" + std::string{member.member} + "'");
+      return ExpressionState{model_.error_type()};
+    }
     if (object_type.kind != TypeKind::kFileClass || !object_type.file) {
       diagnostics_.error(
           range, "type '" + object_type.name + "' has no Cloth members");
@@ -1587,6 +1617,18 @@ class SemanticAnalyzer {
         diagnostics_.error(range, "array type '" + object_type.name +
                                       "' has no member '" +
                                       std::string{member.member} + "'");
+      }
+      return ExpressionState{model_.error_type()};
+    }
+    if (object_type.kind == TypeKind::kString) {
+      if (member.member == "Length" || member.member == "ByteLength" ||
+          member.member == "IsEmpty") {
+        diagnostics_.error(range, "safe access to value-type string member '" +
+                                      std::string{member.member} +
+                                      "' requires nullable value types");
+      } else {
+        diagnostics_.error(
+            range, "string has no member '" + std::string{member.member} + "'");
       }
       return ExpressionState{model_.error_type()};
     }

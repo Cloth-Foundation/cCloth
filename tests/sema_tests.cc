@@ -80,7 +80,7 @@ void core_types_and_typed_hir(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Values.co",
                   "int count = 1;\n"
-                  "String Label = \"cloth\";\n"
+                  "string Label = \"cloth\";\n"
                   "float ratio;\n"
                   "func IsPositive(int value): bool {\n"
                   "  int copy = value;\n"
@@ -179,7 +179,7 @@ void final_binding_contract(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("FinalBindings.co",
             "final int32 Code;\n"
-            "final String Label = \"cloth\";\n"
+            "final string Label = \"cloth\";\n"
             "FinalBindings(final bool alternate, int32 code) {\n"
             "  if (alternate) { Code = code; } "
             "else { self.Code = code + 1; }\n"
@@ -326,11 +326,11 @@ void final_binding_contract(TestContext& test) {
 void non_null_field_initialization(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("Profile.co",
-            "String Name;\n"
-            "String? Nickname;\n"
+            "string Name;\n"
+            "string? Nickname;\n"
             "int32[] Scores;\n"
             "int32 Count;\n"
-            "Profile(String name, int32[] scores, bool replace) {\n"
+            "Profile(string name, int32[] scores, bool replace) {\n"
             "  if (replace) { Name = name; } else { self.Name = name; }\n"
             "  Scores = scores;\n"
             "  Name = name;\n"
@@ -338,7 +338,7 @@ void non_null_field_initialization(TestContext& test) {
             "  Touch();\n"
             "  self.Touch();\n"
             "}\n"
-            "Profile(String name, int32[] scores) {\n"
+            "Profile(string name, int32[] scores) {\n"
             "  Name = name;\n"
             "  Scores = scores;\n"
             "}\n"
@@ -350,14 +350,14 @@ void non_null_field_initialization(TestContext& test) {
   AnalyzedCompilation declaration_initialized;
   declaration_initialized.add(
       "Defaults.co",
-      "String Label = \"ready\";\nString? Optional;\nint32 Count;\n");
+      "string Label = \"ready\";\nstring? Optional;\nint32 Count;\n");
   declaration_initialized.analyze();
   test.expect(declaration_initialized.error_count() == 0,
               "declaration-initialized non-null field was rejected");
 
   AnalyzedCompilation missing_constructor;
   missing_constructor.add("Missing.co",
-                          "String Name;\nString? Optional;\nint32 Count;\n");
+                          "string Name;\nstring? Optional;\nint32 Count;\n");
   missing_constructor.analyze();
   test.expect(missing_constructor.has_diagnostic(
                   "non-null field 'Name' requires an initializer or a "
@@ -366,9 +366,9 @@ void non_null_field_initialization(TestContext& test) {
 
   AnalyzedCompilation partial;
   partial.add("Partial.co",
-              "String Name;\n"
+              "string Name;\n"
               "int32[] Values;\n"
-              "Partial(bool assign, String name, int32[] values) {\n"
+              "Partial(bool assign, string name, int32[] values) {\n"
               "  if (assign) { Name = name; }\n"
               "  Values = values;\n"
               "}\n");
@@ -380,8 +380,8 @@ void non_null_field_initialization(TestContext& test) {
 
   AnalyzedCompilation early_return;
   early_return.add("Early.co",
-                   "String Name;\n"
-                   "Early(bool stop, String name) {\n"
+                   "string Name;\n"
+                   "Early(bool stop, string name) {\n"
                    "  if (stop) { return; }\n"
                    "  Name = name;\n"
                    "}\n");
@@ -393,7 +393,7 @@ void non_null_field_initialization(TestContext& test) {
 
   AnalyzedCompilation read_before_initialization;
   read_before_initialization.add(
-      "ReadBefore.co", "String First = Second;\nString Second = \"ready\";\n");
+      "ReadBefore.co", "string First = Second;\nstring Second = \"ready\";\n");
   read_before_initialization.analyze();
   test.expect(read_before_initialization.has_diagnostic(
                   "non-null field 'Second' is read before it is initialized"),
@@ -401,8 +401,8 @@ void non_null_field_initialization(TestContext& test) {
 
   AnalyzedCompilation indirect;
   indirect.add("Indirect.co",
-               "String Name;\n"
-               "Indirect(String name) { println(Name = name); }\n");
+               "string Name;\n"
+               "Indirect(string name) { println(Name = name); }\n");
   indirect.analyze();
   test.expect(indirect.has_diagnostic(
                   "non-null field 'Name' initialization must be a direct "
@@ -415,8 +415,8 @@ void non_null_field_initialization(TestContext& test) {
 
   AnalyzedCompilation premature_self_use;
   premature_self_use.add("Escape.co",
-                         "String Name;\n"
-                         "Escape(String name) {\n"
+                         "string Name;\n"
+                         "Escape(string name) {\n"
                          "  Publish(self);\n"
                          "  Touch();\n"
                          "  self.Touch();\n"
@@ -439,8 +439,8 @@ void non_null_field_initialization(TestContext& test) {
 
   AnalyzedCompilation loop;
   loop.add("Loop.co",
-           "String Name;\n"
-           "Loop(String name) { while (false) { Name = name; } }\n");
+           "string Name;\n"
+           "Loop(string name) { while (false) { Name = name; } }\n");
   loop.analyze();
   test.expect(
       loop.has_diagnostic("constructor exits before non-null field 'Name' is "
@@ -505,7 +505,7 @@ void core_print_intrinsic(TestContext& test) {
 
   const std::vector<std::pair<std::string_view, cloth::IntrinsicKind>>
       primitive_overloads{
-          {"String", cloth::IntrinsicKind::kPrintString},
+          {"string", cloth::IntrinsicKind::kPrintString},
           {"bool", cloth::IntrinsicKind::kPrintBool},
           {"char", cloth::IntrinsicKind::kPrintChar},
           {"byte", cloth::IntrinsicKind::kPrintUint8},
@@ -733,8 +733,8 @@ void invalid_body_does_not_hide_signature(TestContext& test) {
 void constructor_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("User.co",
-                  "String Name;\n"
-                  "User(String name) { Name = name; }\n");
+                  "string Name;\n"
+                  "User(string name) { Name = name; }\n");
   compilation.add("App.co", "func Make(): User { return User(\"Ada\"); }\n");
   compilation.analyze();
 
@@ -871,14 +871,14 @@ void null_assignability(TestContext& test) {
 
 void nullable_reference_shapes(TestContext& test) {
   AnalyzedCompilation valid;
-  valid.add("User.co", "String? Name;\n");
+  valid.add("User.co", "string? Name;\n");
   valid.add("Shapes.co",
             "func Values(User first): User?[] { return [first, null]; }\n"
             "func MaybeValues(): User[]? { return null; }\n"
             "func Both(): User?[]? { return null; }\n"
             "func Accept(User? value) {}\n"
             "func Widen(User value) { Accept(value); }\n"
-            "func Text(String value): String? { return value; }\n"
+            "func Text(string value): string? { return value; }\n"
             "func Iterate(User[] values) { "
             "for (User? value in values) {} }\n");
   valid.analyze();
@@ -918,7 +918,7 @@ void nullable_reference_shapes(TestContext& test) {
       "combined array nullability is structurally wrong");
 
   AnalyzedCompilation invalid;
-  invalid.add("User.co", "String? Name;\n");
+  invalid.add("User.co", "string? Name;\n");
   invalid.add("BadNulls.co",
               "func Primitive(int32? value) {}\n"
               "func PrimitiveElements(int32?[] values) {}\n"
@@ -953,17 +953,17 @@ void nullable_reference_shapes(TestContext& test) {
 
 void nullable_flow_narrowing(TestContext& test) {
   AnalyzedCompilation valid;
-  valid.add("User.co", "String Name = \"Ada\";\n");
+  valid.add("User.co", "string Name = \"Ada\";\n");
   valid.add("Flow.co",
-            "func Read(User? value): String? {\n"
+            "func Read(User? value): string? {\n"
             "  if (value != null) { return value.Name; }\n"
             "  return null;\n"
             "}\n"
-            "func Guard(User? value): String {\n"
+            "func Guard(User? value): string {\n"
             "  if (value == null) { return \"missing\"; }\n"
             "  return value.Name;\n"
             "}\n"
-            "func Negated(User? value): String? {\n"
+            "func Negated(User? value): string? {\n"
             "  if (!(value == null)) { return value.Name; }\n"
             "  return null;\n"
             "}\n"
@@ -973,7 +973,7 @@ void nullable_flow_narrowing(TestContext& test) {
             "func Disjunction(User? value): bool {\n"
             "  return value == null || value.Name == \"Ada\";\n"
             "}\n"
-            "func Reverse(User? value): String? {\n"
+            "func Reverse(User? value): string? {\n"
             "  if (null != value) { return value.Name; }\n"
             "  return null;\n"
             "}\n"
@@ -1000,11 +1000,11 @@ void nullable_flow_narrowing(TestContext& test) {
             "    value = null;\n"
             "  }\n"
             "}\n"
-            "func Final(final User? value): String? {\n"
+            "func Final(final User? value): string? {\n"
             "  if (value != null) { return value.Name; }\n"
             "  return null;\n"
             "}\n"
-            "func Local(User? value): String? {\n"
+            "func Local(User? value): string? {\n"
             "  User? copy = value;\n"
             "  if (copy != null) { return copy.Name; }\n"
             "  return null;\n"
@@ -1039,28 +1039,28 @@ void nullable_flow_narrowing(TestContext& test) {
               "HIR did not retain the narrowed non-null read type");
 
   AnalyzedCompilation invalid;
-  invalid.add("User.co", "String Name = \"Ada\";\n");
+  invalid.add("User.co", "string Name = \"Ada\";\n");
   invalid.add("BadFlow.co",
               "User? Current;\n"
-              "func Outside(User? value): String {\n"
+              "func Outside(User? value): string {\n"
               "  if (value != null) {}\n"
               "  return value.Name;\n"
               "}\n"
-              "func Reassigned(User? value): String? {\n"
+              "func Reassigned(User? value): string? {\n"
               "  if (value != null) {\n"
               "    value = null;\n"
               "    return value.Name;\n"
               "  }\n"
               "  return null;\n"
               "}\n"
-              "func Joined(User? value, bool choose): String? {\n"
+              "func Joined(User? value, bool choose): string? {\n"
               "  if (value != null) {\n"
               "    if (choose) { value = null; }\n"
               "    return value.Name;\n"
               "  }\n"
               "  return null;\n"
               "}\n"
-              "func Field(): String? {\n"
+              "func Field(): string? {\n"
               "  if (Current != null) { return Current.Name; }\n"
               "  return null;\n"
               "}\n"
@@ -1082,15 +1082,15 @@ void nullable_flow_narrowing(TestContext& test) {
 void null_ergonomics(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("User.co",
-            "String Name = \"Ada\";\n"
-            "String? Alias;\n"
+            "string Name = \"Ada\";\n"
+            "string? Alias;\n"
             "User? Manager;\n"
             "int32 Count;\n"
             "func Greet() {}\n");
   valid.add("NullErgonomics.co",
-            "func Display(User? user, User? backup, bool enabled): String {\n"
-            "  String? name = user?.Name;\n"
-            "  String? alias = user?.Alias;\n"
+            "func Display(User? user, User? backup, bool enabled): string {\n"
+            "  string? name = user?.Name;\n"
+            "  string? alias = user?.Alias;\n"
             "  if (user) { println(user.Name); }\n"
             "  if (!user) { println(\"missing\"); }\n"
             "  while (backup) { println(backup.Name); backup = null; }\n"
@@ -1104,7 +1104,7 @@ void null_ergonomics(TestContext& test) {
             "func Optional(User? user, User? backup): User? {\n"
             "  return user ?? backup;\n"
             "}\n"
-            "func Safe(User? user): String? { return user?.Name; }\n");
+            "func Safe(User? user): string? { return user?.Name; }\n");
   valid.analyze();
 
   test.expect(valid.error_count() == 0,
@@ -1119,14 +1119,14 @@ void null_ergonomics(TestContext& test) {
 
   AnalyzedCompilation invalid;
   invalid.add("User.co",
-              "String Name = \"Ada\";\n"
+              "string Name = \"Ada\";\n"
               "int32 Count;\n"
               "func Greet() {}\n");
   invalid.add(
       "BadNullErgonomics.co",
       "func NonNullableCondition(User value) { if (value) {} }\n"
-      "func SafeNonNullable(User value): String? { return value?.Name; }\n"
-      "func SafeValue(User? value): String? { value?.Count; return null; }\n"
+      "func SafeNonNullable(User value): string? { return value?.Name; }\n"
+      "func SafeValue(User? value): string? { value?.Count; return null; }\n"
       "func SafeCall(User? value) { value?.Greet(); }\n"
       "func BadCoalesce(User value): User { return value ?? value; }\n"
       "func WrongFallback(User? value): User { return value ?? \"x\"; }\n"
@@ -1154,7 +1154,7 @@ void null_ergonomics(TestContext& test) {
               "coalescing accepted a non-null left operand");
   test.expect(invalid.has_diagnostic(
                   "right operand of the null-coalescing operator has type "
-                  "'String'"),
+                  "'string'"),
               "coalescing accepted an incompatible fallback");
   test.expect(invalid.has_diagnostic(
                   "non-null assertion requires a nullable reference"),
@@ -1281,13 +1281,13 @@ void for_iteration_semantics(TestContext& test) {
 void for_binding_scope_and_types(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("Binding.co",
-            "func Read(String[] values): String {\n"
-            "  String value = \"outer\";\n"
+            "func Read(string[] values): string {\n"
+            "  string value = \"outer\";\n"
             "  for (var values in values) {\n"
-            "    String copy = values;\n"
+            "    string copy = values;\n"
             "    values = copy;\n"
             "  }\n"
-            "  for (String value in values) { value = \"changed\"; }\n"
+            "  for (string value in values) { value = \"changed\"; }\n"
             "  return value;\n"
             "}\n");
   valid.analyze();
@@ -1296,7 +1296,7 @@ void for_binding_scope_and_types(TestContext& test) {
 
   std::size_t string_bindings = 0;
   const cloth::TypeId string_type =
-      *valid.result->semantics.find_type("String");
+      *valid.result->semantics.find_type("string");
   for (const cloth::HirStatement& statement :
        valid.result->hir.storage.statements()) {
     const auto* loop = std::get_if<cloth::HirForStatement>(&statement.data);
@@ -1330,9 +1330,9 @@ void for_binding_scope_and_types(TestContext& test) {
 
 void instance_member_binding(TestContext& test) {
   AnalyzedCompilation compilation;
-  compilation.add("User.co", "String Name = \"Ada\";\n");
+  compilation.add("User.co", "string Name = \"Ada\";\n");
   compilation.add("Reader.co",
-                  "func Read(User value): String { return value.Name; }\n");
+                  "func Read(User value): string { return value.Name; }\n");
   compilation.analyze();
 
   test.expect(compilation.error_count() == 0,
@@ -1386,7 +1386,7 @@ void invalid_static_members(TestContext& test) {
   compilation.add(
       "StaticErrors.co",
       "static int32 Mutable = 1;\n"
-      "static final String Text = \"cloth\";\n"
+      "static final string Text = \"cloth\";\n"
       "static final int32 Missing;\n"
       "int32 value;\n"
       "func Read() {}\n"
@@ -1423,6 +1423,91 @@ void invalid_static_members(TestContext& test) {
   test.expect(
       compilation.has_diagnostic("entry point 'Main' must be declared static"),
       "instance Main declaration was accepted");
+}
+
+void string_value_semantics(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Strings.co",
+            "func Inspect(string left, string right): int32 {\n"
+            "  string joined = left + right;\n"
+            "  bool equal = joined == \"cloth\";\n"
+            "  bool different = left != right;\n"
+            "  bool empty = joined.IsEmpty;\n"
+            "  if (equal && different && !empty) { return joined.Length; }\n"
+            "  return joined.ByteLength;\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid string operations produced semantic errors");
+  bool found_length = false;
+  bool found_byte_length = false;
+  bool found_is_empty = false;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    const auto* property =
+        std::get_if<cloth::HirStringPropertyExpression>(&expression.data);
+    if (property == nullptr) {
+      continue;
+    }
+    found_length =
+        found_length || property->property == cloth::StringProperty::kLength;
+    found_byte_length =
+        found_byte_length ||
+        property->property == cloth::StringProperty::kByteLength;
+    found_is_empty =
+        found_is_empty || property->property == cloth::StringProperty::kIsEmpty;
+  }
+  test.expect(found_length && found_byte_length && found_is_empty,
+              "string properties were not retained explicitly in HIR");
+
+  AnalyzedCompilation uppercase_type;
+  uppercase_type.add("String.co", "int32 Value = 1;\n");
+  uppercase_type.add(
+      "UsesString.co",
+      "func Read(String value): int32 { return value.Value; }\n");
+  uppercase_type.analyze();
+  test.expect(uppercase_type.error_count() == 0,
+              "a user-defined uppercase String type was shadowed by string");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadStrings.co",
+              "String Legacy;\n"
+              "func Subtract(string left, string right): string {\n"
+              "  return left - right;\n"
+              "}\n"
+              "func WrongCase(string value): int32 { return value.length; }\n"
+              "func Nullable(string? value): int32 { return value.Length; }\n"
+              "func SafeNullable(string? value): int32 {\n"
+              "  return value?.Length;\n"
+              "}\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic(
+                  "unknown type 'String'; use the built-in type 'string'"),
+              "legacy String spelling did not receive a migration diagnostic");
+  test.expect(
+      invalid.has_diagnostic(
+          "operator 'minus' cannot be applied to 'string' and 'string'"),
+      "string subtraction was accepted");
+  test.expect(invalid.has_diagnostic("string has no member 'length'"),
+              "string property capitalization was ignored");
+  test.expect(invalid.has_diagnostic(
+                  "nullable type 'string?' has no members without narrowing"),
+              "nullable string member access skipped narrowing");
+  test.expect(invalid.has_diagnostic(
+                  "safe access to value-type string member 'Length' requires "
+                  "nullable value types"),
+              "safe string property access produced the wrong diagnostic");
+
+  std::string malformed_source = "func Broken(): string { return \"";
+  malformed_source.push_back(static_cast<char>(0xC3));
+  malformed_source += "\"; }\n";
+  AnalyzedCompilation malformed;
+  malformed.add("Malformed.co", std::move(malformed_source));
+  malformed.analyze();
+  test.expect(malformed.has_diagnostic("string literal is not valid UTF-8"),
+              "malformed UTF-8 was accepted in a string literal");
 }
 
 using TestFunction = void (*)(TestContext&);
@@ -1467,6 +1552,7 @@ int main() {
       {"instance member binding", instance_member_binding},
       {"static member contract", static_member_contract},
       {"invalid static members", invalid_static_members},
+      {"string value semantics", string_value_semantics},
       {"deterministic diagnostics", deterministic_diagnostics},
   };
 

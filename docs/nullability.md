@@ -18,9 +18,13 @@ User[]? values;      // nullable array of non-null User values
 User?[]? values;     // nullable array whose elements may be null
 ```
 
-Only references can be nullable. `String`, file classes, and arrays are
+Only references can be nullable. `string`, file classes, and arrays are
 reference types; primitives and `void` are not. Forms such as `int32?` and
 `void?` are diagnosed.
+
+String properties return value types. Consequently, `value?.Length`,
+`value?.ByteLength`, and `value?.IsEmpty` await nullable value types. Narrow a
+`string?` through a presence/null check or use `value!` before querying them.
 
 ## Compatibility
 
@@ -48,7 +52,7 @@ logical negation, and short-circuit `&&` and `||` compose the same facts. This
 supports both nested branches and guard clauses:
 
 ```cloth
-func Name(User? value): String {
+func Name(User? value): string {
   if (value == null) { return "unknown"; }
   return value.Name;
 }
@@ -79,7 +83,7 @@ Safe access evaluates a nullable receiver once. It loads the reference-valued
 field only when the receiver is non-null and otherwise produces `null`:
 
 ```cloth
-String? name = user?.Name;
+string? name = user?.Name;
 ```
 
 If the field has type `T`, the result is `T?`; if it already has type `T?`, the
@@ -90,7 +94,7 @@ The null-coalescing operator evaluates its left operand once and evaluates the
 fallback only when that value is null:
 
 ```cloth
-String display = user?.Name ?? "Unknown";
+string display = user?.Name ?? "Unknown";
 ```
 
 `left ?? fallback` requires a `T?` left operand. It produces `T` for a `T`

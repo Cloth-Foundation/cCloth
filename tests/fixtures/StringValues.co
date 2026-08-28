@@ -1,0 +1,17 @@
+static func Main() {
+  string empty = "";
+  string greeting = "Hello, " + "Cloth";
+  string unicode = "é🙂";
+  string withNull = "A\0B";
+
+  println(greeting);
+  println(greeting == "Hello, Cloth");
+  println(greeting != "other");
+  println(greeting.Length);
+  println(greeting.ByteLength);
+  println(empty.IsEmpty);
+  println(unicode.Length);
+  println(unicode.ByteLength);
+  println(withNull.Length);
+  println(withNull.ByteLength);
+}

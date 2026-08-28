@@ -152,6 +152,16 @@ class Lowerer {
           member->member == "Length" &&
           semantic.type != semantics_.error_type()) {
         data = HirArrayLengthExpression{expression(member->object)};
+      } else if (semantics_.type(object_type).kind == TypeKind::kString &&
+                 semantic.type != semantics_.error_type()) {
+        StringProperty property = StringProperty::kLength;
+        if (member->member == "ByteLength") {
+          property = StringProperty::kByteLength;
+        } else if (member->member == "IsEmpty") {
+          property = StringProperty::kIsEmpty;
+        }
+        data =
+            HirStringPropertyExpression{expression(member->object), property};
       } else {
         data = HirMemberExpression{expression(member->object), semantic.symbol};
       }

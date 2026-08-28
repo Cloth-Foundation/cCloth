@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 13.5 liveness-aware garbage collection
+# Cloth compiler - Stage 14 immutable UTF-8 strings
 
-This repository contains the deterministic Stage 12.3.5 compiler core for Cloth
+This repository contains the deterministic Stage 14 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -18,7 +18,9 @@ in a precise thread-local shadow stack. Stage 13.3 introduces a single-mutator,
 non-moving mark-and-sweep collector. Stage 13.4 brings file-class objects,
 strings, arrays, and array payloads under that collector. Stage 13.5 clears
 reference roots after their last MIR use and exposes collection-count and
-peak-byte diagnostics for tests and embedders. The project contains no virtual
+peak-byte diagnostics for tests and embedders. Stage 14 makes lowercase
+`string` an immutable UTF-8 value with concatenation, content equality, and
+`Length`, `ByteLength`, and `IsEmpty` properties. The project contains no virtual
 machine, standard library, debugger, or external package registry. LLVM IR
 emission has no link-time dependency on LLVM libraries.
 
@@ -270,6 +272,7 @@ docs/final_bindings.md   Stage 12.1 single-assignment contract
 docs/static_members.md   Stage 12.2 static ownership and entry contract
 docs/nullability.md      Stage 12.3.5 nullable reference and operator contract
 docs/garbage_collection.md Stage 13.1-13.5 managed-heap contract
+docs/strings.md           Stage 14 immutable UTF-8 string contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -316,7 +319,7 @@ allocation and null-receiver behavior behind runtime intrinsics. See
 Stage 6 binds the first typed core output intrinsic, emits a native `main`
 adapter for Cloth's public static `Main()`, implements the minimal runtime, and drives
 LLVM object emission plus the configured host linker. Stage 7 adds structured
-loops and `String`, `int32`, and `bool` output overloads, making FizzBuzz the
+loops and `string`, `int32`, and `bool` output overloads, making FizzBuzz the
 first complete control-flow example. See
 [docs/native_runtime.md](docs/native_runtime.md).
 
@@ -415,6 +418,12 @@ temporaries and reference-valued parameter/local slots are cleared after their
 last use and on dead control-flow paths. The runtime also reports monotonic
 collection count and peak managed bytes for testing and embedding. See
 [docs/garbage_collection.md](docs/garbage_collection.md).
+
+Stage 14 defines lowercase `string` as an immutable managed UTF-8 value.
+Concatenation creates an owned managed buffer, equality compares content, and
+the read-only properties distinguish Unicode scalar length from byte length.
+Malformed UTF-8 literals are rejected before lowering. See
+[docs/strings.md](docs/strings.md).
 
 ## Extending the lexer
 

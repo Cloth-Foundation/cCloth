@@ -154,7 +154,7 @@ void imports(TestContext& test) {
 
 void fields_and_visibility(TestContext& test) {
   const ParsedSource source{"Fields.co",
-                            "String Name;\nint32 id;\nbool active = true;\n"
+                            "string Name;\nint32 id;\nbool active = true;\n"
                             "int32 _cache;\n"
                             "static final int32 Version = 1;\n"};
   test.expect(error_count(source) == 0, "valid fields should parse");
@@ -239,7 +239,7 @@ void legacy_function_keyword_rejected(TestContext& test) {
 
 void constructors(TestContext& test) {
   const ParsedSource source{
-      "User.co", "User() {}\nUser(String name) { self.Name = name; }\n"};
+      "User.co", "User() {}\nUser(string name) { self.Name = name; }\n"};
   test.expect(error_count(source) == 0, "valid constructors should parse");
   test.expect(source.ast().constructors.size() == 2,
               "multiple constructors were not retained");
@@ -253,7 +253,7 @@ void constructors(TestContext& test) {
 }
 
 void wrong_constructor(TestContext& test) {
-  const ParsedSource source{"User.co", "Person(String name) {}\n"};
+  const ParsedSource source{"User.co", "Person(string name) {}\n"};
   test.expect(has_diagnostic(source, "must match implicit class 'User'"),
               "wrong constructor name was not diagnosed");
   test.expect(source.ast().constructors.size() == 1,
@@ -286,7 +286,7 @@ void duplicate_declarations(TestContext& test) {
 void overload_candidates(TestContext& test) {
   const ParsedSource source{"Overloads.co",
                             "func Find(int value) {}\n"
-                            "func Find(String value) {}\n"};
+                            "func Find(string value) {}\n"};
   test.expect(error_count(source) == 0,
               "distinct signatures should remain overload candidates");
   test.expect(source.ast().functions.size() == 2,
@@ -525,7 +525,7 @@ void malformed_for_headers_recover(TestContext& test) {
 void calls_members_and_assignment(TestContext& test) {
   const ParsedSource source{
       "Calls.co",
-      "Calls(String name) { self.Name = Repository.Find(name); }\n"};
+      "Calls(string name) { self.Name = Repository.Find(name); }\n"};
   test.expect(error_count(source) == 0,
               "member calls and assignments should parse");
   const cloth::Block& body =
@@ -629,7 +629,7 @@ void null_ergonomic_expressions(TestContext& test) {
   const ParsedSource source{
       "NullErgonomics.co",
       "func Use(User? user, User? fallback, User value): User {\n"
-      "  String? name = user?.Name;\n"
+      "  string? name = user?.Name;\n"
       "  if (!user) {}\n"
       "  return user ?? fallback ?? value!;\n"
       "}\n"};
@@ -792,14 +792,14 @@ void deterministic_diagnostics(TestContext& test) {
 
 void deterministic_ast_summary(TestContext& test) {
   const ParsedSource source{"User.co",
-                            "String Name;\nint32 id;\nUser() {}\n"
+                            "string Name;\nint32 id;\nUser() {}\n"
                             "func Find(int32 id): User { return id; }\n"
                             "func validate(): bool { return true; }\n"};
   std::ostringstream output;
   cloth::print_ast_summary(source.ast(), output);
   const std::string expected =
       "FileClass User [public]\n"
-      "|- Field Name: String [public]\n"
+      "|- Field Name: string [public]\n"
       "|- Field id: int32 [private]\n"
       "|- Constructor User() [public]\n"
       "|- Function Find(int32 id): User [public]\n"

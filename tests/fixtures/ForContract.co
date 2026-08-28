@@ -29,8 +29,8 @@ static func Main() {
     print(source[0]);
     print("\n");
 
-    String[] labels = ["A", "B"];
-    for (String label in labels) {
+    string[] labels = ["A", "B"];
+    for (string label in labels) {
         print(label);
     }
     print("\n");

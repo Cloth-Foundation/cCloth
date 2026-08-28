@@ -47,7 +47,7 @@ non-cascading errors.
 MIR tests verify the exact preheader, condition, body, latch, and exit edges;
 the two phi predecessors; and reachability after unconditional `break`,
 `continue`, or `return`. Native tests prove evaluate-once behavior, mutable-copy
-bindings, `String[]` iteration, and innermost nested-loop control. Semantic and
+bindings, `string[]` iteration, and innermost nested-loop control. Semantic and
 CLI tests reject nullable-array iteration before lowering. The wasm32 backend
 also emits and verifies the same target-independent iteration shape.
 

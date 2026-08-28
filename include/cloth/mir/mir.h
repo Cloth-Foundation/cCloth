@@ -79,6 +79,11 @@ struct MirArrayLengthInstruction {
   MirValueId array;
 };
 
+struct MirStringPropertyInstruction {
+  MirValueId string;
+  StringProperty property;
+};
+
 struct MirUnaryInstruction {
   TokenKind operation;
   MirValueId operand;
@@ -136,9 +141,10 @@ using MirInstructionData = std::variant<
     MirDeclareLocalInstruction, MirStoreSymbolInstruction,
     MirLoadMemberInstruction, MirStoreMemberInstruction,
     MirArrayLiteralInstruction, MirArrayLoadInstruction,
-    MirArrayStoreInstruction, MirArrayLengthInstruction, MirUnaryInstruction,
-    MirBinaryInstruction, MirConvertInstruction, MirIsNonNullInstruction,
-    MirNullAssertInstruction, MirCallInstruction, MirPhiInstruction>;
+    MirArrayStoreInstruction, MirArrayLengthInstruction,
+    MirStringPropertyInstruction, MirUnaryInstruction, MirBinaryInstruction,
+    MirConvertInstruction, MirIsNonNullInstruction, MirNullAssertInstruction,
+    MirCallInstruction, MirPhiInstruction>;
 
 struct MirInstruction {
   std::optional<MirValueId> result;

@@ -1,5 +1,5 @@
 char Character = 'A';
-String Text = "cloth";
+string Text = "cloth";
 bool Flag = true;
 byte ByteValue;
 int8 Int8Value;

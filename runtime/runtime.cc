@@ -27,7 +27,9 @@ struct ClothObjectHeader {
 struct ClothString {
   ClothObjectHeader header;
   const char* data;
-  std::size_t size;
+  std::size_t byte_size;
+  std::size_t scalar_count;
+  bool owns_data;
 };
 
 struct ClothArray {
@@ -53,7 +55,7 @@ struct ClothAllocationIndexEntry {
 
 constexpr std::uint64_t kInitialCollectionThreshold = 64 * 1024;
 constexpr std::size_t kInitialAllocationIndexCapacity = 64;
-constexpr char kStringTypeName[] = "String";
+constexpr char kStringTypeName[] = "string";
 constexpr char kArrayTypeName[] = "Array";
 constexpr ClothTypeDescriptor kStringTypeDescriptor{
     ClothHeapObjectKind::kString,
@@ -100,6 +102,55 @@ std::size_t native_size(std::uint64_t value,
     runtime_failure(description);
   }
   return static_cast<std::size_t>(value);
+}
+
+std::size_t count_utf8_scalars(const char* data, std::size_t size) noexcept {
+  std::size_t count = 0;
+  std::size_t index = 0;
+  const auto byte = [data](std::size_t offset) {
+    return static_cast<unsigned char>(data[offset]);
+  };
+  const auto is_continuation = [&byte](std::size_t offset) {
+    return (byte(offset) & 0xc0U) == 0x80U;
+  };
+  while (index < size) {
+    const unsigned char first = byte(index);
+    std::size_t width = 0;
+    if (first <= 0x7fU) {
+      width = 1;
+    } else if (first >= 0xc2U && first <= 0xdfU && index + 1 < size &&
+               is_continuation(index + 1)) {
+      width = 2;
+    } else if (first == 0xe0U && index + 2 < size && byte(index + 1) >= 0xa0U &&
+               byte(index + 1) <= 0xbfU && is_continuation(index + 2)) {
+      width = 3;
+    } else if (((first >= 0xe1U && first <= 0xecU) ||
+                (first >= 0xeeU && first <= 0xefU)) &&
+               index + 2 < size && is_continuation(index + 1) &&
+               is_continuation(index + 2)) {
+      width = 3;
+    } else if (first == 0xedU && index + 2 < size && byte(index + 1) >= 0x80U &&
+               byte(index + 1) <= 0x9fU && is_continuation(index + 2)) {
+      width = 3;
+    } else if (first == 0xf0U && index + 3 < size && byte(index + 1) >= 0x90U &&
+               byte(index + 1) <= 0xbfU && is_continuation(index + 2) &&
+               is_continuation(index + 3)) {
+      width = 4;
+    } else if (first >= 0xf1U && first <= 0xf3U && index + 3 < size &&
+               is_continuation(index + 1) && is_continuation(index + 2) &&
+               is_continuation(index + 3)) {
+      width = 4;
+    } else if (first == 0xf4U && index + 3 < size && byte(index + 1) >= 0x80U &&
+               byte(index + 1) <= 0x8fU && is_continuation(index + 2) &&
+               is_continuation(index + 3)) {
+      width = 4;
+    } else {
+      runtime_failure("string contains invalid UTF-8");
+    }
+    index += width;
+    ++count;
+  }
+  return count;
 }
 
 void* allocate_aligned(std::uint64_t size, std::uint64_t alignment,
@@ -326,8 +377,14 @@ void destroy_managed_object(ClothAllocation* allocation) noexcept {
   }
   switch (header.type->kind) {
     case ClothHeapObjectKind::kFileClass:
-    case ClothHeapObjectKind::kString:
       break;
+    case ClothHeapObjectKind::kString: {
+      auto& string = *static_cast<ClothString*>(allocation->object);
+      if (string.owns_data) {
+        free_aligned(const_cast<char*>(string.data));
+      }
+      break;
+    }
     case ClothHeapObjectKind::kArray: {
       auto& array = *static_cast<ClothArray*>(allocation->object);
       free_aligned(array.data);
@@ -414,6 +471,56 @@ void register_allocation(ClothObjectHeader* object,
   live_byte_count += size;
   peak_live_byte_count = std::max(peak_live_byte_count, live_byte_count);
   object->runtime_state = allocation;
+}
+
+const ClothString& require_string(const void* value) noexcept {
+  if (value == nullptr) {
+    runtime_failure("null string");
+  }
+  const auto& string = *static_cast<const ClothString*>(value);
+  if (string.header.type != &kStringTypeDescriptor) {
+    runtime_failure("invalid string object");
+  }
+  return string;
+}
+
+ClothString* allocate_borrowed_string(const char* data, std::size_t byte_size,
+                                      std::size_t scalar_count) noexcept {
+  collect_before_allocation(sizeof(ClothString));
+  auto* string = static_cast<ClothString*>(allocate_aligned(
+      sizeof(ClothString), alignof(ClothString), "string allocation failed"));
+  *string = ClothString{
+      {&kStringTypeDescriptor, nullptr}, data, byte_size, scalar_count, false};
+  register_allocation(&string->header, sizeof(ClothString));
+  return string;
+}
+
+ClothString* allocate_concatenated_string(const ClothString& left,
+                                          const ClothString& right) noexcept {
+  constexpr std::size_t kMaximumStringSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  if (left.byte_size > kMaximumStringSize - right.byte_size ||
+      left.scalar_count > kMaximumStringSize - right.scalar_count) {
+    runtime_failure("string concatenation is too large");
+  }
+  const std::size_t byte_size = left.byte_size + right.byte_size;
+  const std::size_t scalar_count = left.scalar_count + right.scalar_count;
+  const std::uint64_t managed_size = sizeof(ClothString) + byte_size;
+  collect_before_allocation(managed_size);
+  auto* string = static_cast<ClothString*>(allocate_aligned(
+      sizeof(ClothString), alignof(ClothString), "string allocation failed"));
+  auto* data = static_cast<char*>(allocate_aligned(
+      byte_size, alignof(char), "string payload allocation failed"));
+  if (left.byte_size != 0) {
+    std::memcpy(data, left.data, left.byte_size);
+  }
+  if (right.byte_size != 0) {
+    std::memcpy(data + left.byte_size, right.data, right.byte_size);
+  }
+  *string = ClothString{
+      {&kStringTypeDescriptor, nullptr}, data, byte_size, scalar_count, true};
+  register_allocation(&string->header, managed_size);
+  return string;
 }
 
 void configure_stdout() noexcept {
@@ -539,14 +646,51 @@ extern "C" void* cloth_rt_string_literal(const void* data,
   if (data == nullptr && string_size != 0) {
     runtime_failure("string literal has null storage");
   }
-  collect_before_allocation(sizeof(ClothString));
-  auto* string = static_cast<ClothString*>(allocate_aligned(
-      sizeof(ClothString), alignof(ClothString), "string allocation failed"));
-  *string = ClothString{{&kStringTypeDescriptor, nullptr},
-                        static_cast<const char*>(data),
-                        string_size};
-  register_allocation(&string->header, sizeof(ClothString));
-  return string;
+  const auto* bytes = static_cast<const char*>(data);
+  const std::size_t scalar_count = count_utf8_scalars(bytes, string_size);
+  constexpr std::size_t kMaximumStringSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  if (string_size > kMaximumStringSize || scalar_count > kMaximumStringSize) {
+    runtime_failure("string literal is too large");
+  }
+  return allocate_borrowed_string(bytes, string_size, scalar_count);
+}
+
+extern "C" void* cloth_rt_string_concat(const void* left,
+                                        const void* right) noexcept {
+  return allocate_concatenated_string(require_string(left),
+                                      require_string(right));
+}
+
+extern "C" std::uint8_t cloth_rt_string_equal(const void* left,
+                                              const void* right) noexcept {
+  if (left == right) {
+    return 1;
+  }
+  if (left == nullptr || right == nullptr) {
+    return 0;
+  }
+  const ClothString& left_string = require_string(left);
+  const ClothString& right_string = require_string(right);
+  return left_string.byte_size == right_string.byte_size &&
+                 (left_string.byte_size == 0 ||
+                  std::memcmp(left_string.data, right_string.data,
+                              left_string.byte_size) == 0)
+             ? 1
+             : 0;
+}
+
+extern "C" std::int32_t cloth_rt_string_length(const void* value) noexcept {
+  return static_cast<std::int32_t>(require_string(value).scalar_count);
+}
+
+extern "C" std::int32_t cloth_rt_string_byte_length(
+    const void* value) noexcept {
+  return static_cast<std::int32_t>(require_string(value).byte_size);
+}
+
+extern "C" std::uint8_t cloth_rt_string_is_empty(const void* value) noexcept {
+  return require_string(value).byte_size == 0 ? 1 : 0;
 }
 
 extern "C" void* cloth_rt_array_alloc(
@@ -634,10 +778,10 @@ extern "C" void cloth_rt_require_non_null(const void* value) noexcept {
 
 extern "C" void cloth_rt_print(const void* value) noexcept {
   if (value == nullptr) {
-    runtime_failure("print received a null String");
+    runtime_failure("print received a null string");
   }
   const auto& string = *static_cast<const ClothString*>(value);
-  write_stdout(std::string_view{string.data, string.size});
+  write_stdout(std::string_view{string.data, string.byte_size});
 }
 
 extern "C" void cloth_rt_print_i32(std::int32_t value) noexcept {

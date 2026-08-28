@@ -8,7 +8,7 @@ than parser syntax or a C-style variadic facility.
 
 The core scope provides `print(T)` and `println(T)` for these types:
 
-- `String`, `bool`, and `char`
+- `string`, `bool`, and `char`
 - `byte`, every fixed-width signed and unsigned integer, and their aliases
 - `float32`, `float64`, and the `float` alias
 - every file-class type and the `null` literal
@@ -49,7 +49,7 @@ Default object output reads only the descriptor. It never exposes an address,
 field value, allocation order, or collector state. This keeps output stable if
 a future garbage collector moves objects.
 
-`String` and arrays remain opaque runtime reference types rather than
+`string` and arrays remain opaque runtime reference types rather than
 file-class objects, but Stage 13.4 gives them the common managed header and
 collector lifecycle. Array rendering, user-defined string conversion,
 interpolation, and type-checked formatting are deferred. Cloth does not expose
