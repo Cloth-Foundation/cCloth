@@ -84,8 +84,8 @@ discovery order.
 
 `int`, `uint`, and `float` are portable aliases of `int32`, `uint32`, and
 `float32`. `string` is a core immutable UTF-8 reference type. Its `+` operator
-concatenates, `==` and `!=` compare content, and its read-only properties are
-`Length`, `ByteLength`, and `IsEmpty`. General implicit numeric
+concatenates, `==` and `!=` compare content, and its read-only meta queries are
+`::length`, `::byteLength`, and `::isEmpty`. General implicit numeric
 conversions are not part of the initial language; overload selection uses exact
 canonical parameter types. References are non-null by default. `T?` is a
 distinct nullable reference type: `T` widens to `T?`, while `null` is assignable
@@ -95,6 +95,23 @@ Lexical scopes contain `self`, parameters, and locals. A nested block may shadow
 an outer name, but declarations in the same scope may not collide. Public
 functions may be referenced through their file-class name. Fields require an
 instance, including `self` for explicit member access.
+
+## Members and meta queries
+
+`.` performs ordinary declared-member lookup. Those names obey capitalization,
+visibility, overload, receiver, and mutability rules. `expression::name`
+performs a language-defined meta query based on the expression's semantic type.
+Meta queries are not declarations: their lower-camel-case names have no
+visibility, cannot be shadowed or overloaded, and cannot be called or assigned.
+The receiver is evaluated once and must be non-null. Lowering may use a
+constant, direct operation, or runtime call without changing this source
+contract.
+
+The initial meta set is `array::length` plus `string::length`,
+`string::byteLength`, and `string::isEmpty`, where `array` and `string` stand
+for value expressions of those types. Package and import paths also use `::`,
+but only in declaration syntax; expression postfix `::` is unambiguously a meta
+query.
 
 ## Two-pass parsing
 
@@ -259,8 +276,9 @@ elements. Array literals evaluate their elements from left to right and infer
 one exact element type; a reference literal containing `null` infers `T?[]`.
 Empty and null-only literals require future contextual typing and are currently
 rejected. `array[index]` accepts only `int32`, and
-both reads and writes perform runtime null and bounds checks. `Length` is a
-public read-only `int32` member. Array equality compares reference identity.
+both reads and writes perform runtime null and bounds checks. `::length` is a
+read-only `int32` meta query with no visibility. Array equality compares
+reference identity.
 
 The array runtime stores element layout and whether elements contain references
 without exposing that representation to source or LLVM IR. Reference arrays

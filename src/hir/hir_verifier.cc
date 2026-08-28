@@ -91,10 +91,9 @@ class HirVerifier {
       } else if (const auto* length =
                      std::get_if<HirArrayLengthExpression>(&expression.data)) {
         verify_expression(length->array, expression.range);
-      } else if (const auto* property =
-                     std::get_if<HirStringPropertyExpression>(
-                         &expression.data)) {
-        verify_expression(property->string, expression.range);
+      } else if (const auto* meta =
+                     std::get_if<HirStringMetaExpression>(&expression.data)) {
+        verify_expression(meta->string, expression.range);
       } else if (const auto* grouped =
                      std::get_if<HirGroupedExpression>(&expression.data)) {
         verify_expression(grouped->expression, expression.range);

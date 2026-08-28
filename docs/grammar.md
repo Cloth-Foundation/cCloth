@@ -192,7 +192,7 @@ unary_expression
 
 postfix_expression
     = primary_expression
-      { call_suffix | member_suffix | safe_member_suffix | index_suffix
+      { call_suffix | member_suffix | meta_suffix | safe_member_suffix | index_suffix
       | "!" } ;
 
 call_suffix
@@ -203,6 +203,9 @@ argument_list
 
 member_suffix
     = "." identifier ;
+
+meta_suffix
+    = "::" identifier ;
 
 safe_member_suffix
     = "?." identifier ;
@@ -239,7 +242,7 @@ The precedence table, from lowest to highest, is:
 | 7          | `+`, `-`                               | left          |
 | 8          | `*`, `/`, `%`                          | left          |
 | 9          | prefix `!`, `+`, `-`, `~`              | right         |
-| 10         | calls, members, indexing, postfix `!`  | left          |
+| 10         | calls, members, meta queries, indexing, postfix `!` | left |
 
 Stage 1.0 deliberately defers compound assignment, increment/decrement,
 bitwise binary operators, and shifts even though the lexer recognizes them.
@@ -273,6 +276,9 @@ The declaration pass enforces these rules separately from the grammar:
   branches. Assignment invalidates a narrowing; fields are not narrowed.
 - Nullable conditions test presence. `?.`, `??`, and postfix `!` provide safe
   access, lazy fallback, and checked non-null assertion respectively.
+- `expression::name` performs a language-defined meta query. Meta names are
+  case-sensitive, do not participate in member visibility, and are resolved
+  from the expression's type.
 - A static field must also be final, must have an initializer, and currently
   accepts only a scalar literal initializer.
 - `Main` must be declared `static`.

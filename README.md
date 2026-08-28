@@ -20,7 +20,7 @@ strings, arrays, and array payloads under that collector. Stage 13.5 clears
 reference roots after their last MIR use and exposes collection-count and
 peak-byte diagnostics for tests and embedders. Stage 14 makes lowercase
 `string` an immutable UTF-8 value with concatenation, content equality, and
-`Length`, `ByteLength`, and `IsEmpty` properties. The project contains no virtual
+`::length`, `::byteLength`, and `::isEmpty` meta queries. The project contains no virtual
 machine, standard library, debugger, or external package registry. LLVM IR
 emission has no link-time dependency on LLVM libraries.
 
@@ -108,7 +108,7 @@ The Stage 7 loop and typed-output example is FizzBuzz:
 ./fizzbuzz
 ```
 
-The Stage 9 array example sums a collection through `Length` and indexing:
+The Stage 9 array example sums a collection through `::length` and indexing:
 
 ```sh
 ./build/clothc --build=array-sum examples/ArraySum.co
@@ -329,7 +329,7 @@ wildcard, aliased, same-package, and cyclic imports. See
 [docs/packages_and_imports.md](docs/packages_and_imports.md).
 
 Stage 9 adds homogeneous `T[]` references, array literals, mutable checked
-indexing, and the public `Length` member. Arrays lower through explicit HIR and
+indexing, and the `::length` meta query. Arrays lower through explicit HIR and
 MIR nodes to a garbage-collector-ready runtime boundary. See
 [docs/arrays_and_indexing.md](docs/arrays_and_indexing.md).
 
@@ -421,7 +421,7 @@ collection count and peak managed bytes for testing and embedding. See
 
 Stage 14 defines lowercase `string` as an immutable managed UTF-8 value.
 Concatenation creates an owned managed buffer, equality compares content, and
-the read-only properties distinguish Unicode scalar length from byte length.
+read-only meta queries distinguish Unicode scalar length from byte length.
 Malformed UTF-8 literals are rejected before lowering. See
 [docs/strings.md](docs/strings.md).
 

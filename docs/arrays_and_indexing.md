@@ -11,7 +11,7 @@ reference identity:
 ```cloth
 int32[] values = [1, 2, 3];
 values[1] = 4;
-int32 count = values.Length;
+int32 count = values::length;
 ```
 
 Array literals evaluate elements from left to right. Their element type is the
@@ -21,11 +21,11 @@ null-only literals are rejected because contextual literal typing is not yet
 implemented. `null` is assignable to `T[]?`, not to non-null `T[]`. `==` and
 `!=` compare array references rather than elements.
 
-The index type is exactly `int32`; `int` is its canonical alias. `Length` is a
-case-sensitive, public, read-only `int32` member. A nullable array must be
-narrowed before indexing. Indexed reads and writes retain runtime checks for
-invalid internal or foreign null references, negative indices, and indices at
-or beyond `Length`.
+The index type is exactly `int32`; `int` is its canonical alias. `::length` is a
+case-sensitive, read-only `int32` meta query with no visibility. A nullable
+array must be narrowed before indexing or meta access. Indexed reads and writes
+retain runtime checks for invalid internal or foreign null references, negative
+indices, and indices at or beyond `::length`.
 
 ## Compiler representation
 
@@ -50,5 +50,5 @@ owned payload. This policy requires no change to Cloth source or MIR semantics.
 
 Stage 9.0 deliberately defers multidimensional syntax, resizable lists, slices,
 array covariance, deep equality, and contextual empty literals. Stage 10.0
-builds array `for` iteration on the concrete `Length` and indexed-access
+builds array `for` iteration on the concrete `::length` and indexed-access
 semantics established here.

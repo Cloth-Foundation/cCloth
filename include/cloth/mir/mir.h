@@ -79,9 +79,9 @@ struct MirArrayLengthInstruction {
   MirValueId array;
 };
 
-struct MirStringPropertyInstruction {
+struct MirStringMetaInstruction {
   MirValueId string;
-  StringProperty property;
+  StringMetaQuery query;
 };
 
 struct MirUnaryInstruction {
@@ -142,7 +142,7 @@ using MirInstructionData = std::variant<
     MirLoadMemberInstruction, MirStoreMemberInstruction,
     MirArrayLiteralInstruction, MirArrayLoadInstruction,
     MirArrayStoreInstruction, MirArrayLengthInstruction,
-    MirStringPropertyInstruction, MirUnaryInstruction, MirBinaryInstruction,
+    MirStringMetaInstruction, MirUnaryInstruction, MirBinaryInstruction,
     MirConvertInstruction, MirIsNonNullInstruction, MirNullAssertInstruction,
     MirCallInstruction, MirPhiInstruction>;
 

@@ -84,6 +84,11 @@ struct MemberAccessExpression {
   std::string_view member;
 };
 
+struct MetaAccessExpression {
+  ExpressionId object;
+  std::string_view meta;
+};
+
 struct SafeMemberAccessExpression {
   ExpressionId object;
   std::string_view member;
@@ -119,10 +124,10 @@ struct ParenthesizedExpression {
 using ExpressionData =
     std::variant<InvalidExpression, IdentifierExpression, LiteralExpression,
                  UnaryExpression, BinaryExpression, AssignmentExpression,
-                 MemberAccessExpression, SafeMemberAccessExpression,
-                 NullCoalesceExpression, NullAssertExpression, CallExpression,
-                 ArrayLiteralExpression, IndexExpression,
-                 ParenthesizedExpression>;
+                 MemberAccessExpression, MetaAccessExpression,
+                 SafeMemberAccessExpression, NullCoalesceExpression,
+                 NullAssertExpression, CallExpression, ArrayLiteralExpression,
+                 IndexExpression, ParenthesizedExpression>;
 
 struct Expression {
   SourceRange range;

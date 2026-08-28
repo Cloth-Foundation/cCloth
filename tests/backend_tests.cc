@@ -157,7 +157,7 @@ void arrays(TestContext& test) {
               "  int32[] values = [1, 2, 3];\n"
               "  string[] labels = [\"cloth\"];\n"
               "  values[1] = 4;\n"
-              "  return values.Length + values[0];\n"
+              "  return values::length + values[0];\n"
               "}\n");
   sources.compile();
 
@@ -182,8 +182,8 @@ void strings(TestContext& test) {
               "  string joined = left + right;\n"
               "  println(joined == \"cloth\");\n"
               "  println(left != right);\n"
-              "  println(joined.IsEmpty);\n"
-              "  return joined.Length + joined.ByteLength;\n"
+              "  println(joined::isEmpty);\n"
+              "  return joined::length + joined::byteLength;\n"
               "}\n"
               "func Optional(string? left, string? right): bool {\n"
               "  return left == right;\n"
@@ -200,7 +200,7 @@ void strings(TestContext& test) {
       sources.contains("call i32 @cloth_rt_string_length(ptr ") &&
           sources.contains("call i32 @cloth_rt_string_byte_length(ptr ") &&
           sources.contains("call i8 @cloth_rt_string_is_empty(ptr "),
-      "string properties did not use their runtime boundaries");
+      "string meta queries did not use their runtime boundaries");
   test.expect(sources.contains("icmp ne i8 "),
               "runtime string booleans were not converted to LLVM i1");
 }

@@ -45,10 +45,10 @@ qualifiers are invalid on primitive and void types.
 `string` is a managed reference with immutable UTF-8 value semantics. String
 literals are decoded and validated as UTF-8 during semantic analysis. Exact
 `string + string` produces `string`; `==` and `!=` produce `bool` and use
-content equality. `Length` and `ByteLength` are read-only `int32` properties,
-and `IsEmpty` is a read-only `bool` property. Property names retain Cloth's
-case-sensitive spelling. Nullable strings must be narrowed before ordinary
-property access.
+content equality. `::length` and `::byteLength` are `int32` meta queries, and
+`::isEmpty` is a `bool` meta query. Meta names are case-sensitive and bypass
+ordinary member lookup and visibility. Nullable strings must be narrowed before
+meta access.
 
 An omitted function return annotation and explicit `: void` resolve to one
 canonical type. Void has no values or storage: it is rejected for fields,
@@ -61,7 +61,7 @@ element. A compatible nullable element or `null` promotes a reference element
 type to its nullable wrapper before every element is checked.
 Empty and null-only literals are rejected until contextual literal typing is
 implemented. Index operands must be `int32`. Index expressions are mutable
-locations, and `Length` is a read-only `int32` value.
+locations, and `::length` is a read-only `int32` meta query.
 
 The error type is a recovery value. It is compatible with every type solely to
 prevent one failure from producing unrelated diagnostics.
@@ -127,7 +127,7 @@ The checker currently validates:
 - final binding assignment and field definite initialization
 - static ownership, access form, and static `Main` validation
 - member access and visibility
-- homogeneous array literals, indexing, assignment, and `Length`
+- homogeneous array literals, indexing, assignment, and `::length`
 - exact overload and constructor selection
 - return value presence and type compatibility
 

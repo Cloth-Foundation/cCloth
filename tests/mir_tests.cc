@@ -388,7 +388,7 @@ void array_instructions(TestContext& test) {
                   "func Sum(): int32 {\n"
                   "  int32[] values = [1, 2, 3];\n"
                   "  values[1] = 4;\n"
-                  "  return values.Length + values[0];\n"
+                  "  return values::length + values[0];\n"
                   "}\n");
   compilation.compile();
 
@@ -413,11 +413,11 @@ void string_instructions(TestContext& test) {
                   "  string joined = left + right;\n"
                   "  bool equal = joined == \"cloth\";\n"
                   "  bool different = left != right;\n"
-                  "  bool empty = joined.IsEmpty;\n"
+                  "  bool empty = joined::isEmpty;\n"
                   "  if (equal && different && !empty) {\n"
-                  "    return joined.Length;\n"
+                  "    return joined::length;\n"
                   "  }\n"
-                  "  return joined.ByteLength;\n"
+                  "  return joined::byteLength;\n"
                   "}\n");
   compilation.compile();
 
@@ -433,16 +433,14 @@ void string_instructions(TestContext& test) {
   std::size_t equality_count = 0;
   for (const cloth::MirBasicBlock& block : body.blocks) {
     for (const cloth::MirInstruction& instruction : block.instructions) {
-      if (const auto* property =
-              std::get_if<cloth::MirStringPropertyInstruction>(
-                  &instruction.data)) {
-        found_length = found_length ||
-                       property->property == cloth::StringProperty::kLength;
-        found_byte_length =
-            found_byte_length ||
-            property->property == cloth::StringProperty::kByteLength;
-        found_is_empty = found_is_empty ||
-                         property->property == cloth::StringProperty::kIsEmpty;
+      if (const auto* meta =
+              std::get_if<cloth::MirStringMetaInstruction>(&instruction.data)) {
+        found_length =
+            found_length || meta->query == cloth::StringMetaQuery::kLength;
+        found_byte_length = found_byte_length ||
+                            meta->query == cloth::StringMetaQuery::kByteLength;
+        found_is_empty =
+            found_is_empty || meta->query == cloth::StringMetaQuery::kIsEmpty;
       }
       if (const auto* binary =
               std::get_if<cloth::MirBinaryInstruction>(&instruction.data)) {
@@ -456,7 +454,7 @@ void string_instructions(TestContext& test) {
     }
   }
   test.expect(found_length && found_byte_length && found_is_empty,
-              "string properties were not lowered explicitly");
+              "string meta queries were not lowered explicitly");
   test.expect(found_concat && equality_count == 2,
               "string value operators were not retained in MIR");
 }

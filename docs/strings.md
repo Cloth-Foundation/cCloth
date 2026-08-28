@@ -29,18 +29,23 @@ error. Cloth preserves decoded code points exactly: it does not normalize
 Unicode, so canonically equivalent but differently encoded scalar sequences
 remain different values.
 
-## Properties
+## Meta queries
 
-Strings expose three public, read-only properties:
+Strings expose three language-defined, read-only meta queries:
 
-- `Length: int32` counts Unicode scalar values;
-- `ByteLength: int32` counts UTF-8 code units;
-- `IsEmpty: bool` is true exactly when `ByteLength` is zero.
+- `value::length: int32` counts Unicode scalar values;
+- `value::byteLength: int32` counts UTF-8 code units;
+- `value::isEmpty: bool` is true exactly when `byteLength` is zero.
 
 Embedded U+0000 is ordinary string content. It contributes one to both lengths
-and does not terminate printing or comparison. Ordinary member access requires
-a non-null `string`. Safe access such as `value?.Length` awaits nullable value
-types because its result would be `int32?`; narrow or assert the string first.
+and does not terminate printing or comparison. A meta query requires a non-null
+`string`. Safe meta queries await nullable value types because a nullable
+`::length` result would be `int32?`; narrow or assert the string first.
+
+`::` is distinct from declared member access. Meta names are supplied by the
+language, use lower camel case, have no visibility, and cannot be shadowed,
+overloaded, called, or assigned. A future declared operation such as
+`value.Contains("x")` continues to use `.` and ordinary member rules.
 
 ## Representation and collection
 

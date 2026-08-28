@@ -7,8 +7,8 @@ descriptors with precise compiler-emitted file-class metadata, and Stage 13.2
 adds the thread-local precise-root stack. Stage 13.3 adds non-moving collection
 for file-class objects, Stage 13.4 extends it to strings and arrays, and Stage
 13.5 adds liveness-aware roots and monotonic collector diagnostics.
-Stage 14 adds immutable UTF-8 concatenation, content equality, and string
-property queries.
+Stage 14 adds immutable UTF-8 concatenation, content equality, and string meta
+queries.
 
 ## Source contract
 
@@ -104,7 +104,7 @@ Cloth source intrinsics.
 An array header records its fixed length, element size, payload address, and
 whether elements are references. Payload storage is zero-initialized and
 properly aligned. Null access, negative indices, and indices greater than or
-equal to `Length` terminate through the runtime failure path.
+equal to `::length` terminate through the runtime failure path.
 
 Runtime contract violations write a concise message to standard error and
 terminate the process. There is no recovery or exception ABI yet.

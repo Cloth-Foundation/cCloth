@@ -140,7 +140,7 @@ int main() {
   test.expect(cloth_rt_string_length(empty_string) == 0 &&
                   cloth_rt_string_byte_length(empty_string) == 0 &&
                   cloth_rt_string_is_empty(empty_string) == 1,
-              "empty string properties are wrong");
+              "empty string meta-query values are wrong");
   test.expect(cloth_rt_string_length(unicode_string) == 2 &&
                   cloth_rt_string_byte_length(unicode_string) == 6 &&
                   cloth_rt_string_is_empty(unicode_string) == 0,

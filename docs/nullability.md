@@ -22,9 +22,9 @@ Only references can be nullable. `string`, file classes, and arrays are
 reference types; primitives and `void` are not. Forms such as `int32?` and
 `void?` are diagnosed.
 
-String properties return value types. Consequently, `value?.Length`,
-`value?.ByteLength`, and `value?.IsEmpty` await nullable value types. Narrow a
-`string?` through a presence/null check or use `value!` before querying them.
+String meta queries return value types. Safe meta syntax therefore awaits
+nullable value types. Narrow a `string?` through a presence/null check or use
+`value!::length`, `value!::byteLength`, or `value!::isEmpty`.
 
 ## Compatibility
 

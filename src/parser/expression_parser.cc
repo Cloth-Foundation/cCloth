@@ -97,6 +97,19 @@ ExpressionId ExpressionParser::parse_postfix_expression() {
       expression = parse_index_expression(expression);
       continue;
     }
+    if (match(TokenKind::kColonColon)) {
+      if (current().kind != TokenKind::kIdentifier) {
+        diagnostics_.error(current().range,
+                           "expected meta query name after '::'");
+        break;
+      }
+      const Token& meta = advance();
+      const SourceRange range{expression_range(expression).begin,
+                              meta.range.end};
+      expression = storage_.add_expression(
+          Expression{range, MetaAccessExpression{expression, meta.lexeme}});
+      continue;
+    }
     if (match(TokenKind::kDot)) {
       if (current().kind != TokenKind::kIdentifier) {
         diagnostics_.error(current().range, "expected member name after '.'");

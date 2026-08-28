@@ -979,7 +979,7 @@ void nullable_flow_narrowing(TestContext& test) {
             "}\n"
             "func ArrayLength(int32[]? values): int32 {\n"
             "  if (values == null) { return 0; }\n"
-            "  return values.Length;\n"
+            "  return values::length;\n"
             "}\n"
             "func First(int32[]? values): int32 {\n"
             "  if (values != null) { return values[0]; }\n"
@@ -1180,7 +1180,7 @@ void array_semantics(TestContext& test) {
             "func Sum(): int32 {\n"
             "  int32[] values = [1, 2, 3];\n"
             "  values[1] = 4;\n"
-            "  return values.Length + values[0];\n"
+            "  return values::length + values[0];\n"
             "}\n"
             "func Empty(): int32[]? { return null; }\n");
   valid.analyze();
@@ -1205,7 +1205,8 @@ void array_semantics(TestContext& test) {
               "  int32[] empty = [];\n"
               "  int32[] mixed = [1, true];\n"
               "  int32 value = mixed[false];\n"
-              "  int32 missing = mixed.length;\n"
+              "  int32 missing = mixed::Length;\n"
+              "  int32 legacy = mixed.Length;\n"
               "  int32 scalar = 1;\n"
               "  scalar[0] = value;\n"
               "}\n");
@@ -1216,8 +1217,11 @@ void array_semantics(TestContext& test) {
               "heterogeneous array literal was accepted");
   test.expect(invalid.has_diagnostic("array index has type 'bool'"),
               "non-int32 array index was accepted");
-  test.expect(invalid.has_diagnostic("has no member 'length'"),
-              "array Length casing was ignored");
+  test.expect(invalid.has_diagnostic("has no meta query 'Length'"),
+              "array meta query capitalization was ignored");
+  test.expect(
+      invalid.has_diagnostic("array length is a meta query; use '::length'"),
+      "legacy array member syntax did not receive a migration hint");
   test.expect(invalid.has_diagnostic("cannot be indexed"),
               "non-array value was indexable");
 }
@@ -1432,10 +1436,16 @@ void string_value_semantics(TestContext& test) {
             "  string joined = left + right;\n"
             "  bool equal = joined == \"cloth\";\n"
             "  bool different = left != right;\n"
-            "  bool empty = joined.IsEmpty;\n"
-            "  if (equal && different && !empty) { return joined.Length; }\n"
-            "  return joined.ByteLength;\n"
-            "}\n");
+            "  bool empty = joined::isEmpty;\n"
+            "  if (equal && different && !empty) { return joined::length; }\n"
+            "  return joined::byteLength;\n"
+            "}\n"
+            "func Narrow(string? value): int32 {\n"
+            "  if (value) { return value::length; }\n"
+            "  return 0;\n"
+            "}\n"
+            "func Assert(string? value): int32 { return value!::length; }\n"
+            "func Literal(): int32 { return \"cloth\"::length; }\n");
   valid.analyze();
 
   test.expect(valid.error_count() == 0,
@@ -1445,21 +1455,20 @@ void string_value_semantics(TestContext& test) {
   bool found_is_empty = false;
   for (const cloth::HirExpression& expression :
        valid.result->hir.storage.expressions()) {
-    const auto* property =
-        std::get_if<cloth::HirStringPropertyExpression>(&expression.data);
-    if (property == nullptr) {
+    const auto* meta =
+        std::get_if<cloth::HirStringMetaExpression>(&expression.data);
+    if (meta == nullptr) {
       continue;
     }
     found_length =
-        found_length || property->property == cloth::StringProperty::kLength;
+        found_length || meta->query == cloth::StringMetaQuery::kLength;
     found_byte_length =
-        found_byte_length ||
-        property->property == cloth::StringProperty::kByteLength;
+        found_byte_length || meta->query == cloth::StringMetaQuery::kByteLength;
     found_is_empty =
-        found_is_empty || property->property == cloth::StringProperty::kIsEmpty;
+        found_is_empty || meta->query == cloth::StringMetaQuery::kIsEmpty;
   }
   test.expect(found_length && found_byte_length && found_is_empty,
-              "string properties were not retained explicitly in HIR");
+              "string meta queries were not retained explicitly in HIR");
 
   AnalyzedCompilation uppercase_type;
   uppercase_type.add("String.co", "int32 Value = 1;\n");
@@ -1476,11 +1485,15 @@ void string_value_semantics(TestContext& test) {
               "func Subtract(string left, string right): string {\n"
               "  return left - right;\n"
               "}\n"
-              "func WrongCase(string value): int32 { return value.length; }\n"
-              "func Nullable(string? value): int32 { return value.Length; }\n"
+              "func WrongCase(string value): int32 { return value::Length; }\n"
+              "func Legacy(string value): int32 { return value.Length; }\n"
+              "func Nullable(string? value): int32 { return value::length; }\n"
               "func SafeNullable(string? value): int32 {\n"
               "  return value?.Length;\n"
-              "}\n");
+              "}\n"
+              "func Called(string value) { value::length(); }\n"
+              "func Assigned(string value) { value::length = 1; }\n"
+              "func Primitive(int32 value): int32 { return value::length; }\n");
   invalid.analyze();
 
   test.expect(invalid.has_diagnostic(
@@ -1490,15 +1503,25 @@ void string_value_semantics(TestContext& test) {
       invalid.has_diagnostic(
           "operator 'minus' cannot be applied to 'string' and 'string'"),
       "string subtraction was accepted");
-  test.expect(invalid.has_diagnostic("string has no member 'length'"),
-              "string property capitalization was ignored");
+  test.expect(invalid.has_diagnostic("string has no meta query 'Length'"),
+              "string meta query capitalization was ignored");
+  test.expect(
+      invalid.has_diagnostic("string length is a meta query; use '::length'"),
+      "legacy string member syntax did not receive a migration hint");
   test.expect(invalid.has_diagnostic(
-                  "nullable type 'string?' has no members without narrowing"),
-              "nullable string member access skipped narrowing");
+                  "nullable type 'string?' has no meta queries without "
+                  "narrowing"),
+              "nullable string meta query skipped narrowing");
   test.expect(invalid.has_diagnostic(
-                  "safe access to value-type string member 'Length' requires "
-                  "nullable value types"),
-              "safe string property access produced the wrong diagnostic");
+                  "safe meta queries are not supported; narrow the string and "
+                  "use '::length'"),
+              "safe string meta access produced the wrong diagnostic");
+  test.expect(invalid.has_diagnostic("expression is not callable"),
+              "a meta query was accepted as a method call");
+  test.expect(invalid.has_diagnostic("assignment target is not mutable"),
+              "a meta query was accepted as an assignment target");
+  test.expect(invalid.has_diagnostic("type 'int32' has no Cloth meta queries"),
+              "a meta query was accepted on an unsupported value type");
 
   std::string malformed_source = "func Broken(): string { return \"";
   malformed_source.push_back(static_cast<char>(0xC3));

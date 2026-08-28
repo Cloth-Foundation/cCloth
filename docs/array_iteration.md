@@ -28,8 +28,8 @@ internal or foreign values.
 ## Control flow
 
 Lowering creates a preheader plus condition, body, latch, and exit blocks. An
-`int32` phi value carries the hidden index. The condition compares it with
-`Length`; the body performs a checked indexed load and initializes the loop
+`int32` phi value carries the hidden index. The condition compares it with the
+array length; the body performs a checked indexed load and initializes the loop
 binding. Body fallthrough and `continue` target the latch, which increments the
 index. `break` targets the exit.
 

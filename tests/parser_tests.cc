@@ -545,6 +545,45 @@ void calls_members_and_assignment(TestContext& test) {
   }
 }
 
+void meta_queries(TestContext& test) {
+  const ParsedSource source{
+      "Meta.co",
+      "func Inspect(string text, int32[] values): int32 {\n"
+      "  bool empty = text::isEmpty;\n"
+      "  return text::length + text::byteLength + values::length;\n"
+      "}\n"};
+  test.expect(error_count(source) == 0, "valid meta queries did not parse");
+
+  std::size_t meta_count = 0;
+  bool found_length = false;
+  bool found_byte_length = false;
+  bool found_is_empty = false;
+  for (const cloth::Expression& expression :
+       source.ast().storage.expressions()) {
+    const auto* meta =
+        std::get_if<cloth::MetaAccessExpression>(&expression.data);
+    if (meta == nullptr) {
+      continue;
+    }
+    ++meta_count;
+    found_length = found_length || meta->meta == "length";
+    found_byte_length = found_byte_length || meta->meta == "byteLength";
+    found_is_empty = found_is_empty || meta->meta == "isEmpty";
+  }
+  test.expect(
+      meta_count == 4 && found_length && found_byte_length && found_is_empty,
+      "meta queries were not retained as dedicated AST nodes");
+
+  const ParsedSource malformed{
+      "BadMeta.co",
+      "func Broken(string text): int32 { return text::; }\n"
+      "func Recovered(): int32 { return 1; }\n"};
+  test.expect(has_diagnostic(malformed, "expected meta query name after '::'"),
+              "missing meta query name produced the wrong diagnostic");
+  test.expect(malformed.ast().functions.size() == 2,
+              "malformed meta query prevented declaration recovery");
+}
+
 void arrays(TestContext& test) {
   const ParsedSource source{"Arrays.co",
                             "int32[] Values = [1, 2, 3];\n"
@@ -842,6 +881,7 @@ int main() {
       {"for iteration declarations", for_iteration_declarations},
       {"malformed for headers recover", malformed_for_headers_recover},
       {"calls, members, and assignment", calls_members_and_assignment},
+      {"meta queries", meta_queries},
       {"arrays", arrays},
       {"nullable types", nullable_types},
       {"null-ergonomic expressions", null_ergonomic_expressions},

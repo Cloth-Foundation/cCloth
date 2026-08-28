@@ -305,17 +305,18 @@ class MirVerifier {
       if (instruction.type != *semantics_.find_type("int32")) {
         report(instruction.range, "array length does not have type int32");
       }
-    } else if (const auto* property = std::get_if<MirStringPropertyInstruction>(
-                   &instruction.data)) {
-      verify_value(property->string, value_types, instruction.range);
-      verify_value_type(property->string, semantics_.string_type(), value_types,
+    } else if (const auto* meta =
+                   std::get_if<MirStringMetaInstruction>(&instruction.data)) {
+      verify_value(meta->string, value_types, instruction.range);
+      verify_value_type(meta->string, semantics_.string_type(), value_types,
                         instruction.range);
       require_result(instruction);
-      const TypeId expected = property->property == StringProperty::kIsEmpty
+      const TypeId expected = meta->query == StringMetaQuery::kIsEmpty
                                   ? semantics_.bool_type()
                                   : *semantics_.find_type("int32");
       if (instruction.type != expected) {
-        report(instruction.range, "string property result has the wrong type");
+        report(instruction.range,
+               "string meta query result has the wrong type");
       }
     } else if (const auto* unary =
                    std::get_if<MirUnaryInstruction>(&instruction.data)) {

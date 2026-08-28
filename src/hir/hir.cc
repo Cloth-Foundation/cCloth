@@ -145,25 +145,24 @@ class Lowerer {
                                      expression(assignment->value)};
     } else if (const auto* member =
                    std::get_if<MemberAccessExpression>(&syntax.data)) {
+      data = HirMemberExpression{expression(member->object), semantic.symbol};
+    } else if (const auto* meta =
+                   std::get_if<MetaAccessExpression>(&syntax.data)) {
       const TypeId object_type = semantics_.file(current_file_)
-                                     .expressions.at(member->object.value)
+                                     .expressions.at(meta->object.value)
                                      .type;
       if (semantics_.type(object_type).kind == TypeKind::kArray &&
-          member->member == "Length" &&
-          semantic.type != semantics_.error_type()) {
-        data = HirArrayLengthExpression{expression(member->object)};
+          meta->meta == "length" && semantic.type != semantics_.error_type()) {
+        data = HirArrayLengthExpression{expression(meta->object)};
       } else if (semantics_.type(object_type).kind == TypeKind::kString &&
                  semantic.type != semantics_.error_type()) {
-        StringProperty property = StringProperty::kLength;
-        if (member->member == "ByteLength") {
-          property = StringProperty::kByteLength;
-        } else if (member->member == "IsEmpty") {
-          property = StringProperty::kIsEmpty;
+        StringMetaQuery query = StringMetaQuery::kLength;
+        if (meta->meta == "byteLength") {
+          query = StringMetaQuery::kByteLength;
+        } else if (meta->meta == "isEmpty") {
+          query = StringMetaQuery::kIsEmpty;
         }
-        data =
-            HirStringPropertyExpression{expression(member->object), property};
-      } else {
-        data = HirMemberExpression{expression(member->object), semantic.symbol};
+        data = HirStringMetaExpression{expression(meta->object), query};
       }
     } else if (const auto* member =
                    std::get_if<SafeMemberAccessExpression>(&syntax.data)) {

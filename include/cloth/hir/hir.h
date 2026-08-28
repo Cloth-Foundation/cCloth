@@ -108,15 +108,15 @@ struct HirArrayLengthExpression {
   HirExpressionId array;
 };
 
-enum class StringProperty {
+enum class StringMetaQuery {
   kLength,
   kByteLength,
   kIsEmpty,
 };
 
-struct HirStringPropertyExpression {
+struct HirStringMetaExpression {
   HirExpressionId string;
-  StringProperty property;
+  StringMetaQuery query;
 };
 
 struct HirGroupedExpression {
@@ -129,7 +129,7 @@ using HirExpressionData = std::variant<
     HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
     HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
     HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
-    HirStringPropertyExpression, HirGroupedExpression>;
+    HirStringMetaExpression, HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;

@@ -35,7 +35,7 @@ layout.
 Arrays lower as opaque pointers. Literal allocation passes the element count,
 verified ABI size and alignment, and reference-content metadata to the runtime.
 Every indexed load or store obtains its address through the checked runtime
-access function. `Length` is likewise a runtime query, keeping the array header
+access function. `::length` is likewise a runtime query, keeping the array header
 opaque to generated code.
 
 ## Control flow and expressions
@@ -114,7 +114,7 @@ zero-initialized storage with that descriptor in its first header word or
 terminates through the runtime failure path.
 `cloth_rt_string_literal` constructs an opaque Cloth string over immutable
 program-lifetime bytes. Concatenation returns a new managed string with owned
-bytes. Equality compares byte content, and property calls expose cached scalar
+bytes. Equality compares byte content, and meta-query calls expose cached scalar
 and byte lengths without revealing the runtime layout.
 The array calls allocate typed element storage, query its fixed length, and
 perform null and bounds checked element addressing.

@@ -145,9 +145,9 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* length =
                  std::get_if<MirArrayLengthInstruction>(&instruction.data)) {
     uses.push_back(length->array);
-  } else if (const auto* property =
-                 std::get_if<MirStringPropertyInstruction>(&instruction.data)) {
-    uses.push_back(property->string);
+  } else if (const auto* meta =
+                 std::get_if<MirStringMetaInstruction>(&instruction.data)) {
+    uses.push_back(meta->string);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     uses.push_back(unary->operand);
@@ -269,9 +269,9 @@ class BodyEmitter {
   void emit_array_length(const MirInstruction& instruction,
                          const MirArrayLengthInstruction& length,
                          std::ostringstream& output);
-  void emit_string_property(const MirInstruction& instruction,
-                            const MirStringPropertyInstruction& property,
-                            std::ostringstream& output);
+  void emit_string_meta(const MirInstruction& instruction,
+                        const MirStringMetaInstruction& meta,
+                        std::ostringstream& output);
   void emit_unary(const MirInstruction& instruction,
                   const MirUnaryInstruction& unary, std::ostringstream& output);
   void emit_binary(const MirInstruction& instruction,
@@ -1316,9 +1316,9 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* length =
                  std::get_if<MirArrayLengthInstruction>(&instruction.data)) {
     emit_array_length(instruction, *length, output);
-  } else if (const auto* property =
-                 std::get_if<MirStringPropertyInstruction>(&instruction.data)) {
-    emit_string_property(instruction, *property, output);
+  } else if (const auto* meta =
+                 std::get_if<MirStringMetaInstruction>(&instruction.data)) {
+    emit_string_meta(instruction, *meta, output);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     emit_unary(instruction, *unary, output);
@@ -1487,21 +1487,21 @@ void BodyEmitter::emit_array_length(const MirInstruction& instruction,
          << ")\n";
 }
 
-void BodyEmitter::emit_string_property(
-    const MirInstruction& instruction,
-    const MirStringPropertyInstruction& property, std::ostringstream& output) {
-  const std::string operand = value(property.string);
-  switch (property.property) {
-    case StringProperty::kLength:
+void BodyEmitter::emit_string_meta(const MirInstruction& instruction,
+                                   const MirStringMetaInstruction& meta,
+                                   std::ostringstream& output) {
+  const std::string operand = value(meta.string);
+  switch (meta.query) {
+    case StringMetaQuery::kLength:
       output << "  " << result_name(instruction)
              << " = call i32 @cloth_rt_string_length(ptr " << operand << ")\n";
       break;
-    case StringProperty::kByteLength:
+    case StringMetaQuery::kByteLength:
       output << "  " << result_name(instruction)
              << " = call i32 @cloth_rt_string_byte_length(ptr " << operand
              << ")\n";
       break;
-    case StringProperty::kIsEmpty: {
+    case StringMetaQuery::kIsEmpty: {
       const std::string raw_result = next_address();
       output << "  " << raw_result
              << " = call i8 @cloth_rt_string_is_empty(ptr " << operand << ")\n"

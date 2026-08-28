@@ -925,6 +925,9 @@ class SemanticAnalyzer {
     } else if (const auto* member =
                    std::get_if<MemberAccessExpression>(&expression.data)) {
       state = analyze_member_access(*member, expression.range);
+    } else if (const auto* meta =
+                   std::get_if<MetaAccessExpression>(&expression.data)) {
+      state = analyze_meta_access(*meta, expression.range);
     } else if (const auto* member =
                    std::get_if<SafeMemberAccessExpression>(&expression.data)) {
       state = analyze_safe_member_access(*member, expression.range);
@@ -1527,24 +1530,29 @@ class SemanticAnalyzer {
     }
     if (object_type.kind == TypeKind::kArray) {
       if (member.member == "Length") {
-        return ExpressionState{*model_.find_type("int32"),
-                               ValueCategory::kValue};
+        diagnostics_.error(range,
+                           "array length is a meta query; use '::length'");
+      } else {
+        diagnostics_.error(range, "array type '" + object_type.name +
+                                      "' has no member '" +
+                                      std::string{member.member} + "'");
       }
-      diagnostics_.error(range, "array type '" + object_type.name +
-                                    "' has no member '" +
-                                    std::string{member.member} + "'");
       return ExpressionState{model_.error_type()};
     }
     if (object_type.kind == TypeKind::kString) {
-      if (member.member == "Length" || member.member == "ByteLength") {
-        return ExpressionState{*model_.find_type("int32"),
-                               ValueCategory::kValue};
+      if (member.member == "Length") {
+        diagnostics_.error(range,
+                           "string length is a meta query; use '::length'");
+      } else if (member.member == "ByteLength") {
+        diagnostics_.error(
+            range, "string byte length is a meta query; use '::byteLength'");
+      } else if (member.member == "IsEmpty") {
+        diagnostics_.error(range,
+                           "string emptiness is a meta query; use '::isEmpty'");
+      } else {
+        diagnostics_.error(
+            range, "string has no member '" + std::string{member.member} + "'");
       }
-      if (member.member == "IsEmpty") {
-        return ExpressionState{model_.bool_type(), ValueCategory::kValue};
-      }
-      diagnostics_.error(
-          range, "string has no member '" + std::string{member.member} + "'");
       return ExpressionState{model_.error_type()};
     }
     if (object_type.kind != TypeKind::kFileClass || !object_type.file) {
@@ -1590,6 +1598,48 @@ class SemanticAnalyzer {
         model_.error_type(), ValueCategory::kCallable, {}, std::move(members)};
   }
 
+  ExpressionState analyze_meta_access(const MetaAccessExpression& meta,
+                                      SourceRange range) {
+    const ExpressionState object = analyze_expression(meta.object);
+    if (!check_value(object, expression_range(meta.object)) ||
+        object.type == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+
+    const SemanticType& object_type = model_.type(object.type);
+    if (object_type.kind == TypeKind::kNullable) {
+      diagnostics_.error(range, "nullable type '" + object_type.name +
+                                    "' has no meta queries without narrowing");
+      return ExpressionState{model_.error_type()};
+    }
+    if (object_type.kind == TypeKind::kArray) {
+      if (meta.meta == "length") {
+        return ExpressionState{*model_.find_type("int32"),
+                               ValueCategory::kValue};
+      }
+      diagnostics_.error(range, "array type '" + object_type.name +
+                                    "' has no meta query '" +
+                                    std::string{meta.meta} + "'");
+      return ExpressionState{model_.error_type()};
+    }
+    if (object_type.kind == TypeKind::kString) {
+      if (meta.meta == "length" || meta.meta == "byteLength") {
+        return ExpressionState{*model_.find_type("int32"),
+                               ValueCategory::kValue};
+      }
+      if (meta.meta == "isEmpty") {
+        return ExpressionState{model_.bool_type(), ValueCategory::kValue};
+      }
+      diagnostics_.error(
+          range, "string has no meta query '" + std::string{meta.meta} + "'");
+      return ExpressionState{model_.error_type()};
+    }
+
+    diagnostics_.error(
+        range, "type '" + object_type.name + "' has no Cloth meta queries");
+    return ExpressionState{model_.error_type()};
+  }
+
   ExpressionState analyze_safe_member_access(
       const SafeMemberAccessExpression& member, SourceRange range) {
     const ExpressionState object = analyze_expression(member.object);
@@ -1609,10 +1659,9 @@ class SemanticAnalyzer {
     const SemanticType& object_type = model_.type(*nullable.element_type);
     if (object_type.kind == TypeKind::kArray) {
       if (member.member == "Length") {
-        diagnostics_.error(
-            range,
-            "safe access to value-type member 'Length' requires nullable "
-            "value types");
+        diagnostics_.error(range,
+                           "safe meta queries are not supported; narrow the "
+                           "array and use '::length'");
       } else {
         diagnostics_.error(range, "array type '" + object_type.name +
                                       "' has no member '" +
@@ -1621,11 +1670,18 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     if (object_type.kind == TypeKind::kString) {
-      if (member.member == "Length" || member.member == "ByteLength" ||
-          member.member == "IsEmpty") {
-        diagnostics_.error(range, "safe access to value-type string member '" +
-                                      std::string{member.member} +
-                                      "' requires nullable value types");
+      if (member.member == "Length") {
+        diagnostics_.error(range,
+                           "safe meta queries are not supported; narrow the "
+                           "string and use '::length'");
+      } else if (member.member == "ByteLength") {
+        diagnostics_.error(range,
+                           "safe meta queries are not supported; narrow the "
+                           "string and use '::byteLength'");
+      } else if (member.member == "IsEmpty") {
+        diagnostics_.error(range,
+                           "safe meta queries are not supported; narrow the "
+                           "string and use '::isEmpty'");
       } else {
         diagnostics_.error(
             range, "string has no member '" + std::string{member.member} + "'");
