@@ -72,6 +72,10 @@ allocation/load/store/length operations, local declarations, unary and binary
 operations, calls, explicit conversions, and phi values. Source ranges,
 `TypeId`, and `SymbolId` identities survive lowering.
 
+Stage 15 adds explicit object widening, object metadata, exact type-test, and
+checked-cast instructions. Widening erases to the same pointer. A checked cast
+retains both the nullable result type and its non-null runtime target.
+
 Evaluation is left-to-right. Array element operands are evaluated before the
 array instruction, and indexed assignment evaluates the array and index before
 the assigned value. Structured loops use the same explicit jump and branch

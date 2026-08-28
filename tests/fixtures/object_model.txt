@@ -1,0 +1,14 @@
+true
+false
+ObjectModel
+true
+false
+true
+true
+ObjectModel
+string
+array
+cloth
+false
+true
+false

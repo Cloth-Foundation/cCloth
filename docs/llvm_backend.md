@@ -46,8 +46,8 @@ instructions, preserving `&&` and `||` short-circuit behavior.
 
 Integer operations select signed or unsigned division, remainder, and
 comparison from the semantic operand type. Floating-point operations use LLVM
-floating instructions. Null-to-reference conversions disappear because both
-representations use opaque pointers.
+floating instructions. Null-to-reference and managed-reference-to-`object`
+conversions disappear because all use opaque pointers.
 
 Canonical void functions lower to LLVM `void` regardless of whether the source
 omitted the return annotation or wrote `: void`. Their fallthrough and
@@ -85,6 +85,9 @@ declare i8 @cloth_rt_string_equal(ptr, ptr)
 declare i32 @cloth_rt_string_length(ptr)
 declare i32 @cloth_rt_string_byte_length(ptr)
 declare i8 @cloth_rt_string_is_empty(ptr)
+declare ptr @cloth_rt_object_type_name(ptr)
+declare i8 @cloth_rt_object_is_kind(ptr, i64)
+declare i8 @cloth_rt_object_is_type(ptr, ptr)
 declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)
 declare i32 @cloth_rt_array_length(ptr)
 declare ptr @cloth_rt_array_element(ptr, i32)
@@ -116,6 +119,10 @@ terminates through the runtime failure path.
 program-lifetime bytes. Concatenation returns a new managed string with owned
 bytes. Equality compares byte content, and meta-query calls expose cached scalar
 and byte lengths without revealing the runtime layout.
+Object widening is pointer-preserving. `::typeName` calls the runtime and
+returns a managed string. Exact file-class checks pass the compiler-emitted
+descriptor; string checks pass the stable heap-kind value. Safe `as T?`
+lowering selects the original pointer or null from the resulting predicate.
 The array calls allocate typed element storage, query its fixed length, and
 perform null and bounds checked element addressing.
 `cloth_rt_require_receiver` returns for a non-null reference and traps through
@@ -134,10 +141,9 @@ Stage 13.5 performs backward reference liveness over the MIR CFG. It clears
 temporary and parameter/local root slots after their last use and clears values
 retained only by another predecessor when control flow joins. A collecting call
 sees all of its reference operands rooted; result roots are populated before
-any source root is cleared. The managed allocation calls, including string
-concatenation, are the only automatic safepoints. Runtime checks, output, array
-access, and shadow-stack maintenance
-do not collect.
+any source root is cleared. Managed allocation calls, including string
+concatenation and `::typeName`, are the only automatic safepoints. Runtime
+checks, output, array access, and shadow-stack maintenance do not collect.
 
 ## Verification and deferred work
 

@@ -139,6 +139,18 @@ class Lowerer {
           expression(binary->right),
           file.expressions.at(binary->left.value).is_presence_test,
           file.expressions.at(binary->right.value).is_presence_test};
+    } else if (const auto* test =
+                   std::get_if<TypeTestExpression>(&syntax.data)) {
+      if (semantic.type != semantics_.error_type() && semantic.checked_type) {
+        data = HirTypeTestExpression{expression(test->value),
+                                     *semantic.checked_type};
+      }
+    } else if (const auto* cast =
+                   std::get_if<CheckedCastExpression>(&syntax.data)) {
+      if (semantic.type != semantics_.error_type() && semantic.checked_type) {
+        data = HirCheckedCastExpression{expression(cast->value),
+                                        *semantic.checked_type};
+      }
     } else if (const auto* assignment =
                    std::get_if<AssignmentExpression>(&syntax.data)) {
       data = HirAssignmentExpression{expression(assignment->target),
@@ -151,8 +163,12 @@ class Lowerer {
       const TypeId object_type = semantics_.file(current_file_)
                                      .expressions.at(meta->object.value)
                                      .type;
-      if (semantics_.type(object_type).kind == TypeKind::kArray &&
-          meta->meta == "length" && semantic.type != semantics_.error_type()) {
+      if (meta->meta == "typeName" &&
+          semantic.type == semantics_.string_type()) {
+        data = HirObjectMetaExpression{expression(meta->object)};
+      } else if (semantics_.type(object_type).kind == TypeKind::kArray &&
+                 meta->meta == "length" &&
+                 semantic.type != semantics_.error_type()) {
         data = HirArrayLengthExpression{expression(meta->object)};
       } else if (semantics_.type(object_type).kind == TypeKind::kString &&
                  semantic.type != semantics_.error_type()) {

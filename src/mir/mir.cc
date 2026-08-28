@@ -143,13 +143,47 @@ class BodyBuilder {
       return value;
     }
     const SemanticType& target = semantics_.type(expected);
-    if (target.kind == TypeKind::kNullable && target.element_type &&
-        (actual == semantics_.null_type() || actual == *target.element_type)) {
+    if (target.kind == TypeKind::kObject && is_non_null_reference(actual)) {
       return emit_value(
           expected, range,
-          MirConvertInstruction{value, MirConversionKind::kToNullable});
+          MirConvertInstruction{value, MirConversionKind::kWidenReference});
+    }
+    if (target.kind == TypeKind::kNullable && target.element_type) {
+      if (actual == semantics_.null_type()) {
+        return emit_value(
+            expected, range,
+            MirConvertInstruction{value, MirConversionKind::kToNullable});
+      }
+      const SemanticType& source = semantics_.type(actual);
+      if (source.kind == TypeKind::kNullable && source.element_type &&
+          can_widen_reference(*source.element_type, *target.element_type)) {
+        return emit_value(
+            expected, range,
+            MirConvertInstruction{value, MirConversionKind::kWidenReference});
+      }
+      MirValueId converted = value;
+      if (actual != *target.element_type) {
+        converted = coerce(value, *target.element_type, range);
+        if (value_type(converted) == semantics_.error_type()) {
+          return converted;
+        }
+      }
+      return emit_value(
+          expected, range,
+          MirConvertInstruction{converted, MirConversionKind::kToNullable});
     }
     return invalid_value(range);
+  }
+
+  bool is_non_null_reference(TypeId type) const {
+    const TypeKind kind = semantics_.type(type).kind;
+    return kind == TypeKind::kString || kind == TypeKind::kObject ||
+           kind == TypeKind::kFileClass || kind == TypeKind::kArray;
+  }
+
+  bool can_widen_reference(TypeId source, TypeId target) const {
+    return source == target || (target == semantics_.object_type() &&
+                                is_non_null_reference(source));
   }
 
   void lower_block(HirBlockId id) {
@@ -418,6 +452,22 @@ class BodyBuilder {
       return emit_value(expression.type, expression.range,
                         MirBinaryInstruction{left, binary->operation, right});
     }
+    if (const auto* test =
+            std::get_if<HirTypeTestExpression>(&expression.data)) {
+      const HirExpression& value_syntax = hir_.storage.expression(test->value);
+      const MirValueId value = require_value(
+          lower_expression(test->value), value_syntax.type, value_syntax.range);
+      return emit_value(expression.type, expression.range,
+                        MirTypeTestInstruction{value, test->target});
+    }
+    if (const auto* cast =
+            std::get_if<HirCheckedCastExpression>(&expression.data)) {
+      const HirExpression& value_syntax = hir_.storage.expression(cast->value);
+      const MirValueId value = require_value(
+          lower_expression(cast->value), value_syntax.type, value_syntax.range);
+      return emit_value(expression.type, expression.range,
+                        MirCheckedCastInstruction{value, cast->target});
+    }
     if (const auto* assignment =
             std::get_if<HirAssignmentExpression>(&expression.data)) {
       return lower_assignment(*assignment, expression);
@@ -484,6 +534,14 @@ class BodyBuilder {
                                              string.type, string.range);
       return emit_value(expression.type, expression.range,
                         MirStringMetaInstruction{value, meta->query});
+    }
+    if (const auto* meta =
+            std::get_if<HirObjectMetaExpression>(&expression.data)) {
+      const HirExpression& object = hir_.storage.expression(meta->object);
+      const MirValueId value = require_value(lower_expression(meta->object),
+                                             object.type, object.range);
+      return emit_value(expression.type, expression.range,
+                        MirObjectMetaInstruction{value});
     }
     const auto& grouped = std::get<HirGroupedExpression>(expression.data);
     return lower_expression(grouped.expression);

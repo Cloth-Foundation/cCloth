@@ -52,6 +52,14 @@ class HirVerifier {
                      std::get_if<HirBinaryExpression>(&expression.data)) {
         verify_expression(binary->left, expression.range);
         verify_expression(binary->right, expression.range);
+      } else if (const auto* test =
+                     std::get_if<HirTypeTestExpression>(&expression.data)) {
+        verify_expression(test->value, expression.range);
+        verify_type(test->target, expression.range);
+      } else if (const auto* cast =
+                     std::get_if<HirCheckedCastExpression>(&expression.data)) {
+        verify_expression(cast->value, expression.range);
+        verify_type(cast->target, expression.range);
       } else if (const auto* assignment =
                      std::get_if<HirAssignmentExpression>(&expression.data)) {
         verify_expression(assignment->target, expression.range);
@@ -94,6 +102,9 @@ class HirVerifier {
       } else if (const auto* meta =
                      std::get_if<HirStringMetaExpression>(&expression.data)) {
         verify_expression(meta->string, expression.range);
+      } else if (const auto* meta =
+                     std::get_if<HirObjectMetaExpression>(&expression.data)) {
+        verify_expression(meta->object, expression.range);
       } else if (const auto* grouped =
                      std::get_if<HirGroupedExpression>(&expression.data)) {
         verify_expression(grouped->expression, expression.range);

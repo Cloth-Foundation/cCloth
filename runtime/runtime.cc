@@ -57,6 +57,7 @@ constexpr std::uint64_t kInitialCollectionThreshold = 64 * 1024;
 constexpr std::size_t kInitialAllocationIndexCapacity = 64;
 constexpr char kStringTypeName[] = "string";
 constexpr char kArrayTypeName[] = "Array";
+constexpr char kArrayMetaTypeName[] = "array";
 constexpr ClothTypeDescriptor kStringTypeDescriptor{
     ClothHeapObjectKind::kString,
     kStringTypeName,
@@ -484,6 +485,17 @@ const ClothString& require_string(const void* value) noexcept {
   return string;
 }
 
+const ClothObjectHeader& require_object(const void* value) noexcept {
+  if (value == nullptr) {
+    runtime_failure("null object");
+  }
+  const auto& object = *static_cast<const ClothObjectHeader*>(value);
+  if (object.type == nullptr) {
+    runtime_failure("object has no type descriptor");
+  }
+  return object;
+}
+
 ClothString* allocate_borrowed_string(const char* data, std::size_t byte_size,
                                       std::size_t scalar_count) noexcept {
   collect_before_allocation(sizeof(ClothString));
@@ -691,6 +703,43 @@ extern "C" std::int32_t cloth_rt_string_byte_length(
 
 extern "C" std::uint8_t cloth_rt_string_is_empty(const void* value) noexcept {
   return require_string(value).byte_size == 0 ? 1 : 0;
+}
+
+extern "C" void* cloth_rt_object_type_name(const void* value) noexcept {
+  const ClothObjectHeader& object = require_object(value);
+  const char* name = object.type->name;
+  std::size_t name_size =
+      native_size(object.type->name_size, "object type name is too large");
+  if (object.type->kind == ClothHeapObjectKind::kArray) {
+    name = kArrayMetaTypeName;
+    name_size = sizeof(kArrayMetaTypeName) - 1;
+  }
+  if (name == nullptr) {
+    runtime_failure("object type name has null storage");
+  }
+  const std::size_t scalar_count = count_utf8_scalars(name, name_size);
+  return allocate_borrowed_string(name, name_size, scalar_count);
+}
+
+extern "C" std::uint8_t cloth_rt_object_is_kind(const void* value,
+                                                std::uint64_t kind) noexcept {
+  if (value == nullptr) {
+    return 0;
+  }
+  if (kind > static_cast<std::uint64_t>(ClothHeapObjectKind::kArray)) {
+    runtime_failure("invalid heap object kind");
+  }
+  const ClothObjectHeader& object = require_object(value);
+  return object.type->kind == static_cast<ClothHeapObjectKind>(kind) ? 1 : 0;
+}
+
+extern "C" std::uint8_t cloth_rt_object_is_type(
+    const void* value, const ClothTypeDescriptor* type) noexcept {
+  validate_type_descriptor(type);
+  if (value == nullptr) {
+    return 0;
+  }
+  return require_object(value).type == type ? 1 : 0;
 }
 
 extern "C" void* cloth_rt_array_alloc(

@@ -30,6 +30,7 @@ class ExpressionParser {
   [[nodiscard]] ExpressionId parse_call_expression(ExpressionId callee);
   [[nodiscard]] ExpressionId parse_array_literal_expression();
   [[nodiscard]] ExpressionId parse_index_expression(ExpressionId object);
+  [[nodiscard]] TypeSyntax parse_checked_type();
   [[nodiscard]] ExpressionId make_invalid_expression(SourceRange range);
 
   [[nodiscard]] static int binary_precedence(TokenKind kind) noexcept;

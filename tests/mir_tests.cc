@@ -459,6 +459,36 @@ void string_instructions(TestContext& test) {
               "string value operators were not retained in MIR");
 }
 
+void object_model_instructions(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Objects.co",
+                  "Objects() {}\n"
+                  "static func Main() {\n"
+                  "  Objects instance = Objects();\n"
+                  "  object value = instance;\n"
+                  "  bool matches = value is Objects;\n"
+                  "  Objects? cast = value as Objects?;\n"
+                  "  object[] values = [instance, \"cloth\"];\n"
+                  "  string name = value::typeName;\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid object operations failed to lower");
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  test.expect(
+      body_has_conversion(body, cloth::MirConversionKind::kWidenReference),
+      "object widening was not explicit in MIR");
+  test.expect(body_has_instruction<cloth::MirTypeTestInstruction>(body) &&
+                  body_has_instruction<cloth::MirCheckedCastInstruction>(body),
+              "checked object operations were not lowered explicitly");
+  test.expect(body_has_instruction<cloth::MirObjectMetaInstruction>(body),
+              "object typeName was not lowered explicitly");
+  test.expect(body_has_instruction<cloth::MirArrayLiteralInstruction>(body),
+              "heterogeneous object array was not retained in MIR");
+}
+
 void for_iteration_control_flow(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Iteration.co",
@@ -876,6 +906,7 @@ int main() {
       {"member store", member_store},
       {"array instructions", array_instructions},
       {"string instructions", string_instructions},
+      {"object model instructions", object_model_instructions},
       {"for iteration control flow", for_iteration_control_flow},
       {"for terminating body reachability", for_terminating_body_reachability},
       {"nullable conversion", nullable_conversion},

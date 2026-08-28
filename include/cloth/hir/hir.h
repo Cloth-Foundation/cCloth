@@ -64,6 +64,16 @@ struct HirBinaryExpression {
   bool right_is_presence_test{false};
 };
 
+struct HirTypeTestExpression {
+  HirExpressionId value;
+  TypeId target;
+};
+
+struct HirCheckedCastExpression {
+  HirExpressionId value;
+  TypeId target;
+};
+
 struct HirAssignmentExpression {
   HirExpressionId target;
   HirExpressionId value;
@@ -119,6 +129,10 @@ struct HirStringMetaExpression {
   StringMetaQuery query;
 };
 
+struct HirObjectMetaExpression {
+  HirExpressionId object;
+};
+
 struct HirGroupedExpression {
   HirExpressionId expression;
 };
@@ -126,10 +140,11 @@ struct HirGroupedExpression {
 using HirExpressionData = std::variant<
     HirInvalidExpression, HirLiteralExpression, HirSymbolExpression,
     HirTypeExpression, HirUnaryExpression, HirBinaryExpression,
-    HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
-    HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
-    HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
-    HirStringMetaExpression, HirGroupedExpression>;
+    HirTypeTestExpression, HirCheckedCastExpression, HirAssignmentExpression,
+    HirMemberExpression, HirSafeMemberExpression, HirNullCoalesceExpression,
+    HirNullAssertExpression, HirCallExpression, HirArrayLiteralExpression,
+    HirIndexExpression, HirArrayLengthExpression, HirStringMetaExpression,
+    HirObjectMetaExpression, HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;

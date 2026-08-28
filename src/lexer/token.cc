@@ -160,6 +160,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "unsafe";
     case TokenKind::kKwImport:
       return "import";
+    case TokenKind::kKwIs:
+      return "is";
     case TokenKind::kKwAs:
       return "as";
     case TokenKind::kKwModule:
@@ -200,6 +202,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "byte";
     case TokenKind::kKwVoid:
       return "void";
+    case TokenKind::kKwObject:
+      return "object";
   }
   return "unknown";
 }

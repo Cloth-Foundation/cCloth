@@ -84,6 +84,10 @@ struct MirStringMetaInstruction {
   StringMetaQuery query;
 };
 
+struct MirObjectMetaInstruction {
+  MirValueId object;
+};
+
 struct MirUnaryInstruction {
   TokenKind operation;
   MirValueId operand;
@@ -96,6 +100,7 @@ struct MirBinaryInstruction {
 };
 
 enum class MirConversionKind {
+  kWidenReference,
   kToNullable,
   kFromNullable,
 };
@@ -111,6 +116,16 @@ struct MirIsNonNullInstruction {
 
 struct MirNullAssertInstruction {
   MirValueId value;
+};
+
+struct MirTypeTestInstruction {
+  MirValueId value;
+  TypeId target;
+};
+
+struct MirCheckedCastInstruction {
+  MirValueId value;
+  TypeId target;
 };
 
 enum class MirCallKind {
@@ -142,8 +157,9 @@ using MirInstructionData = std::variant<
     MirLoadMemberInstruction, MirStoreMemberInstruction,
     MirArrayLiteralInstruction, MirArrayLoadInstruction,
     MirArrayStoreInstruction, MirArrayLengthInstruction,
-    MirStringMetaInstruction, MirUnaryInstruction, MirBinaryInstruction,
-    MirConvertInstruction, MirIsNonNullInstruction, MirNullAssertInstruction,
+    MirStringMetaInstruction, MirObjectMetaInstruction, MirUnaryInstruction,
+    MirBinaryInstruction, MirConvertInstruction, MirIsNonNullInstruction,
+    MirNullAssertInstruction, MirTypeTestInstruction, MirCheckedCastInstruction,
     MirCallInstruction, MirPhiInstruction>;
 
 struct MirInstruction {

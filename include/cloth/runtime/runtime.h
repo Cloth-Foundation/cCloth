@@ -49,6 +49,11 @@ void cloth_rt_gc_collect() noexcept;
 [[nodiscard]] std::int32_t cloth_rt_string_byte_length(
     const void* value) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_string_is_empty(const void* value) noexcept;
+[[nodiscard]] void* cloth_rt_object_type_name(const void* value) noexcept;
+[[nodiscard]] std::uint8_t cloth_rt_object_is_kind(const void* value,
+                                                   std::uint64_t kind) noexcept;
+[[nodiscard]] std::uint8_t cloth_rt_object_is_type(
+    const void* value, const ClothTypeDescriptor* type) noexcept;
 [[nodiscard]] void* cloth_rt_array_alloc(
     std::int32_t length, std::uint64_t element_size,
     std::uint64_t element_alignment, std::uint8_t contains_references) noexcept;

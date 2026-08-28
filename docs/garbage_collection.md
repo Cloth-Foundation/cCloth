@@ -108,7 +108,8 @@ The LLVM backend roots these categories:
 - constructor `self`, before any field initializer or constructor statement;
 - reference-valued parameters and local bindings, including nullable forms;
 - every reference-producing MIR value, including strings, arrays, object calls,
-  nullable conversions, member loads, and reference phi nodes.
+  object widenings, checked casts, type-name strings, nullable conversions,
+  member loads, and reference phi nodes.
 
 All root slots are initialized to null before registration. Reference-free
 callables do not create empty frames. Every reachable return pops its frame
@@ -131,8 +132,9 @@ or writes it. Registry entries record the allocation address and complete
 managed size plus collector-only links and mark state.
 
 Managed allocation is the only automatic safepoint. Specifically,
-`cloth_rt_alloc`, `cloth_rt_string_literal`, `cloth_rt_string_concat`, and
-`cloth_rt_array_alloc` may collect before reserving new storage. Checks,
+`cloth_rt_alloc`, `cloth_rt_string_literal`, `cloth_rt_string_concat`,
+`cloth_rt_object_type_name`, and `cloth_rt_array_alloc` may collect before
+reserving new storage. Type checks,
 printing, array access, root-frame
 operations, and an ordinary call boundary do not independently collect; a
 callee can still reach a managed allocation safepoint. Before an allocation

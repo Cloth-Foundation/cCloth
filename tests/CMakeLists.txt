@@ -126,6 +126,12 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/string_values.txt
         EXACT
     )
+    cloth_add_native_output_test(object_model
+        OUTPUT "cloth object model"
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ObjectModel.co
+        EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/object_model.txt
+        EXACT
+    )
     cloth_add_native_failure_test(null_assert_failure
         OUTPUT "cloth null assert failure"
         SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/NullAssertFailure.co
@@ -186,5 +192,7 @@ cloth_add_cli_failure_test(final_error
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/FinalErrors.co)
 cloth_add_cli_failure_test(nullable_error
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/NullableErrors.co)
+cloth_add_cli_failure_test(object_model_error
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ObjectModelErrors.co)
 
 cloth_finalize_tests()

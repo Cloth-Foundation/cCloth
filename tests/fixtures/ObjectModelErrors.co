@@ -1,0 +1,13 @@
+static func Main() {
+  int32 scalar = 1;
+  bool primitiveTest = scalar is object;
+
+  object value = "cloth";
+  string nonNullableCast = value as string;
+  bool nullableTest = value is string?;
+  bool erasedArrayTest = value is int32[];
+  object boxedPrimitive = scalar;
+
+  int32[] numbers = [1, 2];
+  object[] covariant = numbers;
+}

@@ -114,7 +114,7 @@ void keywords_versus_identifiers(TestContext& test) {
 void primitive_keywords(TestContext& test) {
   const LexedSource source{
       "int int8 int16 int32 int64 uint uint8 uint16 uint32 uint64 "
-      "float float32 float64 bool char byte void"};
+      "float float32 float64 bool char byte void object"};
   expect_kinds(test, source,
                {cloth::TokenKind::kKwInt, cloth::TokenKind::kKwInt8,
                 cloth::TokenKind::kKwInt16, cloth::TokenKind::kKwInt32,
@@ -124,7 +124,17 @@ void primitive_keywords(TestContext& test) {
                 cloth::TokenKind::kKwFloat, cloth::TokenKind::kKwFloat32,
                 cloth::TokenKind::kKwFloat64, cloth::TokenKind::kKwBool,
                 cloth::TokenKind::kKwChar, cloth::TokenKind::kKwByte,
-                cloth::TokenKind::kKwVoid, cloth::TokenKind::kEof});
+                cloth::TokenKind::kKwVoid, cloth::TokenKind::kKwObject,
+                cloth::TokenKind::kEof});
+}
+
+void checked_type_keywords(TestContext& test) {
+  const LexedSource source{"value is string value as string?"};
+  expect_kinds(test, source,
+               {cloth::TokenKind::kIdentifier, cloth::TokenKind::kKwIs,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kKwAs, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kQuestion, cloth::TokenKind::kEof});
 }
 
 void numeric_literals(TestContext& test) {
@@ -329,6 +339,7 @@ int main() {
       {"single identifier", single_identifier},
       {"keywords versus identifiers", keywords_versus_identifiers},
       {"primitive keywords", primitive_keywords},
+      {"checked type keywords", checked_type_keywords},
       {"numeric literals", numeric_literals},
       {"punctuation", punctuation},
       {"import keywords", import_keywords},

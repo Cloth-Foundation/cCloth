@@ -584,6 +584,40 @@ void meta_queries(TestContext& test) {
               "malformed meta query prevented declaration recovery");
 }
 
+void checked_type_expressions(TestContext& test) {
+  const ParsedSource source{"Checked.co",
+                            "static func Main() {\n"
+                            "  object value = \"cloth\";\n"
+                            "  bool matches = value is string;\n"
+                            "  string? cast = value as string?;\n"
+                            "}\n"};
+  test.expect(error_count(source) == 0,
+              "valid checked type expressions did not parse");
+  bool found_test = false;
+  bool found_cast = false;
+  for (const cloth::Expression& expression :
+       source.ast().storage.expressions()) {
+    if (const auto* type_test =
+            std::get_if<cloth::TypeTestExpression>(&expression.data)) {
+      found_test =
+          type_test->target.name == "string" && !type_test->target.is_nullable;
+    }
+    if (const auto* cast =
+            std::get_if<cloth::CheckedCastExpression>(&expression.data)) {
+      found_cast = cast->target.name == "string" && cast->target.is_nullable;
+    }
+  }
+  test.expect(found_test && found_cast,
+              "checked type syntax was not retained in dedicated AST nodes");
+
+  const ParsedSource malformed{"MalformedChecked.co",
+                               "static func Main() { object value = \"x\"; "
+                               "bool a = value is; object? b = value as; }\n"};
+  test.expect(
+      has_diagnostic(malformed, "expected a type after checked type operator"),
+      "missing checked target type produced the wrong diagnostic");
+}
+
 void arrays(TestContext& test) {
   const ParsedSource source{"Arrays.co",
                             "int32[] Values = [1, 2, 3];\n"
@@ -882,6 +916,7 @@ int main() {
       {"malformed for headers recover", malformed_for_headers_recover},
       {"calls, members, and assignment", calls_members_and_assignment},
       {"meta queries", meta_queries},
+      {"checked type expressions", checked_type_expressions},
       {"arrays", arrays},
       {"nullable types", nullable_types},
       {"null-ergonomic expressions", null_ergonomic_expressions},

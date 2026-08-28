@@ -1,0 +1,38 @@
+ObjectModel() {}
+
+static func Main() {
+  ObjectModel instance = ObjectModel();
+  object first = instance;
+  object same = instance;
+  object different = ObjectModel();
+
+  println(first == same);
+  println(first == different);
+  println(first::typeName);
+  println(first is ObjectModel);
+  println(first is string);
+
+  ObjectModel? recovered = first as ObjectModel?;
+  string? rejected = first as string?;
+  println(recovered != null);
+  println(rejected == null);
+
+  object[] values = [instance, "cloth", [1, 2, 3]];
+  for (object value in values) {
+    println(value::typeName);
+  }
+
+  object? maybeString = "cloth";
+  string? text = maybeString as string?;
+  println(text ?? "missing");
+
+  object? absent = null;
+  println(absent is ObjectModel);
+
+  string contentLeft = "cloth";
+  string contentRight = "cl" + "oth";
+  println(contentLeft == contentRight);
+  object identityLeft = contentLeft;
+  object identityRight = contentRight;
+  println(identityLeft == identityRight);
+}

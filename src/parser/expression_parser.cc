@@ -1,5 +1,7 @@
 #include "cloth/parser/expression_parser.h"
 
+#include "cloth/parser/syntax_facts.h"
+
 #include <utility>
 
 namespace cloth {
@@ -30,6 +32,18 @@ ExpressionId ExpressionParser::parse_expression(int minimum_precedence) {
       break;
     }
     advance();
+    if (operation == TokenKind::kKwIs || operation == TokenKind::kKwAs) {
+      TypeSyntax target = parse_checked_type();
+      const SourceRange range{expression_range(left).begin, target.range.end};
+      if (operation == TokenKind::kKwIs) {
+        left = storage_.add_expression(
+            Expression{range, TypeTestExpression{left, target}});
+      } else {
+        left = storage_.add_expression(
+            Expression{range, CheckedCastExpression{left, target}});
+      }
+      continue;
+    }
     const int next_precedence =
         is_right_associative(operation) ? precedence : precedence + 1;
     const ExpressionId right = parse_expression(next_precedence);
@@ -304,6 +318,45 @@ ExpressionId ExpressionParser::parse_index_expression(ExpressionId object) {
       Expression{SourceRange{begin, end}, IndexExpression{object, index}});
 }
 
+TypeSyntax ExpressionParser::parse_checked_type() {
+  if (at_limit() || !can_start_type(current().kind)) {
+    diagnostics_.error(current().range,
+                       "expected a type after checked type operator");
+    return TypeSyntax{"<invalid>", false, point_range(current().range.begin)};
+  }
+
+  const Token& token = advance();
+  SourceRange range = token.range;
+  const bool inner_nullable = match(TokenKind::kQuestion);
+  if (inner_nullable) {
+    range.end = tokens_[current_ - 1].range.end;
+  }
+  bool is_array = false;
+  while (match(TokenKind::kLeftBracket)) {
+    if (is_array) {
+      diagnostics_.error(tokens_[current_ - 1].range,
+                         "multidimensional array types are not supported");
+    }
+    is_array = true;
+    if (match(TokenKind::kRightBracket)) {
+      range.end = tokens_[current_ - 1].range.end;
+    } else {
+      diagnostics_.error(current().range, "expected ']' in checked type");
+      break;
+    }
+  }
+  const bool outer_nullable = is_array && match(TokenKind::kQuestion);
+  if (outer_nullable) {
+    range.end = tokens_[current_ - 1].range.end;
+  }
+  return TypeSyntax{token.lexeme,
+                    is_primitive_type(token.kind),
+                    range,
+                    is_array,
+                    is_array ? outer_nullable : inner_nullable,
+                    is_array && inner_nullable};
+}
+
 ExpressionId ExpressionParser::make_invalid_expression(SourceRange range) {
   return storage_.add_expression(Expression{range, InvalidExpression{}});
 }
@@ -325,6 +378,8 @@ int ExpressionParser::binary_precedence(TokenKind kind) noexcept {
     case TokenKind::kLessEqual:
     case TokenKind::kGreater:
     case TokenKind::kGreaterEqual:
+    case TokenKind::kKwIs:
+    case TokenKind::kKwAs:
       return 6;
     case TokenKind::kPlus:
     case TokenKind::kMinus:

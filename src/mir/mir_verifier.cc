@@ -318,6 +318,14 @@ class MirVerifier {
         report(instruction.range,
                "string meta query result has the wrong type");
       }
+    } else if (const auto* meta =
+                   std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
+      verify_value(meta->object, value_types, instruction.range);
+      require_result(instruction);
+      if (instruction.type != semantics_.string_type()) {
+        report(instruction.range,
+               "object meta query result does not have type string");
+      }
     } else if (const auto* unary =
                    std::get_if<MirUnaryInstruction>(&instruction.data)) {
       verify_value(unary->operand, value_types, instruction.range);
@@ -335,7 +343,13 @@ class MirVerifier {
           known_value_type(conversion->value, value_types);
       if (instruction.type != semantics_.error_type() &&
           instruction.type.value < semantics_.types().size()) {
-        if (conversion->kind == MirConversionKind::kToNullable) {
+        if (conversion->kind == MirConversionKind::kWidenReference) {
+          if (source_type &&
+              !can_widen_reference(*source_type, instruction.type)) {
+            report(instruction.range,
+                   "reference widening consumes incompatible types");
+          }
+        } else if (conversion->kind == MirConversionKind::kToNullable) {
           const SemanticType& target = semantics_.type(instruction.type);
           if (target.kind != TypeKind::kNullable || !target.element_type) {
             report(instruction.range,
@@ -354,6 +368,27 @@ class MirVerifier {
             report(instruction.range,
                    "nullable narrowing consumes an incompatible value");
           }
+        }
+      }
+    } else if (const auto* test =
+                   std::get_if<MirTypeTestInstruction>(&instruction.data)) {
+      verify_value(test->value, value_types, instruction.range);
+      verify_type(test->target, instruction.range);
+      require_result(instruction);
+      if (instruction.type != semantics_.bool_type()) {
+        report(instruction.range, "type test does not have type bool");
+      }
+    } else if (const auto* cast =
+                   std::get_if<MirCheckedCastInstruction>(&instruction.data)) {
+      verify_value(cast->value, value_types, instruction.range);
+      verify_type(cast->target, instruction.range);
+      require_result(instruction);
+      if (instruction.type.value < semantics_.types().size()) {
+        const SemanticType& result = semantics_.type(instruction.type);
+        if (result.kind != TypeKind::kNullable ||
+            result.element_type != cast->target) {
+          report(instruction.range,
+                 "checked cast result does not match its target");
         }
       }
     } else if (const auto* test =
@@ -570,6 +605,37 @@ class MirVerifier {
         expected != semantics_.error_type()) {
       report(range, "value type does not match its use");
     }
+  }
+
+  bool is_non_null_reference(TypeId type) const {
+    if (type.value >= semantics_.types().size()) {
+      return false;
+    }
+    const TypeKind kind = semantics_.type(type).kind;
+    return kind == TypeKind::kString || kind == TypeKind::kObject ||
+           kind == TypeKind::kFileClass || kind == TypeKind::kArray;
+  }
+
+  bool can_widen_reference(TypeId source, TypeId target) const {
+    if (source == semantics_.error_type() ||
+        target == semantics_.error_type()) {
+      return true;
+    }
+    if (target == semantics_.object_type()) {
+      return is_non_null_reference(source);
+    }
+    if (source.value >= semantics_.types().size() ||
+        target.value >= semantics_.types().size()) {
+      return false;
+    }
+    const SemanticType& source_type = semantics_.type(source);
+    const SemanticType& target_type = semantics_.type(target);
+    return source_type.kind == TypeKind::kNullable &&
+           target_type.kind == TypeKind::kNullable &&
+           source_type.element_type && target_type.element_type &&
+           (*source_type.element_type == *target_type.element_type ||
+            (*target_type.element_type == semantics_.object_type() &&
+             is_non_null_reference(*source_type.element_type)));
   }
 
   void verify_value(MirValueId value,

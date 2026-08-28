@@ -90,6 +90,7 @@ enum class TokenKind {
   kKwExtern,
   kKwUnsafe,
   kKwImport,
+  kKwIs,
   kKwAs,
   kKwModule,
   kKwMatch,
@@ -110,6 +111,7 @@ enum class TokenKind {
   kKwChar,
   kKwByte,
   kKwVoid,
+  kKwObject,
 };
 
 struct Token {

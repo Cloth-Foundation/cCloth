@@ -187,6 +187,65 @@ int main() {
               "sweeping did not reclaim a cross-kind object cycle");
   cloth_rt_gc_pop_frame(&array_frame);
 
+  ClothGcRootFrame object_frame{};
+  void* meta_node = nullptr;
+  void* meta_string = nullptr;
+  void* meta_array = nullptr;
+  void* node_name = nullptr;
+  void* string_name = nullptr;
+  void* array_name = nullptr;
+  void* expected_node_name = nullptr;
+  void* expected_string_name = nullptr;
+  void* expected_array_name = nullptr;
+  void** object_roots[]{
+      &meta_node,          &meta_string,          &meta_array,
+      &node_name,          &string_name,          &array_name,
+      &expected_node_name, &expected_string_name, &expected_array_name};
+  cloth_rt_gc_push_frame(&object_frame, object_roots, 9);
+  meta_node = cloth_rt_alloc(&node_type);
+  constexpr std::string_view kMetaString = "value";
+  meta_string = cloth_rt_string_literal(kMetaString.data(), kMetaString.size());
+  meta_array = cloth_rt_array_alloc(1, sizeof(void*), alignof(void*), 1);
+  node_name = cloth_rt_object_type_name(meta_node);
+  string_name = cloth_rt_object_type_name(meta_string);
+  array_name = cloth_rt_object_type_name(meta_array);
+  expected_node_name =
+      cloth_rt_string_literal(kNodeName.data(), kNodeName.size());
+  constexpr std::string_view kStringName = "string";
+  expected_string_name =
+      cloth_rt_string_literal(kStringName.data(), kStringName.size());
+  constexpr std::string_view kArrayName = "array";
+  expected_array_name =
+      cloth_rt_string_literal(kArrayName.data(), kArrayName.size());
+
+  test.expect(cloth_rt_object_is_type(meta_node, &node_type) == 1 &&
+                  cloth_rt_object_is_type(meta_string, &node_type) == 0,
+              "exact runtime type identity is wrong");
+  test.expect(
+      cloth_rt_object_is_kind(
+          meta_string,
+          static_cast<std::uint64_t>(ClothHeapObjectKind::kString)) == 1 &&
+          cloth_rt_object_is_kind(
+              meta_array,
+              static_cast<std::uint64_t>(ClothHeapObjectKind::kArray)) == 1 &&
+          cloth_rt_object_is_kind(
+              nullptr,
+              static_cast<std::uint64_t>(ClothHeapObjectKind::kString)) == 0,
+      "runtime object-kind checks are wrong");
+  test.expect(
+      cloth_rt_string_equal(node_name, expected_node_name) == 1 &&
+          cloth_rt_string_equal(string_name, expected_string_name) == 1 &&
+          cloth_rt_string_equal(array_name, expected_array_name) == 1,
+      "stable object type names are wrong");
+
+  for (void** root : object_roots) {
+    *root = nullptr;
+  }
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "object metadata queries leaked managed strings");
+  cloth_rt_gc_pop_frame(&object_frame);
+
   const std::uint64_t peak_before = cloth_rt_gc_peak_live_bytes();
   static_cast<void>(cloth_rt_alloc(&node_type));
   test.expect(cloth_rt_gc_peak_live_bytes() >= peak_before &&
@@ -199,7 +258,7 @@ int main() {
               "explicit collection diagnostics were not updated");
 
   if (test.failures() == 0) {
-    std::cout << "7 tests passed\n";
+    std::cout << "8 tests passed\n";
     return 0;
   }
   return 1;

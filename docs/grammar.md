@@ -176,7 +176,9 @@ equality_expression
 
 comparison_expression
     = additive_expression
-      { ( "<" | "<=" | ">" | ">=" ) additive_expression } ;
+      { ( "<" | "<=" | ">" | ">=" ) additive_expression
+      | "is" type
+      | "as" type } ;
 
 additive_expression
     = multiplicative_expression
@@ -238,7 +240,7 @@ The precedence table, from lowest to highest, is:
 | 3          | `||`                                   | left          |
 | 4          | `&&`                                   | left          |
 | 5          | `==`, `!=`                             | left          |
-| 6          | `<`, `<=`, `>`, `>=`                   | left          |
+| 6          | `<`, `<=`, `>`, `>=`, `is T`, `as T`  | left          |
 | 7          | `+`, `-`                               | left          |
 | 8          | `*`, `/`, `%`                          | left          |
 | 9          | prefix `!`, `+`, `-`, `~`              | right         |
@@ -279,6 +281,8 @@ The declaration pass enforces these rules separately from the grammar:
 - `expression::name` performs a language-defined meta query. Meta names are
   case-sensitive, do not participate in member visibility, and are resolved
   from the expression's type.
+- `value is T` requires a non-null runtime-checkable target. `value as T?`
+  requires a nullable target and yields `null` when the runtime type differs.
 - A static field must also be final, must have an initializer, and currently
   accepts only a scalar literal initializer.
 - `Main` must be declared `static`.

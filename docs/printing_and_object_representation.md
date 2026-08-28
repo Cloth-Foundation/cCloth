@@ -11,7 +11,7 @@ The core scope provides `print(T)` and `println(T)` for these types:
 - `string`, `bool`, and `char`
 - `byte`, every fixed-width signed and unsigned integer, and their aliases
 - `float32`, `float64`, and the `float` alias
-- every file-class type and the `null` literal
+- `object` and the `null` literal; file classes and arrays widen to `object`
 
 `print(value)` writes only the value. `println(value)` uses the same
 representation and then writes one line-feed byte. `println()` writes one
@@ -29,6 +29,7 @@ Values have these deterministic representations:
 - finite floats: the locale-independent shortest round-trippable decimal
 - infinities and NaN: `inf`, `-inf`, and `nan`
 - file-class objects: `<qualified.TypeName>`
+- arrays passed as `object`: `<Array>`
 - the untyped `null` literal: `null`
 
 A nullable reference must be narrowed before it can be passed to a non-null
@@ -54,3 +55,7 @@ file-class objects, but Stage 13.4 gives them the common managed header and
 collector lifecycle. Array rendering, user-defined string conversion,
 interpolation, and type-checked formatting are deferred. Cloth does not expose
 C `printf` or an unchecked variadic formatting ABI.
+
+Stage 15 exposes stable type identity separately through `value::typeName`.
+That query returns a string (`qualified.Type`, `string`, or erased `array`)
+without changing default output or exposing an address.

@@ -14,9 +14,11 @@ values[1] = 4;
 int32 count = values::length;
 ```
 
-Array literals evaluate elements from left to right. Their element type is the
-first non-null type. A compatible nullable element or `null` promotes a
-reference element type, so `[user, null]` has type `User?[]`. Empty and
+Array literals evaluate elements from left to right. Their element type starts
+from the first non-null type. A compatible nullable element or `null` promotes
+a reference element type, so `[user, null]` has type `User?[]`. Stage 15 joins
+different managed-reference types at `object`, enabling heterogeneous
+`object[]` literals without making array types covariant. Empty and
 null-only literals are rejected because contextual literal typing is not yet
 implemented. `null` is assignable to `T[]?`, not to non-null `T[]`. `==` and
 `!=` compare array references rather than elements.
@@ -52,3 +54,6 @@ Stage 9.0 deliberately defers multidimensional syntax, resizable lists, slices,
 array covariance, deep equality, and contextual empty literals. Stage 10.0
 builds array `for` iteration on the concrete `::length` and indexed-access
 semantics established here.
+
+Checked casts to array types also remain deferred because the runtime does not
+yet reify complete element-type identity.

@@ -65,7 +65,7 @@ An implicit class receives its visibility from the source file stem, so
 and inherits the class visibility. Until Cloth defines Unicode identifier
 rules, only ASCII letter case participates in visibility.
 
-Lowercase core type names such as `string`, `int32`, and `bool` are reserved
+Lowercase core type names such as `string`, `object`, `int32`, and `bool` are reserved
 language-provided names rather than declarations, so capitalization does not
 make them private. Uppercase names remain the user-defined type namespace;
 `String` and `string` are therefore distinct.
@@ -87,7 +87,9 @@ discovery order.
 concatenates, `==` and `!=` compare content, and its read-only meta queries are
 `::length`, `::byteLength`, and `::isEmpty`. General implicit numeric
 conversions are not part of the initial language; overload selection uses exact
-canonical parameter types. References are non-null by default. `T?` is a
+canonical parameter types. `object` is the universal non-null managed-reference
+type for file classes, strings, and arrays; widening to it is representation
+preserving and does not box primitives. References are non-null by default. `T?` is a
 distinct nullable reference type: `T` widens to `T?`, while `null` is assignable
 only to `T?`. Nullability alone does not distinguish overloads.
 
@@ -109,7 +111,8 @@ contract.
 
 The initial meta set is `array::length` plus `string::length`,
 `string::byteLength`, and `string::isEmpty`, where `array` and `string` stand
-for value expressions of those types. Package and import paths also use `::`,
+for value expressions of those types. Every managed reference also exposes
+`::typeName`; arrays report the stable erased name `array`. Package and import paths also use `::`,
 but only in declaration syntax; expression postfix `::` is unambiguously a meta
 query.
 
@@ -273,7 +276,8 @@ Future iteration protocols must preserve this source contract.
 
 `T[]` is a homogeneous, fixed-length non-null reference collection with mutable
 elements. Array literals evaluate their elements from left to right and infer
-one exact element type; a reference literal containing `null` infers `T?[]`.
+one compatible element type. Different managed-reference types join at
+`object`, and a reference literal containing `null` infers a nullable element.
 Empty and null-only literals require future contextual typing and are currently
 rejected. `array[index]` accepts only `int32`, and
 both reads and writes perform runtime null and bounds checks. `::length` is a
@@ -283,6 +287,10 @@ reference identity.
 The array runtime stores element layout and whether elements contain references
 without exposing that representation to source or LLVM IR. Reference arrays
 are traced element by element; primitive array payloads are not scanned.
+
+Array types are invariant: `User[]` is not assignable to `object[]`. This
+prevents storing a non-`User` through a widened array reference. Checked array
+casts await reified element-type metadata.
 
 File-class descriptors are immutable compiler-emitted metadata. They retain the
 qualified type identity, verified object size and alignment, heap object kind,
@@ -303,7 +311,8 @@ order, or reclamation timing.
 ## Core output and native entry point
 
 `print(T)` and `println(T)` are compiler-provided core intrinsics for all
-primitive types, file-class objects, and `null`. `print` appends nothing;
+primitive types, `object`, and `null`. File classes and arrays widen to the
+`object` overload. `print` appends nothing;
 `println` appends exactly one line feed, and its zero-argument overload writes
 only that line feed. File-class objects use `<qualified.Type>` without an
 address. Source members named `print` or `println` shadow the corresponding

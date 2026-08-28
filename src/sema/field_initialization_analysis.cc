@@ -257,6 +257,15 @@ class FieldInitializationAnalyzer {
       analyze_expression(binary->right, assignments, false);
       return;
     }
+    if (const auto* test = std::get_if<TypeTestExpression>(&expression.data)) {
+      analyze_expression(test->value, assignments, false);
+      return;
+    }
+    if (const auto* cast =
+            std::get_if<CheckedCastExpression>(&expression.data)) {
+      analyze_expression(cast->value, assignments, false);
+      return;
+    }
     if (const auto* assignment =
             std::get_if<AssignmentExpression>(&expression.data)) {
       analyze_expression(assignment->target, assignments, true);
@@ -289,6 +298,11 @@ class FieldInitializationAnalyzer {
     if (const auto* member =
             std::get_if<SafeMemberAccessExpression>(&expression.data)) {
       analyze_expression(member->object, assignments, false);
+      return;
+    }
+    if (const auto* meta =
+            std::get_if<MetaAccessExpression>(&expression.data)) {
+      analyze_expression(meta->object, assignments, false);
       return;
     }
     if (const auto* coalesce =
@@ -479,8 +493,8 @@ class FieldInitializationAnalyzer {
 
   bool is_non_null_reference(SymbolId symbol) const {
     const TypeKind kind = semantics_.type(semantics_.symbol(symbol).type).kind;
-    return kind == TypeKind::kString || kind == TypeKind::kFileClass ||
-           kind == TypeKind::kArray;
+    return kind == TypeKind::kString || kind == TypeKind::kObject ||
+           kind == TypeKind::kFileClass || kind == TypeKind::kArray;
   }
 
   void require_initialized(const std::vector<AssignmentCount>& assignments,

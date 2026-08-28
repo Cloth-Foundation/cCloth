@@ -1396,7 +1396,7 @@ void invalid_static_members(TestContext& test) {
       "func Read() {}\n"
       "static func Utility() {}\n"
       "static func Bad() { print(value); Read(); print(self); }\n"
-      "func ThroughInstance(StaticErrors object) { object.Utility(); }\n"
+      "func ThroughInstance(StaticErrors instance) { instance.Utility(); }\n"
       "func ThroughType() { StaticErrors.Read(); }\n"
       "func Main() {}\n");
   compilation.analyze();
@@ -1533,6 +1533,76 @@ void string_value_semantics(TestContext& test) {
               "malformed UTF-8 was accepted in a string literal");
 }
 
+void object_model_semantics(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Objects.co",
+            "Objects() {}\n"
+            "static func Main() {\n"
+            "  Objects instance = Objects();\n"
+            "  object value = instance;\n"
+            "  object? maybe = value;\n"
+            "  bool matches = maybe is Objects;\n"
+            "  Objects? cast = maybe as Objects?;\n"
+            "  object[] values = [instance, \"cloth\", [1]];\n"
+            "  string name = value::typeName;\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid universal object program produced semantic errors");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  test.expect(semantics.find_type("object") == semantics.object_type() &&
+                  semantics.type(semantics.object_type()).kind ==
+                      cloth::TypeKind::kObject,
+              "object was not registered as the canonical universal type");
+  bool found_object_array = false;
+  bool found_checked_file_type = false;
+  for (const cloth::SemanticType& type : semantics.types()) {
+    found_object_array =
+        found_object_array || (type.kind == cloth::TypeKind::kArray &&
+                               type.element_type == semantics.object_type());
+  }
+  for (const cloth::ExpressionSemantics& expression :
+       semantics.file(cloth::FileId{0}).expressions) {
+    found_checked_file_type = found_checked_file_type ||
+                              (expression.checked_type &&
+                               semantics.type(*expression.checked_type).kind ==
+                                   cloth::TypeKind::kFileClass);
+  }
+  test.expect(found_object_array,
+              "heterogeneous managed references did not infer object[]");
+  test.expect(found_checked_file_type,
+              "checked target identity was not retained in semantics");
+
+  AnalyzedCompilation invalid;
+  invalid.add("ObjectErrors.co",
+              "static func Main() {\n"
+              "  int32 scalar = 1;\n"
+              "  bool badSource = scalar is object;\n"
+              "  object value = \"cloth\";\n"
+              "  string badCast = value as string;\n"
+              "  bool nullableTarget = value is string?;\n"
+              "  bool erasedArray = value is int32[];\n"
+              "  object boxed = scalar;\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic(
+                  "checked type operations require a managed reference"),
+              "a primitive was accepted by a checked type operation");
+  test.expect(
+      invalid.has_diagnostic("the right operand of 'as' must be nullable"),
+      "a non-nullable checked cast target was accepted");
+  test.expect(
+      invalid.has_diagnostic("the right operand of 'is' must be non-nullable"),
+      "a nullable type-test target was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "checked array casts require reified array type metadata"),
+              "an erased array type was accepted as a checked target");
+  test.expect(invalid.has_diagnostic("local initializer has type 'int32'; "
+                                     "expected 'object'"),
+              "implicit primitive boxing was accepted");
+}
+
 using TestFunction = void (*)(TestContext&);
 
 struct TestCase {
@@ -1576,6 +1646,7 @@ int main() {
       {"static member contract", static_member_contract},
       {"invalid static members", invalid_static_members},
       {"string value semantics", string_value_semantics},
+      {"object model semantics", object_model_semantics},
       {"deterministic diagnostics", deterministic_diagnostics},
   };
 

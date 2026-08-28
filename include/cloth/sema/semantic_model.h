@@ -52,6 +52,7 @@ enum class TypeKind {
   kFloat32,
   kFloat64,
   kString,
+  kObject,
   kFileClass,
   kArray,
   kNullable,
@@ -121,6 +122,7 @@ struct ExpressionSemantics {
   ValueCategory category{ValueCategory::kInvalid};
   std::optional<SymbolId> symbol{};
   bool is_presence_test{false};
+  std::optional<TypeId> checked_type{};
 };
 
 struct FileSemantics {
@@ -144,6 +146,7 @@ class SemanticModel {
   [[nodiscard]] TypeId null_type() const noexcept;
   [[nodiscard]] TypeId bool_type() const noexcept;
   [[nodiscard]] TypeId string_type() const noexcept;
+  [[nodiscard]] TypeId object_type() const noexcept;
 
   [[nodiscard]] std::optional<TypeId> find_type(
       std::string_view name) const noexcept;
@@ -185,6 +188,7 @@ class SemanticModel {
   TypeId null_type_{0};
   TypeId bool_type_{0};
   TypeId string_type_{0};
+  TypeId object_type_{0};
 };
 
 [[nodiscard]] std::string_view type_kind_name(TypeKind kind) noexcept;

@@ -115,6 +115,10 @@ MIR operations or control flow. ABI lowering erases nullable conversions: `T`
 and `T?` use the same opaque reference layout and type encoding. This keeps
 nullability a static contract without changing pointers or mangled symbols.
 
+Stage 15 permits file-class, string, and array nullable references to widen to
+`object?`. Safe `value as T?` uses the same nullable representation, returning
+the original reference on an exact type match and `null` otherwise.
+
 ## Construction guarantee
 
 Every non-static field of non-null reference type must be initialized by its

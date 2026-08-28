@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 14 immutable UTF-8 strings
+# Cloth compiler - Stage 15 core object model
 
-This repository contains the deterministic Stage 14 compiler core for Cloth
+This repository contains the deterministic Stage 15 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -20,8 +20,11 @@ strings, arrays, and array payloads under that collector. Stage 13.5 clears
 reference roots after their last MIR use and exposes collection-count and
 peak-byte diagnostics for tests and embedders. Stage 14 makes lowercase
 `string` an immutable UTF-8 value with concatenation, content equality, and
-`::length`, `::byteLength`, and `::isEmpty` meta queries. The project contains no virtual
-machine, standard library, debugger, or external package registry. LLVM IR
+`::length`, `::byteLength`, and `::isEmpty` meta queries. Stage 15 adds the
+universal managed-reference type `object`, identity equality, stable
+`::typeName`, checked `is`/`as` operations, and heterogeneous `object[]`
+literals without primitive boxing or array covariance. The project contains no
+virtual machine, standard library, debugger, or external package registry. LLVM IR
 emission has no link-time dependency on LLVM libraries.
 
 ## Requirements
@@ -177,7 +180,8 @@ visibility, constructors, overload candidates, statements, expressions, source
 ranges, and recovery.
 Semantic coverage includes package and cross-file binding, aliases, wildcards,
 privacy, core types, exact overload and constructor resolution, lexical scopes,
-type checking, array inference and access, return paths, portable file-name
+type checking, object widening and checked casts, heterogeneous array inference
+and access, return paths, portable file-name
 collisions, typed HIR, and deterministic diagnostics. MIR coverage
 includes branches, fallthrough joins, structured loop edges, short-circuit phi
 nodes, dead blocks, field initializers, array operations, iteration latches,
@@ -189,8 +193,9 @@ arithmetic, short-circuit branches, phi values, immutable descriptor globals,
 precise root frames, objects, arrays, field initializers, receiver forms,
 constructors, typed output, and wasm32. Runtime coverage checks nested LIFO root
 registration, rooted cycle preservation, cross-kind cycle reclamation, managed
-strings, managed reference arrays, and automatic allocation safepoints
-directly. Backend coverage checks linear and control-flow-sensitive dead-root
+strings, managed reference arrays, exact object identity, stable runtime type
+names, and automatic allocation safepoints directly. Backend coverage checks
+linear and control-flow-sensitive dead-root
 clearing. Native stress fixtures preserve a 5,000-object chain and a string
 plus an object array across collections.
 When `opt` is available, CTest also verifies an emitted module with LLVM itself.
@@ -273,6 +278,8 @@ docs/static_members.md   Stage 12.2 static ownership and entry contract
 docs/nullability.md      Stage 12.3.5 nullable reference and operator contract
 docs/garbage_collection.md Stage 13.1-13.5 managed-heap contract
 docs/strings.md           Stage 14 immutable UTF-8 string contract
+docs/objects.md           Stage 15 universal object and checked-type contract
+TODO.md                   Central deferred-work ledger and design guardrails
 .vscode/                Build, test, and debug integration
 ```
 
@@ -424,6 +431,12 @@ Concatenation creates an owned managed buffer, equality compares content, and
 read-only meta queries distinguish Unicode scalar length from byte length.
 Malformed UTF-8 literals are rejected before lowering. See
 [docs/strings.md](docs/strings.md).
+
+Stage 15 defines lowercase `object` as the universal managed-reference type.
+File classes, strings, and arrays widen without representation changes;
+primitives are not boxed. It adds identity equality, `::typeName`, exact `is`,
+nullable safe `as`, and heterogeneous `object[]` literals while preserving
+array invariance. See [docs/objects.md](docs/objects.md).
 
 ## Extending the lexer
 

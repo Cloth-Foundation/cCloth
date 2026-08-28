@@ -73,6 +73,16 @@ struct BinaryExpression {
   ExpressionId right;
 };
 
+struct TypeTestExpression {
+  ExpressionId value;
+  TypeSyntax target;
+};
+
+struct CheckedCastExpression {
+  ExpressionId value;
+  TypeSyntax target;
+};
+
 struct AssignmentExpression {
   ExpressionId target;
   TokenKind operation;
@@ -123,7 +133,8 @@ struct ParenthesizedExpression {
 
 using ExpressionData =
     std::variant<InvalidExpression, IdentifierExpression, LiteralExpression,
-                 UnaryExpression, BinaryExpression, AssignmentExpression,
+                 UnaryExpression, BinaryExpression, TypeTestExpression,
+                 CheckedCastExpression, AssignmentExpression,
                  MemberAccessExpression, MetaAccessExpression,
                  SafeMemberAccessExpression, NullCoalesceExpression,
                  NullAssertExpression, CallExpression, ArrayLiteralExpression,

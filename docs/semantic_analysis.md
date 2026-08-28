@@ -30,6 +30,7 @@ The core type table contains:
 - `uint8`, `uint16`, `uint32`, and `uint64`
 - `float32` and `float64`
 - `string`
+- `object`, the universal non-null managed-reference type
 - `void`, plus internal error and null types
 - one named reference type for each valid file class
 - one canonical array reference type for each used element type
@@ -41,6 +42,11 @@ and `float32` respectively. Integer and floating literals have `int32` and
 implemented. References are non-null by default. `T?` is a distinct nullable
 wrapper, `T` widens to `T?`, and `null` is assignable only to `T?`. Nullable
 qualifiers are invalid on primitive and void types.
+
+File-class, string, and array references widen to `object`, and those nullable
+forms widen to `object?`. The conversion is not available to primitives and
+does not imply boxing. Arrays remain invariant: `User[]` does not widen to
+`object[]`.
 
 `string` is a managed reference with immutable UTF-8 value semantics. String
 literals are decoded and validated as UTF-8 during semantic analysis. Exact
@@ -56,9 +62,9 @@ parameters, locals, arrays, and iteration bindings. Void calls are valid only
 where their result is not consumed. Void functions may fall through or use
 `return;`; value-returning functions retain complete-return requirements.
 
-An array literal infers its element type from the first non-null, non-error
-element. A compatible nullable element or `null` promotes a reference element
-type to its nullable wrapper before every element is checked.
+An array literal starts from its first non-null, non-error element. Different
+managed-reference element types join at `object`; nullable references or
+`null` make the joined element nullable before every element is checked.
 Empty and null-only literals are rejected until contextual literal typing is
 implemented. Index operands must be `int32`. Index expressions are mutable
 locations, and `::length` is a read-only `int32` meta query.
@@ -108,7 +114,8 @@ otherwise conflicting file-class names. Wildcards expose only public direct
 members of one package, and ambiguous wildcard names are diagnosed.
 
 The core scope provides typed `print` and `println` overloads for every
-primitive, each file-class type, and `null`; `println()` is a separate
+primitive, `object`, and `null`; file classes and arrays use object widening,
+and `println()` is a separate
 zero-argument intrinsic. Locals and members retain normal precedence over core
 names, so a source declaration can shadow either overload set. Exact parameter
 matches take precedence over non-null-to-nullable widening. Callables cannot
@@ -127,7 +134,8 @@ The checker currently validates:
 - final binding assignment and field definite initialization
 - static ownership, access form, and static `Main` validation
 - member access and visibility
-- homogeneous array literals, indexing, assignment, and `::length`
+- array literal inference, indexing, assignment, and `::length`
+- object widening, `::typeName`, checked `is`, and nullable `as`
 - exact overload and constructor selection
 - return value presence and type compatibility
 
@@ -144,7 +152,9 @@ with a runtime null guard.
 
 Overload matching is exact after the portable aliases are canonicalized.
 User-defined conversions, numeric promotions, inheritance, traits, generics,
-first-class function values, and implicit default constructors are deferred.
+primitive boxing, first-class function values, and implicit default constructors
+are deferred. Checked array casts are also deferred until arrays carry reified
+element-type metadata.
 Complete return-path and reachability checks are performed by the Stage 3.0
 control-flow analysis after HIR verification.
 

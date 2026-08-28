@@ -25,6 +25,7 @@ SemanticModel::SemanticModel() {
   const TypeId float64 =
       add_type(SemanticType{TypeKind::kFloat64, "float64", {}});
   string_type_ = add_type(SemanticType{TypeKind::kString, "string", {}});
+  object_type_ = add_type(SemanticType{TypeKind::kObject, "object", {}});
   add_type_alias("int", int32);
   add_type_alias("uint", uint32);
   add_type_alias("float", float32);
@@ -45,6 +46,7 @@ SemanticModel::SemanticModel() {
       std::pair{float32, IntrinsicKind::kPrintFloat32},
       std::pair{float64, IntrinsicKind::kPrintFloat64},
       std::pair{null_type_, IntrinsicKind::kPrintObject},
+      std::pair{object_type_, IntrinsicKind::kPrintObject},
   };
   for (const auto& [type, intrinsic] : primitive_prints) {
     add_intrinsic("print", {type}, intrinsic);
@@ -62,6 +64,8 @@ TypeId SemanticModel::null_type() const noexcept { return null_type_; }
 TypeId SemanticModel::bool_type() const noexcept { return bool_type_; }
 
 TypeId SemanticModel::string_type() const noexcept { return string_type_; }
+
+TypeId SemanticModel::object_type() const noexcept { return object_type_; }
 
 TypeId SemanticModel::add_type(SemanticType type) {
   const TypeId id{types_.size()};
@@ -221,6 +225,8 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
       return "float64";
     case TypeKind::kString:
       return "string";
+    case TypeKind::kObject:
+      return "object";
     case TypeKind::kFileClass:
       return "file class";
     case TypeKind::kArray:

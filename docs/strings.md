@@ -36,6 +36,7 @@ Strings expose three language-defined, read-only meta queries:
 - `value::length: int32` counts Unicode scalar values;
 - `value::byteLength: int32` counts UTF-8 code units;
 - `value::isEmpty: bool` is true exactly when `byteLength` is zero.
+- `value::typeName: string` is the universal object query and returns `string`.
 
 Embedded U+0000 is ordinary string content. It contributes one to both lengths
 and does not terminate printing or comparison. A meta query requires a non-null

@@ -38,6 +38,7 @@ constexpr std::array kKeywords{
     Keyword{"extern", TokenKind::kKwExtern},
     Keyword{"unsafe", TokenKind::kKwUnsafe},
     Keyword{"import", TokenKind::kKwImport},
+    Keyword{"is", TokenKind::kKwIs},
     Keyword{"as", TokenKind::kKwAs},
     Keyword{"module", TokenKind::kKwModule},
     Keyword{"match", TokenKind::kKwMatch},
@@ -58,6 +59,7 @@ constexpr std::array kKeywords{
     Keyword{"char", TokenKind::kKwChar},
     Keyword{"byte", TokenKind::kKwByte},
     Keyword{"void", TokenKind::kKwVoid},
+    Keyword{"object", TokenKind::kKwObject},
 };
 
 constexpr bool is_digit(char character) noexcept {

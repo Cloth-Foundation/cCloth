@@ -54,6 +54,7 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
       return make_type_layout(type, AbiTypeKind::kVoid, 0, 0, 1);
     case TypeKind::kNull:
     case TypeKind::kString:
+    case TypeKind::kObject:
     case TypeKind::kFileClass:
     case TypeKind::kArray:
     case TypeKind::kNullable:
@@ -128,6 +129,8 @@ std::string encode_type(TypeId type, const SemanticModel& semantics) {
       return "f64";
     case TypeKind::kString:
       return "s";
+    case TypeKind::kObject:
+      return "o";
     case TypeKind::kFileClass:
       return "r" + encode_name(semantic_type.name);
     case TypeKind::kArray:

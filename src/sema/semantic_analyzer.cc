@@ -32,6 +32,7 @@ struct ExpressionState {
   ValueCategory category{ValueCategory::kInvalid};
   std::optional<SymbolId> symbol{};
   std::vector<SymbolId> candidates{};
+  std::optional<TypeId> checked_type{};
 };
 
 using NonNullSet = std::vector<SymbolId>;
@@ -110,7 +111,6 @@ class SemanticAnalyzer {
 
   SemanticAnalysisResult run() {
     register_file_classes();
-    register_object_print_intrinsics();
     register_imports();
     register_members();
     analyze_definitions();
@@ -119,17 +119,6 @@ class SemanticAnalyzer {
   }
 
  private:
-  void register_object_print_intrinsics() {
-    for (std::size_t index = 0; index < files_.size(); ++index) {
-      const TypeId type = model_.file(FileId{index}).type;
-      if (type == model_.error_type()) {
-        continue;
-      }
-      model_.add_intrinsic("print", {type}, IntrinsicKind::kPrintObject);
-      model_.add_intrinsic("println", {type}, IntrinsicKind::kPrintObject);
-    }
-  }
-
   void register_file_classes() {
     for (std::size_t index = 0; index < files_.size(); ++index) {
       const FileClassDecl& syntax = *files_[index];
@@ -919,6 +908,12 @@ class SemanticAnalyzer {
     } else if (const auto* binary =
                    std::get_if<BinaryExpression>(&expression.data)) {
       state = analyze_binary(*binary, expression.range);
+    } else if (const auto* test =
+                   std::get_if<TypeTestExpression>(&expression.data)) {
+      state = analyze_type_test(*test, expression.range);
+    } else if (const auto* cast =
+                   std::get_if<CheckedCastExpression>(&expression.data)) {
+      state = analyze_checked_cast(*cast, expression.range);
     } else if (const auto* assignment =
                    std::get_if<AssignmentExpression>(&expression.data)) {
       state = analyze_assignment(*assignment, expression.range);
@@ -1067,15 +1062,29 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     for (const ExpressionState& element : elements) {
-      const SemanticType& type = model_.type(element.type);
-      if (type.kind == TypeKind::kNullable &&
-          type.element_type == element_type) {
+      if (element.type == model_.error_type() ||
+          element.type == model_.null_type()) {
+        continue;
+      }
+      if (is_assignable(*element_type, element.type)) {
+        continue;
+      }
+      if (is_assignable(element.type, *element_type)) {
         element_type = element.type;
+        continue;
+      }
+      if (is_reference(*element_type) && is_reference(element.type)) {
+        const bool nullable =
+            model_.type(*element_type).kind == TypeKind::kNullable ||
+            model_.type(element.type).kind == TypeKind::kNullable;
+        element_type = nullable ? model_.get_nullable_type(model_.object_type())
+                                : model_.object_type();
       }
     }
-    if (contains_null && is_reference(*element_type) &&
-        model_.type(*element_type).kind != TypeKind::kNullable) {
-      element_type = model_.get_nullable_type(*element_type);
+    if (contains_null && is_reference(*element_type)) {
+      if (model_.type(*element_type).kind != TypeKind::kNullable) {
+        element_type = model_.get_nullable_type(*element_type);
+      }
     }
     for (std::size_t index = 0; index < elements.size(); ++index) {
       check_assignment(*element_type, elements[index].type,
@@ -1220,6 +1229,85 @@ class SemanticAnalyzer {
                    "' cannot be applied to '" + type_name(left.type) +
                    "' and '" + type_name(right.type) + "'");
     return ExpressionState{model_.error_type()};
+  }
+
+  ExpressionState analyze_type_test(const TypeTestExpression& test,
+                                    SourceRange range) {
+    const ExpressionState value = analyze_expression(test.value);
+    check_value(value, expression_range(test.value));
+    const TypeId target = resolve_type(test.target, current_file_);
+    if (value.type == model_.error_type() || target == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+    if (model_.type(target).kind == TypeKind::kNullable) {
+      diagnostics_.error(test.target.range,
+                         "the right operand of 'is' must be non-nullable");
+      return ExpressionState{model_.error_type()};
+    }
+    if (!check_runtime_type_operation(value.type, target, range)) {
+      return ExpressionState{model_.error_type()};
+    }
+    return ExpressionState{
+        model_.bool_type(), ValueCategory::kValue, {}, {}, target};
+  }
+
+  ExpressionState analyze_checked_cast(const CheckedCastExpression& cast,
+                                       SourceRange range) {
+    const ExpressionState value = analyze_expression(cast.value);
+    check_value(value, expression_range(cast.value));
+    const TypeId target = resolve_type(cast.target, current_file_);
+    if (value.type == model_.error_type() || target == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+    const SemanticType& target_type = model_.type(target);
+    if (target_type.kind != TypeKind::kNullable || !target_type.element_type) {
+      diagnostics_.error(cast.target.range,
+                         "the right operand of 'as' must be nullable");
+      return ExpressionState{model_.error_type()};
+    }
+    if (!check_runtime_type_operation(value.type, *target_type.element_type,
+                                      range)) {
+      return ExpressionState{model_.error_type()};
+    }
+    return ExpressionState{
+        target, ValueCategory::kValue, {}, {}, *target_type.element_type};
+  }
+
+  bool check_runtime_type_operation(TypeId source, TypeId target,
+                                    SourceRange range) {
+    TypeId source_base = source;
+    const SemanticType& source_type = model_.type(source);
+    if (source_type.kind == TypeKind::kNullable && source_type.element_type) {
+      source_base = *source_type.element_type;
+    }
+    const TypeKind source_kind = model_.type(source_base).kind;
+    const TypeKind target_kind = model_.type(target).kind;
+    if (!is_reference(source) && source != model_.null_type()) {
+      diagnostics_.error(range,
+                         "checked type operations require a managed "
+                         "reference; found '" +
+                             type_name(source) + "'");
+      return false;
+    }
+    if (target_kind == TypeKind::kArray) {
+      diagnostics_.error(
+          range, "checked array casts require reified array type metadata");
+      return false;
+    }
+    if (target_kind != TypeKind::kObject && target_kind != TypeKind::kString &&
+        target_kind != TypeKind::kFileClass) {
+      diagnostics_.error(
+          range, "type '" + type_name(target) + "' is not runtime-checkable");
+      return false;
+    }
+    if (source == model_.null_type() || source_kind == TypeKind::kObject ||
+        target_kind == TypeKind::kObject || source_base == target) {
+      return true;
+    }
+    diagnostics_.error(range, "types '" + type_name(source) + "' and '" +
+                                  type_name(target) +
+                                  "' cannot overlap without inheritance");
+    return false;
   }
 
   ExpressionState analyze_assignment(const AssignmentExpression& assignment,
@@ -1417,6 +1505,13 @@ class SemanticAnalyzer {
       return expression_assigns_symbol(binary->left, symbol) ||
              expression_assigns_symbol(binary->right, symbol);
     }
+    if (const auto* test = std::get_if<TypeTestExpression>(&expression.data)) {
+      return expression_assigns_symbol(test->value, symbol);
+    }
+    if (const auto* cast =
+            std::get_if<CheckedCastExpression>(&expression.data)) {
+      return expression_assigns_symbol(cast->value, symbol);
+    }
     if (const auto* assignment =
             std::get_if<AssignmentExpression>(&expression.data)) {
       return narrowable_symbol(assignment->target) == symbol ||
@@ -1430,6 +1525,10 @@ class SemanticAnalyzer {
     if (const auto* member =
             std::get_if<SafeMemberAccessExpression>(&expression.data)) {
       return expression_assigns_symbol(member->object, symbol);
+    }
+    if (const auto* meta =
+            std::get_if<MetaAccessExpression>(&expression.data)) {
+      return expression_assigns_symbol(meta->object, symbol);
     }
     if (const auto* coalesce =
             std::get_if<NullCoalesceExpression>(&expression.data)) {
@@ -1611,6 +1710,9 @@ class SemanticAnalyzer {
       diagnostics_.error(range, "nullable type '" + object_type.name +
                                     "' has no meta queries without narrowing");
       return ExpressionState{model_.error_type()};
+    }
+    if (meta.meta == "typeName" && is_reference(object.type)) {
+      return ExpressionState{model_.string_type(), ValueCategory::kValue};
     }
     if (object_type.kind == TypeKind::kArray) {
       if (meta.meta == "length") {
@@ -1960,7 +2062,8 @@ class SemanticAnalyzer {
 
   ExpressionState record_expression(ExpressionId id, ExpressionState state) {
     model_.mutable_file(current_file_).expressions.at(id.value) =
-        ExpressionSemantics{state.type, state.category, state.symbol};
+        ExpressionSemantics{state.type, state.category, state.symbol, false,
+                            state.checked_type};
     return state;
   }
 
@@ -2109,16 +2212,31 @@ class SemanticAnalyzer {
       return true;
     }
     const SemanticType& expected_type = model_.type(expected);
-    return expected_type.kind == TypeKind::kNullable &&
-           expected_type.element_type &&
-           (actual == model_.null_type() ||
-            actual == *expected_type.element_type);
+    const SemanticType& actual_type = model_.type(actual);
+    if (expected_type.kind == TypeKind::kObject) {
+      return actual_type.kind == TypeKind::kString ||
+             actual_type.kind == TypeKind::kFileClass ||
+             actual_type.kind == TypeKind::kArray;
+    }
+    if (expected_type.kind != TypeKind::kNullable ||
+        !expected_type.element_type) {
+      return false;
+    }
+    if (actual == model_.null_type() ||
+        is_assignable(*expected_type.element_type, actual)) {
+      return true;
+    }
+    return actual_type.kind == TypeKind::kNullable &&
+           actual_type.element_type &&
+           is_assignable(*expected_type.element_type,
+                         *actual_type.element_type);
   }
 
   bool is_reference(TypeId type) const {
     const TypeKind kind = model_.type(type).kind;
-    return kind == TypeKind::kString || kind == TypeKind::kFileClass ||
-           kind == TypeKind::kArray || kind == TypeKind::kNullable;
+    return kind == TypeKind::kString || kind == TypeKind::kObject ||
+           kind == TypeKind::kFileClass || kind == TypeKind::kArray ||
+           kind == TypeKind::kNullable;
   }
 
   bool is_integer(TypeId type) const {

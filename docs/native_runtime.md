@@ -8,7 +8,8 @@ adds the thread-local precise-root stack. Stage 13.3 adds non-moving collection
 for file-class objects, Stage 13.4 extends it to strings and arrays, and Stage
 13.5 adds liveness-aware roots and monotonic collector diagnostics.
 Stage 14 adds immutable UTF-8 concatenation, content equality, and string meta
-queries.
+queries. Stage 15 adds universal object queries and checked runtime type
+operations.
 
 ## Source contract
 
@@ -20,7 +21,8 @@ println(T): no value
 println(): no value
 ```
 
-`T` covers every primitive, every file class, and `null`. `print` does not add
+`T` covers every primitive, `object`, and `null`; file classes and arrays widen
+to `object`. `print` does not add
 a newline; `println` adds exactly one line feed. The complete representation
 rules are in
 [printing_and_object_representation.md](printing_and_object_representation.md).
@@ -57,6 +59,9 @@ cloth_rt_string_equal(left, right) -> uint8
 cloth_rt_string_length(value) -> int32
 cloth_rt_string_byte_length(value) -> int32
 cloth_rt_string_is_empty(value) -> uint8
+cloth_rt_object_type_name(value) -> string
+cloth_rt_object_is_kind(value, kind) -> uint8
+cloth_rt_object_is_type(value, type_descriptor) -> uint8
 cloth_rt_array_alloc(length, element_size, element_alignment,
                      contains_references) -> array
 cloth_rt_array_length(array) -> int32
@@ -81,6 +86,12 @@ header while remaining opaque to generated LLVM IR. A literal string borrows
 immutable program-lifetime bytes. A concatenated string owns its separately
 allocated bytes. Both cache byte and Unicode scalar lengths; collection reclaims
 owned payloads together with their managed headers.
+
+Object type-name queries return a managed immutable string over stable
+program-lifetime name bytes. File classes use qualified descriptor names,
+strings use `string`, and arrays use the erased name `array`. Exact file-class
+checks compare canonical descriptor addresses; string checks compare the
+runtime heap kind. Null fails every concrete type check without trapping.
 
 Root frames are stack-owned by generated callables and linked in thread-local
 LIFO order. Each registered entry is the address of a stack slot containing a
@@ -130,9 +141,9 @@ LLVM IR emission but does not yet have a WebAssembly runtime or linker path.
 
 ## Deferred work
 
-Stage 14 completes the first immutable UTF-8 string value contract. String
-indexing, slicing, iteration, formatting, normalization, interning, root-slot
-reuse, optimization levels, debug information, command-line arguments,
-exceptions, and platform
+Stage 15 completes the first universal managed-reference contract. Primitive
+boxing, inheritance-aware checks, reified array casts, string indexing,
+slicing, iteration, formatting, normalization, interning, root-slot reuse,
+optimization levels, debug information, command-line arguments, exceptions, and platform
 packaging remain future work. These features should extend the runtime and
 toolchain boundaries without changing existing source contracts.

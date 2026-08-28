@@ -205,6 +205,30 @@ void strings(TestContext& test) {
               "runtime string booleans were not converted to LLVM i1");
 }
 
+void object_model(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Objects.co",
+              "Objects() {}\n"
+              "static func Main() {\n"
+              "  object value = Objects();\n"
+              "  bool exact = value is Objects;\n"
+              "  bool stringLike = value is string;\n"
+              "  Objects? cast = value as Objects?;\n"
+              "  string name = value::typeName;\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(),
+              "object operations failed LLVM emission");
+  test.expect(sources.contains("call ptr @cloth_rt_object_type_name(ptr "),
+              "object typeName did not use its runtime boundary");
+  test.expect(sources.contains("call i8 @cloth_rt_object_is_type(ptr ") &&
+                  sources.contains("call i8 @cloth_rt_object_is_kind(ptr "),
+              "checked object operations lost runtime type checks");
+  test.expect(sources.contains(" = select i1 "),
+              "checked cast did not select the value or null");
+}
+
 void call_receivers(TestContext& test) {
   CompiledSources sources;
   sources.add("User.co",
@@ -524,6 +548,7 @@ int main() {
       {"object construction", object_construction},
       {"arrays", arrays},
       {"strings", strings},
+      {"object model", object_model},
       {"call receivers", call_receivers},
       {"static members", static_members},
       {"null ergonomics", null_ergonomics},

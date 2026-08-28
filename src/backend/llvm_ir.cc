@@ -5,6 +5,7 @@
 #include "cloth/lexer/literal.h"
 #include "cloth/lexer/token.h"
 #include "cloth/mir/mir.h"
+#include "cloth/runtime/runtime.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
@@ -148,6 +149,9 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* meta =
                  std::get_if<MirStringMetaInstruction>(&instruction.data)) {
     uses.push_back(meta->string);
+  } else if (const auto* meta =
+                 std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
+    uses.push_back(meta->object);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     uses.push_back(unary->operand);
@@ -164,6 +168,12 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* assertion =
                  std::get_if<MirNullAssertInstruction>(&instruction.data)) {
     uses.push_back(assertion->value);
+  } else if (const auto* test =
+                 std::get_if<MirTypeTestInstruction>(&instruction.data)) {
+    uses.push_back(test->value);
+  } else if (const auto* cast =
+                 std::get_if<MirCheckedCastInstruction>(&instruction.data)) {
+    uses.push_back(cast->value);
   } else if (const auto* call =
                  std::get_if<MirCallInstruction>(&instruction.data)) {
     if (call->receiver) {
@@ -272,6 +282,9 @@ class BodyEmitter {
   void emit_string_meta(const MirInstruction& instruction,
                         const MirStringMetaInstruction& meta,
                         std::ostringstream& output);
+  void emit_object_meta(const MirInstruction& instruction,
+                        const MirObjectMetaInstruction& meta,
+                        std::ostringstream& output);
   void emit_unary(const MirInstruction& instruction,
                   const MirUnaryInstruction& unary, std::ostringstream& output);
   void emit_binary(const MirInstruction& instruction,
@@ -283,6 +296,15 @@ class BodyEmitter {
   void emit_null_assert(const MirInstruction& instruction,
                         const MirNullAssertInstruction& assertion,
                         std::ostringstream& output);
+  void emit_type_test(const MirInstruction& instruction,
+                      const MirTypeTestInstruction& test,
+                      std::ostringstream& output);
+  void emit_checked_cast(const MirInstruction& instruction,
+                         const MirCheckedCastInstruction& cast,
+                         std::ostringstream& output);
+  void emit_type_condition(std::string_view result, MirValueId value,
+                           TypeId target, SourceRange range,
+                           std::ostringstream& output);
   void emit_call(const MirInstruction& instruction,
                  const MirCallInstruction& call, std::ostringstream& output);
   void emit_phi(const MirInstruction& instruction, const MirPhiInstruction& phi,
@@ -368,6 +390,9 @@ class ModuleEmitter {
            << "declare i32 @cloth_rt_string_length(ptr)\n"
            << "declare i32 @cloth_rt_string_byte_length(ptr)\n"
            << "declare i8 @cloth_rt_string_is_empty(ptr)\n"
+           << "declare ptr @cloth_rt_object_type_name(ptr)\n"
+           << "declare i8 @cloth_rt_object_is_kind(ptr, i64)\n"
+           << "declare i8 @cloth_rt_object_is_type(ptr, ptr)\n"
            << "declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)\n"
            << "declare i32 @cloth_rt_array_length(ptr)\n"
            << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
@@ -1319,6 +1344,9 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* meta =
                  std::get_if<MirStringMetaInstruction>(&instruction.data)) {
     emit_string_meta(instruction, *meta, output);
+  } else if (const auto* meta =
+                 std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
+    emit_object_meta(instruction, *meta, output);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     emit_unary(instruction, *unary, output);
@@ -1334,6 +1362,12 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* assertion =
                  std::get_if<MirNullAssertInstruction>(&instruction.data)) {
     emit_null_assert(instruction, *assertion, output);
+  } else if (const auto* test =
+                 std::get_if<MirTypeTestInstruction>(&instruction.data)) {
+    emit_type_test(instruction, *test, output);
+  } else if (const auto* cast =
+                 std::get_if<MirCheckedCastInstruction>(&instruction.data)) {
+    emit_checked_cast(instruction, *cast, output);
   } else if (const auto* call =
                  std::get_if<MirCallInstruction>(&instruction.data)) {
     emit_call(instruction, *call, output);
@@ -1512,6 +1546,14 @@ void BodyEmitter::emit_string_meta(const MirInstruction& instruction,
   }
 }
 
+void BodyEmitter::emit_object_meta(const MirInstruction& instruction,
+                                   const MirObjectMetaInstruction& meta,
+                                   std::ostringstream& output) {
+  output << "  " << result_name(instruction)
+         << " = call ptr @cloth_rt_object_type_name(ptr " << value(meta.object)
+         << ")\n";
+}
+
 void BodyEmitter::emit_unary(const MirInstruction& instruction,
                              const MirUnaryInstruction& unary,
                              std::ostringstream& output) {
@@ -1629,6 +1671,54 @@ void BodyEmitter::emit_null_assert(const MirInstruction& instruction,
   const std::string operand = value(assertion.value);
   output << "  call void @cloth_rt_require_non_null(ptr " << operand << ")\n";
   values_.at(instruction.result->value) = operand;
+}
+
+void BodyEmitter::emit_type_test(const MirInstruction& instruction,
+                                 const MirTypeTestInstruction& test,
+                                 std::ostringstream& output) {
+  emit_type_condition(result_name(instruction), test.value, test.target,
+                      instruction.range, output);
+}
+
+void BodyEmitter::emit_checked_cast(const MirInstruction& instruction,
+                                    const MirCheckedCastInstruction& cast,
+                                    std::ostringstream& output) {
+  const std::string condition = next_address();
+  emit_type_condition(condition, cast.value, cast.target, instruction.range,
+                      output);
+  output << "  " << result_name(instruction) << " = select i1 " << condition
+         << ", ptr " << value(cast.value) << ", ptr null\n";
+}
+
+void BodyEmitter::emit_type_condition(std::string_view result,
+                                      MirValueId source, TypeId target,
+                                      SourceRange range,
+                                      std::ostringstream& output) {
+  if (target.value >= module_.semantics().types().size()) {
+    module_.report(range, "checked operation has an unknown target type");
+    return;
+  }
+  const SemanticType& type = module_.semantics().type(target);
+  if (type.kind == TypeKind::kObject) {
+    output << "  " << result << " = icmp ne ptr " << value(source)
+           << ", null\n";
+    return;
+  }
+
+  const std::string raw = next_address();
+  if (type.kind == TypeKind::kString) {
+    output << "  " << raw << " = call i8 @cloth_rt_object_is_kind(ptr "
+           << value(source) << ", i64 "
+           << static_cast<std::uint64_t>(ClothHeapObjectKind::kString) << ")\n";
+  } else if (type.kind == TypeKind::kFileClass && type.file) {
+    output << "  " << raw << " = call i8 @cloth_rt_object_is_type(ptr "
+           << value(source) << ", ptr "
+           << module_.type_descriptor_global(*type.file) << ")\n";
+  } else {
+    module_.report(range, "unsupported checked target reached LLVM lowering");
+    return;
+  }
+  output << "  " << result << " = icmp ne i8 " << raw << ", 0\n";
 }
 
 void BodyEmitter::emit_call(const MirInstruction& instruction,

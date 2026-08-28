@@ -30,13 +30,16 @@ has one-bit value semantics and one-byte storage.
 no storage representation. An omitted function return annotation and explicit
 `: void` produce the same semantic and ABI return type.
 
-`string`, file classes, arrays, nullable wrappers, and `null` use the target
+`string`, `object`, file classes, arrays, nullable wrappers, and `null` use the target
 reference representation. A reference has the target pointer size and
 alignment. ABI references are opaque; the contract does not expose a native
 C++ object or commit the future garbage collector to non-moving addresses.
 Array element types remain structural semantic data and use an `a` prefix in
 mangled names. Nullable wrappers erase to the underlying reference encoding,
 so `T` and `T?` have identical layouts and mangling.
+Widening a managed reference to `object` is also representation preserving.
+The canonical mangling code for an explicitly declared `object` parameter is
+`o`; a concrete source type keeps its own encoding.
 
 `final` is a source binding contract and has no ABI representation. It does not
 change field layout, parameter types, return types, overload identity, or
