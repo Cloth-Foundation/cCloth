@@ -210,6 +210,12 @@ class BodyEmitter {
   void emit_binary(const MirInstruction& instruction,
                    const MirBinaryInstruction& binary,
                    std::ostringstream& output);
+  void emit_is_non_null(const MirInstruction& instruction,
+                        const MirIsNonNullInstruction& test,
+                        std::ostringstream& output);
+  void emit_null_assert(const MirInstruction& instruction,
+                        const MirNullAssertInstruction& assertion,
+                        std::ostringstream& output);
   void emit_call(const MirInstruction& instruction,
                  const MirCallInstruction& call, std::ostringstream& output);
   void emit_phi(const MirInstruction& instruction, const MirPhiInstruction& phi,
@@ -280,6 +286,7 @@ class ModuleEmitter {
            << "declare i32 @cloth_rt_array_length(ptr)\n"
            << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
            << "declare void @cloth_rt_require_receiver(ptr)\n"
+           << "declare void @cloth_rt_require_non_null(ptr)\n"
            << "declare void @cloth_rt_print(ptr)\n"
            << "declare void @cloth_rt_print_char(i32)\n"
            << "declare void @cloth_rt_print_i8(i8)\n"
@@ -775,6 +782,12 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* conversion =
                  std::get_if<MirConvertInstruction>(&instruction.data)) {
     values_.at(instruction.result->value) = value(conversion->value);
+  } else if (const auto* test =
+                 std::get_if<MirIsNonNullInstruction>(&instruction.data)) {
+    emit_is_non_null(instruction, *test, output);
+  } else if (const auto* assertion =
+                 std::get_if<MirNullAssertInstruction>(&instruction.data)) {
+    emit_null_assert(instruction, *assertion, output);
   } else if (const auto* call =
                  std::get_if<MirCallInstruction>(&instruction.data)) {
     emit_call(instruction, *call, output);
@@ -1010,6 +1023,21 @@ void BodyEmitter::emit_binary(const MirInstruction& instruction,
   output << "  " << result_name(instruction) << " = " << operation << ' '
          << type << ' ' << value(binary.left) << ", " << value(binary.right)
          << '\n';
+}
+
+void BodyEmitter::emit_is_non_null(const MirInstruction& instruction,
+                                   const MirIsNonNullInstruction& test,
+                                   std::ostringstream& output) {
+  output << "  " << result_name(instruction) << " = icmp ne ptr "
+         << value(test.value) << ", null\n";
+}
+
+void BodyEmitter::emit_null_assert(const MirInstruction& instruction,
+                                   const MirNullAssertInstruction& assertion,
+                                   std::ostringstream& output) {
+  const std::string operand = value(assertion.value);
+  output << "  call void @cloth_rt_require_non_null(ptr " << operand << ")\n";
+  values_.at(instruction.result->value) = operand;
 }
 
 void BodyEmitter::emit_call(const MirInstruction& instruction,

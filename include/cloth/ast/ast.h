@@ -84,6 +84,20 @@ struct MemberAccessExpression {
   std::string_view member;
 };
 
+struct SafeMemberAccessExpression {
+  ExpressionId object;
+  std::string_view member;
+};
+
+struct NullCoalesceExpression {
+  ExpressionId nullable;
+  ExpressionId fallback;
+};
+
+struct NullAssertExpression {
+  ExpressionId operand;
+};
+
 struct CallExpression {
   ExpressionId callee;
   std::vector<ExpressionId> arguments;
@@ -105,8 +119,10 @@ struct ParenthesizedExpression {
 using ExpressionData =
     std::variant<InvalidExpression, IdentifierExpression, LiteralExpression,
                  UnaryExpression, BinaryExpression, AssignmentExpression,
-                 MemberAccessExpression, CallExpression, ArrayLiteralExpression,
-                 IndexExpression, ParenthesizedExpression>;
+                 MemberAccessExpression, SafeMemberAccessExpression,
+                 NullCoalesceExpression, NullAssertExpression, CallExpression,
+                 ArrayLiteralExpression, IndexExpression,
+                 ParenthesizedExpression>;
 
 struct Expression {
   SourceRange range;

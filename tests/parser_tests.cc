@@ -625,6 +625,56 @@ void nullable_types(TestContext& test) {
               "nullability alone created an overload distinction");
 }
 
+void null_ergonomic_expressions(TestContext& test) {
+  const ParsedSource source{
+      "NullErgonomics.co",
+      "func Use(User? user, User? fallback, User value): User {\n"
+      "  String? name = user?.Name;\n"
+      "  if (!user) {}\n"
+      "  return user ?? fallback ?? value!;\n"
+      "}\n"};
+  test.expect(error_count(source) == 0,
+              "valid null-ergonomic expressions did not parse");
+  const cloth::Block& body =
+      source.ast().storage.block(source.ast().functions[0].body);
+  if (body.statements.size() != 3) {
+    test.expect(false, "null-ergonomics fixture has the wrong statement count");
+    return;
+  }
+
+  const auto* local = std::get_if<cloth::LocalVariableStatement>(
+      &source.ast().storage.statement(body.statements[0]).data);
+  test.expect(local != nullptr && local->initializer,
+              "safe-member initializer is missing");
+  if (local != nullptr && local->initializer) {
+    test.expect(std::holds_alternative<cloth::SafeMemberAccessExpression>(
+                    source.ast().storage.expression(*local->initializer).data),
+                "safe-member AST node is missing");
+  }
+
+  const auto* statement = std::get_if<cloth::ReturnStatement>(
+      &source.ast().storage.statement(body.statements[2]).data);
+  if (statement == nullptr || !statement->value) {
+    test.expect(false, "coalescing return expression is missing");
+    return;
+  }
+  const auto* outer = std::get_if<cloth::NullCoalesceExpression>(
+      &source.ast().storage.expression(*statement->value).data);
+  test.expect(outer != nullptr,
+              "null-coalescing AST node is missing from return expression");
+  if (outer == nullptr) {
+    return;
+  }
+  const auto* inner = std::get_if<cloth::NullCoalesceExpression>(
+      &source.ast().storage.expression(outer->fallback).data);
+  test.expect(inner != nullptr, "null coalescing is not right-associative");
+  if (inner != nullptr) {
+    test.expect(std::holds_alternative<cloth::NullAssertExpression>(
+                    source.ast().storage.expression(inner->fallback).data),
+                "postfix non-null assertion AST node is missing");
+  }
+}
+
 void missing_statement_semicolon_recover(TestContext& test) {
   const ParsedSource source{"Statements.co",
                             "func Values(): int { return 1 return 2; }\n"};
@@ -794,6 +844,7 @@ int main() {
       {"calls, members, and assignment", calls_members_and_assignment},
       {"arrays", arrays},
       {"nullable types", nullable_types},
+      {"null-ergonomic expressions", null_ergonomic_expressions},
       {"missing statement semicolon recover",
        missing_statement_semicolon_recover},
       {"mandatory if braces", mandatory_if_braces},

@@ -286,6 +286,22 @@ class FieldInitializationAnalyzer {
       }
       return;
     }
+    if (const auto* member =
+            std::get_if<SafeMemberAccessExpression>(&expression.data)) {
+      analyze_expression(member->object, assignments, false);
+      return;
+    }
+    if (const auto* coalesce =
+            std::get_if<NullCoalesceExpression>(&expression.data)) {
+      analyze_expression(coalesce->nullable, assignments, false);
+      analyze_expression(coalesce->fallback, assignments, false);
+      return;
+    }
+    if (const auto* assertion =
+            std::get_if<NullAssertExpression>(&expression.data)) {
+      analyze_expression(assertion->operand, assignments, false);
+      return;
+    }
     if (const auto* call = std::get_if<CallExpression>(&expression.data)) {
       analyze_expression(call->callee, assignments, false);
       for (const ExpressionId argument : call->arguments) {

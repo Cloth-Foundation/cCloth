@@ -1,0 +1,38 @@
+String Name;
+int32 Reads;
+
+NullErgonomics(String name) {
+  Name = name;
+}
+
+func Maybe(): NullErgonomics? {
+  Reads = Reads + 1;
+  return self;
+}
+
+static func Fallback(): String {
+  println("fallback");
+  return "Unknown";
+}
+
+static func Main() {
+  NullErgonomics? user = NullErgonomics("Cloth");
+  String? name = user?.Name;
+  String display = user?.Name ?? Fallback();
+  if (user) {
+    println(display);
+  }
+
+  NullErgonomics present = user!;
+  println(present.Name);
+
+  user = null;
+  println(user?.Name ?? Fallback());
+  if (!user) {
+    println("missing");
+  }
+
+  NullErgonomics source = NullErgonomics("once");
+  println(source.Maybe()?.Name ?? Fallback());
+  println(source.Reads);
+}

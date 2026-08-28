@@ -274,6 +274,12 @@ extern "C" void cloth_rt_require_receiver(const void* receiver) noexcept {
   }
 }
 
+extern "C" void cloth_rt_require_non_null(const void* value) noexcept {
+  if (value == nullptr) {
+    runtime_failure("non-null assertion failed");
+  }
+}
+
 extern "C" void cloth_rt_print(const void* value) noexcept {
   if (value == nullptr) {
     runtime_failure("print received a null String");

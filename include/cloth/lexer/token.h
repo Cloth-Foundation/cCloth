@@ -28,6 +28,8 @@ enum class TokenKind {
   kColonColon,
   kDot,
   kQuestion,
+  kQuestionDot,
+  kQuestionQuestion,
 
   kPlus,
   kMinus,

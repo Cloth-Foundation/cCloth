@@ -1079,6 +1079,92 @@ void nullable_flow_narrowing(TestContext& test) {
               "invalid nullable flow leaked an internal diagnostic");
 }
 
+void null_ergonomics(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("User.co",
+            "String Name = \"Ada\";\n"
+            "String? Alias;\n"
+            "User? Manager;\n"
+            "int32 Count;\n"
+            "func Greet() {}\n");
+  valid.add("NullErgonomics.co",
+            "func Display(User? user, User? backup, bool enabled): String {\n"
+            "  String? name = user?.Name;\n"
+            "  String? alias = user?.Alias;\n"
+            "  if (user) { println(user.Name); }\n"
+            "  if (!user) { println(\"missing\"); }\n"
+            "  while (backup) { println(backup.Name); backup = null; }\n"
+            "  if (user && enabled) { println(user.Name); }\n"
+            "  User actual = user!;\n"
+            "  return user.Name;\n"
+            "}\n"
+            "func Required(User? user, User backup): User {\n"
+            "  return user ?? backup;\n"
+            "}\n"
+            "func Optional(User? user, User? backup): User? {\n"
+            "  return user ?? backup;\n"
+            "}\n"
+            "func Safe(User? user): String? { return user?.Name; }\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid null ergonomics produced semantic errors");
+  bool found_presence_test = false;
+  for (const cloth::ExpressionSemantics& expression :
+       valid.result->semantics.file(cloth::FileId{1}).expressions) {
+    found_presence_test = found_presence_test || expression.is_presence_test;
+  }
+  test.expect(found_presence_test,
+              "nullable condition was not marked as a presence test");
+
+  AnalyzedCompilation invalid;
+  invalid.add("User.co",
+              "String Name = \"Ada\";\n"
+              "int32 Count;\n"
+              "func Greet() {}\n");
+  invalid.add(
+      "BadNullErgonomics.co",
+      "func NonNullableCondition(User value) { if (value) {} }\n"
+      "func SafeNonNullable(User value): String? { return value?.Name; }\n"
+      "func SafeValue(User? value): String? { value?.Count; return null; }\n"
+      "func SafeCall(User? value) { value?.Greet(); }\n"
+      "func BadCoalesce(User value): User { return value ?? value; }\n"
+      "func WrongFallback(User? value): User { return value ?? \"x\"; }\n"
+      "func BadAssert(User value): User { return value!; }\n"
+      "func Assign(User? value) { value?.Name = \"x\"; }\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic(
+                  "if condition uses a non-null reference and is always true"),
+              "non-null reference condition was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "safe member access requires a nullable reference"),
+              "safe access accepted a non-null receiver");
+  test.expect(invalid.has_diagnostic(
+                  "safe access to value-type field 'Count' requires nullable "
+                  "value types"),
+              "safe access accepted a value-type field");
+  test.expect(invalid.has_diagnostic(
+                  "safe function calls are not implemented; narrow the "
+                  "receiver first"),
+              "safe access accepted an instance function call");
+  test.expect(invalid.has_diagnostic(
+                  "left operand of the null-coalescing operator must be "
+                  "nullable"),
+              "coalescing accepted a non-null left operand");
+  test.expect(invalid.has_diagnostic(
+                  "right operand of the null-coalescing operator has type "
+                  "'String'"),
+              "coalescing accepted an incompatible fallback");
+  test.expect(invalid.has_diagnostic(
+                  "non-null assertion requires a nullable reference"),
+              "non-null assertion accepted a non-null operand");
+  test.expect(invalid.has_diagnostic("assignment target is not mutable"),
+              "safe member access was accepted as an assignment target");
+  test.expect(!invalid.has_diagnostic("internal"),
+              "invalid null ergonomics leaked an internal diagnostic");
+}
+
 void assignment_requires_location(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Assignments.co", "func Bad(): int { 1 = 2; return 0; }\n");
@@ -1373,6 +1459,7 @@ int main() {
       {"null assignability", null_assignability},
       {"nullable reference shapes", nullable_reference_shapes},
       {"nullable flow narrowing", nullable_flow_narrowing},
+      {"null ergonomics", null_ergonomics},
       {"assignment requires location", assignment_requires_location},
       {"array semantics", array_semantics},
       {"for iteration semantics", for_iteration_semantics},

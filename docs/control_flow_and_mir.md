@@ -81,6 +81,12 @@ narrowing are explicit MIR conversions; both erase at the ABI boundary. `&&`
 and `||` lower to branches and a typed phi value, preserving short-circuit
 behavior.
 
+Nullable presence checks lower to explicit non-null tests. Safe member access
+and null coalescing lower to guarded branches and typed phi values, so the
+receiver or left operand is evaluated once and the skipped side is not
+evaluated. Postfix non-null assertion lowers to a dedicated checked MIR
+instruction and runtime guard before exposing the underlying reference type.
+
 Calls retain whether they were unqualified, file-class-qualified,
 instance-qualified, or constructor calls. This avoids choosing an implicit
 method calling convention before the ABI stage.

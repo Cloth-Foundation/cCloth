@@ -626,6 +626,63 @@ void nullable_narrowing_conversion(TestContext& test) {
       "MIR verifier reported the wrong conversion invariant");
 }
 
+void null_ergonomics_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("User.co", "String Name = \"Ada\";\n");
+  compilation.add("NullErgonomics.co",
+                  "func Display(User? user): String {\n"
+                  "  if (user) { return user.Name; }\n"
+                  "  return user?.Name ?? \"Unknown\";\n"
+                  "}\n"
+                  "func Assert(User? user): User { return user!; }\n"
+                  "func Both(User? user, bool enabled): bool {\n"
+                  "  return user && enabled;\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid null ergonomics failed MIR verification");
+  const cloth::MirFileClass& file = compilation.result->mir.files[1];
+  const cloth::MirBody& display = file.functions[0].body;
+  const cloth::MirBody& assertion = file.functions[1].body;
+  const cloth::MirBody& conjunction = file.functions[2].body;
+  test.expect(
+      body_has_instruction<cloth::MirIsNonNullInstruction>(display) &&
+          body_has_instruction<cloth::MirPhiInstruction>(display),
+      "safe access and coalescing did not lower to guarded control flow");
+  test.expect(body_has_instruction<cloth::MirNullAssertInstruction>(assertion),
+              "non-null assertion lacks an explicit MIR guard");
+  test.expect(
+      body_has_instruction<cloth::MirIsNonNullInstruction>(conjunction) &&
+          body_has_instruction<cloth::MirPhiInstruction>(conjunction),
+      "nullable short-circuit operand was not lowered as a presence test");
+
+  cloth::MirModule broken = compilation.result->mir;
+  bool corrupted = false;
+  for (cloth::MirBasicBlock& block : broken.files[1].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (std::holds_alternative<cloth::MirIsNonNullInstruction>(
+              instruction.data)) {
+        instruction.type =
+            compilation.result->semantics.file(cloth::FileId{0}).type;
+        corrupted = true;
+        break;
+      }
+    }
+    if (corrupted) {
+      break;
+    }
+  }
+  cloth::DiagnosticEngine diagnostics;
+  test.expect(
+      corrupted && !cloth::verify_mir(broken, compilation.result->semantics,
+                                      diagnostics),
+      "MIR verifier accepted a non-bool presence test");
+  test.expect(
+      has_diagnostic(diagnostics, "non-null test does not have type bool"),
+      "MIR verifier reported the wrong presence-test invariant");
+}
+
 void call_receivers(TestContext& test) {
   CompiledSources compilation;
   compilation.add(
@@ -769,6 +826,7 @@ int main() {
       {"for terminating body reachability", for_terminating_body_reachability},
       {"nullable conversion", nullable_conversion},
       {"nullable narrowing conversion", nullable_narrowing_conversion},
+      {"null ergonomics lowering", null_ergonomics_lowering},
       {"call receivers", call_receivers},
       {"verifiers reject corruption", verifiers_reject_corruption},
   };

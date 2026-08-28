@@ -120,6 +120,7 @@ struct ExpressionSemantics {
   TypeId type{0};
   ValueCategory category{ValueCategory::kInvalid};
   std::optional<SymbolId> symbol{};
+  bool is_presence_test{false};
 };
 
 struct FileSemantics {

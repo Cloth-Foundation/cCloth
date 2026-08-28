@@ -38,6 +38,9 @@ ExpressionId ExpressionParser::parse_expression(int minimum_precedence) {
     if (operation == TokenKind::kEqual) {
       left = storage_.add_expression(
           Expression{range, AssignmentExpression{left, operation, right}});
+    } else if (operation == TokenKind::kQuestionQuestion) {
+      left = storage_.add_expression(
+          Expression{range, NullCoalesceExpression{left, right}});
     } else {
       left = storage_.add_expression(
           Expression{range, BinaryExpression{left, operation, right}});
@@ -104,6 +107,26 @@ ExpressionId ExpressionParser::parse_postfix_expression() {
                               member.range.end};
       expression = storage_.add_expression(
           Expression{range, MemberAccessExpression{expression, member.lexeme}});
+      continue;
+    }
+    if (match(TokenKind::kQuestionDot)) {
+      if (current().kind != TokenKind::kIdentifier) {
+        diagnostics_.error(current().range, "expected member name after '?.'");
+        break;
+      }
+      const Token& member = advance();
+      const SourceRange range{expression_range(expression).begin,
+                              member.range.end};
+      expression = storage_.add_expression(Expression{
+          range, SafeMemberAccessExpression{expression, member.lexeme}});
+      continue;
+    }
+    if (match(TokenKind::kBang)) {
+      const Token& operation = tokens_[current_ - 1];
+      const SourceRange range{expression_range(expression).begin,
+                              operation.range.end};
+      expression = storage_.add_expression(
+          Expression{range, NullAssertExpression{expression}});
       continue;
     }
     break;
@@ -276,32 +299,34 @@ int ExpressionParser::binary_precedence(TokenKind kind) noexcept {
   switch (kind) {
     case TokenKind::kEqual:
       return 1;
-    case TokenKind::kPipePipe:
+    case TokenKind::kQuestionQuestion:
       return 2;
-    case TokenKind::kAmpersandAmpersand:
+    case TokenKind::kPipePipe:
       return 3;
+    case TokenKind::kAmpersandAmpersand:
+      return 4;
     case TokenKind::kEqualEqual:
     case TokenKind::kBangEqual:
-      return 4;
+      return 5;
     case TokenKind::kLess:
     case TokenKind::kLessEqual:
     case TokenKind::kGreater:
     case TokenKind::kGreaterEqual:
-      return 5;
+      return 6;
     case TokenKind::kPlus:
     case TokenKind::kMinus:
-      return 6;
+      return 7;
     case TokenKind::kStar:
     case TokenKind::kSlash:
     case TokenKind::kPercent:
-      return 7;
+      return 8;
     default:
       return 0;
   }
 }
 
 bool ExpressionParser::is_right_associative(TokenKind kind) noexcept {
-  return kind == TokenKind::kEqual;
+  return kind == TokenKind::kEqual || kind == TokenKind::kQuestionQuestion;
 }
 
 SourceRange ExpressionParser::expression_range(ExpressionId id) const {

@@ -100,6 +100,14 @@ struct MirConvertInstruction {
   MirConversionKind kind;
 };
 
+struct MirIsNonNullInstruction {
+  MirValueId value;
+};
+
+struct MirNullAssertInstruction {
+  MirValueId value;
+};
+
 enum class MirCallKind {
   kUnqualified,
   kClassQualified,
@@ -123,15 +131,14 @@ struct MirPhiInstruction {
   std::vector<MirPhiIncoming> incoming;
 };
 
-using MirInstructionData =
-    std::variant<MirInvalidInstruction, MirLiteralInstruction,
-                 MirLoadSymbolInstruction, MirDeclareLocalInstruction,
-                 MirStoreSymbolInstruction, MirLoadMemberInstruction,
-                 MirStoreMemberInstruction, MirArrayLiteralInstruction,
-                 MirArrayLoadInstruction, MirArrayStoreInstruction,
-                 MirArrayLengthInstruction, MirUnaryInstruction,
-                 MirBinaryInstruction, MirConvertInstruction,
-                 MirCallInstruction, MirPhiInstruction>;
+using MirInstructionData = std::variant<
+    MirInvalidInstruction, MirLiteralInstruction, MirLoadSymbolInstruction,
+    MirDeclareLocalInstruction, MirStoreSymbolInstruction,
+    MirLoadMemberInstruction, MirStoreMemberInstruction,
+    MirArrayLiteralInstruction, MirArrayLoadInstruction,
+    MirArrayStoreInstruction, MirArrayLengthInstruction, MirUnaryInstruction,
+    MirBinaryInstruction, MirConvertInstruction, MirIsNonNullInstruction,
+    MirNullAssertInstruction, MirCallInstruction, MirPhiInstruction>;
 
 struct MirInstruction {
   std::optional<MirValueId> result;

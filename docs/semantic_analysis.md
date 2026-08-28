@@ -124,12 +124,15 @@ The checker currently validates:
 - return value presence and type compatibility
 
 Nullable locals and parameters are narrowed to their underlying reference type
-on paths proven by direct `null` equality or inequality checks. Parentheses,
-`!`, `&&`, and `||` compose true- and false-path facts, including guard clauses.
-Assignments invalidate a fact, and branch joins retain it only when every
-fallthrough path does. Fields are excluded until member effects and aliasing
-have a stronger contract. Without a proof, nullable values cannot be
-dereferenced, indexed, or iterated.
+on paths proven by direct `null` equality or inequality checks or nullable
+presence conditions. Parentheses, `!`, `&&`, and `||` compose true- and
+false-path facts, including guard clauses. Assignments invalidate a fact, and
+branch joins retain it only when every fallthrough path does. Fields are
+excluded until member effects and aliasing have a stronger contract. Without a
+proof, nullable values cannot be directly dereferenced, indexed, or iterated.
+Safe reference-field access produces a nullable result, null coalescing checks
+a compatible lazy fallback, and postfix assertion produces the underlying type
+with a runtime null guard.
 
 Overload matching is exact after the portable aliases are canonicalized.
 User-defined conversions, numeric promotions, inheritance, traits, generics,

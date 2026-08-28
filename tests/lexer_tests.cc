@@ -172,7 +172,7 @@ void iteration_keywords(TestContext& test) {
 void operators_and_longest_match(TestContext& test) {
   const LexedSource source{
       "+ - * / % = == != < <= > >= && || ! & | ^ ~ ++ -- += -= *= "
-      "/= %= << >> <<= >>= &= |= ^="};
+      "/= %= << >> <<= >>= &= |= ^= ?. ??"};
   expect_kinds(test, source,
                {cloth::TokenKind::kPlus,
                 cloth::TokenKind::kMinus,
@@ -207,6 +207,8 @@ void operators_and_longest_match(TestContext& test) {
                 cloth::TokenKind::kAmpersandEqual,
                 cloth::TokenKind::kPipeEqual,
                 cloth::TokenKind::kCaretEqual,
+                cloth::TokenKind::kQuestionDot,
+                cloth::TokenKind::kQuestionQuestion,
                 cloth::TokenKind::kEof});
 }
 

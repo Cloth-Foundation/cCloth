@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 12.3.4 nullable flow narrowing
+# Cloth compiler - Stage 12.3.5 null ergonomics
 
-This repository contains the deterministic Stage 12.3.4 compiler core for Cloth
+This repository contains the deterministic Stage 12.3.5 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -242,7 +242,7 @@ docs/printing_and_object_representation.md Stage 10.5 output contract
 docs/void_and_callable_contracts.md Stage 11 void contract
 docs/final_bindings.md   Stage 12.1 single-assignment contract
 docs/static_members.md   Stage 12.2 static ownership and entry contract
-docs/nullability.md      Stage 12.3.4 nullable reference and flow contract
+docs/nullability.md      Stage 12.3.5 nullable reference and operator contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -352,6 +352,11 @@ Stage 12.3.4 narrows nullable locals and parameters after direct `null` checks.
 True and false facts compose through `!`, `&&`, `||`, branches, and guard
 clauses; assignments invalidate them. Narrowed reads retain explicit HIR and
 MIR type evidence while erasing to the unchanged reference ABI.
+
+Stage 12.3.5 adds nullable presence conditions, safe reference-field access
+with `?.`, lazy null coalescing with `??`, and postfix non-null assertion with
+`!`. Assertions use an explicit runtime guard and trap on null; safe access and
+coalescing evaluate their left operand once and lower to short-circuit MIR.
 
 ## Extending the lexer
 

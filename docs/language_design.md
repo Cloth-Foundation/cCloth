@@ -145,8 +145,9 @@ initialization order and collector roots have explicit contracts.
 nullability explicit: `T?[]` has nullable elements, `T[]?` is a nullable array,
 and `T?[]?` permits both. Primitive and void types cannot be nullable.
 
-Nullable values cannot be used for member access, indexing, or iteration until
-they are narrowed. Every non-null reference field is initialized by its
+Nullable values cannot be used for ordinary member access, indexing, or
+iteration until they are narrowed. Every non-null reference field is
+initialized by its
 declaration or definitely assigned on every constructor exit. It cannot be read
 before initialization, and the current object cannot escape or invoke instance
 functions until all its non-null fields are initialized. Nullable reference
@@ -155,6 +156,12 @@ parameters along proven control-flow paths; logical operators compose facts,
 and assignment invalidates them. Fields do not narrow until member effects and
 aliasing have an explicit model. The ABI erases `?` to the underlying reference
 layout and mangling.
+
+Nullable references may be used directly as conditions, where non-null means
+true; prefix `!` tests for null. `receiver?.Field` safely reads a
+reference-valued field, `value ?? fallback` lazily supplies an alternative, and
+postfix `value!` checks at runtime before producing the underlying non-null
+type. Safe calls and safe access to primitive fields remain deferred.
 
 ## Path-derived packages
 

@@ -17,6 +17,7 @@ extern "C" {
 [[nodiscard]] void* cloth_rt_array_element(void* array,
                                            std::int32_t index) noexcept;
 void cloth_rt_require_receiver(const void* receiver) noexcept;
+void cloth_rt_require_non_null(const void* value) noexcept;
 void cloth_rt_print(const void* string) noexcept;
 void cloth_rt_print_char(std::uint32_t value) noexcept;
 void cloth_rt_print_i8(std::int8_t value) noexcept;

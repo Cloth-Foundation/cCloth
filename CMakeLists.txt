@@ -466,6 +466,51 @@ if(BUILD_TESTING)
         )
 
         if(WIN32)
+            set(CLOTH_TEST_NULL_ERGONOMICS_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth null ergonomics.exe")
+            set(CLOTH_TEST_NULL_ASSERT_FAILURE_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth null assert failure.exe")
+        else()
+            set(CLOTH_TEST_NULL_ERGONOMICS_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth null ergonomics")
+            set(CLOTH_TEST_NULL_ASSERT_FAILURE_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth null assert failure")
+        endif()
+        add_test(
+            NAME cloth_cli_build_null_ergonomics
+            COMMAND clothc
+                    "--build=${CLOTH_TEST_NULL_ERGONOMICS_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/NullErgonomics.co
+        )
+        add_test(
+            NAME cloth_null_ergonomics
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_NULL_ERGONOMICS_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/null_ergonomics.txt"
+                    -DCLOTH_EXACT_OUTPUT=ON
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_null_ergonomics PROPERTIES
+            DEPENDS cloth_cli_build_null_ergonomics
+        )
+        add_test(
+            NAME cloth_cli_build_null_assert_failure
+            COMMAND clothc
+                    "--build=${CLOTH_TEST_NULL_ASSERT_FAILURE_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/NullAssertFailure.co
+        )
+        add_test(
+            NAME cloth_null_assert_failure
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_NULL_ASSERT_FAILURE_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED_ERROR=non-null assertion failed"
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_failure.cmake
+        )
+        set_tests_properties(cloth_null_assert_failure PROPERTIES
+            DEPENDS cloth_cli_build_null_assert_failure
+        )
+
+        if(WIN32)
             set(CLOTH_TEST_FIZZBUZZ_EXECUTABLE
                 "${CMAKE_CURRENT_BINARY_DIR}/cloth fizzbuzz.exe")
         else()

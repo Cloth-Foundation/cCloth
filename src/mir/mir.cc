@@ -251,11 +251,8 @@ class BodyBuilder {
   }
 
   void lower_if(const HirIfStatement& if_statement, SourceRange range) {
-    const HirExpression& condition_syntax =
-        hir_.storage.expression(if_statement.condition);
-    const MirValueId condition =
-        require_value(lower_expression(if_statement.condition),
-                      condition_syntax.type, condition_syntax.range);
+    const MirValueId condition = lower_condition(
+        if_statement.condition, if_statement.condition_is_presence_test);
     const bool branch_reachable = current_is_reachable();
     const MirBlockId then_block = add_block(branch_reachable);
     const MirBlockId else_block = add_block(branch_reachable);
@@ -299,11 +296,8 @@ class BodyBuilder {
     jump_to(condition_block, range);
 
     current_block_ = condition_block;
-    const HirExpression& condition_syntax =
-        hir_.storage.expression(while_statement.condition);
-    const MirValueId condition =
-        require_value(lower_expression(while_statement.condition),
-                      condition_syntax.type, condition_syntax.range);
+    const MirValueId condition = lower_condition(
+        while_statement.condition, while_statement.condition_is_presence_test);
     terminate(MirBranchTerminator{condition, body_block, exit_block}, range);
 
     loop_targets_.push_back(LoopTargets{condition_block, exit_block});
@@ -399,9 +393,13 @@ class BodyBuilder {
       return invalid_value(expression.range);
     }
     if (const auto* unary = std::get_if<HirUnaryExpression>(&expression.data)) {
-      const MirValueId operand = require_value(
-          lower_expression(unary->operand),
-          hir_.storage.expression(unary->operand).type, expression.range);
+      const HirExpression& operand_syntax =
+          hir_.storage.expression(unary->operand);
+      const MirValueId operand =
+          unary->operation == TokenKind::kBang
+              ? lower_condition(unary->operand, unary->operand_is_presence_test)
+              : require_value(lower_expression(unary->operand),
+                              operand_syntax.type, operand_syntax.range);
       return emit_value(expression.type, expression.range,
                         MirUnaryInstruction{unary->operation, operand});
     }
@@ -427,6 +425,18 @@ class BodyBuilder {
     if (const auto* member =
             std::get_if<HirMemberExpression>(&expression.data)) {
       return lower_member(*member, expression);
+    }
+    if (const auto* member =
+            std::get_if<HirSafeMemberExpression>(&expression.data)) {
+      return lower_safe_member(*member, expression);
+    }
+    if (const auto* coalesce =
+            std::get_if<HirNullCoalesceExpression>(&expression.data)) {
+      return lower_null_coalesce(*coalesce, expression);
+    }
+    if (const auto* assertion =
+            std::get_if<HirNullAssertExpression>(&expression.data)) {
+      return lower_null_assert(*assertion, expression);
     }
     if (const auto* call = std::get_if<HirCallExpression>(&expression.data)) {
       return lower_call(*call, expression);
@@ -469,6 +479,139 @@ class BodyBuilder {
     }
     const auto& grouped = std::get<HirGroupedExpression>(expression.data);
     return lower_expression(grouped.expression);
+  }
+
+  MirValueId lower_condition(HirExpressionId id, bool is_presence_test) {
+    const HirExpression& expression = hir_.storage.expression(id);
+    const MirValueId value =
+        require_value(lower_expression(id), expression.type, expression.range);
+    if (!is_presence_test) {
+      if (expression.type == semantics_.bool_type() ||
+          expression.type == semantics_.error_type()) {
+        return value;
+      }
+      return invalid_value(expression.range);
+    }
+    return emit_value(semantics_.bool_type(), expression.range,
+                      MirIsNonNullInstruction{value});
+  }
+
+  std::optional<MirValueId> lower_safe_member(
+      const HirSafeMemberExpression& member, const HirExpression& expression) {
+    const HirExpression& object_syntax = hir_.storage.expression(member.object);
+    const MirValueId object =
+        require_value(lower_expression(member.object), object_syntax.type,
+                      object_syntax.range);
+    if (!member.member) {
+      return invalid_value(expression.range);
+    }
+    const SemanticType& nullable_type = semantics_.type(object_syntax.type);
+    if (nullable_type.kind != TypeKind::kNullable ||
+        !nullable_type.element_type) {
+      return invalid_value(expression.range);
+    }
+
+    const MirValueId has_object =
+        emit_value(semantics_.bool_type(), object_syntax.range,
+                   MirIsNonNullInstruction{object});
+    const bool branch_reachable = current_is_reachable();
+    const MirBlockId member_block = add_block(branch_reachable);
+    const MirBlockId null_block = add_block(branch_reachable);
+    const MirBlockId merge_block = add_block(branch_reachable);
+    terminate(MirBranchTerminator{has_object, member_block, null_block},
+              expression.range);
+
+    current_block_ = member_block;
+    const MirValueId narrowed_object = emit_value(
+        *nullable_type.element_type, object_syntax.range,
+        MirConvertInstruction{object, MirConversionKind::kFromNullable});
+    const SemanticSymbol& symbol = semantics_.symbol(*member.member);
+    MirValueId loaded =
+        emit_value(symbol.type, expression.range,
+                   MirLoadMemberInstruction{narrowed_object, *member.member});
+    loaded = coerce(loaded, expression.type, expression.range);
+    const MirBlockId member_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = null_block;
+    MirValueId null_value =
+        emit_value(semantics_.null_type(), expression.range,
+                   MirLiteralInstruction{LiteralKind::kNull, "null"});
+    null_value = coerce(null_value, expression.type, expression.range);
+    const MirBlockId null_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = merge_block;
+    std::vector<MirPhiIncoming> incoming;
+    incoming.push_back(MirPhiIncoming{member_end, loaded});
+    incoming.push_back(MirPhiIncoming{null_end, null_value});
+    return emit_value(expression.type, expression.range,
+                      MirPhiInstruction{std::move(incoming)});
+  }
+
+  std::optional<MirValueId> lower_null_coalesce(
+      const HirNullCoalesceExpression& coalesce_expression,
+      const HirExpression& expression) {
+    const HirExpression& nullable_syntax =
+        hir_.storage.expression(coalesce_expression.nullable);
+    const MirValueId nullable =
+        require_value(lower_expression(coalesce_expression.nullable),
+                      nullable_syntax.type, nullable_syntax.range);
+    const SemanticType& nullable_type = semantics_.type(nullable_syntax.type);
+    if (nullable_type.kind != TypeKind::kNullable ||
+        !nullable_type.element_type) {
+      return invalid_value(expression.range);
+    }
+
+    const MirValueId has_value =
+        emit_value(semantics_.bool_type(), nullable_syntax.range,
+                   MirIsNonNullInstruction{nullable});
+    const bool branch_reachable = current_is_reachable();
+    const MirBlockId value_block = add_block(branch_reachable);
+    const MirBlockId fallback_block = add_block(branch_reachable);
+    const MirBlockId merge_block = add_block(branch_reachable);
+    terminate(MirBranchTerminator{has_value, value_block, fallback_block},
+              expression.range);
+
+    current_block_ = value_block;
+    MirValueId value = emit_value(
+        *nullable_type.element_type, nullable_syntax.range,
+        MirConvertInstruction{nullable, MirConversionKind::kFromNullable});
+    value = coerce(value, expression.type, expression.range);
+    const MirBlockId value_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = fallback_block;
+    const HirExpression& fallback_syntax =
+        hir_.storage.expression(coalesce_expression.fallback);
+    MirValueId fallback =
+        require_value(lower_expression(coalesce_expression.fallback),
+                      fallback_syntax.type, fallback_syntax.range);
+    fallback = coerce(fallback, expression.type, fallback_syntax.range);
+    const MirBlockId fallback_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = merge_block;
+    std::vector<MirPhiIncoming> incoming;
+    incoming.push_back(MirPhiIncoming{value_end, value});
+    incoming.push_back(MirPhiIncoming{fallback_end, fallback});
+    return emit_value(expression.type, expression.range,
+                      MirPhiInstruction{std::move(incoming)});
+  }
+
+  std::optional<MirValueId> lower_null_assert(
+      const HirNullAssertExpression& assertion,
+      const HirExpression& expression) {
+    if (expression.type == semantics_.error_type()) {
+      return invalid_value(expression.range);
+    }
+    const HirExpression& operand_syntax =
+        hir_.storage.expression(assertion.operand);
+    const MirValueId operand =
+        require_value(lower_expression(assertion.operand), operand_syntax.type,
+                      operand_syntax.range);
+    return emit_value(expression.type, expression.range,
+                      MirNullAssertInstruction{operand});
   }
 
   std::optional<MirValueId> lower_symbol(
@@ -688,9 +831,8 @@ class BodyBuilder {
 
   std::optional<MirValueId> lower_short_circuit(
       const HirBinaryExpression& binary, const HirExpression& expression) {
-    const HirExpression& left_syntax = hir_.storage.expression(binary.left);
-    const MirValueId left = require_value(lower_expression(binary.left),
-                                          left_syntax.type, left_syntax.range);
+    const MirValueId left =
+        lower_condition(binary.left, binary.left_is_presence_test);
     const bool branch_reachable = current_is_reachable();
     const MirBlockId right_block = add_block(branch_reachable);
     const MirBlockId short_block = add_block(branch_reachable);
@@ -702,9 +844,8 @@ class BodyBuilder {
               expression.range);
 
     current_block_ = right_block;
-    const HirExpression& right_syntax = hir_.storage.expression(binary.right);
-    const MirValueId right = require_value(
-        lower_expression(binary.right), right_syntax.type, right_syntax.range);
+    const MirValueId right =
+        lower_condition(binary.right, binary.right_is_presence_test);
     const MirBlockId right_end = *current_block_;
     jump_to(merge_block, expression.range);
 

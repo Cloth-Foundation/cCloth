@@ -164,7 +164,9 @@ std::vector<Token> Lexer::lex() {
         add(TokenKind::kDot);
         break;
       case '?':
-        add(TokenKind::kQuestion);
+        add(match('?')   ? TokenKind::kQuestionQuestion
+            : match('.') ? TokenKind::kQuestionDot
+                         : TokenKind::kQuestion);
         break;
       case '+':
         add(match('+')   ? TokenKind::kPlusPlus

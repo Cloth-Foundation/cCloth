@@ -53,12 +53,15 @@ struct HirTypeExpression {
 struct HirUnaryExpression {
   TokenKind operation;
   HirExpressionId operand;
+  bool operand_is_presence_test{false};
 };
 
 struct HirBinaryExpression {
   HirExpressionId left;
   TokenKind operation;
   HirExpressionId right;
+  bool left_is_presence_test{false};
+  bool right_is_presence_test{false};
 };
 
 struct HirAssignmentExpression {
@@ -69,6 +72,20 @@ struct HirAssignmentExpression {
 struct HirMemberExpression {
   HirExpressionId object;
   std::optional<SymbolId> member;
+};
+
+struct HirSafeMemberExpression {
+  HirExpressionId object;
+  std::optional<SymbolId> member;
+};
+
+struct HirNullCoalesceExpression {
+  HirExpressionId nullable;
+  HirExpressionId fallback;
+};
+
+struct HirNullAssertExpression {
+  HirExpressionId operand;
 };
 
 struct HirCallExpression {
@@ -95,13 +112,13 @@ struct HirGroupedExpression {
   HirExpressionId expression;
 };
 
-using HirExpressionData =
-    std::variant<HirInvalidExpression, HirLiteralExpression,
-                 HirSymbolExpression, HirTypeExpression, HirUnaryExpression,
-                 HirBinaryExpression, HirAssignmentExpression,
-                 HirMemberExpression, HirCallExpression,
-                 HirArrayLiteralExpression, HirIndexExpression,
-                 HirArrayLengthExpression, HirGroupedExpression>;
+using HirExpressionData = std::variant<
+    HirInvalidExpression, HirLiteralExpression, HirSymbolExpression,
+    HirTypeExpression, HirUnaryExpression, HirBinaryExpression,
+    HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
+    HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
+    HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
+    HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;
@@ -128,11 +145,13 @@ struct HirIfStatement {
   HirExpressionId condition;
   HirBlockId then_block;
   std::optional<HirBlockId> else_block;
+  bool condition_is_presence_test{false};
 };
 
 struct HirWhileStatement {
   HirExpressionId condition;
   HirBlockId body;
+  bool condition_is_presence_test{false};
 };
 
 struct HirForStatement {

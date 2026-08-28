@@ -211,6 +211,27 @@ void static_members(TestContext& test) {
               "native entry adapter did not call static Main directly");
 }
 
+void null_ergonomics(TestContext& test) {
+  CompiledSources sources;
+  sources.add("User.co", "String Name = \"Ada\";\n");
+  sources.add("NullErgonomics.co",
+              "func Display(User? user): String {\n"
+              "  return user?.Name ?? \"Unknown\";\n"
+              "}\n"
+              "func Assert(User? user): User { return user!; }\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(),
+              "null ergonomics module failed to emit");
+  test.expect(sources.contains("declare void @cloth_rt_require_non_null(ptr)"),
+              "non-null assertion runtime boundary is missing");
+  test.expect(
+      sources.contains(" = icmp ne ptr ") && sources.contains(" = phi ptr "),
+      "safe access and coalescing did not emit guarded LLVM flow");
+  test.expect(sources.contains("call void @cloth_rt_require_non_null(ptr "),
+              "non-null assertion did not emit its runtime guard");
+}
+
 void wasm32_module(TestContext& test) {
   CompiledSources sources{cloth::TargetDataLayout::llvm_wasm32()};
   sources.add("Small.co",
@@ -367,6 +388,7 @@ int main() {
       {"arrays", arrays},
       {"call receivers", call_receivers},
       {"static members", static_members},
+      {"null ergonomics", null_ergonomics},
       {"wasm32 module", wasm32_module},
       {"print and native entry point", print_and_native_entry_point},
       {"rejects invalid native entry points",

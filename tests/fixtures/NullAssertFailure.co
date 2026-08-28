@@ -1,0 +1,4 @@
+static func Main() {
+  String? value = null;
+  println(value!);
+}

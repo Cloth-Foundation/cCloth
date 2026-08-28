@@ -127,11 +127,18 @@ class Lowerer {
         data = HirSymbolExpression{*semantic.symbol};
       }
     } else if (const auto* unary = std::get_if<UnaryExpression>(&syntax.data)) {
-      data = HirUnaryExpression{unary->operation, expression(unary->operand)};
+      data = HirUnaryExpression{unary->operation, expression(unary->operand),
+                                semantics_.file(current_file_)
+                                    .expressions.at(unary->operand.value)
+                                    .is_presence_test};
     } else if (const auto* binary =
                    std::get_if<BinaryExpression>(&syntax.data)) {
-      data = HirBinaryExpression{expression(binary->left), binary->operation,
-                                 expression(binary->right)};
+      const FileSemantics& file = semantics_.file(current_file_);
+      data = HirBinaryExpression{
+          expression(binary->left), binary->operation,
+          expression(binary->right),
+          file.expressions.at(binary->left.value).is_presence_test,
+          file.expressions.at(binary->right.value).is_presence_test};
     } else if (const auto* assignment =
                    std::get_if<AssignmentExpression>(&syntax.data)) {
       data = HirAssignmentExpression{expression(assignment->target),
@@ -148,6 +155,17 @@ class Lowerer {
       } else {
         data = HirMemberExpression{expression(member->object), semantic.symbol};
       }
+    } else if (const auto* member =
+                   std::get_if<SafeMemberAccessExpression>(&syntax.data)) {
+      data =
+          HirSafeMemberExpression{expression(member->object), semantic.symbol};
+    } else if (const auto* coalesce =
+                   std::get_if<NullCoalesceExpression>(&syntax.data)) {
+      data = HirNullCoalesceExpression{expression(coalesce->nullable),
+                                       expression(coalesce->fallback)};
+    } else if (const auto* assertion =
+                   std::get_if<NullAssertExpression>(&syntax.data)) {
+      data = HirNullAssertExpression{expression(assertion->operand)};
     } else if (const auto* call = std::get_if<CallExpression>(&syntax.data)) {
       std::vector<HirExpressionId> arguments;
       arguments.reserve(call->arguments.size());
@@ -205,11 +223,17 @@ class Lowerer {
           expression(if_statement->condition), block(if_statement->then_block),
           if_statement->else_block
               ? std::optional<HirBlockId>{block(*if_statement->else_block)}
-              : std::nullopt};
+              : std::nullopt,
+          semantics_.file(current_file_)
+              .expressions.at(if_statement->condition.value)
+              .is_presence_test};
     } else if (const auto* while_statement =
                    std::get_if<WhileStatement>(&syntax.data)) {
-      data = HirWhileStatement{expression(while_statement->condition),
-                               block(while_statement->body)};
+      data = HirWhileStatement{
+          expression(while_statement->condition), block(while_statement->body),
+          semantics_.file(current_file_)
+              .expressions.at(while_statement->condition.value)
+              .is_presence_test};
     } else if (const auto* for_statement =
                    std::get_if<ForStatement>(&syntax.data)) {
       data = HirForStatement{

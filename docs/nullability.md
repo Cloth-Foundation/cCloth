@@ -1,4 +1,4 @@
-# Cloth Stage 12.3.4 nullability contract
+# Cloth Stage 12.3.5 nullability contract
 
 Cloth reference types are non-null by default. A trailing `?` admits the
 `null` value and creates a distinct semantic type:
@@ -58,14 +58,58 @@ The declaration remains `T?`; only reads on a proven path have type `T`.
 Assigning the binding invalidates the proof. Fields are deliberately not
 narrowed because an alias or instance call may mutate them without a local
 assignment. Copy a field to a local when a stable refinement is needed.
-Safe-navigation and forced-unwrapping syntax remain deferred.
 
-Without a proof, a nullable value cannot be used for member access, indexing,
-or iteration. HIR records narrowed reads with the underlying `TypeId`. MIR uses
+## Presence and null operators
+
+A nullable reference is a valid `if` or `while` condition. It is true when the
+reference is non-null. Prefix `!` tests for null, and nullable operands in
+`&&` and `||` use the same presence rule. A non-null reference condition is
+rejected as always true rather than silently accepted:
+
+```cloth
+if (user) { println(user.Name); }
+if (!user) { println("missing"); }
+if (user && enabled) { println(user.Name); }
+```
+
+Presence tests narrow stable locals and parameters on the appropriate path.
+Fields may be tested for presence but are not narrowed.
+
+Safe access evaluates a nullable receiver once. It loads the reference-valued
+field only when the receiver is non-null and otherwise produces `null`:
+
+```cloth
+String? name = user?.Name;
+```
+
+If the field has type `T`, the result is `T?`; if it already has type `T?`, the
+result remains `T?`. Safe access to primitive fields awaits nullable value
+types. Safe function calls are also deferred; narrow the receiver first.
+
+The null-coalescing operator evaluates its left operand once and evaluates the
+fallback only when that value is null:
+
+```cloth
+String display = user?.Name ?? "Unknown";
+```
+
+`left ?? fallback` requires a `T?` left operand. It produces `T` for a `T`
+fallback, or `T?` for a compatible nullable fallback. The operator is
+right-associative.
+
+Postfix `value!` asserts that a `T?` value is present, returning `T`. It
+evaluates the operand once and traps with `non-null assertion failed` when the
+value is null. A successful assertion of a stable local or parameter also
+establishes the same flow fact for subsequent reads.
+
+Without a proof, a nullable value cannot be used for ordinary member access,
+indexing, or iteration. HIR records narrowed reads with the underlying
+`TypeId`. MIR uses
 explicit conversions for both `T` or `null` to `T?` and proof-backed `T?` to
-`T`. ABI lowering erases both conversions: `T` and `T?` use the same opaque
-reference layout and type encoding. This keeps nullability a static contract
-without changing runtime pointers or mangled symbols.
+`T`. Presence tests, safe access, coalescing, and assertions retain explicit
+MIR operations or control flow. ABI lowering erases nullable conversions: `T`
+and `T?` use the same opaque reference layout and type encoding. This keeps
+nullability a static contract without changing pointers or mangled symbols.
 
 ## Construction guarantee
 

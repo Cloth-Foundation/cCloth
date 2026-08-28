@@ -343,6 +343,38 @@ class MirVerifier {
           }
         }
       }
+    } else if (const auto* test =
+                   std::get_if<MirIsNonNullInstruction>(&instruction.data)) {
+      verify_value(test->value, value_types, instruction.range);
+      require_result(instruction);
+      if (instruction.type != semantics_.bool_type()) {
+        report(instruction.range, "non-null test does not have type bool");
+      }
+      const std::optional<TypeId> source_type =
+          known_value_type(test->value, value_types);
+      if (source_type && *source_type != semantics_.error_type() &&
+          source_type->value < semantics_.types().size()) {
+        const SemanticType& source = semantics_.type(*source_type);
+        if (source.kind != TypeKind::kNullable || !source.element_type) {
+          report(instruction.range,
+                 "non-null test consumes a non-nullable value");
+        }
+      }
+    } else if (const auto* assertion =
+                   std::get_if<MirNullAssertInstruction>(&instruction.data)) {
+      verify_value(assertion->value, value_types, instruction.range);
+      require_result(instruction);
+      const std::optional<TypeId> source_type =
+          known_value_type(assertion->value, value_types);
+      if (source_type && *source_type != semantics_.error_type() &&
+          source_type->value < semantics_.types().size()) {
+        const SemanticType& source = semantics_.type(*source_type);
+        if (source.kind != TypeKind::kNullable || !source.element_type ||
+            *source.element_type != instruction.type) {
+          report(instruction.range,
+                 "non-null assertion consumes an incompatible value");
+        }
+      }
     } else if (const auto* call =
                    std::get_if<MirCallInstruction>(&instruction.data)) {
       verify_symbol(call->callable, instruction.range);

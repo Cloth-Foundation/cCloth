@@ -60,6 +60,17 @@ class HirVerifier {
                      std::get_if<HirMemberExpression>(&expression.data)) {
         verify_expression(member->object, expression.range);
         verify_optional_symbol(member->member, expression.range);
+      } else if (const auto* member =
+                     std::get_if<HirSafeMemberExpression>(&expression.data)) {
+        verify_expression(member->object, expression.range);
+        verify_optional_symbol(member->member, expression.range);
+      } else if (const auto* coalesce =
+                     std::get_if<HirNullCoalesceExpression>(&expression.data)) {
+        verify_expression(coalesce->nullable, expression.range);
+        verify_expression(coalesce->fallback, expression.range);
+      } else if (const auto* assertion =
+                     std::get_if<HirNullAssertExpression>(&expression.data)) {
+        verify_expression(assertion->operand, expression.range);
       } else if (const auto* call =
                      std::get_if<HirCallExpression>(&expression.data)) {
         verify_expression(call->callee, expression.range);

@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 12.3.4.
+This document defines the syntax implemented through Stage 12.3.5.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -159,7 +159,10 @@ expression
     = assignment_expression ;
 
 assignment_expression
-    = logical_or_expression [ "=" assignment_expression ] ;
+    = null_coalescing_expression [ "=" assignment_expression ] ;
+
+null_coalescing_expression
+    = logical_or_expression [ "??" null_coalescing_expression ] ;
 
 logical_or_expression
     = logical_and_expression { "||" logical_and_expression } ;
@@ -189,7 +192,8 @@ unary_expression
 
 postfix_expression
     = primary_expression
-      { call_suffix | member_suffix | index_suffix } ;
+      { call_suffix | member_suffix | safe_member_suffix | index_suffix
+      | "!" } ;
 
 call_suffix
     = "(" [ argument_list ] ")" ;
@@ -199,6 +203,9 @@ argument_list
 
 member_suffix
     = "." identifier ;
+
+safe_member_suffix
+    = "?." identifier ;
 
 index_suffix
     = "[" expression "]" ;
@@ -221,17 +228,18 @@ primary_expression
 
 The precedence table, from lowest to highest, is:
 
-| Precedence | Operators                | Associativity |
-|-----------:|--------------------------|---------------|
-| 1          | `=`                      | right         |
-| 2          | `||`                     | left          |
-| 3          | `&&`                     | left          |
-| 4          | `==`, `!=`               | left          |
-| 5          | `<`, `<=`, `>`, `>=`     | left          |
-| 6          | `+`, `-`                 | left          |
-| 7          | `*`, `/`, `%`            | left          |
-| 8          | prefix `!`, `+`, `-`, `~`| right         |
-| 9          | calls, members, indexing | left          |
+| Precedence | Operators                              | Associativity |
+|-----------:|----------------------------------------|---------------|
+| 1          | `=`                                    | right         |
+| 2          | `??`                                   | right         |
+| 3          | `||`                                   | left          |
+| 4          | `&&`                                   | left          |
+| 5          | `==`, `!=`                             | left          |
+| 6          | `<`, `<=`, `>`, `>=`                   | left          |
+| 7          | `+`, `-`                               | left          |
+| 8          | `*`, `/`, `%`                          | left          |
+| 9          | prefix `!`, `+`, `-`, `~`              | right         |
+| 10         | calls, members, indexing, postfix `!`  | left          |
 
 Stage 1.0 deliberately defers compound assignment, increment/decrement,
 bitwise binary operators, and shifts even though the lexer recognizes them.
@@ -263,6 +271,8 @@ The declaration pass enforces these rules separately from the grammar:
   object, until all non-null reference fields are initialized.
 - Direct `null` comparisons narrow nullable locals and parameters on proven
   branches. Assignment invalidates a narrowing; fields are not narrowed.
+- Nullable conditions test presence. `?.`, `??`, and postfix `!` provide safe
+  access, lazy fallback, and checked non-null assertion respectively.
 - A static field must also be final, must have an initializer, and currently
   accepts only a scalar literal initializer.
 - `Main` must be declared `static`.

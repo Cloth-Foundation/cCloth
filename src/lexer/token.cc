@@ -40,6 +40,10 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "dot";
     case TokenKind::kQuestion:
       return "question";
+    case TokenKind::kQuestionDot:
+      return "question_dot";
+    case TokenKind::kQuestionQuestion:
+      return "question_question";
     case TokenKind::kPlus:
       return "plus";
     case TokenKind::kMinus:

@@ -775,10 +775,7 @@ class SemanticAnalyzer {
     if (const auto* if_statement = std::get_if<IfStatement>(&statement.data)) {
       const ExpressionState condition =
           analyze_expression(if_statement->condition);
-      check_value(condition, expression_range(if_statement->condition));
-      check_assignment(model_.bool_type(), condition.type,
-                       expression_range(if_statement->condition),
-                       "if condition");
+      check_condition(condition, if_statement->condition, "if condition");
 
       const ConditionFacts facts = condition_facts(if_statement->condition);
       const NonNullSet branch_base = active_non_null_;
@@ -809,10 +806,7 @@ class SemanticAnalyzer {
             std::get_if<WhileStatement>(&statement.data)) {
       const ExpressionState condition =
           analyze_expression(while_statement->condition);
-      check_value(condition, expression_range(while_statement->condition));
-      check_assignment(model_.bool_type(), condition.type,
-                       expression_range(while_statement->condition),
-                       "while condition");
+      check_condition(condition, while_statement->condition, "while condition");
       const ConditionFacts facts = condition_facts(while_statement->condition);
       const NonNullSet loop_base = active_non_null_;
       add_non_null_facts(facts.when_true);
@@ -923,6 +917,15 @@ class SemanticAnalyzer {
     } else if (const auto* member =
                    std::get_if<MemberAccessExpression>(&expression.data)) {
       state = analyze_member_access(*member, expression.range);
+    } else if (const auto* member =
+                   std::get_if<SafeMemberAccessExpression>(&expression.data)) {
+      state = analyze_safe_member_access(*member, expression.range);
+    } else if (const auto* coalesce =
+                   std::get_if<NullCoalesceExpression>(&expression.data)) {
+      state = analyze_null_coalesce(*coalesce, expression.range);
+    } else if (const auto* assertion =
+                   std::get_if<NullAssertExpression>(&expression.data)) {
+      state = analyze_null_assert(*assertion, expression.range);
     } else if (const auto* call =
                    std::get_if<CallExpression>(&expression.data)) {
       state = analyze_call(*call, expression.range);
@@ -1102,7 +1105,8 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     if (unary.operation == TokenKind::kBang) {
-      if (operand.type != model_.bool_type()) {
+      if (operand.type != model_.bool_type() &&
+          !mark_presence_test(operand, unary.operand)) {
         report_operator_type(unary.operation, range, operand.type);
         return ExpressionState{model_.error_type()};
       }
@@ -1126,6 +1130,9 @@ class SemanticAnalyzer {
     const bool is_short_circuit =
         binary.operation == TokenKind::kAmpersandAmpersand ||
         binary.operation == TokenKind::kPipePipe;
+    const bool left_is_boolean =
+        left.type == model_.bool_type() ||
+        (is_short_circuit && mark_presence_test(left, binary.left));
     const NonNullSet right_base = active_non_null_;
     if (is_short_circuit) {
       const ConditionFacts facts = condition_facts(binary.left);
@@ -1134,6 +1141,9 @@ class SemanticAnalyzer {
                              : facts.when_false);
     }
     const ExpressionState right = analyze_expression(binary.right);
+    const bool right_is_boolean =
+        right.type == model_.bool_type() ||
+        (is_short_circuit && mark_presence_test(right, binary.right));
     if (is_short_circuit) {
       active_non_null_ = intersect_symbols(right_base, active_non_null_);
     }
@@ -1176,8 +1186,7 @@ class SemanticAnalyzer {
         break;
       case TokenKind::kAmpersandAmpersand:
       case TokenKind::kPipePipe:
-        if (left.type == model_.bool_type() &&
-            right.type == model_.bool_type()) {
+        if (left_is_boolean && right_is_boolean) {
           return ExpressionState{model_.bool_type(), ValueCategory::kValue};
         }
         break;
@@ -1260,7 +1269,7 @@ class SemanticAnalyzer {
   ConditionFacts condition_facts(ExpressionId id) const {
     const ExpressionSemantics& semantics =
         model_.file(current_file_).expressions.at(id.value);
-    if (semantics.type != model_.bool_type()) {
+    if (semantics.type != model_.bool_type() && !semantics.is_presence_test) {
       return {};
     }
 
@@ -1278,6 +1287,15 @@ class SemanticAnalyzer {
   ConditionFacts raw_condition_facts(ExpressionId id) const {
     const Expression& expression =
         files_[current_file_.value]->storage.expression(id);
+    const ExpressionSemantics& semantics =
+        model_.file(current_file_).expressions.at(id.value);
+    if (semantics.is_presence_test) {
+      ConditionFacts facts;
+      if (const std::optional<SymbolId> symbol = narrowable_symbol(id)) {
+        facts.when_true.push_back(*symbol);
+      }
+      return facts;
+    }
     if (const auto* grouped =
             std::get_if<ParenthesizedExpression>(&expression.data)) {
       return condition_facts(grouped->expression);
@@ -1387,6 +1405,19 @@ class SemanticAnalyzer {
     if (const auto* member =
             std::get_if<MemberAccessExpression>(&expression.data)) {
       return expression_assigns_symbol(member->object, symbol);
+    }
+    if (const auto* member =
+            std::get_if<SafeMemberAccessExpression>(&expression.data)) {
+      return expression_assigns_symbol(member->object, symbol);
+    }
+    if (const auto* coalesce =
+            std::get_if<NullCoalesceExpression>(&expression.data)) {
+      return expression_assigns_symbol(coalesce->nullable, symbol) ||
+             expression_assigns_symbol(coalesce->fallback, symbol);
+    }
+    if (const auto* assertion =
+            std::get_if<NullAssertExpression>(&expression.data)) {
+      return expression_assigns_symbol(assertion->operand, symbol);
     }
     if (const auto* call = std::get_if<CallExpression>(&expression.data)) {
       if (expression_assigns_symbol(call->callee, symbol)) {
@@ -1527,6 +1558,145 @@ class SemanticAnalyzer {
     }
     return ExpressionState{
         model_.error_type(), ValueCategory::kCallable, {}, std::move(members)};
+  }
+
+  ExpressionState analyze_safe_member_access(
+      const SafeMemberAccessExpression& member, SourceRange range) {
+    const ExpressionState object = analyze_expression(member.object);
+    check_value(object, expression_range(member.object));
+    if (object.type == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+    const SemanticType& nullable = model_.type(object.type);
+    if (nullable.kind != TypeKind::kNullable || !nullable.element_type) {
+      diagnostics_.error(range,
+                         "safe member access requires a nullable "
+                         "reference; found '" +
+                             nullable.name + "'");
+      return ExpressionState{model_.error_type()};
+    }
+
+    const SemanticType& object_type = model_.type(*nullable.element_type);
+    if (object_type.kind == TypeKind::kArray) {
+      if (member.member == "Length") {
+        diagnostics_.error(
+            range,
+            "safe access to value-type member 'Length' requires nullable "
+            "value types");
+      } else {
+        diagnostics_.error(range, "array type '" + object_type.name +
+                                      "' has no member '" +
+                                      std::string{member.member} + "'");
+      }
+      return ExpressionState{model_.error_type()};
+    }
+    if (object_type.kind != TypeKind::kFileClass || !object_type.file) {
+      diagnostics_.error(
+          range, "type '" + object_type.name + "' has no Cloth members");
+      return ExpressionState{model_.error_type()};
+    }
+
+    const FileId target_file = *object_type.file;
+    std::vector<SymbolId> members =
+        find_members(target_file, member.member, true);
+    if (members.empty()) {
+      if (has_inaccessible_member(target_file, member.member)) {
+        diagnostics_.error(range, "member '" + std::string{member.member} +
+                                      "' is private in file class '" +
+                                      object_type.name + "'");
+      } else {
+        diagnostics_.error(range, "file class '" + object_type.name +
+                                      "' has no member '" +
+                                      std::string{member.member} + "'");
+      }
+      return ExpressionState{model_.error_type()};
+    }
+
+    const SemanticSymbol& selected = model_.symbol(members.front());
+    if (selected.kind != SymbolKind::kField) {
+      diagnostics_.error(
+          range,
+          "safe function calls are not implemented; narrow the receiver "
+          "first");
+      return ExpressionState{model_.error_type()};
+    }
+    if (selected.is_static) {
+      diagnostics_.error(range,
+                         "static field '" + selected.name +
+                             "' must be accessed through its file class");
+      return ExpressionState{model_.error_type()};
+    }
+    if (!is_reference(selected.type)) {
+      diagnostics_.error(range, "safe access to value-type field '" +
+                                    selected.name +
+                                    "' requires nullable value types");
+      return ExpressionState{model_.error_type()};
+    }
+
+    const TypeId result = model_.type(selected.type).kind == TypeKind::kNullable
+                              ? selected.type
+                              : model_.get_nullable_type(selected.type);
+    return ExpressionState{result, ValueCategory::kValue, members.front(), {}};
+  }
+
+  ExpressionState analyze_null_coalesce(const NullCoalesceExpression& coalesce,
+                                        SourceRange range) {
+    const ExpressionState nullable = analyze_expression(coalesce.nullable);
+    check_value(nullable, expression_range(coalesce.nullable));
+    const NonNullSet fallback_base = active_non_null_;
+    const ExpressionState fallback = analyze_expression(coalesce.fallback);
+    check_value(fallback, expression_range(coalesce.fallback));
+    active_non_null_ = intersect_symbols(fallback_base, active_non_null_);
+
+    if (nullable.type == model_.error_type() ||
+        fallback.type == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+    const SemanticType& nullable_type = model_.type(nullable.type);
+    if (nullable_type.kind != TypeKind::kNullable ||
+        !nullable_type.element_type) {
+      diagnostics_.error(
+          range,
+          "left operand of the null-coalescing operator must be nullable; "
+          "found '" +
+              nullable_type.name + "'");
+      return ExpressionState{model_.error_type()};
+    }
+    if (is_assignable(*nullable_type.element_type, fallback.type)) {
+      return ExpressionState{*nullable_type.element_type,
+                             ValueCategory::kValue};
+    }
+    if (is_assignable(nullable.type, fallback.type)) {
+      return ExpressionState{nullable.type, ValueCategory::kValue};
+    }
+    diagnostics_.error(
+        range, "right operand of the null-coalescing operator has type '" +
+                   type_name(fallback.type) + "'; expected '" +
+                   type_name(*nullable_type.element_type) + "' or '" +
+                   nullable_type.name + "'");
+    return ExpressionState{model_.error_type()};
+  }
+
+  ExpressionState analyze_null_assert(const NullAssertExpression& assertion,
+                                      SourceRange range) {
+    const ExpressionState operand = analyze_expression(assertion.operand);
+    check_value(operand, expression_range(assertion.operand));
+    if (operand.type == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+    const SemanticType& nullable = model_.type(operand.type);
+    if (nullable.kind != TypeKind::kNullable || !nullable.element_type) {
+      diagnostics_.error(range,
+                         "non-null assertion requires a nullable reference; "
+                         "found '" +
+                             nullable.name + "'");
+      return ExpressionState{model_.error_type()};
+    }
+    if (const std::optional<SymbolId> symbol =
+            narrowable_symbol(assertion.operand)) {
+      add_symbol(active_non_null_, *symbol);
+    }
+    return ExpressionState{*nullable.element_type, ValueCategory::kValue};
   }
 
   ExpressionState analyze_call(const CallExpression& call, SourceRange range) {
@@ -1775,6 +1945,33 @@ class SemanticAnalyzer {
       }
     }
     return std::nullopt;
+  }
+
+  bool mark_presence_test(const ExpressionState& state, ExpressionId id) {
+    if (state.type == model_.error_type() ||
+        model_.type(state.type).kind != TypeKind::kNullable) {
+      return false;
+    }
+    model_.mutable_file(current_file_)
+        .expressions.at(id.value)
+        .is_presence_test = true;
+    return true;
+  }
+
+  void check_condition(const ExpressionState& state, ExpressionId id,
+                       std::string_view context) {
+    const SourceRange range = expression_range(id);
+    if (!check_value(state, range) || state.type == model_.error_type() ||
+        state.type == model_.bool_type() || mark_presence_test(state, id)) {
+      return;
+    }
+    if (is_reference(state.type)) {
+      diagnostics_.error(range, std::string{context} +
+                                    " uses a non-null reference and is always "
+                                    "true");
+      return;
+    }
+    check_assignment(model_.bool_type(), state.type, range, context);
   }
 
   bool check_value(const ExpressionState& state, SourceRange range) {
