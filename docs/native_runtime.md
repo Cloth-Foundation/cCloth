@@ -22,16 +22,15 @@ rules are in
 A native compilation must contain exactly one eligible entry point:
 
 ```text
-func Main() { ... }
-func Main(): void { ... }
-func Main(): int32 { ... }
+static func Main() { ... }
+static func Main(): void { ... }
+static func Main(): int32 { ... }
 ```
 
 Capitalization makes `Main` public. It takes no explicit parameters. Omitting
 the return type or explicitly returning `void` produces process status zero;
 returning `int32` supplies the process status. An LLVM `main` adapter invokes
-the Cloth function with a null class receiver, matching ordinary
-class-qualified call semantics.
+the receiver-free Cloth function directly.
 
 ## Runtime ABI
 

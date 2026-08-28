@@ -1,0 +1,10 @@
+static final int32 Version = 12;
+
+static func Double(int32 value): int32 {
+    return value + value;
+}
+
+static func Main(): int32 {
+    println(Double(Version));
+    return 0;
+}

@@ -67,6 +67,12 @@ through branches and early returns, rejects repeated or loop-based writes, and
 rejects reads before initialization. Every constructor must initialize each
 otherwise-uninitialized final field exactly once.
 
+`static` is also stored on member symbols rather than types. Static functions
+have no implicit `self` scope entry. Unqualified instance fields and functions
+therefore fail in static bodies, as do instance-qualified static accesses and
+file-class-qualified instance accesses. Static scalar fields must be final and
+literal-initialized; they are excluded from instance final-field analysis.
+
 ## Binding and checking
 
 Names are resolved from the innermost lexical scope outward, followed by the
@@ -87,8 +93,8 @@ zero-argument intrinsic. Locals and members retain normal precedence over core
 names, so a source declaration can shadow either overload set. Exact parameter
 matches take precedence over nullable-reference conversions, keeping
 `print(null)` unambiguous as file-class overloads are added.
-Public functions can be qualified by a file-class name, such as
-`Repository.Find(id)`. Fields require an instance.
+Public static functions and fields can be qualified by a file-class name, such
+as `Repository.Find(id)`. Instance members require an object.
 
 The checker currently validates:
 
@@ -99,6 +105,7 @@ The checker currently validates:
 - `break` and `continue` placement inside loops
 - inferred or explicitly typed array iteration declarations
 - final binding assignment and final field definite initialization
+- static ownership, access form, and static `Main` validation
 - member access and visibility
 - homogeneous array literals, indexing, assignment, and `Length`
 - exact overload and constructor selection

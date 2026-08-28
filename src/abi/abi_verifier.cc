@@ -83,6 +83,9 @@ class AbiVerifier {
     if (file.layout != expected.layout) {
       report(range, "class layout does not match its fields and target");
     }
+    if (file.static_fields != expected.static_fields) {
+      report(range, "static field ABI does not match semantics");
+    }
     if (file.member_order != expected.member_order) {
       report(range, "member order does not match MIR");
     }
@@ -141,6 +144,12 @@ class AbiVerifier {
   void verify_unique_names() {
     std::unordered_set<std::string> names;
     for (const AbiFileClass& file : abi_.files) {
+      for (const AbiStaticField& field : file.static_fields) {
+        if (!names.insert(field.mangled_name).second) {
+          report(symbol_range(field.symbol),
+                 "mangled static field name is not unique");
+        }
+      }
       for (const AbiCallable& callable : file.functions) {
         verify_unique_name(callable, names);
       }
@@ -198,9 +207,10 @@ class AbiVerifier {
           report(instruction.range, "MIR call has no ABI declaration");
           continue;
         }
-        const bool is_constructor =
-            callable->kind == AbiCallableKind::kConstructor;
-        const std::size_t receiver_count = is_constructor ? 0 : 1;
+        const bool has_receiver =
+            !callable->parameters.empty() &&
+            callable->parameters.front().kind == AbiParameterKind::kReceiver;
+        const std::size_t receiver_count = has_receiver ? 1U : 0U;
         if (callable->parameters.size() !=
             call->arguments.size() + receiver_count) {
           report(instruction.range,

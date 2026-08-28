@@ -58,6 +58,16 @@ enum class AbiLinkage {
   kExternal,
 };
 
+struct AbiStaticField {
+  SymbolId symbol;
+  TypeId type;
+  AbiLinkage linkage;
+  std::string mangled_name;
+
+  friend bool operator==(const AbiStaticField&,
+                         const AbiStaticField&) = default;
+};
+
 enum class AbiCallingConvention {
   kC,
 };
@@ -91,6 +101,7 @@ struct AbiFileClass {
   FileId file;
   SymbolId symbol;
   AbiClassLayout layout;
+  std::vector<AbiStaticField> static_fields;
   std::vector<AbiCallable> functions;
   std::vector<AbiCallable> constructors;
   std::vector<MemberReference> member_order;
@@ -112,6 +123,9 @@ struct AbiModule {
 
 [[nodiscard]] std::string mangle_abi_symbol(const SemanticSymbol& symbol,
                                             const SemanticModel& semantics);
+
+[[nodiscard]] std::string mangle_abi_static_field(
+    const SemanticSymbol& symbol, const SemanticModel& semantics);
 
 }  // namespace cloth
 

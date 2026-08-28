@@ -2,7 +2,7 @@ import greetings::Greeter;
 import numbers::Value as Number;
 import exports.*;
 
-func Main() {
+static func Main() {
     print(Greeter.Text());
     print(Number.Get());
     print(Banner.Text());

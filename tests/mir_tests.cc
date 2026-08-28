@@ -566,15 +566,18 @@ void nullable_conversion(TestContext& test) {
 
 void call_receivers(TestContext& test) {
   CompiledSources compilation;
-  compilation.add("User.co",
-                  "User() {}\n"
-                  "func Echo(int value): int { return value; }\n"
-                  "func Forward(int value): int { return Echo(value); }\n");
-  compilation.add("Calls.co",
-                  "func Static(User user): int { return User.Echo(1); }\n"
-                  "func Instance(User user): int { "
-                  "return user.Echo(1); }\n"
-                  "func Make(): User { return User(); }\n");
+  compilation.add(
+      "User.co",
+      "User() {}\n"
+      "static func Echo(int value): int { return value; }\n"
+      "func InstanceEcho(int value): int { return value; }\n"
+      "func Forward(int value): int { return InstanceEcho(value); }\n");
+  compilation.add(
+      "Calls.co",
+      "static func Static(User user): int { return User.Echo(1); }\n"
+      "func Instance(User user): int { "
+      "return user.InstanceEcho(1); }\n"
+      "func Make(): User { return User(); }\n");
   compilation.compile();
 
   test.expect(compilation.result->is_valid, "valid calls failed to lower");
@@ -596,7 +599,7 @@ void call_receivers(TestContext& test) {
   const cloth::MirCallInstruction* instance_call =
       call_in(calls.functions[1].body);
   const cloth::MirCallInstruction* unqualified_call =
-      call_in(compilation.result->mir.files[0].functions[1].body);
+      call_in(compilation.result->mir.files[0].functions[2].body);
   const cloth::MirCallInstruction* constructor_call =
       call_in(calls.functions[2].body);
   test.expect(class_call != nullptr && !class_call->receiver &&

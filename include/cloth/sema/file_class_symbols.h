@@ -28,6 +28,7 @@ struct MemberSymbol {
   std::optional<TypeSyntax> declared_type;
   bool is_valid{true};
   bool is_final{false};
+  bool is_static{false};
 };
 
 class FileClassSymbols {

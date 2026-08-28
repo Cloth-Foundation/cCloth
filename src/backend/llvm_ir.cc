@@ -83,6 +83,71 @@ std::uint32_t decode_character(std::string_view lexeme) noexcept {
   return static_cast<unsigned char>(value);
 }
 
+std::optional<std::string> lower_scalar_literal(
+    const MirLiteralInstruction& literal, const AbiTypeLayout& type) {
+  switch (literal.kind) {
+    case LiteralKind::kInteger: {
+      std::uint64_t parsed = 0;
+      const char* const begin = literal.lexeme.data();
+      const char* const end = begin + literal.lexeme.size();
+      const auto result = std::from_chars(begin, end, parsed);
+      const std::uint64_t maximum =
+          type.bit_width == 0 ? 0
+          : type.bit_width >= 64
+              ? static_cast<std::uint64_t>(
+                    std::numeric_limits<std::int64_t>::max())
+              : (std::uint64_t{1} << (type.bit_width - 1)) - 1;
+      if (type.bit_width == 0 || result.ec != std::errc{} ||
+          result.ptr != end || parsed > maximum) {
+        return std::nullopt;
+      }
+      return std::to_string(parsed);
+    }
+    case LiteralKind::kFloat: {
+      double parsed = 0.0;
+      const char* const begin = literal.lexeme.data();
+      const char* const end = begin + literal.lexeme.size();
+      const auto parsed_result =
+          std::from_chars(begin, end, parsed, std::chars_format::general);
+      std::array<char, 128> buffer{};
+      const auto formatted =
+          std::to_chars(buffer.data(), buffer.data() + buffer.size(), parsed,
+                        std::chars_format::scientific, 17);
+      if (parsed_result.ec != std::errc{} || parsed_result.ptr != end ||
+          formatted.ec != std::errc{}) {
+        return std::nullopt;
+      }
+      return std::string{buffer.data(), formatted.ptr};
+    }
+    case LiteralKind::kCharacter:
+      return std::to_string(decode_character(literal.lexeme));
+    case LiteralKind::kBoolean:
+      return literal.lexeme;
+    case LiteralKind::kString:
+    case LiteralKind::kNull:
+      return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+const MirInstruction* returned_instruction(const MirBody& body) {
+  for (const MirBasicBlock& block : body.blocks) {
+    const auto* returned =
+        std::get_if<MirReturnTerminator>(&block.terminator.data);
+    if (returned == nullptr || !returned->value) {
+      continue;
+    }
+    for (const MirBasicBlock& candidate_block : body.blocks) {
+      for (const MirInstruction& instruction : candidate_block.instructions) {
+        if (instruction.result == returned->value) {
+          return &instruction;
+        }
+      }
+    }
+  }
+  return nullptr;
+}
+
 std::string llvm_string_bytes(std::string_view value) {
   std::ostringstream output;
   output << std::uppercase << std::hex << std::setfill('0');
@@ -300,6 +365,27 @@ class ModuleEmitter {
     return nullptr;
   }
 
+  [[nodiscard]] const AbiStaticField* find_static_field(SymbolId symbol) const {
+    for (const AbiFileClass& file : abi_.files) {
+      for (const AbiStaticField& field : file.static_fields) {
+        if (field.symbol == symbol) {
+          return &field;
+        }
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] const MirField* find_mir_field(FileId file,
+                                               SymbolId symbol) const {
+    for (const MirField& field : mir_file(file).fields) {
+      if (field.symbol == symbol) {
+        return &field;
+      }
+    }
+    return nullptr;
+  }
+
   std::string add_string_literal(std::string value) {
     const std::size_t index = globals_.size();
     const std::string name = "@.cloth.str." + std::to_string(index);
@@ -325,8 +411,10 @@ class ModuleEmitter {
       switch (member.kind) {
         case DeclarationKind::kField: {
           const MirField& field = mir_file.fields.at(member.index);
-          if (field.initializer) {
-            emit_field_initializer(abi_file, member.index, *field.initializer);
+          if (semantics_.symbol(field.symbol).is_static) {
+            emit_static_field(field);
+          } else if (field.initializer) {
+            emit_field_initializer(abi_file, field.symbol, *field.initializer);
           }
           break;
         }
@@ -344,16 +432,55 @@ class ModuleEmitter {
     }
   }
 
-  void emit_field_initializer(const AbiFileClass& file, std::size_t index,
+  void emit_static_field(const MirField& field) {
+    const AbiStaticField* abi_field = find_static_field(field.symbol);
+    if (abi_field == nullptr || !field.initializer) {
+      report(semantics_.symbol(field.symbol).range,
+             "static field has no ABI declaration or initializer");
+      return;
+    }
+    const MirInstruction* instruction =
+        returned_instruction(*field.initializer);
+    const auto* literal =
+        instruction == nullptr
+            ? nullptr
+            : std::get_if<MirLiteralInstruction>(&instruction->data);
+    if (literal == nullptr) {
+      report(semantics_.symbol(field.symbol).range,
+             "static field initializer is not a scalar literal");
+      return;
+    }
+    const std::optional<std::string> value =
+        lower_scalar_literal(*literal, abi_.types.at(abi_field->type.value));
+    if (!value) {
+      report(instruction->range, "static field literal is out of range");
+      return;
+    }
+    std::ostringstream global;
+    global << '@' << abi_field->mangled_name << " = ";
+    if (abi_field->linkage == AbiLinkage::kInternal) {
+      global << "internal ";
+    }
+    global << "constant " << llvm_type(abi_field->type) << ' ' << *value
+           << ", align " << alignment(abi_field->type);
+    globals_.push_back(global.str());
+  }
+
+  void emit_field_initializer(const AbiFileClass& file, SymbolId symbol,
                               const MirBody& body) {
-    const AbiFieldLayout& field = file.layout.fields.at(index);
+    const AbiFieldLayout* field = find_field(symbol);
+    if (field == nullptr) {
+      report(semantics_.symbol(symbol).range,
+             "instance field has no ABI layout");
+      return;
+    }
     const SemanticSymbol& class_symbol = semantics_.symbol(file.symbol);
-    const SemanticSymbol& field_symbol = semantics_.symbol(field.symbol);
+    const SemanticSymbol& field_symbol = semantics_.symbol(field->symbol);
     const std::string name =
         field_initializer_name(class_symbol.name, field_symbol.name);
-    definitions_ << "define internal " << llvm_type(field.type) << " @" << name
+    definitions_ << "define internal " << llvm_type(field->type) << " @" << name
                  << "(ptr %receiver) {\n"
-                 << BodyEmitter{*this,       body,  file,   field.type,
+                 << BodyEmitter{*this,       body,  file,   field->type,
                                 "%receiver", false, nullptr}
                         .emit()
                  << "}\n\n";
@@ -382,11 +509,16 @@ class ModuleEmitter {
     }
     definitions_ << ") {\n";
     const bool is_constructor = callable.kind == AbiCallableKind::kConstructor;
+    const bool has_receiver =
+        !callable.parameters.empty() &&
+        callable.parameters.front().kind == AbiParameterKind::kReceiver;
     definitions_ << BodyEmitter{*this,
                                 mir_callable.body,
                                 file,
                                 callable.return_type,
-                                is_constructor ? "%self" : "%receiver",
+                                is_constructor
+                                    ? "%self"
+                                    : (has_receiver ? "%receiver" : "undef"),
                                 is_constructor,
                                 &callable}
                         .emit()
@@ -407,7 +539,7 @@ class ModuleEmitter {
         entry_range = symbol.range;
         const TypeKind return_kind = semantics_.type(callable.return_type).kind;
         const bool valid_signature =
-            symbol.parameter_types.empty() &&
+            symbol.is_static && symbol.parameter_types.empty() &&
             callable.linkage == AbiLinkage::kExternal &&
             (return_kind == TypeKind::kVoid || return_kind == TypeKind::kInt32);
         if (!valid_signature) {
@@ -424,9 +556,9 @@ class ModuleEmitter {
     if (entry == nullptr) {
       report(entry_range,
              saw_main
-                 ? "entry point 'Main' must be public, take no parameters, "
-                   "and return no value or int32"
-                 : "native program requires a public 'Main' function");
+                 ? "entry point 'Main' must be public and static, take no "
+                   "parameters, and return no value or int32"
+                 : "native program requires a public static 'Main' function");
       return;
     }
 
@@ -434,11 +566,11 @@ class ModuleEmitter {
     definitions_ << "define i32 @main() {\n"
                  << "entry:\n";
     if (return_kind == TypeKind::kVoid) {
-      definitions_ << "  call void @" << entry->mangled_name << "(ptr null)\n"
+      definitions_ << "  call void @" << entry->mangled_name << "()\n"
                    << "  ret i32 0\n";
     } else {
       definitions_ << "  %exit_code = call i32 @" << entry->mangled_name
-                   << "(ptr null)\n"
+                   << "()\n"
                    << "  ret i32 %exit_code\n";
     }
     definitions_ << "}\n\n";
@@ -576,8 +708,9 @@ void BodyEmitter::emit_field_initializers(std::ostringstream& output) {
         field_initializer_name(class_symbol.name, field_symbol.name);
     // Initializer presence is encoded by a generated helper. The module emitter
     // exposes it only for fields whose MIR contains an initializer.
-    const MirField& mir_field = module_.mir_file(file_.file).fields.at(index);
-    if (!mir_field.initializer) {
+    const MirField* mir_field =
+        module_.find_mir_field(file_.file, field.symbol);
+    if (mir_field == nullptr || !mir_field->initializer) {
       continue;
     }
     const std::string value_name = "%init" + std::to_string(index);
@@ -655,43 +788,20 @@ void BodyEmitter::emit_literal(const MirInstruction& instruction,
                                std::ostringstream& output) {
   std::string lowered;
   switch (literal.kind) {
-    case LiteralKind::kInteger: {
-      std::uint64_t parsed = 0;
-      const char* const begin = literal.lexeme.data();
-      const char* const end = begin + literal.lexeme.size();
-      const auto result = std::from_chars(begin, end, parsed);
-      const std::uint32_t bits =
-          module_.abi().types.at(instruction.type.value).bit_width;
-      const std::uint64_t maximum =
-          bits == 0    ? 0
-          : bits >= 64 ? static_cast<std::uint64_t>(
-                             std::numeric_limits<std::int64_t>::max())
-                       : (std::uint64_t{1} << (bits - 1)) - 1;
-      if (bits == 0 || result.ec != std::errc{} || result.ptr != end ||
-          parsed > maximum) {
-        module_.report(instruction.range, "integer literal is out of range");
+    case LiteralKind::kInteger:
+    case LiteralKind::kFloat:
+    case LiteralKind::kCharacter:
+    case LiteralKind::kBoolean: {
+      const std::optional<std::string> value = lower_scalar_literal(
+          literal, module_.abi().types.at(instruction.type.value));
+      if (!value) {
+        module_.report(instruction.range,
+                       literal.kind == LiteralKind::kInteger
+                           ? "integer literal is out of range"
+                           : "floating literal is out of range");
         lowered = "0";
       } else {
-        lowered = std::to_string(parsed);
-      }
-      break;
-    }
-    case LiteralKind::kFloat: {
-      double parsed = 0.0;
-      const char* const begin = literal.lexeme.data();
-      const char* const end = begin + literal.lexeme.size();
-      const auto parsed_result =
-          std::from_chars(begin, end, parsed, std::chars_format::general);
-      std::array<char, 128> buffer{};
-      const auto formatted =
-          std::to_chars(buffer.data(), buffer.data() + buffer.size(), parsed,
-                        std::chars_format::scientific, 17);
-      if (parsed_result.ec != std::errc{} || parsed_result.ptr != end ||
-          formatted.ec != std::errc{}) {
-        module_.report(instruction.range, "floating literal is out of range");
-        lowered = "0.00000000000000000e+00";
-      } else {
-        lowered.assign(buffer.data(), formatted.ptr);
+        lowered = *value;
       }
       break;
     }
@@ -703,12 +813,6 @@ void BodyEmitter::emit_literal(const MirInstruction& instruction,
              << ", i64 " << decoded.size() << ")\n";
       return;
     }
-    case LiteralKind::kCharacter:
-      lowered = std::to_string(decode_character(literal.lexeme));
-      break;
-    case LiteralKind::kBoolean:
-      lowered = literal.lexeme;
-      break;
     case LiteralKind::kNull:
       lowered = "null";
       break;
@@ -997,7 +1101,10 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
   output << "call " << module_.llvm_type(callable->return_type) << " @"
          << callable->mangled_name << '(';
   bool needs_comma = false;
-  if (callable->kind == AbiCallableKind::kFunction) {
+  const bool has_receiver =
+      !callable->parameters.empty() &&
+      callable->parameters.front().kind == AbiParameterKind::kReceiver;
+  if (has_receiver) {
     std::string receiver = receiver_;
     if (call.kind == MirCallKind::kClassQualified) {
       receiver = "null";
@@ -1011,8 +1118,7 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     if (needs_comma) {
       output << ", ";
     }
-    const std::size_t abi_index =
-        index + (callable->kind == AbiCallableKind::kFunction ? 1U : 0U);
+    const std::size_t abi_index = index + (has_receiver ? 1U : 0U);
     const TypeId type = callable->parameters.at(abi_index).type;
     output << module_.llvm_type(type) << ' ' << value(call.arguments[index]);
     needs_comma = true;
@@ -1078,6 +1184,13 @@ std::string BodyEmitter::result_name(const MirInstruction& instruction) const {
 }
 
 std::string BodyEmitter::symbol_address(SymbolId symbol) const {
+  const SemanticSymbol& semantic_symbol = module_.semantics().symbol(symbol);
+  if (semantic_symbol.kind == SymbolKind::kField && semantic_symbol.is_static) {
+    const AbiStaticField* field = module_.find_static_field(symbol);
+    if (field != nullptr) {
+      return "@" + field->mangled_name;
+    }
+  }
   return "%s" + std::to_string(symbol.value);
 }
 

@@ -64,6 +64,9 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
       case DeclarationKind::kField: {
         const FieldDecl& field = file_class.fields[member.index];
         output << "Field " << field.name << ": ";
+        if (field.is_static) {
+          output << "static ";
+        }
         if (field.is_final) {
           output << "final ";
         }
@@ -86,7 +89,11 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
             output << "[]";
           }
         }
-        output << " [" << visibility_name(function.visibility) << ']';
+        output << " [" << visibility_name(function.visibility);
+        if (function.is_static) {
+          output << ", static";
+        }
+        output << ']';
         print_validity(function.is_valid, output);
         break;
       }

@@ -57,10 +57,13 @@ zero.
 
 ## Calls and construction
 
-Ordinary functions receive the Stage 4 receiver slot followed by explicit
-parameters. Instance calls pass their receiver, unqualified calls forward the
-current receiver, and class-qualified calls pass null. Constructor calls have
-no receiver argument and return the allocated object reference.
+Instance functions receive the Stage 4 receiver slot followed by explicit
+parameters. Instance calls pass their receiver, and unqualified instance calls
+forward the current receiver. Static functions and constructor calls have no
+receiver argument; constructors return the allocated object reference.
+
+Static scalar fields lower to constant LLVM globals using their verified ABI
+names. Loads address those globals directly; they never use an object offset.
 
 Each field initializer becomes an internal LLVM helper taking the new object as
 its receiver. Constructor entry points allocate the verified class size, invoke

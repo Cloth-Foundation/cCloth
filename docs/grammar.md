@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 12.1.
+This document defines the syntax implemented through Stage 12.2.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -50,10 +50,11 @@ member_declaration
     | constructor_declaration ;
 
 field_declaration
-    = [ "final" ] type identifier [ "=" expression ] ";" ;
+    = [ "static" ] [ "final" ] type identifier
+      [ "=" expression ] ";" ;
 
 function_declaration
-    = "func" identifier
+    = [ "static" ] "func" identifier
       "(" [ parameter_list ] ")"
       [ ":" return_type ]
       block ;
@@ -253,6 +254,9 @@ The declaration pass enforces these rules separately from the grammar:
   initializer.
 - A final field is initialized by its declaration or exactly once on every
   constructor exit path.
+- A static field must also be final, must have an initializer, and currently
+  accepts only a scalar literal initializer.
+- `Main` must be declared `static`.
 
 Type checking, assignment-target validation, return checking, and overload
 resolution are defined in [semantic_analysis.md](semantic_analysis.md).

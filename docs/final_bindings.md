@@ -59,5 +59,6 @@ values = [4, 5];     // invalid: the final binding cannot be replaced
 
 The qualifier is retained on semantic symbols and in diagnostic IR summaries.
 It does not change type identity, overload selection, object layout, mangling,
-or the LLVM representation. This leaves Stage 12.2 free to define `static`
-without coupling binding mutability to the callable ABI.
+or the LLVM representation. Stage 12.2 builds on that separation: `static`
+controls instance ownership and callable ABI, while `final` continues to
+control rebinding.

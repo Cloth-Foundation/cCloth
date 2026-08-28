@@ -1,3 +1,3 @@
-func Find(int32 id): User {
+static func Find(int32 id): User {
   return null;
 }

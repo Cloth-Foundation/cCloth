@@ -1,4 +1,4 @@
-func Main(): int32 {
+static func Main(): int32 {
     print("Hello, World! I am Cloth!\n");
 	int x = 2 + 2;
     print(x + 2);

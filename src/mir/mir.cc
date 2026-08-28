@@ -472,6 +472,10 @@ class BodyBuilder {
       const HirExpression& expression) {
     const SemanticSymbol& symbol = semantics_.symbol(symbol_expression.symbol);
     if (symbol.kind == SymbolKind::kField) {
+      if (symbol.is_static) {
+        return emit_value(expression.type, expression.range,
+                          MirLoadSymbolInstruction{symbol_expression.symbol});
+      }
       const MirValueId self = emit_self(expression.range);
       return emit_value(
           expression.type, expression.range,
@@ -487,6 +491,13 @@ class BodyBuilder {
 
   std::optional<MirValueId> lower_member(const HirMemberExpression& member,
                                          const HirExpression& expression) {
+    if (member.member) {
+      const SemanticSymbol& symbol = semantics_.symbol(*member.member);
+      if (symbol.kind == SymbolKind::kField && symbol.is_static) {
+        return emit_value(expression.type, expression.range,
+                          MirLoadSymbolInstruction{*member.member});
+      }
+    }
     const MirValueId object = require_value(
         lower_expression(member.object),
         hir_.storage.expression(member.object).type, expression.range);
@@ -542,6 +553,14 @@ class BodyBuilder {
       const SemanticSymbol& symbol =
           semantics_.symbol(symbol_expression->symbol);
       if (symbol.kind == SymbolKind::kField) {
+        if (symbol.is_static) {
+          return LoweredLocation{symbol_expression->symbol,
+                                 std::nullopt,
+                                 std::nullopt,
+                                 symbol.type,
+                                 false,
+                                 false};
+        }
         return LoweredLocation{symbol_expression->symbol,
                                emit_self(expression.range),
                                std::nullopt,
@@ -561,6 +580,13 @@ class BodyBuilder {
     }
     if (const auto* member =
             std::get_if<HirMemberExpression>(&expression.data)) {
+      if (member->member) {
+        const SemanticSymbol& symbol = semantics_.symbol(*member->member);
+        if (symbol.kind == SymbolKind::kField && symbol.is_static) {
+          return LoweredLocation{member->member, std::nullopt, std::nullopt,
+                                 symbol.type,    false,        false};
+        }
+      }
       const MirValueId object = require_value(
           lower_expression(member->object),
           hir_.storage.expression(member->object).type, expression.range);

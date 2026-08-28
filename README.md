@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 12.1 final bindings
+# Cloth compiler - Stage 12.2 static members
 
-This repository contains the deterministic Stage 12.1 compiler core for Cloth
+This repository contains the deterministic Stage 12.2 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -241,6 +241,7 @@ docs/testing.md           Stage 10.1 test and diagnostic-build contract
 docs/printing_and_object_representation.md Stage 10.5 output contract
 docs/void_and_callable_contracts.md Stage 11 void contract
 docs/final_bindings.md   Stage 12.1 single-assignment contract
+docs/static_members.md   Stage 12.2 static ownership and entry contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -285,7 +286,7 @@ allocation and null-receiver behavior behind runtime intrinsics. See
 [docs/llvm_backend.md](docs/llvm_backend.md).
 
 Stage 6 binds the first typed core output intrinsic, emits a native `main`
-adapter for Cloth's public `Main()`, implements the minimal runtime, and drives
+adapter for Cloth's public static `Main()`, implements the minimal runtime, and drives
 LLVM object emission plus the configured host linker. Stage 7 adds structured
 loops and `String`, `int32`, and `bool` output overloads, making FizzBuzz the
 first complete control-flow example. See
@@ -327,6 +328,12 @@ Stage 12.1 adds `final` fields and bindings, inferred `var` locals, and
 constructor-aware definite initialization. Final affects rebinding rather than
 object mutability and has no ABI representation. See
 [docs/final_bindings.md](docs/final_bindings.md).
+
+Stage 12.2 adds receiver-free static functions, constant scalar static fields,
+and explicit `static func Main()`. Static members belong to the implicit file
+class but not to any instance; static fields are excluded from object layout,
+and static functions have no `self` binding or receiver ABI slot. See
+[docs/static_members.md](docs/static_members.md).
 
 ## Extending the lexer
 

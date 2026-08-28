@@ -65,7 +65,9 @@ DeclarationPassResult DeclarationPass::run() {
           "package");
       is_valid_ = false;
       synchronize_member();
-    } else if (current().kind == TokenKind::kKwFunc) {
+    } else if (current().kind == TokenKind::kKwFunc ||
+               (current().kind == TokenKind::kKwStatic &&
+                peek(1).kind == TokenKind::kKwFunc)) {
       saw_member = true;
       parse_function();
     } else if (is_nested_type_keyword(current().kind)) {
@@ -75,7 +77,8 @@ DeclarationPassResult DeclarationPass::run() {
                peek(1).kind == TokenKind::kLeftParen) {
       saw_member = true;
       parse_constructor();
-    } else if (current().kind == TokenKind::kKwFinal ||
+    } else if (current().kind == TokenKind::kKwStatic ||
+               current().kind == TokenKind::kKwFinal ||
                can_start_type(current().kind)) {
       saw_member = true;
       parse_field();
@@ -271,6 +274,7 @@ std::optional<TokenIndexRange> DeclarationPass::locate_body(
 void DeclarationPass::parse_field() {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
   const std::size_t begin = current_;
+  const bool is_static = match(TokenKind::kKwStatic);
   const bool is_final = match(TokenKind::kKwFinal);
   auto type = parse_type();
   if (!type) {
@@ -303,6 +307,7 @@ void DeclarationPass::parse_field() {
       if (parenthesis_depth == 0 &&
           (current().kind == TokenKind::kSemicolon ||
            current().kind == TokenKind::kKwFunc ||
+           current().kind == TokenKind::kKwStatic ||
            is_nested_type_keyword(current().kind) ||
            (current().kind == TokenKind::kKwFinal &&
             can_start_type(peek(1).kind)) ||
@@ -337,6 +342,7 @@ void DeclarationPass::parse_field() {
                       *type,
                       declaration_valid};
   symbol.is_final = is_final;
+  symbol.is_static = is_static;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kField, symbol_index,
                                     begin, initializer, std::nullopt, range,
@@ -346,7 +352,13 @@ void DeclarationPass::parse_field() {
 void DeclarationPass::parse_function() {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
   const std::size_t begin = current_;
-  advance();
+  const bool is_static = match(TokenKind::kKwStatic);
+  if (!match(TokenKind::kKwFunc)) {
+    diagnostics_.error(current().range, "expected 'func' after 'static'");
+    is_valid_ = false;
+    synchronize_member();
+    return;
+  }
   if (current().kind != TokenKind::kIdentifier) {
     diagnostics_.error(current().range, "expected function name after 'func'");
     is_valid_ = false;
@@ -373,6 +385,7 @@ void DeclarationPass::parse_function() {
                       std::move(parameters),
                       return_type,
                       declaration_valid};
+  symbol.is_static = is_static;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kFunction, symbol_index,
                                     begin, std::nullopt, body, range,
@@ -590,7 +603,7 @@ bool DeclarationPass::looks_like_member_start(
     std::size_t index) const noexcept {
   const TokenKind kind = tokens_[index].kind;
   if (kind == TokenKind::kKwFunc || kind == TokenKind::kKwFinal ||
-      is_nested_type_keyword(kind)) {
+      kind == TokenKind::kKwStatic || is_nested_type_keyword(kind)) {
     return true;
   }
   if (!can_start_type(kind)) {

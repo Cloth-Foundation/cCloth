@@ -211,6 +211,7 @@ struct FieldDecl {
   SourceRange range;
   bool is_valid{true};
   bool is_final{false};
+  bool is_static{false};
 };
 
 struct FunctionDecl {
@@ -221,6 +222,7 @@ struct FunctionDecl {
   BlockId body;
   SourceRange range;
   bool is_valid{true};
+  bool is_static{false};
 };
 
 struct ConstructorDecl {

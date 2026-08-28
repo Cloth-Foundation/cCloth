@@ -104,6 +104,7 @@ struct SemanticSymbol {
   std::vector<SymbolId> parameter_symbols{};
   IntrinsicKind intrinsic{IntrinsicKind::kNone};
   bool is_final{false};
+  bool is_static{false};
 };
 
 enum class ValueCategory {

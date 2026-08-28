@@ -319,6 +319,7 @@ class SemanticAnalyzer {
                        field.range,
                        field.is_valid && type != model_.error_type()});
     model_.mutable_symbol(symbol).is_final = field.is_final;
+    model_.mutable_symbol(symbol).is_static = field.is_static;
     model_.mutable_file(file_id).fields.at(index) = symbol;
   }
 
@@ -341,6 +342,12 @@ class SemanticAnalyzer {
         SemanticSymbol{SymbolKind::kFunction, std::string{function.name},
                        return_type, std::move(parameters), function.visibility,
                        file_id, function.range, valid});
+    model_.mutable_symbol(symbol).is_static = function.is_static;
+    if (function.name == "Main" && !function.is_static) {
+      diagnostics_.error(function.range,
+                         "entry point 'Main' must be declared static");
+      model_.mutable_symbol(symbol).is_valid = false;
+    }
     model_.mutable_file(file_id).functions.at(index) = symbol;
   }
 
@@ -438,10 +445,27 @@ class SemanticAnalyzer {
 
   void analyze_field(std::size_t index) {
     const FieldDecl& field = files_[current_file_.value]->fields.at(index);
+    const SymbolId symbol = model_.file(current_file_).fields.at(index);
+    if (field.is_static) {
+      if (!field.is_final) {
+        diagnostics_.error(field.range, "static field '" +
+                                            std::string{field.name} +
+                                            "' must also be final");
+      }
+      if (!field.initializer) {
+        diagnostics_.error(field.range, "static field '" +
+                                            std::string{field.name} +
+                                            "' requires an initializer");
+      } else if (!is_static_scalar_initializer(*field.initializer) ||
+                 !is_static_scalar_type(model_.symbol(symbol).type)) {
+        diagnostics_.error(expression_range(*field.initializer),
+                           "static field initializer must be a scalar literal");
+      }
+    }
     if (!field.initializer) {
       return;
     }
-    begin_root_scope();
+    begin_root_scope(!field.is_static);
     const ExpressionState value = analyze_expression(*field.initializer);
     check_value(value, files_[current_file_.value]
                            ->storage.expression(*field.initializer)
@@ -475,7 +499,9 @@ class SemanticAnalyzer {
   void analyze_callable(SymbolId callable_symbol,
                         std::span<const ParameterDecl> parameters, BlockId body,
                         TypeId return_type) {
-    begin_root_scope();
+    const SemanticSymbol& callable = model_.symbol(callable_symbol);
+    begin_root_scope(callable.kind == SymbolKind::kConstructor ||
+                     !callable.is_static);
     const std::vector<TypeId> parameter_types =
         model_.symbol(callable_symbol).parameter_types;
     for (std::size_t index = 0; index < parameters.size(); ++index) {
@@ -506,17 +532,21 @@ class SemanticAnalyzer {
     end_root_scope();
   }
 
-  void begin_root_scope() {
+  void begin_root_scope(bool include_self = true) {
     scopes_.clear();
     scopes_.push_back(Scope{});
     current_scope_ = 0;
-    scopes_[0].entries.push_back(
-        ScopeEntry{"self", model_.file(current_file_).self_symbol});
+    has_implicit_receiver_ = include_self;
+    if (include_self) {
+      scopes_[0].entries.push_back(
+          ScopeEntry{"self", model_.file(current_file_).self_symbol});
+    }
   }
 
   void end_root_scope() {
     scopes_.clear();
     current_scope_.reset();
+    has_implicit_receiver_ = false;
   }
 
   void push_scope() {
@@ -814,6 +844,11 @@ class SemanticAnalyzer {
     if (!members.empty()) {
       const SemanticSymbol& first = model_.symbol(members.front());
       if (first.kind == SymbolKind::kField) {
+        if (!first.is_static && !has_implicit_receiver_) {
+          diagnostics_.error(range, "instance field '" + first.name +
+                                        "' is unavailable in a static context");
+          return ExpressionState{model_.error_type()};
+        }
         return ExpressionState{
             first.type, ValueCategory::kMutableLocation, members.front(), {}};
       }
@@ -1043,7 +1078,7 @@ class SemanticAnalyzer {
     const SemanticSymbol& target_symbol = model_.symbol(symbol);
     return current_callable_kind_ == SymbolKind::kConstructor &&
            target_symbol.kind == SymbolKind::kField &&
-           target_symbol.file == current_file_ &&
+           !target_symbol.is_static && target_symbol.file == current_file_ &&
            is_self_field_reference(target, symbol);
   }
 
@@ -1107,7 +1142,14 @@ class SemanticAnalyzer {
 
     const SemanticSymbol& first = model_.symbol(members.front());
     if (first.kind == SymbolKind::kField) {
-      if (object.category == ValueCategory::kType) {
+      if (first.is_static && object.category != ValueCategory::kType) {
+        diagnostics_.error(range,
+                           "static field '" + first.name +
+                               "' must be accessed through file class '" +
+                               object_type.name + "'");
+        return ExpressionState{model_.error_type()};
+      }
+      if (!first.is_static && object.category == ValueCategory::kType) {
         diagnostics_.error(range,
                            "field '" + first.name + "' requires an instance");
         return ExpressionState{model_.error_type()};
@@ -1213,7 +1255,71 @@ class SemanticAnalyzer {
         model_.mutable_file(current_file_).expressions.at(call.callee.value);
     callee_semantics.symbol = selected;
     const SemanticSymbol& symbol = model_.symbol(selected);
+    if (!validate_call_access(call.callee, symbol, range)) {
+      return ExpressionState{model_.error_type()};
+    }
     return ExpressionState{symbol.type, ValueCategory::kValue, selected, {}};
+  }
+
+  bool validate_call_access(ExpressionId callee_id,
+                            const SemanticSymbol& callable, SourceRange range) {
+    if (callable.kind != SymbolKind::kFunction ||
+        callable.intrinsic != IntrinsicKind::kNone) {
+      return true;
+    }
+    const Expression& callee =
+        files_[current_file_.value]->storage.expression(callee_id);
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&callee.data)) {
+      return validate_call_access(grouped->expression, callable, range);
+    }
+    const auto* member = std::get_if<MemberAccessExpression>(&callee.data);
+    if (member == nullptr) {
+      if (!callable.is_static && !has_implicit_receiver_) {
+        diagnostics_.error(range, "instance function '" + callable.name +
+                                      "' is unavailable in a static context");
+        return false;
+      }
+      return true;
+    }
+
+    const ExpressionSemantics& object =
+        model_.file(current_file_).expressions.at(member->object.value);
+    if (callable.is_static && object.category != ValueCategory::kType) {
+      diagnostics_.error(range,
+                         "static function '" + callable.name +
+                             "' must be accessed through its file class");
+      return false;
+    }
+    if (!callable.is_static && object.category == ValueCategory::kType) {
+      diagnostics_.error(
+          range, "function '" + callable.name + "' requires an instance");
+      return false;
+    }
+    return true;
+  }
+
+  bool is_static_scalar_initializer(ExpressionId id) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return is_static_scalar_initializer(grouped->expression);
+    }
+    const auto* literal = std::get_if<LiteralExpression>(&expression.data);
+    return literal != nullptr && literal->kind != LiteralKind::kString &&
+           literal->kind != LiteralKind::kNull;
+  }
+
+  bool is_static_scalar_type(TypeId type) const {
+    const TypeKind kind = model_.type(type).kind;
+    return kind == TypeKind::kBool || kind == TypeKind::kChar ||
+           kind == TypeKind::kByte || kind == TypeKind::kInt8 ||
+           kind == TypeKind::kInt16 || kind == TypeKind::kInt32 ||
+           kind == TypeKind::kInt64 || kind == TypeKind::kUint8 ||
+           kind == TypeKind::kUint16 || kind == TypeKind::kUint32 ||
+           kind == TypeKind::kUint64 || kind == TypeKind::kFloat32 ||
+           kind == TypeKind::kFloat64;
   }
 
   ExpressionState record_expression(ExpressionId id, ExpressionState state) {
@@ -1393,6 +1499,7 @@ class SemanticAnalyzer {
   std::vector<Scope> scopes_;
   std::vector<std::vector<VisibleFile>> visible_files_;
   std::optional<std::size_t> current_scope_;
+  bool has_implicit_receiver_{false};
   std::size_t loop_depth_{0};
 };
 

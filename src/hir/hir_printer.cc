@@ -36,6 +36,9 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
           const SemanticSymbol& symbol =
               semantics.symbol(file.fields.at(reference.index).symbol);
           output << "|- Field " << symbol.name << ": ";
+          if (symbol.is_static) {
+            output << "static ";
+          }
           if (symbol.is_final) {
             output << "final ";
           }
@@ -49,7 +52,11 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
           output << "|- Function " << symbol.name;
           print_parameters(symbol, semantics, output);
           output << ": " << semantics.type(symbol.type).name << " ["
-                 << visibility_name(symbol.visibility) << "]\n";
+                 << visibility_name(symbol.visibility);
+          if (symbol.is_static) {
+            output << ", static";
+          }
+          output << "]\n";
           break;
         }
         case DeclarationKind::kConstructor: {

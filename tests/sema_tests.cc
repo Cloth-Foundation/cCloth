@@ -115,9 +115,9 @@ void core_types_and_typed_hir(TestContext& test) {
 void void_callable_contract(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("Stage11.co",
-            "func Explicit(): void { return; }\n"
-            "func Implicit() { Explicit(); }\n"
-            "func Main(): void { Implicit(); return; }\n");
+            "static func Explicit(): void { return; }\n"
+            "static func Implicit() { Explicit(); }\n"
+            "static func Main(): void { Implicit(); return; }\n");
   valid.analyze();
 
   test.expect(valid.error_count() == 0,
@@ -327,7 +327,7 @@ void core_print_intrinsic(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("HelloWorld.co",
             "HelloWorld() {}\n"
-            "func Main() {\n"
+            "static func Main() {\n"
             "  HelloWorld value = HelloWorld();\n"
             "  print(\"hello\"); print(1); print(true); print('C');\n"
             "  print(1.5); print(value); print(null);\n"
@@ -407,15 +407,16 @@ void core_print_intrinsic(TestContext& test) {
   }
 
   AnalyzedCompilation invalid;
-  invalid.add("BadPrint.co", "func Main() { print(); println(1, 2); }\n");
+  invalid.add("BadPrint.co",
+              "static func Main() { print(); println(1, 2); }\n");
   invalid.analyze();
   test.expect(invalid.has_diagnostic("no matching overload"),
               "invalid print arity was accepted");
 
   AnalyzedCompilation shadowed;
   shadowed.add("Shadow.co",
-               "func print(int value) {}\n"
-               "func Main() { print(1); }\n");
+               "static func print(int value) {}\n"
+               "static func Main() { print(1); }\n");
   shadowed.analyze();
   test.expect(shadowed.error_count() == 0,
               "source member did not shadow core print");
@@ -425,7 +426,8 @@ void cross_file_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("App.co",
                   "func Load(int id): User { return User.Find(id); }\n");
-  compilation.add("User.co", "func Find(int32 id): User { return null; }\n");
+  compilation.add("User.co",
+                  "static func Find(int32 id): User { return null; }\n");
   compilation.analyze();
 
   test.expect(compilation.error_count() == 0,
@@ -454,11 +456,12 @@ void package_imports(TestContext& test) {
                   "func Load(): ModelUser { return Factory.Make(); }\n"
                   "func Help(): int { return Helper.Value(); }\n",
                   "app");
-  compilation.add("app/Helper.co", "func Value(): int { return 8; }\n", "app");
+  compilation.add("app/Helper.co", "static func Value(): int { return 8; }\n",
+                  "app");
   compilation.add("models/User.co", "", "models");
   compilation.add("services/Factory.co",
                   "import models::User;\n"
-                  "func Make(): User { return null; }\n",
+                  "static func Make(): User { return null; }\n",
                   "services");
   compilation.analyze();
 
@@ -501,7 +504,7 @@ void invalid_package_imports(TestContext& test) {
 
 void private_member_access(TestContext& test) {
   AnalyzedCompilation compilation;
-  compilation.add("User.co", "func hidden(): bool { return true; }\n");
+  compilation.add("User.co", "static func hidden(): bool { return true; }\n");
   compilation.add("App.co", "func Read(): bool { return User.hidden(); }\n");
   compilation.analyze();
 
@@ -913,6 +916,73 @@ void deterministic_diagnostics(TestContext& test) {
               "semantic diagnostic order changed between runs");
 }
 
+void static_member_contract(TestContext& test) {
+  AnalyzedCompilation compilation;
+  compilation.add(
+      "Statics.co",
+      "static final int32 Version = 12;\n"
+      "int32 value;\n"
+      "static func Twice(int32 input): int32 { return input + input; }\n"
+      "func Read(): int32 { return Twice(Version) + Statics.Version; }\n");
+  compilation.analyze();
+
+  test.expect(compilation.error_count() == 0,
+              "valid static members produced semantic errors");
+  const cloth::FileSemantics& file =
+      compilation.result->semantics.file(cloth::FileId{0});
+  test.expect(compilation.result->semantics.symbol(file.fields[0]).is_static &&
+                  compilation.result->semantics.symbol(file.fields[0]).is_final,
+              "static field metadata was not preserved");
+  test.expect(
+      compilation.result->semantics.symbol(file.functions[0]).is_static &&
+          !compilation.result->semantics.symbol(file.functions[1]).is_static,
+      "static function metadata was not preserved");
+}
+
+void invalid_static_members(TestContext& test) {
+  AnalyzedCompilation compilation;
+  compilation.add(
+      "StaticErrors.co",
+      "static int32 Mutable = 1;\n"
+      "static final String Text = \"cloth\";\n"
+      "static final int32 Missing;\n"
+      "int32 value;\n"
+      "func Read() {}\n"
+      "static func Utility() {}\n"
+      "static func Bad() { print(value); Read(); print(self); }\n"
+      "func ThroughInstance(StaticErrors object) { object.Utility(); }\n"
+      "func ThroughType() { StaticErrors.Read(); }\n"
+      "func Main() {}\n");
+  compilation.analyze();
+
+  test.expect(compilation.has_diagnostic("must also be final"),
+              "mutable static field was accepted");
+  test.expect(compilation.has_diagnostic(
+                  "static field initializer must be a scalar literal"),
+              "reference-valued static field was accepted");
+  test.expect(compilation.has_diagnostic("requires an initializer"),
+              "uninitialized static field was accepted");
+  test.expect(compilation.has_diagnostic(
+                  "instance field 'value' is unavailable in a static context"),
+              "static function accessed an implicit instance field");
+  test.expect(
+      compilation.has_diagnostic(
+          "instance function 'Read' is unavailable in a static context"),
+      "static function called an implicit instance function");
+  test.expect(compilation.has_diagnostic("unknown name 'self'"),
+              "static function received an implicit self binding");
+  test.expect(
+      compilation.has_diagnostic(
+          "static function 'Utility' must be accessed through its file class"),
+      "static function was accepted through an instance");
+  test.expect(
+      compilation.has_diagnostic("function 'Read' requires an instance"),
+      "instance function was accepted through a file class");
+  test.expect(
+      compilation.has_diagnostic("entry point 'Main' must be declared static"),
+      "instance Main declaration was accepted");
+}
+
 using TestFunction = void (*)(TestContext&);
 
 struct TestCase {
@@ -949,6 +1019,8 @@ int main() {
       {"for iteration semantics", for_iteration_semantics},
       {"for binding scope and types", for_binding_scope_and_types},
       {"instance member binding", instance_member_binding},
+      {"static member contract", static_member_contract},
+      {"invalid static members", invalid_static_members},
       {"deterministic diagnostics", deterministic_diagnostics},
   };
 

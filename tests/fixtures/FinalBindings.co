@@ -10,7 +10,7 @@ func Show(): void {
     println(Code);
 }
 
-func Main(): void {
+static func Main(): void {
     final var value = FinalBindings(12);
     value.Show();
 }

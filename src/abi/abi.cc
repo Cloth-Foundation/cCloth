@@ -154,7 +154,11 @@ AbiClassLayout lower_class_layout(const MirFileClass& file,
   std::vector<AbiFieldLayout> fields;
   fields.reserve(file.fields.size());
   for (const MirField& field : file.fields) {
-    const TypeId type = semantics.symbol(field.symbol).type;
+    const SemanticSymbol& symbol = semantics.symbol(field.symbol);
+    if (symbol.is_static) {
+      continue;
+    }
+    const TypeId type = symbol.type;
     const AbiTypeLayout& type_layout = types.at(type.value);
     class_alignment = std::max(class_alignment, type_layout.storage.alignment);
     offset = align_to(offset, type_layout.storage.alignment);
@@ -170,9 +174,10 @@ AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
                            const SemanticModel& semantics) {
   const SemanticSymbol& symbol = semantics.symbol(callable.symbol);
   std::vector<AbiParameter> parameters;
-  parameters.reserve(callable.parameters.size() +
-                     (kind == AbiCallableKind::kFunction ? 1U : 0U));
-  if (kind == AbiCallableKind::kFunction) {
+  parameters.reserve(
+      callable.parameters.size() +
+      (kind == AbiCallableKind::kFunction && !symbol.is_static ? 1U : 0U));
+  if (kind == AbiCallableKind::kFunction && !symbol.is_static) {
     parameters.push_back(AbiParameter{AbiParameterKind::kReceiver,
                                       file.self_symbol,
                                       semantics.symbol(file.symbol).type});
@@ -215,6 +220,19 @@ std::string mangle_abi_symbol(const SemanticSymbol& symbol,
   return result;
 }
 
+std::string mangle_abi_static_field(const SemanticSymbol& symbol,
+                                    const SemanticModel& semantics) {
+  std::string result = "_C1S";
+  if (symbol.file) {
+    const FileSemantics& file = semantics.file(*symbol.file);
+    result += encode_name(semantics.symbol(file.symbol).name);
+  } else {
+    result += encode_name("invalid");
+  }
+  result += encode_name(symbol.name);
+  return result;
+}
+
 AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
                        TargetDataLayout target) {
   AbiModule abi{std::move(target), {}, {}};
@@ -233,7 +251,18 @@ AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
         lower_class_layout(mir_file, semantics, abi.types, abi.target),
         {},
         {},
+        {},
         mir_file.member_order};
+    file.static_fields.reserve(mir_file.fields.size());
+    for (const MirField& field : mir_file.fields) {
+      const SemanticSymbol& symbol = semantics.symbol(field.symbol);
+      if (!symbol.is_static) {
+        continue;
+      }
+      file.static_fields.push_back(AbiStaticField{
+          field.symbol, symbol.type, lower_linkage(symbol.visibility),
+          mangle_abi_static_field(symbol, semantics)});
+    }
     file.functions.reserve(mir_file.functions.size());
     for (const MirCallable& function : mir_file.functions) {
       file.functions.push_back(lower_callable(

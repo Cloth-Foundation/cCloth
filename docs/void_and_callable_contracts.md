@@ -51,6 +51,6 @@ calls without result IDs and uses valueless return terminators. The ABI assigns
 void size zero, alignment one, and LLVM lowers it to `void`, `call void`, and
 `ret void` on both x86-64 and wasm32.
 
-Native entry points accept `Main(): void`, omitted-return `Main()`, or
-`Main(): int32`. The first two return process status zero; the last supplies the
-process status explicitly.
+Native entry points accept `static func Main(): void`, omitted-return
+`static func Main()`, or `static func Main(): int32`. The first two return
+process status zero; the last supplies the process status explicitly.

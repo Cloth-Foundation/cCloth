@@ -15,7 +15,7 @@ float64 Float64Value = 1.5;
 
 PrintRepresentation() {}
 
-func Main() {
+static func Main() {
     PrintRepresentation values = PrintRepresentation();
     println(values.Character);
     println(values.Text);

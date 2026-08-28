@@ -47,7 +47,7 @@ class FinalFieldAnalyzer {
     FlowState flow;
     for (std::size_t index = 0; index < file_.fields.size(); ++index) {
       const FieldDecl& field = file_.fields[index];
-      if (!field.is_valid || !field.is_final) {
+      if (!field.is_valid || !field.is_final || field.is_static) {
         continue;
       }
       final_fields_.push_back(semantics_.file(file_id_).fields[index]);
@@ -70,7 +70,7 @@ class FinalFieldAnalyzer {
         continue;
       }
       analyze_expression(*field.initializer, flow.assignments, false);
-      if (!field.is_valid || !field.is_final) {
+      if (!field.is_valid || !field.is_final || field.is_static) {
         continue;
       }
       const SymbolId symbol = semantics_.file(file_id_).fields[index];
@@ -87,7 +87,8 @@ class FinalFieldAnalyzer {
 
   void validate_fields_without_constructor() {
     for (const FieldDecl& field : file_.fields) {
-      if (field.is_valid && field.is_final && !field.initializer) {
+      if (field.is_valid && field.is_final && !field.is_static &&
+          !field.initializer) {
         diagnostics_.error(field.range, "final field '" +
                                             std::string{field.name} +
                                             "' requires an initializer or a "

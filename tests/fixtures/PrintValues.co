@@ -1,4 +1,4 @@
-func Main() {
+static func Main() {
     print("value: ");
     print(42);
     print(" ");

@@ -162,7 +162,7 @@ void DefinitionPass::build_field(const MemberOutline& outline,
   const std::size_t index = file_class_.fields.size();
   file_class_.fields.push_back(FieldDecl{type, symbol.name, symbol.visibility,
                                          initializer, outline.range, is_valid,
-                                         symbol.is_final});
+                                         symbol.is_final, symbol.is_static});
   file_class_.member_order.push_back(
       MemberReference{DeclarationKind::kField, index});
   file_class_.is_valid = file_class_.is_valid && is_valid;
@@ -183,9 +183,9 @@ void DefinitionPass::build_function(const MemberOutline& outline,
                         file_class_.storage.block(body).is_valid &&
                         diagnostics_.diagnostics().size() == diagnostic_count;
   const std::size_t index = file_class_.functions.size();
-  file_class_.functions.push_back(
-      FunctionDecl{symbol.name, symbol.visibility, copy_parameters(symbol),
-                   symbol.declared_type, body, outline.range, is_valid});
+  file_class_.functions.push_back(FunctionDecl{
+      symbol.name, symbol.visibility, copy_parameters(symbol),
+      symbol.declared_type, body, outline.range, is_valid, symbol.is_static});
   file_class_.member_order.push_back(
       MemberReference{DeclarationKind::kFunction, index});
   file_class_.is_valid = file_class_.is_valid && is_valid;

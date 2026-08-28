@@ -1,4 +1,4 @@
-func Main() {
+static func Main() {
     int value = 1;
     while (true) {
         if (value > 100) {

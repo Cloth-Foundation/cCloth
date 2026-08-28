@@ -4,6 +4,7 @@
 #include "cloth/ast/ast.h"
 #include "cloth/sema/semantic_model.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <ostream>
 #include <string_view>
@@ -21,7 +22,11 @@ void print_callable(const AbiCallable& callable, const SemanticModel& semantics,
   output << "|- "
          << (callable.kind == AbiCallableKind::kConstructor ? "Constructor "
                                                             : "Function ")
-         << symbol.name << " [" << linkage_name(callable.linkage) << "]\n";
+         << symbol.name << " [" << linkage_name(callable.linkage);
+  if (symbol.is_static) {
+    output << ", static";
+  }
+  output << "]\n";
   output << "|  |- ABI " << callable.mangled_name << '(';
   for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
     if (index != 0) {
@@ -52,13 +57,36 @@ void print_abi_summary(const AbiModule& abi, const SemanticModel& semantics,
     for (const MemberReference& member : file.member_order) {
       switch (member.kind) {
         case DeclarationKind::kField: {
-          const AbiFieldLayout& field = file.layout.fields.at(member.index);
-          const SemanticSymbol& symbol = semantics.symbol(field.symbol);
-          const AbiTypeLayout& type = abi.types.at(field.type.value);
+          const SymbolId symbol_id =
+              semantics.file(file.file).fields.at(member.index);
+          const SemanticSymbol& symbol = semantics.symbol(symbol_id);
+          if (symbol.is_static) {
+            const auto field = std::find_if(
+                file.static_fields.begin(), file.static_fields.end(),
+                [symbol_id](const AbiStaticField& candidate) {
+                  return candidate.symbol == symbol_id;
+                });
+            if (field != file.static_fields.end()) {
+              output << "|- StaticField " << symbol.name << ": "
+                     << semantics.type(field->type).name << " ["
+                     << linkage_name(field->linkage) << ", ABI "
+                     << field->mangled_name << "]\n";
+            }
+            break;
+          }
+          const auto field =
+              std::find_if(file.layout.fields.begin(), file.layout.fields.end(),
+                           [symbol_id](const AbiFieldLayout& candidate) {
+                             return candidate.symbol == symbol_id;
+                           });
+          if (field == file.layout.fields.end()) {
+            break;
+          }
+          const AbiTypeLayout& type = abi.types.at(field->type.value);
           output << "|- Field " << symbol.name << ": "
-                 << semantics.type(field.type).name << " [offset "
-                 << field.offset << ", size " << type.storage.size << ", align "
-                 << type.storage.alignment << "]\n";
+                 << semantics.type(field->type).name << " [offset "
+                 << field->offset << ", size " << type.storage.size
+                 << ", align " << type.storage.alignment << "]\n";
           break;
         }
         case DeclarationKind::kFunction:

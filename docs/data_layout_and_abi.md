@@ -53,18 +53,22 @@ its ABI type, padding is explicit in its recorded offset, and the complete
 object size is rounded to the largest required alignment. Empty file classes
 still contain the two-word header.
 
+Static fields are not object fields. Stage 12.2 records them in a separate ABI
+table and emits their literal value as constant global storage. Their `_C1S`
+name includes the qualified file class and field name. Static field linkage is
+still determined by capitalization.
+
 `String` remains an opaque runtime type and does not use file-class field
 layout.
 
 ## Callable ABI
 
-Every ordinary `func` ABI has one leading, nullable receiver slot followed by
-its declared parameters. Instance-qualified calls supply their object.
-Class-qualified calls supply a null receiver. Unqualified calls forward the
-current receiver. Keeping the slot in every function signature gives each
-overload one stable native type while Cloth has no separate `static` modifier.
-Accessing instance state through a null receiver follows Cloth's null-reference
-trap path.
+Every instance `func` ABI has one leading receiver slot followed by its
+declared parameters. Instance-qualified calls supply their object, and
+unqualified instance calls forward the current receiver. Static functions omit
+the receiver slot entirely. Semantic analysis rejects class-qualified instance
+calls and instance-qualified static calls, so null is never used as a stand-in
+receiver for a valid function call.
 
 Constructor entry points accept only their declared parameters and return the
 new file-class reference. Backend lowering allocates the object, makes it

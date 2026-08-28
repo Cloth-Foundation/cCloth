@@ -122,6 +122,22 @@ to direct assignments on the current instance and cannot occur in loops. These
 rules establish the definite-initialization foundation that future non-null
 fields will reuse.
 
+## Static members
+
+`static` moves member ownership from an instance to the implicit file class.
+A static function has no `self` binding and no receiver ABI parameter. It may
+be called unqualified inside its defining file class or through a file-class
+name. Calling it through an object is invalid. An instance function may be
+called unqualified only where an implicit receiver exists or explicitly
+through an object; calling it through a file-class name is invalid.
+
+Stage 12.2 static fields use the intentionally narrow form
+`static final T Name = literal;`, where `T` is a scalar primitive. They have
+separate constant storage, do not occupy object layout, and are accessed
+unqualified or through their file class. Dynamic static initialization,
+mutable static storage, and reference-valued static fields are deferred until
+initialization order and collector roots have explicit contracts.
+
 ## Path-derived packages
 
 Cloth has no `module` or `package` declaration. A file's directory relative to
@@ -228,8 +244,8 @@ intrinsic overload set under normal lexical lookup rules. The exact formatting
 contract is documented in
 [printing_and_object_representation.md](printing_and_object_representation.md).
 
-A native program contains exactly one public `Main` function with no explicit
-parameters. `Main` may omit its return type, explicitly return `void`, or return
-`int32`. A void `Main` produces process status zero; an `int32` `Main` supplies
-the returned value. The native adapter invokes `Main` as a class-qualified
-function with no instance.
+A native program contains exactly one public `static func Main` with no
+explicit parameters. `Main` may omit its return type, explicitly return
+`void`, or return `int32`. A void `Main` produces process status zero; an
+`int32` `Main` supplies the returned value. The native adapter calls this
+receiver-free function directly.

@@ -65,6 +65,9 @@ void print_callable(const MirCallable& callable, const SemanticModel& semantics,
   if (symbol.kind == SymbolKind::kFunction) {
     output << ": " << semantics.type(symbol.type).name;
   }
+  if (symbol.is_static) {
+    output << " [static]";
+  }
   output << '\n';
   print_body(callable.body, output);
 }
@@ -81,6 +84,9 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
           const MirField& field = file.fields.at(member.index);
           const SemanticSymbol& symbol = semantics.symbol(field.symbol);
           output << "|- Field " << symbol.name << ": ";
+          if (symbol.is_static) {
+            output << "static ";
+          }
           if (symbol.is_final) {
             output << "final ";
           }

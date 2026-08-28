@@ -203,6 +203,13 @@ class MirVerifier {
       verify_symbol(load->symbol, instruction.range);
       require_result(instruction);
       verify_symbol_type(load->symbol, instruction.type, instruction.range);
+      if (load->symbol.value < semantics_.symbols().size()) {
+        const SemanticSymbol& symbol = semantics_.symbol(load->symbol);
+        if (symbol.kind == SymbolKind::kField && !symbol.is_static) {
+          report(instruction.range,
+                 "instance field was lowered as a symbol load");
+        }
+      }
     } else if (const auto* declaration =
                    std::get_if<MirDeclareLocalInstruction>(&instruction.data)) {
       verify_symbol(declaration->symbol, instruction.range);
@@ -229,6 +236,10 @@ class MirVerifier {
       verify_symbol(load->member, instruction.range);
       require_result(instruction);
       verify_symbol_type(load->member, instruction.type, instruction.range);
+      if (load->member.value < semantics_.symbols().size() &&
+          semantics_.symbol(load->member).is_static) {
+        report(instruction.range, "static field was lowered as a member load");
+      }
     } else if (const auto* store =
                    std::get_if<MirStoreMemberInstruction>(&instruction.data)) {
       verify_value(store->object, value_types, instruction.range);
@@ -341,6 +352,17 @@ class MirVerifier {
         }
         if (!is_constructor && callable.kind != SymbolKind::kFunction) {
           report(instruction.range, "callable symbol is not callable");
+        }
+        if (callable.kind == SymbolKind::kFunction) {
+          if (callable.is_static && call->kind == MirCallKind::kInstance) {
+            report(instruction.range,
+                   "static function call has an instance receiver");
+          }
+          if (!callable.is_static &&
+              call->kind == MirCallKind::kClassQualified) {
+            report(instruction.range,
+                   "instance function call is class-qualified");
+          }
         }
         if (instruction.type != callable.type) {
           report(instruction.range,

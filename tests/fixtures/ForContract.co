@@ -11,7 +11,7 @@ func GetCalls(): int32 {
     return Calls;
 }
 
-func Main() {
+static func Main() {
     ForContract tracker = ForContract();
     int32 total = 0;
     for (var value in tracker.Values()) {

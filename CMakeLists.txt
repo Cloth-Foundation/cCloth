@@ -418,6 +418,30 @@ if(BUILD_TESTING)
         )
 
         if(WIN32)
+            set(CLOTH_TEST_STATIC_MEMBERS_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth static members.exe")
+        else()
+            set(CLOTH_TEST_STATIC_MEMBERS_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth static members")
+        endif()
+        add_test(
+            NAME cloth_cli_build_static_members
+            COMMAND clothc "--build=${CLOTH_TEST_STATIC_MEMBERS_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/StaticMembers.co
+        )
+        add_test(
+            NAME cloth_static_members
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_STATIC_MEMBERS_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/static_members.txt"
+                    -DCLOTH_EXACT_OUTPUT=ON
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_static_members PROPERTIES
+            DEPENDS cloth_cli_build_static_members
+        )
+
+        if(WIN32)
             set(CLOTH_TEST_FIZZBUZZ_EXECUTABLE
                 "${CMAKE_CURRENT_BINARY_DIR}/cloth fizzbuzz.exe")
         else()

@@ -155,7 +155,8 @@ void imports(TestContext& test) {
 void fields_and_visibility(TestContext& test) {
   const ParsedSource source{"Fields.co",
                             "String Name;\nint32 id;\nbool active = true;\n"
-                            "int32 _cache;\nfinal int32 Version = 1;\n"};
+                            "int32 _cache;\n"
+                            "static final int32 Version = 1;\n"};
   test.expect(error_count(source) == 0, "valid fields should parse");
   test.expect(source.ast().fields.size() == 5, "wrong field count");
   if (source.ast().fields.size() != 5) {
@@ -183,8 +184,9 @@ void fields_and_visibility(TestContext& test) {
   test.expect(source.ast().fields[3].visibility == cloth::Visibility::kPrivate,
               "underscore field should be private");
   test.expect(source.ast().fields[4].is_final &&
+                  source.ast().fields[4].is_static &&
                   source.ast().fields[4].name == "Version",
-              "final field modifier was not retained");
+              "static final field modifiers were not retained");
 
   const ParsedSource private_class{"user.co", ""};
   test.expect(private_class.ast().visibility == cloth::Visibility::kPrivate,
@@ -195,7 +197,7 @@ void functions(TestContext& test) {
   const ParsedSource source{
       "Functions.co",
       "func shutdown() {}\n"
-      "func Add(final int a, int b): int { return a + b; }\n"
+      "static func Add(final int a, int b): int { return a + b; }\n"
       "func Flush(): void { return; }\n"};
   test.expect(error_count(source) == 0, "valid functions should parse");
   test.expect(source.ast().functions.size() == 3, "wrong function count");
@@ -217,6 +219,7 @@ void functions(TestContext& test) {
               "func return type is wrong");
   test.expect(add.visibility == cloth::Visibility::kPublic,
               "uppercase function should be public");
+  test.expect(add.is_static, "static function modifier was not retained");
   test.expect(source.ast().storage.block(add.body).statements.size() == 1,
               "func body was not parsed");
 

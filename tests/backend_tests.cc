@@ -163,26 +163,52 @@ void call_receivers(TestContext& test) {
   CompiledSources sources;
   sources.add("User.co",
               "User() {}\n"
-              "func Echo(int value): int { return value; }\n"
-              "func Forward(int value): int { return Echo(value); }\n");
+              "static func Echo(int value): int { return value; }\n"
+              "func InstanceEcho(int value): int { return value; }\n"
+              "func Forward(int value): int { return InstanceEcho(value); }\n");
   sources.add("Calls.co",
-              "func Static(): int { return User.Echo(1); }\n"
-              "func Instance(User user): int { return user.Echo(2); }\n"
+              "static func Static(): int { return User.Echo(1); }\n"
+              "func Instance(User user): int { return user.InstanceEcho(2); }\n"
               "func Make(): User { return User(); }\n");
   sources.compile();
 
   test.expect(sources.llvm.has_value(), "call module failed to emit");
-  test.expect(
-      sources.contains("call i32 @_C1F4_User4_EchoP1_i32(ptr null, i32 1)"),
-      "class-qualified call did not pass a null receiver");
-  test.expect(
-      sources.contains("call i32 @_C1F4_User4_EchoP1_i32(ptr %receiver"),
-      "unqualified call did not forward its receiver");
-  test.expect(
-      sources.contains("call i32 @_C1F4_User4_EchoP1_i32(ptr %v0, i32 2)"),
-      "instance-qualified call did not pass its object");
+  test.expect(sources.contains("call i32 @_C1F4_User4_EchoP1_i32(i32 1)"),
+              "static call gained an ABI receiver");
+  test.expect(sources.contains(
+                  "call i32 @_C1F4_User12_InstanceEchoP1_i32(ptr %receiver"),
+              "unqualified call did not forward its receiver");
+  test.expect(sources.contains(
+                  "call i32 @_C1F4_User12_InstanceEchoP1_i32(ptr %v0, i32 2)"),
+              "instance-qualified call did not pass its object");
   test.expect(sources.contains("call ptr @_C1C4_User4_UserP0()"),
               "constructor call gained an ABI receiver");
+}
+
+void static_members(TestContext& test) {
+  CompiledSources sources;
+  sources.add(
+      "Statics.co",
+      "static final int32 Version = 12;\n"
+      "int32 Value;\n"
+      "static func Twice(int32 value): int32 { return value + value; }\n"
+      "static func Main(): int32 { "
+      "return Statics.Twice(Statics.Version); }\n");
+  sources.compile(cloth::LlvmIrOptions{true});
+
+  test.expect(sources.llvm.has_value(), "static member module failed to emit");
+  test.expect(
+      sources.contains("@_C1S7_Statics7_Version = constant i32 12, align 4"),
+      "static field was not emitted as constant global storage");
+  test.expect(
+      sources.contains("define i32 @_C1F7_Statics5_TwiceP1_i32(i32 %arg"),
+      "static function gained a receiver parameter");
+  test.expect(
+      sources.contains("load i32, ptr @_C1S7_Statics7_Version") &&
+          sources.contains("call i32 @_C1F7_Statics5_TwiceP1_i32(i32 %v"),
+      "unqualified static call did not use receiver-free ABI");
+  test.expect(sources.contains("call i32 @_C1F7_Statics4_MainP0()"),
+              "native entry adapter did not call static Main directly");
 }
 
 void wasm32_module(TestContext& test) {
@@ -220,7 +246,7 @@ void print_and_native_entry_point(TestContext& test) {
   CompiledSources sources;
   sources.add("HelloWorld.co",
               "HelloWorld() {}\n"
-              "func Main(): void {\n"
+              "static func Main(): void {\n"
               "  print(\"Hello, World!\\n\");\n"
               "  print(7);\n"
               "  print(true);\n"
@@ -253,34 +279,33 @@ void print_and_native_entry_point(TestContext& test) {
       "object print intrinsic was not lowered");
   test.expect(sources.contains("call void @cloth_rt_print_newline()"),
               "println did not lower its line feed");
-  test.expect(
-      sources.contains(
-          "define void @_C1F10_HelloWorld4_MainP0(ptr %receiver)") &&
-          sources.contains("ret void") &&
-          sources.contains("define i32 @main()") &&
-          sources.contains("call void @_C1F10_HelloWorld4_MainP0(ptr null)"),
-      "explicit void Main or its native entry adapter was not emitted");
+  test.expect(sources.contains("define void @_C1F10_HelloWorld4_MainP0()") &&
+                  sources.contains("ret void") &&
+                  sources.contains("define i32 @main()") &&
+                  sources.contains("call void @_C1F10_HelloWorld4_MainP0()"),
+              "explicit void Main or its native entry adapter was not emitted");
 
   CompiledSources exit_code;
-  exit_code.add("Program.co", "func Main(): int32 { return 7; }\n");
+  exit_code.add("Program.co", "static func Main(): int32 { return 7; }\n");
   exit_code.compile(cloth::LlvmIrOptions{true});
-  test.expect(exit_code.contains(
-                  "%exit_code = call i32 @_C1F7_Program4_MainP0(ptr null)") &&
-                  exit_code.contains("ret i32 %exit_code"),
-              "int32 Main did not supply the process exit code");
+  test.expect(
+      exit_code.contains("%exit_code = call i32 @_C1F7_Program4_MainP0()") &&
+          exit_code.contains("ret i32 %exit_code"),
+      "int32 Main did not supply the process exit code");
 }
 
 void rejects_invalid_native_entry_points(TestContext& test) {
   CompiledSources missing;
   missing.add("Library.co", "func Read(): int { return 1; }\n");
   missing.compile(cloth::LlvmIrOptions{true});
-  test.expect(
-      !missing.llvm && has_diagnostic(missing.diagnostics,
-                                      "requires a public 'Main' function"),
-      "missing native entry point was accepted");
+  test.expect(!missing.llvm &&
+                  has_diagnostic(missing.diagnostics,
+                                 "requires a public static 'Main' function"),
+              "missing native entry point was accepted");
 
   CompiledSources invalid;
-  invalid.add("Program.co", "func Main(int value): int { return value; }\n");
+  invalid.add("Program.co",
+              "static func Main(int value): int { return value; }\n");
   invalid.compile(cloth::LlvmIrOptions{true});
   test.expect(
       !invalid.llvm && has_diagnostic(invalid.diagnostics,
@@ -288,8 +313,8 @@ void rejects_invalid_native_entry_points(TestContext& test) {
       "invalid native entry signature was accepted");
 
   CompiledSources duplicate;
-  duplicate.add("First.co", "func Main() {}\n");
-  duplicate.add("Second.co", "func Main(): int { return 0; }\n");
+  duplicate.add("First.co", "static func Main() {}\n");
+  duplicate.add("Second.co", "static func Main(): int { return 0; }\n");
   duplicate.compile(cloth::LlvmIrOptions{true});
   test.expect(
       !duplicate.llvm && has_diagnostic(duplicate.diagnostics,
@@ -341,6 +366,7 @@ int main() {
       {"object construction", object_construction},
       {"arrays", arrays},
       {"call receivers", call_receivers},
+      {"static members", static_members},
       {"wasm32 module", wasm32_module},
       {"print and native entry point", print_and_native_entry_point},
       {"rejects invalid native entry points",

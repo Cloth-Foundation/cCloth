@@ -134,6 +134,26 @@ void callable_abi(TestContext& test) {
               "constructor ABI does not return the allocated object");
 }
 
+void static_member_abi(TestContext& test) {
+  const CompiledSource source{
+      "static final int32 Version = 12;\n"
+      "int32 Value;\n"
+      "static func Read(): int32 { return Version; }\n"};
+  const cloth::AbiFileClass& file = source.result->abi.files[0];
+
+  test.expect(source.result->is_valid,
+              "valid static members failed ABI lowering");
+  test.expect(file.layout.fields.size() == 1 &&
+                  file.layout.fields[0].symbol ==
+                      source.result->semantics.file(cloth::FileId{0}).fields[1],
+              "static field leaked into instance layout");
+  test.expect(file.static_fields.size() == 1 &&
+                  file.static_fields[0].mangled_name == "_C1S6_Layout7_Version",
+              "static field ABI is missing or unstable");
+  test.expect(file.functions[0].parameters.empty(),
+              "static function gained a receiver parameter");
+}
+
 void void_abi(TestContext& test) {
   const CompiledSource source{
       "func Explicit(): void { return; }\n"
@@ -260,6 +280,7 @@ int main() {
       {"class field layout", class_field_layout},
       {"wasm32 layout", wasm32_layout},
       {"callable ABI", callable_abi},
+      {"static member ABI", static_member_abi},
       {"void ABI", void_abi},
       {"deterministic mangling", deterministic_mangling},
       {"array ABI", array_abi},
