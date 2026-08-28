@@ -5,7 +5,9 @@ contains unit, verifier, LLVM, driver, native-output, and expected-failure
 tests. Run it after building:
 
 ```sh
-ctest --test-dir build --output-on-failure
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
 ```
 
 Each CTest case defaults to a 15-second timeout. Native programs launched by a
@@ -20,12 +22,9 @@ and cannot be mixed with coverage instrumentation. CMake verifies that the
 selected compiler has the required runtimes before generating the build:
 
 ```sh
-cmake -S . -B build-sanitize \
-  -DCMAKE_CXX_COMPILER=clang++ \
-  -DCLOTH_ENABLE_SANITIZERS=ON \
-  -DCLOTH_WARNINGS_AS_ERRORS=ON
-cmake --build build-sanitize
-ctest --test-dir build-sanitize --output-on-failure
+cmake --preset sanitize -DCMAKE_CXX_COMPILER=clang++
+cmake --build --preset sanitize
+ctest --preset sanitize
 ```
 
 Compiler and test targets are instrumented. `cloth_runtime` remains
@@ -40,11 +39,9 @@ GNU and Clang coverage instrumentation is available without changing normal
 builds:
 
 ```sh
-cmake -S . -B build-coverage \
-  -DCLOTH_ENABLE_COVERAGE=ON \
-  -DCLOTH_WARNINGS_AS_ERRORS=ON
-cmake --build build-coverage
-ctest --test-dir build-coverage --output-on-failure
+cmake --preset coverage
+cmake --build --preset coverage
+ctest --preset coverage
 ```
 
 The build produces the compiler's native coverage data for tools such as
@@ -57,17 +54,16 @@ The libFuzzer target requires Clang and sanitizer mode. Seed inputs include
 valid and malformed array iteration:
 
 ```sh
-cmake -S . -B build-fuzz \
-  -DCMAKE_CXX_COMPILER=clang++ \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCLOTH_ENABLE_SANITIZERS=ON \
-  -DCLOTH_BUILD_FUZZERS=ON
-cmake --build build-fuzz --target cloth_lexer_parser_fuzzer
-ctest --test-dir build-fuzz -R cloth_lexer_parser_fuzzer_smoke \
-  --output-on-failure
+cmake --preset fuzz -DCMAKE_CXX_COMPILER=clang++
+cmake --build --preset fuzz
+ctest --preset fuzz
 ```
 
 For a longer local campaign, invoke `cloth_lexer_parser_fuzzer` directly with
 `tests/fuzz_corpus/lexer_parser` and an explicit time or run limit. The target
 feeds arbitrary bytes through both lexer and two-pass parser; diagnostics and
 invalid input must never crash or violate sanitizer checks.
+
+The presets select build behavior but do not hard-code a compiler. Pass a
+compiler on the first configure, as shown for Clang above, or select one through
+the environment or a CMake toolchain file.

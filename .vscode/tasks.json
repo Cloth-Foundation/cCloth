@@ -6,11 +6,8 @@
             "type": "process",
             "command": "cmake",
             "args": [
-                "-S",
-                "${workspaceFolder}",
-                "-B",
-                "${workspaceFolder}/build",
-                "-DCMAKE_BUILD_TYPE=Debug"
+                "--preset",
+                "dev"
             ],
             "problemMatcher": []
         },
@@ -20,9 +17,8 @@
             "command": "cmake",
             "args": [
                 "--build",
-                "${workspaceFolder}/build",
-                "--config",
-                "Debug"
+                "--preset",
+                "dev"
             ],
             "dependsOn": "CMake: configure",
             "problemMatcher": ["$gcc"]
@@ -33,9 +29,8 @@
             "command": "cmake",
             "args": [
                 "--build",
-                "${workspaceFolder}/build",
-                "--config",
-                "Debug",
+                "--preset",
+                "dev",
                 "--target",
                 "run_compiler"
             ],
@@ -51,11 +46,8 @@
             "type": "process",
             "command": "ctest",
             "args": [
-                "--test-dir",
-                "${workspaceFolder}/build",
-                "--build-config",
-                "Debug",
-                "--output-on-failure"
+                "--preset",
+                "dev"
             ],
             "dependsOn": "CMake: build",
             "problemMatcher": []
@@ -66,7 +58,8 @@
             "command": "cmake",
             "args": [
                 "--build",
-                "${workspaceFolder}/build",
+                "--preset",
+                "dev",
                 "--target",
                 "check_format"
             ],

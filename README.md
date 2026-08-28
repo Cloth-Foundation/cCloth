@@ -39,6 +39,19 @@ cmake --build build --config Debug
 `--config Debug` is useful for multi-configuration generators and harmless for
 single-configuration generators.
 
+The checked-in development preset provides the same workflow with tests and
+warnings-as-errors enabled in `build/dev`:
+
+```sh
+cmake --preset dev
+cmake --build --preset dev
+ctest --preset dev
+```
+
+Sanitizer, coverage, and Clang/libFuzzer presets are also available. Their
+compiler requirements and commands are documented in
+[docs/testing.md](docs/testing.md).
+
 To make project warnings fail the build during development, configure with:
 
 ```sh
@@ -207,6 +220,9 @@ cmake --build build --target check_format
 ## Project structure
 
 ```text
+CMakeLists.txt          Top-level project and component orchestration
+CMakePresets.json       Development, sanitizer, coverage, and fuzz presets
+cmake/                  Shared options, tooling, and test helpers
 include/cloth/          Public compiler interfaces
   source/               Source files and locations
   diagnostics/          Collected, presentation-independent diagnostics
@@ -223,9 +239,9 @@ include/cloth/          Public compiler interfaces
   compiler/             Multi-file compilation orchestration
   project/              Project-root and source-root discovery
   runtime/              Native runtime ABI interface
-src/                    Implementations and the clothc driver
-runtime/                Native object/array allocation, traps, and output
-tests/                  Deterministic lexer, parser, and semantic tests
+src/                    Compiler implementation, clothc, and owned CMake target
+runtime/                Native runtime implementation and owned CMake target
+tests/                  Test targets, fixtures, projects, and CTest registration
 examples/               Native and cross-file language examples
 docs/language_design.md Stable language and compiler design constraints
 docs/grammar.md         Implemented grammar and precedence
@@ -341,6 +357,11 @@ nullable semantic type. Array nullability composes as `T?[]`, `T[]?`, and
 `T?[]?`; MIR keeps explicit widening conversions while the ABI erases the
 qualifier to the existing opaque pointer representation. See
 [docs/nullability.md](docs/nullability.md).
+
+Stage 12.3.2 applies directional nullable compatibility consistently to
+initializers, assignments, calls, returns, arrays, and iteration bindings.
+Unsafe dereference, indexing, iteration, and non-null argument passing are
+rejected before lowering.
 
 Stage 12.3.3 closes the construction gap: every non-null reference field must
 be definitely initialized on every constructor exit. Reads, `self` escape, and
