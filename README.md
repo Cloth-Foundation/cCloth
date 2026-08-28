@@ -1,65 +1,51 @@
-# Cloth compiler - Stage 16.5 virtual dispatch
+# Cloth
 
-This repository contains the deterministic Stage 16.5 compiler core for Cloth
-source files (`.co`). It discovers a path-derived package graph, lexes and
-parses its implicit file classes, checks imports, arrays, types, and visibility,
-verifies typed HIR, analyzes control flow, and lowers executable definitions to
-target-independent MIR, a verified target ABI, and textual LLVM IR. The driver
-prints readable token, AST, HIR, MIR, and ABI summaries or emits a standalone
-LLVM module or builds a native x86-64 executable. Errors are collected with
-source ranges.
+Cloth is a statically typed, compiled language designed around a
+write-once, use-anywhere model. Its compiler is written in C++23 and lowers
+verified, target-independent intermediate representations to textual LLVM IR.
+The native runtime provides managed objects, arrays, immutable UTF-8 strings,
+and precise garbage collection.
 
-The project includes structured `while` and array `for` iteration, `break` and
-`continue` control flow, fixed-length mutable arrays with checked indexing, and
-a minimal native runtime for allocation, strings, null checks, precise object
-type metadata, and typed `print` and `println` overloads. Stage 13.1 emits exact
-reference-field layouts, and Stage 13.2 registers every managed stack reference
-in a precise thread-local shadow stack. Stage 13.3 introduces a single-mutator,
-non-moving mark-and-sweep collector. Stage 13.4 brings file-class objects,
-strings, arrays, and array payloads under that collector. Stage 13.5 clears
-reference roots after their last MIR use and exposes collection-count and
-peak-byte diagnostics for tests and embedders. Stage 14 makes lowercase
-`string` an immutable UTF-8 value with concatenation, content equality, and
-`::length`, `::byteLength`, and `::isEmpty` meta queries. Stage 15 adds the
-universal managed-reference type `object`, identity equality, stable
-`::typeName`, checked `is`/`as` operations, and heterogeneous `object[]`
-literals without primitive boxing or array covariance. The project contains no
-virtual machine, standard library, debugger, or external package registry.
-Stage 16.1 adds the optional unnamed `class : Base { ... }` file envelope and a
-validated single-inheritance semantic graph. Stage 16.2 gives derived objects a
-stable base-layout prefix and emits parent-linked descriptors with complete GC
-reference maps. Stage 16.3 adds explicit direct-base constructor initializers,
-single-allocation constructor chaining, and deterministic base-before-derived
-initialization. Stage 16.4 adds visibility-aware inherited lookup, transitive
-base-reference widening, and hierarchy-aware `is`/`as`. Stage 16.5 adds
-explicit `override func` declarations, stable virtual slots, descriptor-backed
-dynamic dispatch, and construction-time dispatch suppression. LLVM IR emission
-has no link-time dependency on LLVM libraries.
-
-## Requirements
-
-- CMake 3.25 or newer
-- A C++23 compiler (recent MSVC, Clang, or GCC)
-- An optional build tool supported by CMake, such as Ninja
-- Optional LLVM `opt` for LLVM IR verification tests
-- LLVM `llc` and the configured C++ linker driver for native builds
-
-No third-party libraries are required.
-
-## Configure and build
-
-From the repository root:
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build --config Debug
+```cloth
+// HelloWorld.co
+static func Main() {
+  println("Hello, World!");
+}
 ```
 
-`--config Debug` is useful for multi-configuration generators and harmless for
-single-configuration generators.
+Every `.co` file is an implicit class named after the file. `User.co`
+therefore defines `User`; fields, functions, constructors, and nested types
+belong to that class without an enclosing `class User` declaration.
+Capitalization carries visibility: names beginning with an uppercase ASCII
+letter are public, while lowercase and underscore-prefixed names are private.
 
-The checked-in development preset provides the same workflow with tests and
-warnings-as-errors enabled in `build/dev`:
+Cloth is under active development. The language, compiler interfaces, runtime
+ABI, and tooling are not yet stable, and there is currently no standard
+library or external package registry.
+
+## What works today
+
+The compiler has a deterministic lexer and two-pass parser, semantic analysis,
+typed HIR, control-flow MIR, a verified target ABI, and an LLVM IR backend. It
+supports path-derived packages and imports, functions and constructors,
+structured control flow, arrays, null-safe managed references, strings,
+objects, single inheritance, overriding, and virtual dispatch.
+
+The backend can emit LLVM IR for x86-64 and wasm32 layouts. Native executable
+generation currently targets x86-64 and uses LLVM `llc` plus the configured
+C++ linker driver.
+
+## Build from source
+
+Requirements:
+
+- CMake 3.25 or newer
+- Ninja for the checked-in CMake presets
+- A C++23 compiler such as recent Clang, GCC, or MSVC
+- LLVM `llc` and a C++ linker driver to build native Cloth executables
+- Optional LLVM `opt` for backend verification tests
+
+No third-party C++ libraries are required. From the repository root:
 
 ```sh
 cmake --preset dev
@@ -67,436 +53,191 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
-Sanitizer, coverage, and Clang/libFuzzer presets are also available. Their
-compiler requirements and commands are documented in
-[docs/testing.md](docs/testing.md).
+The development preset creates `build/dev`, enables tests, and treats compiler
+warnings as errors. See [Testing](docs/testing.md) for sanitizer, coverage, and
+fuzzing presets.
 
-To make project warnings fail the build during development, configure with:
-
-```sh
-cmake -S . -B build -DCLOTH_WARNINGS_AS_ERRORS=ON
-```
-
-## Run
+## Compile a Cloth program
 
 On Linux or macOS:
 
 ```sh
-./build/clothc examples/User.co examples/Repository.co
+./build/dev/clothc --build=build/dev/hello \
+  examples/hello/HelloWorld.co
+./build/dev/hello
 ```
 
-On Windows with a single-configuration generator:
+On Windows PowerShell:
 
 ```powershell
-.\build\clothc.exe examples\User.co examples\Repository.co
+.\build\dev\clothc.exe --build=build/dev/hello.exe `
+  examples\hello\HelloWorld.co
+.\build\dev\hello.exe
 ```
 
-Select the 32-bit WebAssembly layout with:
+Emit LLVM IR instead of a native executable with:
 
 ```sh
-./build/clothc --target=wasm32 examples/User.co examples/Repository.co
+./build/dev/clothc --emit-llvm=build/dev/hello.ll \
+  examples/hello/HelloWorld.co
 ```
 
-Emit LLVM IR to standard output or a file with:
+Without an output option, `clothc` prints its tokens, AST, HIR, MIR, and ABI
+summaries. Diagnostics go to standard error. The complete command shape is:
+
+```text
+clothc [--target=x86_64|wasm32]
+       [--emit-llvm[=<path>] | --build=<path>]
+       <source.co>...
+```
+
+Native `--build` output currently requires `--target=x86_64`.
+
+## Projects and imports
+
+A multi-file project has an empty or metadata-only `cloth.toml` and a
+`src/` source root:
+
+```text
+my_app/
+  cloth.toml
+  src/
+    Main.co
+    models/
+      User.co
+```
+
+Compile an entry file; Cloth discovers imported files and same-package sources
+from the project root:
 
 ```sh
-./build/clothc --emit-llvm examples/User.co examples/Repository.co
-./build/clothc --emit-llvm=cloth.ll examples/User.co examples/Repository.co
+./build/dev/clothc --build=build/dev/my_app my_app/src/Main.co
 ```
 
-Build and run Cloth's first native program with:
-
-```sh
-./build/clothc --build=hello examples/hello/HelloWorld.co
-./hello
-```
-
-On Windows, use `--build=hello.exe` and run `.\hello.exe`.
-
-The Stage 7 loop and typed-output example is FizzBuzz:
-
-```sh
-./build/clothc --build=fizzbuzz examples/FizzBuzz.co
-./fizzbuzz
-```
-
-The Stage 9 array example sums a collection through `::length` and indexing:
-
-```sh
-./build/clothc --build=array-sum examples/ArraySum.co
-./array-sum
-```
-
-Stage 10 adds inferred and explicitly typed iteration declarations:
-
-```sh
-./build/clothc --build=for-each examples/ForEach.co
-./for-each
-```
-
-```cloth
-for (var value in values) { ... }
-for (int32 value in values) { ... }
-```
-
-A project uses an empty or metadata-only `cloth.toml` and a `src/` directory.
-Compile only its entry file; imports and same-package sources are discovered:
-
-```sh
-./build/clothc --build=imports \
-  tests/projects/imports/src/Main.co
-./imports
-```
-
-Imports are identifier paths rather than strings:
+Imports use identifier paths rather than file-name strings:
 
 ```cloth
 import models::User;
-import services.api::*;
+import services.api.*;
 import legacy::User as LegacyUser;
 ```
 
-Visual Studio and other multi-configuration generators may place the binary in
-`build/Debug`. The portable CMake target below builds the executable and runs
-the example regardless of its output directory:
+See [Packages and imports](docs/packages_and_imports.md) for path identity,
+visibility, discovery, and collision rules.
+
+## Propose a change with an RFC
+
+Open an RFC before implementing a change to source syntax, language semantics,
+the public compiler interface, object layout, the runtime ABI, or observable
+tooling behavior. Focused bug fixes, tests, documentation corrections, and
+internal refactors do not normally need one.
+
+1. [Open a GitHub issue](https://github.com/Cloth-Foundation/cCloth/issues/new)
+   titled `RFC: <short name>`.
+2. State the problem and concrete use cases.
+3. Specify the proposed syntax and semantics with valid and invalid examples.
+4. Describe compiler, runtime, portability, and compatibility consequences.
+5. Compare reasonable alternatives and list unresolved questions.
+6. Define how the behavior will be tested and documented.
+
+Keep the RFC scoped to one coherent decision. Implementation should begin
+after the intended behavior is clear enough for review. The merged language
+and architecture documents are the source of truth; the issue preserves the
+discussion and alternatives.
+
+## Implement a feature
+
+Carry a feature through every compiler boundary it affects:
+
+1. Update the language contract and grammar. Use the RFC process when the
+   behavior is externally visible.
+2. Add lexical, parser, and AST support where syntax changes.
+3. Bind and type-check the behavior, then represent it explicitly in HIR.
+4. Lower and verify any control-flow or data behavior in MIR.
+5. Update target ABI, LLVM lowering, and runtime behavior when representation
+   or execution changes.
+6. Add focused unit tests, invalid-program diagnostics, and an end-to-end
+   native test when the feature is executable.
+7. Update the relevant design document and remove or amend any entry in
+   [TODO.md](TODO.md).
+
+Not every change touches every layer, but a pull request should make deliberate
+boundaries explicit rather than stopping once new syntax parses.
+
+Before requesting review:
 
 ```sh
-cmake --build build --config Debug --target run_compiler
+cmake --build --preset dev --target check_format
+cmake --build --preset dev
+ctest --preset dev
+
+cmake --preset sanitize
+cmake --build --preset sanitize
+ctest --preset sanitize
 ```
 
-The command accepts `--target=x86_64` or `--target=wasm32`, one output mode,
-and one or more source paths as one compilation set. Output modes are
-`--emit-llvm[=<path>]` and `--build=<path>`. Native builds currently require
-the x86-64 target.
-Without LLVM emission, tokens, ASTs, typed HIR, control-flow MIR, and the
-portable ABI are written to standard output. Diagnostics are written to
-standard error. Exit codes have these meanings:
+The `check_format` target is available when `clang-format` is installed.
+C++ changes must follow [CODE_STYLE.md](CODE_STYLE.md), the repository's
+Google C++ style variant for C++23.
 
-- `0`: front-end compilation completed without errors
-- `1`: lexical, syntactic, or semantic errors were reported
-- `2`: command-line usage or source-loading failure
+## Pull, branch, and push
 
-## Run tests
+Fork the repository on GitHub, then clone your fork and register the canonical
+repository as `upstream`:
 
 ```sh
-ctest --test-dir build --build-config Debug --output-on-failure
+git clone https://github.com/<your-account>/cCloth.git
+cd cCloth
+git remote add upstream https://github.com/Cloth-Foundation/cCloth.git
 ```
 
-The internal test executables use no external test framework. Lexer coverage
-includes tokens, comments, literals, operators, invalid input, ranges, and EOF.
-Parser coverage includes imports, declarations, arrays, `for` bindings,
-visibility, constructor initializers, overload candidates, statements,
-expressions, source ranges, and recovery.
-Semantic coverage includes package and cross-file binding, aliases, wildcards,
-privacy, core types, exact overload and constructor resolution, lexical scopes,
-base-constructor binding, inherited lookup, transitive base conversions, type
-checking, object widening and hierarchy-aware checked casts, heterogeneous
-array inference and access, return paths, portable file-name
-collisions, typed HIR, and deterministic diagnostics. MIR coverage
-includes branches, fallthrough joins, structured loop edges, short-circuit phi
-nodes, dead blocks, field initializers, array operations, iteration latches,
-explicit object/base conversions, constructor ordering, inherited receivers,
-and verifier failures.
-ABI coverage includes primitive and reference layouts, class padding, inherited
-base prefixes, precise descriptor reference maps, both target widths, receiver
-slots, constructor returns, linkage, mangling, and verifier failures. Backend
-coverage includes arithmetic, short-circuit branches, phi values,
-parent-linked immutable descriptor globals,
-precise root frames, objects, arrays, field initializers, receiver forms,
-constructor chaining, inherited access, typed output, and wasm32. Runtime
-coverage checks nested LIFO root
-registration, rooted cycle preservation, cross-kind cycle reclamation, managed
-strings, managed reference arrays, exact object identity, stable runtime type
-names, and automatic allocation safepoints directly. Backend coverage checks
-linear and control-flow-sensitive dead-root
-clearing. Native stress fixtures preserve a 5,000-object chain and a string
-plus an object array across collections.
-When `opt` is available, CTest also verifies an emitted module with LLVM itself.
-When `llc` is available, CTest builds and executes the native examples and the
-multi-package project. Their output is compared exactly against golden files.
-Every CTest case has a configurable timeout, and native program probes have a
-shorter subprocess timeout. Opt-in coverage, sanitizer, and lexer/parser fuzz
-configurations are documented in [docs/testing.md](docs/testing.md).
-
-## VS Code
-
-Install the recommended **C/C++** and **CMake Tools** extensions, open the
-repository folder, and let CMake Tools configure the project.
-
-Available tasks include:
-
-- `CMake: configure`
-- `CMake: build`
-- `CMake: build and run compiler` (the default build task)
-- `CMake: test`
-- `CMake: check format`
-
-For debugging, select `clothc` as the CMake launch target and choose the launch
-configuration matching the local debugger: GDB, LLDB, or MSVC. Each passes
-`examples/User.co` and `examples/Repository.co` to the compiler and uses the
-repository root as its working directory.
-
-## Code style
-
-The repository follows [CODE_STYLE.md](CODE_STYLE.md), a documented Google C++
-style variant for C++23. `.clang-format` provides deterministic formatting and
-`.clang-tidy` checks naming conventions. When `clang-format` is installed, CMake
-also exposes `format` and `check_format` targets:
+Start work from an up-to-date `master` branch:
 
 ```sh
-cmake --build build --target check_format
+git switch master
+git pull --ff-only upstream master
+git switch -c feature/<short-name>
 ```
 
-## Project structure
+Keep commits focused and use imperative commit subjects. Push the branch to
+your fork:
 
-```text
-CMakeLists.txt          Top-level project and component orchestration
-CMakePresets.json       Development, sanitizer, coverage, and fuzz presets
-cmake/                  Shared options, tooling, and test helpers
-include/cloth/          Public compiler interfaces
-  source/               Source files and locations
-  diagnostics/          Collected, presentation-independent diagnostics
-  lexer/                Tokens and the lexer API
-  parser/               Declaration and definition passes
-  ast/                  Stable-handle syntax tree representation
-  sema/                 Stable types, symbols, binding, and type checking
-  hir/                  Typed target-independent intermediate representation
-  flow/                 Callable-level control-flow analysis
-  mir/                  Explicit basic-block intermediate representation
-  target/               Backend-neutral target data-layout descriptions
-  abi/                  Object layout, signatures, linkage, and mangling
-  backend/              LLVM IR emission
-  compiler/             Multi-file compilation orchestration
-  project/              Project-root and source-root discovery
-  runtime/              Native runtime ABI interface
-src/                    Compiler implementation, clothc, and owned CMake target
-runtime/                Native runtime implementation and owned CMake target
-tests/                  Test targets, fixtures, projects, and CTest registration
-examples/               Native and cross-file language examples
-docs/language_design.md Stable language and compiler design constraints
-docs/grammar.md         Implemented grammar and precedence
-docs/semantic_analysis.md Implemented Stage 2.0 semantic rules
-docs/control_flow_and_mir.md Implemented Stage 3.0 IR contract
-docs/data_layout_and_abi.md Implemented Stage 4.0 ABI contract
-docs/llvm_backend.md     Implemented Stage 5.0 LLVM lowering contract
-docs/native_runtime.md   Implemented Stage 6.0 native execution contract
-docs/packages_and_imports.md Implemented Stage 8.0 package graph contract
-docs/arrays_and_indexing.md Implemented Stage 9.0 array contract
-docs/array_iteration.md   Implemented Stage 10.0 iteration contract
-docs/testing.md           Stage 10.1 test and diagnostic-build contract
-docs/printing_and_object_representation.md Stage 10.5 output contract
-docs/void_and_callable_contracts.md Stage 11 void contract
-docs/final_bindings.md   Stage 12.1 single-assignment contract
-docs/static_members.md   Stage 12.2 static ownership and entry contract
-docs/nullability.md      Stage 12.3.5 nullable reference and operator contract
-docs/garbage_collection.md Stage 13.1-13.5 managed-heap contract
-docs/strings.md           Stage 14 immutable UTF-8 string contract
-docs/objects.md           Stage 15 universal object and checked-type contract
-docs/inheritance.md       Stage 16.5 inheritance and dispatch contract
-TODO.md                   Central deferred-work ledger and design guardrails
-.vscode/                Build, test, and debug integration
+```sh
+git add <files>
+git commit -m "Add <concise change>"
+git push -u origin feature/<short-name>
 ```
 
-`SourceFile` owns source text. Token and AST names are `std::string_view`s into
-that storage, so the `SourceFile` must outlive its tokens and parse result.
-Moving a `SourceFile` does not invalidate those views. `Compilation` owns all
-three for multi-file front-end runs.
+Open a pull request against `Cloth-Foundation/cCloth:master`. Explain the
+user-visible contract, affected compiler layers, tests, and any intentionally
+deferred work. To refresh a branch while it is under review:
 
-Locations use a zero-based byte offset and one-based line and column numbers.
-Columns count source bytes; tabs currently advance by one column. Both LF and
-CRLF are treated as one line break. Identifiers currently use ASCII letters,
-digits, and underscore; this makes the initial lexical contract explicit and
-leaves Unicode identifier policy for a later language-design decision.
+```sh
+git fetch upstream
+git rebase upstream/master
+git push --force-with-lease
+```
 
-Source ranges are half-open (`[begin, end)`) and are retained on declarations,
-parameters, types, blocks, statements, and expressions. The parser runs two
-logical passes over the same immutable token stream: declaration discovery
-first, followed by executable body parsing. AST recursion uses stable numeric
-handles owned by `AstStorage`, keeping allocation strategy out of public node
-identity.
+Do not commit build directories, generated executables, or unrelated
+formatting changes.
 
-Semantic analysis registers every file class before members and every member
-before bodies. It emits stable `FileId`, `TypeId`, and `SymbolId` handles, then
-lowers bound syntax to typed HIR. See
-[docs/semantic_analysis.md](docs/semantic_analysis.md) for the implemented
-contract and deliberate Stage 2 boundaries.
+## Repository map
 
-HIR is verified before control-flow analysis. Callable bodies and field
-initializers then lower to verified MIR with explicit instructions, blocks,
-terminators, short-circuit branches, and phi values. See
-[docs/control_flow_and_mir.md](docs/control_flow_and_mir.md) for the Stage 3
-contract and backend boundary.
+| Path | Purpose |
+| --- | --- |
+| `include/cloth/` | Public compiler interfaces |
+| `src/` | Compiler implementation and the `clothc` driver |
+| `runtime/` | Native runtime and managed-heap support |
+| `tests/` | Unit, diagnostic, project, backend, and native tests |
+| `examples/` | Small Cloth programs |
+| `docs/` | Language and compiler contracts |
+| `cmake/` | Shared build, tooling, and test configuration |
+| `TODO.md` | Deferred work and design guardrails |
 
-Verified MIR lowers to target-specific, LLVM-friendly ABI descriptions without
-linking LLVM into the front end. Stage 4 fixes primitive representation, object
-layout, linkage, receiver slots, constructor results, and versioned symbol
-mangling. See [docs/data_layout_and_abi.md](docs/data_layout_and_abi.md).
-
-The Stage 5 backend consumes only verified MIR and ABI data. It emits opaque-
-pointer LLVM IR, composes field initializers with constructors, and isolates
-allocation and null-receiver behavior behind runtime intrinsics. See
-[docs/llvm_backend.md](docs/llvm_backend.md).
-
-Stage 6 binds the first typed core output intrinsic, emits a native `main`
-adapter for Cloth's public static `Main()`, implements the minimal runtime, and drives
-LLVM object emission plus the configured host linker. Stage 7 adds structured
-loops and `string`, `int32`, and `bool` output overloads, making FizzBuzz the
-first complete control-flow example. See
-[docs/native_runtime.md](docs/native_runtime.md).
-
-Stage 8 derives package identities from paths, discovers projects through
-`cloth.toml`, closes the source graph recursively, and implements explicit,
-wildcard, aliased, same-package, and cyclic imports. See
-[docs/packages_and_imports.md](docs/packages_and_imports.md).
-
-Stage 9 adds homogeneous `T[]` references, array literals, mutable checked
-indexing, and the `::length` meta query. Arrays lower through explicit HIR and
-MIR nodes to a garbage-collector-ready runtime boundary. See
-[docs/arrays_and_indexing.md](docs/arrays_and_indexing.md).
-
-Stage 10 adds `for (declaration in expression)` over arrays. The loop binding
-may infer its element type with `var` or state it explicitly. Lowering evaluates
-the iterable once and uses a dedicated latch so `continue` always advances the
-hidden index. See [docs/array_iteration.md](docs/array_iteration.md).
-
-Stage 10.1 hardens that contract with malformed-header recovery, exact MIR edge
-checks, nested-loop and terminating-body coverage, native reference iteration,
-copy-semantics and evaluate-once probes, runtime guards, timeouts, coverage
-instrumentation, sanitizers, and an opt-in lexer/parser fuzzer. See
-[docs/testing.md](docs/testing.md).
-
-Stage 10.5 completes primitive `print` overloads, adds `println(value)` and
-`println()`, and initializes file-class object headers with opaque type
-descriptors. Default object output is the stable `<qualified.Type>` form and
-never includes an address. See
-[docs/printing_and_object_representation.md](docs/printing_and_object_representation.md).
-
-Stage 11 adds explicit `void`, defaults omitted function returns to the same
-canonical type, and prevents void calls from being used as values. It preserves
-valueless fallthrough and lowers explicit and implicit forms identically. See
-[docs/void_and_callable_contracts.md](docs/void_and_callable_contracts.md).
-
-Stage 12.1 adds `final` fields and bindings, inferred `var` locals, and
-constructor-aware definite initialization. Final affects rebinding rather than
-object mutability and has no ABI representation. See
-[docs/final_bindings.md](docs/final_bindings.md).
-
-Stage 12.2 adds receiver-free static functions, constant scalar static fields,
-and explicit `static func Main()`. Static members belong to the implicit file
-class but not to any instance; static fields are excluded from object layout,
-and static functions have no `self` binding or receiver ABI slot. See
-[docs/static_members.md](docs/static_members.md).
-
-Stage 12.3.1 makes references non-null by default and adds `T?` as a distinct
-nullable semantic type. Array nullability composes as `T?[]`, `T[]?`, and
-`T?[]?`; MIR keeps explicit widening conversions while the ABI erases the
-qualifier to the existing opaque pointer representation. See
-[docs/nullability.md](docs/nullability.md).
-
-Stage 12.3.2 applies directional nullable compatibility consistently to
-initializers, assignments, calls, returns, arrays, and iteration bindings.
-Unsafe dereference, indexing, iteration, and non-null argument passing are
-rejected before lowering.
-
-Stage 12.3.3 closes the construction gap: every non-null reference field must
-be definitely initialized on every constructor exit. Reads, `self` escape, and
-instance calls that could observe an uninitialized field are rejected. Mutable
-fields may still be reassigned after initialization; final fields retain their
-exactly-once contract.
-
-Stage 12.3.4 narrows nullable locals and parameters after direct `null` checks.
-True and false facts compose through `!`, `&&`, `||`, branches, and guard
-clauses; assignments invalidate them. Narrowed reads retain explicit HIR and
-MIR type evidence while erasing to the unchanged reference ABI.
-
-Stage 12.3.5 adds nullable presence conditions, safe reference-field access
-with `?.`, lazy null coalescing with `??`, and postfix non-null assertion with
-`!`. Assertions use an explicit runtime guard and trap on null; safe access and
-coalescing evaluate their left operand once and lower to short-circuit MIR.
-
-Stage 13.1 defines stable heap object kinds and emits one immutable descriptor
-per file class. Descriptors retain qualified identity, verified size and
-alignment, and exact reference-field offsets. The runtime validates and uses
-the descriptor for allocation.
-
-Stage 13.2 adds compiler-generated shadow-stack frames for receivers,
-constructor `self`, reference parameters and locals, and reference-valued MIR
-temporaries. Frames are thread-local and strictly LIFO, while reference-free
-callables pay no frame cost.
-
-Stage 13.3 registers file-class allocations, marks from those precise roots
-through descriptor reference offsets, and sweeps unreachable storage. The mark
-worklist is intrusive and non-recursive, cycles are reclaimed naturally, and
-allocation pressure supplies automatic safepoints.
-
-Stage 13.4 gives strings and arrays the same managed header and registry
-lifecycle. Strings are leaf objects. Reference arrays trace each element, and
-sweeping an array also releases its aligned payload. Cross-kind cycles are
-collected without changing source syntax, MIR, or the LLVM runtime calls.
-
-Stage 13.5 computes backward root liveness over MIR control flow. Reference
-temporaries and reference-valued parameter/local slots are cleared after their
-last use and on dead control-flow paths. The runtime also reports monotonic
-collection count and peak managed bytes for testing and embedding. See
-[docs/garbage_collection.md](docs/garbage_collection.md).
-
-Stage 14 defines lowercase `string` as an immutable managed UTF-8 value.
-Concatenation creates an owned managed buffer, equality compares content, and
-read-only meta queries distinguish Unicode scalar length from byte length.
-Malformed UTF-8 literals are rejected before lowering. See
-[docs/strings.md](docs/strings.md).
-
-Stage 15 defines lowercase `object` as the universal managed-reference type.
-File classes, strings, and arrays widen without representation changes;
-primitives are not boxed. It adds identity equality, `::typeName`, exact `is`,
-nullable safe `as`, and heterogeneous `object[]` literals while preserving
-array invariance. See [docs/objects.md](docs/objects.md).
-
-Stage 16.1 accepts an optional unnamed `class { ... }` envelope and
-`class : Base { ... }` for one visible file-class base. Semantic analysis
-records stable base edges and rejects private bases, self-inheritance, and
-indirect cycles deterministically.
-
-Stage 16.2 carries those edges through HIR, MIR, and ABI lowering. Derived
-storage begins with the complete base layout, inherited and local reference
-offsets form one precise GC map, and each generated descriptor points to its
-base descriptor.
-
-Stage 16.3 requires every declared derived constructor to select its direct
-base explicitly with `Derived(...): Base(...)`. The most-derived public entry
-allocates once; private initializer entries recursively run base fields and
-body before derived fields and body.
-
-Stage 16.4 searches public members through the base chain, preserves declaring
-symbols and base-field offsets, and permits pointer-preserving widening to any
-transitive base, including nullable forms. Runtime `is` and `as` checks follow
-descriptor parent links.
-
-Stage 16.5 makes every public instance function virtual. A derived function
-with the same name and canonical parameter signature must use `override func`
-and exactly preserve the return type. Vtable slots remain stable across the
-hierarchy, so a base-typed receiver dispatches to the most-derived override.
-Private and static functions use direct calls. Field initializers and
-constructors also bind calls on the object under construction directly. See
-[docs/inheritance.md](docs/inheritance.md).
-
-## Extending the lexer
-
-Keywords are defined in one table in `src/lexer/lexer.cc`, while token debug
-names are centralized in `src/lexer/token.cc`. Numeric lexing currently
-recognizes decimal integers and decimal fractions with digits on both sides of
-the decimal point. Original lexemes are preserved so later compiler stages can
-define numeric conversion, suffixes, separators, and alternate bases without
-changing the token representation.
-
-Function declarations use the `func` keyword. The former `function` spelling is
-an ordinary identifier and is not accepted as declaration syntax.
-
-## Extending the parser
-
-The implemented syntax and explicit precedence table are documented in
-[docs/grammar.md](docs/grammar.md). Stable contextual rules, including implicit
-file classes and capitalization-based visibility, are documented in
-[docs/language_design.md](docs/language_design.md). Keep grammar changes and
-parser tests in the same change, and keep contextual validation out of the
-lexer.
+Start with [Language design](docs/language_design.md) and the
+[implemented grammar](docs/grammar.md). The main compiler boundaries are
+documented in [semantic analysis](docs/semantic_analysis.md),
+[control flow and MIR](docs/control_flow_and_mir.md),
+[data layout and ABI](docs/data_layout_and_abi.md), the
+[LLVM backend](docs/llvm_backend.md), and the
+[native runtime](docs/native_runtime.md).
