@@ -320,15 +320,28 @@ class MirVerifier {
       require_result(instruction);
       const std::optional<TypeId> source_type =
           known_value_type(conversion->value, value_types);
-      if (source_type && *source_type != semantics_.null_type() &&
-          *source_type != semantics_.error_type()) {
-        report(instruction.range,
-               "explicit conversion does not consume a null value");
-      }
       if (instruction.type != semantics_.error_type() &&
-          !is_reference(instruction.type)) {
-        report(instruction.range,
-               "explicit null conversion does not produce a reference");
+          instruction.type.value < semantics_.types().size()) {
+        if (conversion->kind == MirConversionKind::kToNullable) {
+          const SemanticType& target = semantics_.type(instruction.type);
+          if (target.kind != TypeKind::kNullable || !target.element_type) {
+            report(instruction.range,
+                   "nullable widening does not produce a nullable type");
+          } else if (source_type && *source_type != semantics_.error_type() &&
+                     *source_type != semantics_.null_type() &&
+                     *source_type != *target.element_type) {
+            report(instruction.range,
+                   "nullable widening consumes an incompatible value");
+          }
+        } else if (source_type && *source_type != semantics_.error_type() &&
+                   source_type->value < semantics_.types().size()) {
+          const SemanticType& source = semantics_.type(*source_type);
+          if (source.kind != TypeKind::kNullable || !source.element_type ||
+              *source.element_type != instruction.type) {
+            report(instruction.range,
+                   "nullable narrowing consumes an incompatible value");
+          }
+        }
       }
     } else if (const auto* call =
                    std::get_if<MirCallInstruction>(&instruction.data)) {
@@ -469,15 +482,6 @@ class MirVerifier {
     return symbol.value < semantics_.symbols().size()
                ? semantics_.symbol(symbol).type
                : fallback;
-  }
-
-  bool is_reference(TypeId type) const {
-    if (type.value >= semantics_.types().size()) {
-      return false;
-    }
-    const TypeKind kind = semantics_.type(type).kind;
-    return kind == TypeKind::kString || kind == TypeKind::kFileClass ||
-           kind == TypeKind::kArray;
   }
 
   std::optional<TypeId> array_element_type(

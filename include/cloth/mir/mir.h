@@ -90,8 +90,14 @@ struct MirBinaryInstruction {
   MirValueId right;
 };
 
+enum class MirConversionKind {
+  kToNullable,
+  kFromNullable,
+};
+
 struct MirConvertInstruction {
   MirValueId value;
+  MirConversionKind kind;
 };
 
 enum class MirCallKind {

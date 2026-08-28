@@ -38,6 +38,8 @@ struct TypeSyntax {
   bool is_primitive;
   SourceRange range;
   bool is_array{false};
+  bool is_nullable{false};
+  bool is_element_nullable{false};
 };
 
 enum class LiteralKind {

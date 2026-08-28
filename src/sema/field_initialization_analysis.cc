@@ -1,9 +1,10 @@
-#include "cloth/sema/final_field_analysis.h"
+#include "cloth/sema/field_initialization_analysis.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -16,15 +17,22 @@ struct AssignmentCount {
   unsigned int maximum{0};
 };
 
+struct TrackedField {
+  SymbolId symbol;
+  bool is_final;
+  bool is_non_null_reference;
+};
+
 struct FlowState {
   std::vector<AssignmentCount> assignments;
   bool can_fall_through{true};
 };
 
-class FinalFieldAnalyzer {
+class FieldInitializationAnalyzer {
  public:
-  FinalFieldAnalyzer(const FileClassDecl& file, const SemanticModel& semantics,
-                     FileId file_id, DiagnosticEngine& diagnostics)
+  FieldInitializationAnalyzer(const FileClassDecl& file,
+                              const SemanticModel& semantics, FileId file_id,
+                              DiagnosticEngine& diagnostics)
       : file_(file),
         semantics_(semantics),
         file_id_(file_id),
@@ -43,14 +51,20 @@ class FinalFieldAnalyzer {
 
  private:
   FlowState begin_analysis(bool include_declaration_initializers) {
-    final_fields_.clear();
+    tracked_fields_.clear();
     FlowState flow;
     for (std::size_t index = 0; index < file_.fields.size(); ++index) {
       const FieldDecl& field = file_.fields[index];
-      if (!field.is_valid || !field.is_final || field.is_static) {
+      if (!field.is_valid || field.is_static) {
         continue;
       }
-      final_fields_.push_back(semantics_.file(file_id_).fields[index]);
+      const SymbolId symbol = semantics_.file(file_id_).fields[index];
+      const bool is_non_null = is_non_null_reference(symbol);
+      if (!field.is_final && !is_non_null) {
+        continue;
+      }
+      tracked_fields_.push_back(
+          TrackedField{symbol, field.is_final, is_non_null});
       const unsigned int initialized =
           include_declaration_initializers && field.initializer ? 1U : 0U;
       flow.assignments.push_back(AssignmentCount{initialized, initialized});
@@ -60,7 +74,7 @@ class FinalFieldAnalyzer {
 
   void validate_initializers() {
     FlowState flow = begin_analysis(false);
-    if (final_fields_.empty()) {
+    if (tracked_fields_.empty()) {
       return;
     }
 
@@ -70,26 +84,35 @@ class FinalFieldAnalyzer {
         continue;
       }
       analyze_expression(*field.initializer, flow.assignments, false);
-      if (!field.is_valid || !field.is_final || field.is_static) {
+      if (!field.is_valid || field.is_static) {
         continue;
       }
       const SymbolId symbol = semantics_.file(file_id_).fields[index];
-      for (std::size_t final_index = 0; final_index < final_fields_.size();
-           ++final_index) {
-        if (final_fields_[final_index] == symbol) {
-          flow.assignments[final_index] = AssignmentCount{1U, 1U};
+      for (std::size_t tracked_index = 0;
+           tracked_index < tracked_fields_.size(); ++tracked_index) {
+        if (tracked_fields_[tracked_index].symbol == symbol) {
+          flow.assignments[tracked_index] = AssignmentCount{1U, 1U};
           break;
         }
       }
     }
-    final_fields_.clear();
+    tracked_fields_.clear();
   }
 
   void validate_fields_without_constructor() {
-    for (const FieldDecl& field : file_.fields) {
-      if (field.is_valid && field.is_final && !field.is_static &&
-          !field.initializer) {
+    for (std::size_t index = 0; index < file_.fields.size(); ++index) {
+      const FieldDecl& field = file_.fields[index];
+      if (!field.is_valid || field.is_static || field.initializer) {
+        continue;
+      }
+      const SymbolId symbol = semantics_.file(file_id_).fields[index];
+      if (field.is_final) {
         diagnostics_.error(field.range, "final field '" +
+                                            std::string{field.name} +
+                                            "' requires an initializer or a "
+                                            "constructor");
+      } else if (is_non_null_reference(symbol)) {
+        diagnostics_.error(field.range, "non-null field '" +
                                             std::string{field.name} +
                                             "' requires an initializer or a "
                                             "constructor");
@@ -99,7 +122,7 @@ class FinalFieldAnalyzer {
 
   void validate_constructor(const ConstructorDecl& constructor) {
     FlowState flow = begin_analysis(true);
-    if (final_fields_.empty()) {
+    if (tracked_fields_.empty()) {
       return;
     }
 
@@ -108,7 +131,7 @@ class FinalFieldAnalyzer {
       const Block& body = file_.storage.block(constructor.body);
       require_initialized(flow.assignments, point_range(body.range.end));
     }
-    final_fields_.clear();
+    tracked_fields_.clear();
   }
 
   FlowState analyze_block(BlockId id, FlowState flow, bool inside_loop) {
@@ -148,7 +171,7 @@ class FinalFieldAnalyzer {
       if (const auto* assignment =
               std::get_if<AssignmentExpression>(&expression.data)) {
         if (const std::optional<std::size_t> field =
-                final_field_index(assignment->target)) {
+                tracked_field_index(assignment->target)) {
           analyze_expression(assignment->target, flow.assignments, true);
           analyze_expression(assignment->value, flow.assignments, false);
           assign_field(*field, expression_range(assignment->target),
@@ -217,6 +240,7 @@ class FinalFieldAnalyzer {
     if (std::holds_alternative<IdentifierExpression>(expression.data)) {
       if (!is_assignment_target) {
         check_read(id, assignments);
+        check_self_use(id, assignments);
       }
       return;
     }
@@ -238,17 +262,25 @@ class FinalFieldAnalyzer {
       analyze_expression(assignment->target, assignments, true);
       analyze_expression(assignment->value, assignments, false);
       if (const std::optional<std::size_t> field =
-              final_field_index(assignment->target)) {
-        diagnostics_.error(
-            expression.range,
-            "final field '" + semantics_.symbol(final_fields_[*field]).name +
-                "' initialization must be a direct constructor statement");
+              tracked_field_index(assignment->target)) {
+        const TrackedField& tracked = tracked_fields_[*field];
+        if (tracked.is_final || assignments[*field].minimum == 0) {
+          const std::string_view qualifier =
+              tracked.is_final ? "final" : "non-null";
+          diagnostics_.error(expression.range,
+                             std::string{qualifier} + " field '" +
+                                 semantics_.symbol(tracked.symbol).name +
+                                 "' initialization must be a direct "
+                                 "constructor statement");
+        }
       }
       return;
     }
     if (const auto* member =
             std::get_if<MemberAccessExpression>(&expression.data)) {
-      analyze_expression(member->object, assignments, false);
+      if (!is_self_expression(member->object)) {
+        analyze_expression(member->object, assignments, false);
+      }
       if (!is_assignment_target) {
         check_read(id, assignments);
       }
@@ -259,6 +291,7 @@ class FinalFieldAnalyzer {
       for (const ExpressionId argument : call->arguments) {
         analyze_expression(argument, assignments, false);
       }
+      check_instance_call(call->callee, assignments);
       return;
     }
     if (const auto* array =
@@ -280,7 +313,12 @@ class FinalFieldAnalyzer {
   void assign_field(std::size_t index, SourceRange range,
                     std::vector<AssignmentCount>& assignments,
                     bool inside_loop) {
-    const std::string& name = semantics_.symbol(final_fields_[index]).name;
+    const TrackedField& field = tracked_fields_[index];
+    if (!field.is_final) {
+      assignments[index] = AssignmentCount{1U, 1U};
+      return;
+    }
+    const std::string& name = semantics_.symbol(field.symbol).name;
     if (inside_loop) {
       diagnostics_.error(range, "final field '" + name +
                                     "' cannot be initialized inside a loop");
@@ -297,25 +335,81 @@ class FinalFieldAnalyzer {
 
   void check_read(ExpressionId id,
                   const std::vector<AssignmentCount>& assignments) {
-    const std::optional<std::size_t> field = final_field_index(id);
+    const std::optional<std::size_t> field = tracked_field_index(id);
     if (!field || assignments[*field].minimum != 0) {
       return;
     }
+    const TrackedField& tracked = tracked_fields_[*field];
+    const std::string_view qualifier = tracked.is_final ? "final" : "non-null";
     diagnostics_.error(expression_range(id),
-                       "final field '" +
-                           semantics_.symbol(final_fields_[*field]).name +
-                           "' is read before it is initialized");
+                       std::string{qualifier} + " field '" +
+                           semantics_.symbol(tracked.symbol).name +
+                           "' is read before it is "
+                           "initialized");
   }
 
-  std::optional<std::size_t> final_field_index(ExpressionId id) const {
+  void check_self_use(ExpressionId id,
+                      const std::vector<AssignmentCount>& assignments) {
+    if (!is_self_expression(id)) {
+      return;
+    }
+    const std::optional<std::size_t> field =
+        first_uninitialized_non_null_field(assignments);
+    if (!field) {
+      return;
+    }
+    diagnostics_.error(
+        expression_range(id),
+        "cannot use 'self' before non-null field '" +
+            semantics_.symbol(tracked_fields_[*field].symbol).name +
+            "' is initialized");
+  }
+
+  void check_instance_call(ExpressionId callee,
+                           const std::vector<AssignmentCount>& assignments) {
+    const ExpressionSemantics& expression =
+        semantics_.file(file_id_).expressions.at(callee.value);
+    if (!expression.symbol) {
+      return;
+    }
+    const SemanticSymbol& symbol = semantics_.symbol(*expression.symbol);
+    if (symbol.kind != SymbolKind::kFunction || symbol.is_static ||
+        !uses_current_instance(callee)) {
+      return;
+    }
+    const std::optional<std::size_t> field =
+        first_uninitialized_non_null_field(assignments);
+    if (!field) {
+      return;
+    }
+    diagnostics_.error(
+        expression_range(callee),
+        "instance function '" + symbol.name +
+            "' cannot be called before non-null field '" +
+            semantics_.symbol(tracked_fields_[*field].symbol).name +
+            "' is initialized");
+  }
+
+  std::optional<std::size_t> first_uninitialized_non_null_field(
+      const std::vector<AssignmentCount>& assignments) const {
+    for (std::size_t index = 0; index < assignments.size(); ++index) {
+      if (tracked_fields_[index].is_non_null_reference &&
+          assignments[index].minimum == 0) {
+        return index;
+      }
+    }
+    return std::nullopt;
+  }
+
+  std::optional<std::size_t> tracked_field_index(ExpressionId id) const {
     const ExpressionSemantics& expression =
         semantics_.file(file_id_).expressions.at(id.value);
     if (!expression.symbol ||
         !is_self_field_reference(id, *expression.symbol)) {
       return std::nullopt;
     }
-    for (std::size_t index = 0; index < final_fields_.size(); ++index) {
-      if (final_fields_[index] == *expression.symbol) {
+    for (std::size_t index = 0; index < tracked_fields_.size(); ++index) {
+      if (tracked_fields_[index].symbol == *expression.symbol) {
         return index;
       }
     }
@@ -340,14 +434,50 @@ class FinalFieldAnalyzer {
     return false;
   }
 
+  bool is_self_expression(ExpressionId id) const {
+    const Expression& expression = file_.storage.expression(id);
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return is_self_expression(grouped->expression);
+    }
+    const ExpressionSemantics& semantics =
+        semantics_.file(file_id_).expressions.at(id.value);
+    return semantics.symbol == semantics_.file(file_id_).self_symbol;
+  }
+
+  bool uses_current_instance(ExpressionId id) const {
+    const Expression& expression = file_.storage.expression(id);
+    if (std::holds_alternative<IdentifierExpression>(expression.data)) {
+      return true;
+    }
+    if (const auto* member =
+            std::get_if<MemberAccessExpression>(&expression.data)) {
+      return is_self_expression(member->object);
+    }
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return uses_current_instance(grouped->expression);
+    }
+    return false;
+  }
+
+  bool is_non_null_reference(SymbolId symbol) const {
+    const TypeKind kind = semantics_.type(semantics_.symbol(symbol).type).kind;
+    return kind == TypeKind::kString || kind == TypeKind::kFileClass ||
+           kind == TypeKind::kArray;
+  }
+
   void require_initialized(const std::vector<AssignmentCount>& assignments,
                            SourceRange range) {
     for (std::size_t index = 0; index < assignments.size(); ++index) {
       if (assignments[index].minimum == 0) {
-        diagnostics_.error(range,
-                           "constructor exits before final field '" +
-                               semantics_.symbol(final_fields_[index]).name +
-                               "' is initialized");
+        const TrackedField& field = tracked_fields_[index];
+        const std::string_view qualifier =
+            field.is_final ? "final" : "non-null";
+        diagnostics_.error(range, "constructor exits before " +
+                                      std::string{qualifier} + " field '" +
+                                      semantics_.symbol(field.symbol).name +
+                                      "' is initialized");
       }
     }
   }
@@ -360,15 +490,16 @@ class FinalFieldAnalyzer {
   const SemanticModel& semantics_;
   FileId file_id_;
   DiagnosticEngine& diagnostics_;
-  std::vector<SymbolId> final_fields_;
+  std::vector<TrackedField> tracked_fields_;
 };
 
 }  // namespace
 
-void validate_final_fields(const FileClassDecl& file,
-                           const SemanticModel& semantics, FileId file_id,
-                           DiagnosticEngine& diagnostics) {
-  FinalFieldAnalyzer{file, semantics, file_id, diagnostics}.run();
+void validate_field_initialization(const FileClassDecl& file,
+                                   const SemanticModel& semantics,
+                                   FileId file_id,
+                                   DiagnosticEngine& diagnostics) {
+  FieldInitializationAnalyzer{file, semantics, file_id, diagnostics}.run();
 }
 
 }  // namespace cloth

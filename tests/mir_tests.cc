@@ -75,6 +75,20 @@ bool body_has_instruction(const cloth::MirBody& body) {
   return false;
 }
 
+bool body_has_conversion(const cloth::MirBody& body,
+                         cloth::MirConversionKind kind) {
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      const auto* conversion =
+          std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+      if (conversion != nullptr && conversion->kind == kind) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 std::optional<cloth::MirBlockId> for_latch_block(const cloth::MirBody& body) {
   for (const cloth::MirBasicBlock& block : body.blocks) {
     for (const cloth::MirInstruction& instruction : block.instructions) {
@@ -554,14 +568,62 @@ void for_terminating_body_reachability(TestContext& test) {
 void nullable_conversion(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co", "");
-  compilation.add("Factory.co", "func Empty(): User { return null; }\n");
+  compilation.add("Factory.co",
+                  "func Empty(): User? { return null; }\n"
+                  "func Present(User value): User? { return value; }\n");
+  compilation.compile();
+
+  const cloth::MirBody& empty =
+      compilation.result->mir.files[1].functions[0].body;
+  const cloth::MirBody& present =
+      compilation.result->mir.files[1].functions[1].body;
+  test.expect(compilation.result->is_valid, "nullable reference return failed");
+  test.expect(body_has_conversion(empty, cloth::MirConversionKind::kToNullable),
+              "null-to-nullable return lacks an explicit conversion");
+  test.expect(
+      body_has_conversion(present, cloth::MirConversionKind::kToNullable),
+      "non-null-to-nullable return lacks an explicit conversion");
+}
+
+void nullable_narrowing_conversion(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("User.co", "String Name = \"Ada\";\n");
+  compilation.add("Flow.co",
+                  "func Read(User? value): String? {\n"
+                  "  if (value != null) { return value.Name; }\n"
+                  "  return null;\n"
+                  "}\n");
   compilation.compile();
 
   const cloth::MirBody& body =
       compilation.result->mir.files[1].functions[0].body;
-  test.expect(compilation.result->is_valid, "nullable reference return failed");
-  test.expect(body_has_instruction<cloth::MirConvertInstruction>(body),
-              "nullable return lacks an explicit conversion");
+  test.expect(compilation.result->is_valid,
+              "flow-narrowed reference failed MIR verification");
+  test.expect(
+      body_has_conversion(body, cloth::MirConversionKind::kFromNullable),
+      "narrowed read lacks an explicit MIR conversion");
+  test.expect(body_has_conversion(body, cloth::MirConversionKind::kToNullable),
+              "narrowed return lost its nullable widening");
+
+  cloth::MirModule broken = compilation.result->mir;
+  for (cloth::MirBasicBlock& block : broken.files[1].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      auto* conversion =
+          std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+      if (conversion != nullptr &&
+          conversion->kind == cloth::MirConversionKind::kFromNullable) {
+        conversion->kind = cloth::MirConversionKind::kToNullable;
+      }
+    }
+  }
+  cloth::DiagnosticEngine diagnostics;
+  test.expect(
+      !cloth::verify_mir(broken, compilation.result->semantics, diagnostics),
+      "MIR verifier accepted a mislabeled narrowing conversion");
+  test.expect(
+      has_diagnostic(diagnostics,
+                     "nullable widening does not produce a nullable type"),
+      "MIR verifier reported the wrong conversion invariant");
 }
 
 void call_receivers(TestContext& test) {
@@ -631,6 +693,27 @@ void verifiers_reject_corruption(TestContext& test) {
   test.expect(has_diagnostic(mir_diagnostics, "unknown basic block"),
               "MIR verifier reported the wrong invariant failure");
 
+  CompiledSources nullable;
+  nullable.add("User.co", "");
+  nullable.add("Factory.co", "func Empty(): User? { return null; }\n");
+  nullable.compile();
+  cloth::MirModule broken_conversion = nullable.result->mir;
+  for (cloth::MirBasicBlock& block :
+       broken_conversion.files[1].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (std::holds_alternative<cloth::MirConvertInstruction>(
+              instruction.data)) {
+        instruction.type = cloth::TypeId{999};
+      }
+    }
+  }
+  cloth::DiagnosticEngine conversion_diagnostics;
+  test.expect(!cloth::verify_mir(broken_conversion, nullable.result->semantics,
+                                 conversion_diagnostics),
+              "MIR verifier accepted an invalid nullable conversion type");
+  test.expect(has_diagnostic(conversion_diagnostics, "unknown type"),
+              "invalid nullable conversion did not report its type");
+
   cloth::HirModule broken_hir;
   const cloth::SourceRange range =
       compilation.result->semantics
@@ -685,6 +768,7 @@ int main() {
       {"for iteration control flow", for_iteration_control_flow},
       {"for terminating body reachability", for_terminating_body_reachability},
       {"nullable conversion", nullable_conversion},
+      {"nullable narrowing conversion", nullable_narrowing_conversion},
       {"call receivers", call_receivers},
       {"verifiers reject corruption", verifiers_reject_corruption},
   };

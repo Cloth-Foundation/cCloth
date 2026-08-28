@@ -15,14 +15,17 @@ int32 count = values.Length;
 ```
 
 Array literals evaluate elements from left to right. Their element type is the
-first non-null type, and every remaining element must be assignable to it.
-Empty and null-only literals are rejected because Stage 9.0 does not yet apply
-an expected type while checking literals. `null` is assignable to any array
-type. `==` and `!=` compare array references rather than elements.
+first non-null type. A compatible nullable element or `null` promotes a
+reference element type, so `[user, null]` has type `User?[]`. Empty and
+null-only literals are rejected because contextual literal typing is not yet
+implemented. `null` is assignable to `T[]?`, not to non-null `T[]`. `==` and
+`!=` compare array references rather than elements.
 
 The index type is exactly `int32`; `int` is its canonical alias. `Length` is a
-case-sensitive, public, read-only `int32` member. Indexed reads and writes trap
-on null references, negative indices, and indices at or beyond `Length`.
+case-sensitive, public, read-only `int32` member. A nullable array must be
+narrowed before indexing. Indexed reads and writes retain runtime checks for
+invalid internal or foreign null references, negative indices, and indices at
+or beyond `Length`.
 
 ## Compiler representation
 

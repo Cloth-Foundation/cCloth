@@ -1,7 +1,7 @@
 #include "cloth/sema/semantic_analyzer.h"
 
 #include "cloth/lexer/token.h"
-#include "cloth/sema/final_field_analysis.h"
+#include "cloth/sema/field_initialization_analysis.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -32,6 +32,40 @@ struct ExpressionState {
   std::optional<SymbolId> symbol{};
   std::vector<SymbolId> candidates{};
 };
+
+using NonNullSet = std::vector<SymbolId>;
+
+struct ConditionFacts {
+  NonNullSet when_true;
+  NonNullSet when_false;
+};
+
+bool contains_symbol(const NonNullSet& symbols, SymbolId symbol) {
+  return std::find(symbols.begin(), symbols.end(), symbol) != symbols.end();
+}
+
+void add_symbol(NonNullSet& symbols, SymbolId symbol) {
+  if (!contains_symbol(symbols, symbol)) {
+    symbols.push_back(symbol);
+  }
+}
+
+NonNullSet union_symbols(NonNullSet left, const NonNullSet& right) {
+  for (const SymbolId symbol : right) {
+    add_symbol(left, symbol);
+  }
+  return left;
+}
+
+NonNullSet intersect_symbols(const NonNullSet& left, const NonNullSet& right) {
+  NonNullSet result;
+  for (const SymbolId symbol : left) {
+    if (contains_symbol(right, symbol)) {
+      result.push_back(symbol);
+    }
+  }
+  return result;
+}
 
 enum class VisibleFileKind {
   kSamePackage,
@@ -381,14 +415,20 @@ class SemanticAnalyzer {
           model_.mutable_file(current_file).is_valid = false;
           return model_.error_type();
         }
+        if (syntax.is_nullable) {
+          diagnostics_.error(syntax.range, "'void' cannot be nullable");
+          model_.mutable_file(current_file).is_valid = false;
+          return model_.error_type();
+        }
         if (!allow_void) {
           diagnostics_.error(syntax.range,
                              "'void' is only valid as a function return type");
           model_.mutable_file(current_file).is_valid = false;
           return model_.error_type();
         }
+        return *core;
       }
-      return syntax.is_array ? model_.get_array_type(*core) : *core;
+      return apply_type_syntax(syntax, current_file, *core);
     }
     const std::optional<FileId> file =
         find_visible_file(current_file, syntax.name);
@@ -408,7 +448,36 @@ class SemanticAnalyzer {
       return model_.error_type();
     }
     const TypeId type = model_.file(*file).type;
-    return syntax.is_array ? model_.get_array_type(type) : type;
+    return apply_type_syntax(syntax, current_file, type);
+  }
+
+  TypeId apply_type_syntax(const TypeSyntax& syntax, FileId current_file,
+                           TypeId base_type) {
+    TypeId type = base_type;
+    if (syntax.is_element_nullable) {
+      if (!is_reference(type)) {
+        diagnostics_.error(syntax.range,
+                           "nullable marker requires a reference type; '" +
+                               type_name(type) + "' is a value type");
+        model_.mutable_file(current_file).is_valid = false;
+        return model_.error_type();
+      }
+      type = model_.get_nullable_type(type);
+    }
+    if (syntax.is_array) {
+      type = model_.get_array_type(type);
+    }
+    if (syntax.is_nullable) {
+      if (!is_reference(type)) {
+        diagnostics_.error(syntax.range,
+                           "nullable marker requires a reference type; '" +
+                               type_name(type) + "' is a value type");
+        model_.mutable_file(current_file).is_valid = false;
+        return model_.error_type();
+      }
+      type = model_.get_nullable_type(type);
+    }
+    return type;
   }
 
   void analyze_definitions() {
@@ -431,7 +500,8 @@ class SemanticAnalyzer {
             break;
         }
       }
-      validate_final_fields(syntax, model_, current_file_, diagnostics_);
+      validate_field_initialization(syntax, model_, current_file_,
+                                    diagnostics_);
       const auto diagnostics = diagnostics_.diagnostics();
       for (std::size_t index = diagnostic_begin; index < diagnostics.size();
            ++index) {
@@ -534,6 +604,7 @@ class SemanticAnalyzer {
 
   void begin_root_scope(bool include_self = true) {
     scopes_.clear();
+    active_non_null_.clear();
     scopes_.push_back(Scope{});
     current_scope_ = 0;
     has_implicit_receiver_ = include_self;
@@ -545,6 +616,7 @@ class SemanticAnalyzer {
 
   void end_root_scope() {
     scopes_.clear();
+    active_non_null_.clear();
     current_scope_.reset();
     has_implicit_receiver_ = false;
   }
@@ -555,7 +627,13 @@ class SemanticAnalyzer {
     current_scope_ = id;
   }
 
-  void pop_scope() { current_scope_ = scopes_.at(*current_scope_).parent; }
+  void pop_scope() {
+    const Scope& scope = scopes_.at(*current_scope_);
+    for (const ScopeEntry& entry : scope.entries) {
+      std::erase(active_non_null_, entry.symbol);
+    }
+    current_scope_ = scope.parent;
+  }
 
   void bind_name(std::string_view name, SymbolId symbol, SourceRange range) {
     Scope& scope = scopes_.at(*current_scope_);
@@ -701,11 +779,30 @@ class SemanticAnalyzer {
       check_assignment(model_.bool_type(), condition.type,
                        expression_range(if_statement->condition),
                        "if condition");
+
+      const ConditionFacts facts = condition_facts(if_statement->condition);
+      const NonNullSet branch_base = active_non_null_;
+      add_non_null_facts(facts.when_true);
       const bool then_returns = analyze_block(if_statement->then_block, true);
-      const bool else_returns =
-          if_statement->else_block
-              ? analyze_block(*if_statement->else_block, true)
-              : false;
+      const NonNullSet then_state = active_non_null_;
+
+      active_non_null_ = branch_base;
+      add_non_null_facts(facts.when_false);
+      bool else_returns = false;
+      if (if_statement->else_block) {
+        else_returns = analyze_block(*if_statement->else_block, true);
+      }
+      const NonNullSet else_state = active_non_null_;
+
+      if (then_returns && !else_returns) {
+        active_non_null_ = else_state;
+      } else if (!then_returns && else_returns) {
+        active_non_null_ = then_state;
+      } else if (!then_returns && !else_returns) {
+        active_non_null_ = intersect_symbols(then_state, else_state);
+      } else {
+        active_non_null_ = branch_base;
+      }
       return then_returns && if_statement->else_block && else_returns;
     }
     if (const auto* while_statement =
@@ -716,9 +813,17 @@ class SemanticAnalyzer {
       check_assignment(model_.bool_type(), condition.type,
                        expression_range(while_statement->condition),
                        "while condition");
+      const ConditionFacts facts = condition_facts(while_statement->condition);
+      const NonNullSet loop_base = active_non_null_;
+      add_non_null_facts(facts.when_true);
       ++loop_depth_;
-      static_cast<void>(analyze_block(while_statement->body, true));
+      const bool body_returns = analyze_block(while_statement->body, true);
       --loop_depth_;
+      if (body_returns) {
+        active_non_null_ = loop_base;
+      } else {
+        active_non_null_ = intersect_symbols(loop_base, active_non_null_);
+      }
       return false;
     }
     if (const auto* for_statement =
@@ -762,10 +867,16 @@ class SemanticAnalyzer {
       push_scope();
       bind_name(for_statement->variable.name, symbol,
                 for_statement->variable.range);
+      const NonNullSet loop_base = active_non_null_;
       ++loop_depth_;
-      static_cast<void>(analyze_block(for_statement->body, false));
+      const bool body_returns = analyze_block(for_statement->body, false);
       --loop_depth_;
       pop_scope();
+      if (body_returns) {
+        active_non_null_ = loop_base;
+      } else {
+        active_non_null_ = intersect_symbols(loop_base, active_non_null_);
+      }
       return false;
     }
     if (std::holds_alternative<BreakStatement>(statement.data)) {
@@ -836,7 +947,8 @@ class SemanticAnalyzer {
       const ValueCategory category = symbol.kind == SymbolKind::kSelf
                                          ? ValueCategory::kValue
                                          : ValueCategory::kMutableLocation;
-      return ExpressionState{symbol.type, category, *local, {}};
+      return ExpressionState{
+          narrowed_type(*local).value_or(symbol.type), category, *local, {}};
     }
 
     std::vector<SymbolId> members =
@@ -916,9 +1028,11 @@ class SemanticAnalyzer {
     std::vector<ExpressionState> elements;
     elements.reserve(array.elements.size());
     std::optional<TypeId> element_type;
+    bool contains_null = false;
     for (const ExpressionId element : array.elements) {
       ExpressionState state = analyze_expression(element);
       check_value(state, expression_range(element));
+      contains_null = contains_null || state.type == model_.null_type();
       if (state.type != model_.error_type() &&
           state.type != model_.void_type() &&
           state.type != model_.null_type() && !element_type) {
@@ -932,6 +1046,17 @@ class SemanticAnalyzer {
                          "cannot infer the element type of an empty or "
                          "null-only array literal");
       return ExpressionState{model_.error_type()};
+    }
+    for (const ExpressionState& element : elements) {
+      const SemanticType& type = model_.type(element.type);
+      if (type.kind == TypeKind::kNullable &&
+          type.element_type == element_type) {
+        element_type = element.type;
+      }
+    }
+    if (contains_null && is_reference(*element_type) &&
+        model_.type(*element_type).kind != TypeKind::kNullable) {
+      element_type = model_.get_nullable_type(*element_type);
     }
     for (std::size_t index = 0; index < elements.size(); ++index) {
       check_assignment(*element_type, elements[index].type,
@@ -956,6 +1081,12 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     const SemanticType& type = model_.type(object.type);
+    if (type.kind == TypeKind::kNullable && type.element_type &&
+        model_.type(*type.element_type).kind == TypeKind::kArray) {
+      diagnostics_.error(range, "nullable array type '" + type.name +
+                                    "' cannot be indexed without narrowing");
+      return ExpressionState{model_.error_type()};
+    }
     if (type.kind != TypeKind::kArray || !type.element_type) {
       diagnostics_.error(range, "type '" + type.name + "' cannot be indexed");
       return ExpressionState{model_.error_type()};
@@ -992,7 +1123,20 @@ class SemanticAnalyzer {
   ExpressionState analyze_binary(const BinaryExpression& binary,
                                  SourceRange range) {
     const ExpressionState left = analyze_expression(binary.left);
+    const bool is_short_circuit =
+        binary.operation == TokenKind::kAmpersandAmpersand ||
+        binary.operation == TokenKind::kPipePipe;
+    const NonNullSet right_base = active_non_null_;
+    if (is_short_circuit) {
+      const ConditionFacts facts = condition_facts(binary.left);
+      add_non_null_facts(binary.operation == TokenKind::kAmpersandAmpersand
+                             ? facts.when_true
+                             : facts.when_false);
+    }
     const ExpressionState right = analyze_expression(binary.right);
+    if (is_short_circuit) {
+      active_non_null_ = intersect_symbols(right_base, active_non_null_);
+    }
     const bool values = check_value(left, expression_range(binary.left)) &&
                         check_value(right, expression_range(binary.right));
     if (!values || left.type == model_.error_type() ||
@@ -1025,7 +1169,8 @@ class SemanticAnalyzer {
       case TokenKind::kEqualEqual:
       case TokenKind::kBangEqual:
         if (is_assignable(left.type, right.type) ||
-            is_assignable(right.type, left.type)) {
+            is_assignable(right.type, left.type) ||
+            is_declared_nullable_null_comparison(binary)) {
           return ExpressionState{model_.bool_type(), ValueCategory::kValue};
         }
         break;
@@ -1049,7 +1194,15 @@ class SemanticAnalyzer {
 
   ExpressionState analyze_assignment(const AssignmentExpression& assignment,
                                      SourceRange range) {
-    const ExpressionState target = analyze_expression(assignment.target);
+    ExpressionState target = analyze_expression(assignment.target);
+    if (target.symbol && target.category == ValueCategory::kMutableLocation) {
+      const SemanticSymbol& symbol = model_.symbol(*target.symbol);
+      if (symbol.kind == SymbolKind::kLocal ||
+          symbol.kind == SymbolKind::kParameter) {
+        target.type = symbol.type;
+        restore_assignment_target_type(assignment.target, symbol.type);
+      }
+    }
     const ExpressionState value = analyze_expression(assignment.value);
     if (target.type != model_.error_type() &&
         target.category != ValueCategory::kMutableLocation) {
@@ -1066,12 +1219,222 @@ class SemanticAnalyzer {
     }
     check_value(value, expression_range(assignment.value));
     check_assignment(target.type, value.type, range, "assignment");
+    if (target.symbol) {
+      invalidate_narrowing(*target.symbol);
+    }
     if (target.type == model_.error_type() ||
         value.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
     }
     return ExpressionState{
         target.type, ValueCategory::kValue, target.symbol, {}};
+  }
+
+  std::optional<TypeId> narrowed_type(SymbolId symbol) const {
+    if (!contains_symbol(active_non_null_, symbol)) {
+      return std::nullopt;
+    }
+    const SemanticType& declared = model_.type(model_.symbol(symbol).type);
+    if (declared.kind != TypeKind::kNullable || !declared.element_type) {
+      return std::nullopt;
+    }
+    return declared.element_type;
+  }
+
+  void add_non_null_facts(const NonNullSet& facts) {
+    for (const SymbolId symbol : facts) {
+      const SemanticSymbol& declared = model_.symbol(symbol);
+      const TypeKind kind = model_.type(declared.type).kind;
+      if ((declared.kind == SymbolKind::kLocal ||
+           declared.kind == SymbolKind::kParameter) &&
+          kind == TypeKind::kNullable) {
+        add_symbol(active_non_null_, symbol);
+      }
+    }
+  }
+
+  void invalidate_narrowing(SymbolId symbol) {
+    std::erase(active_non_null_, symbol);
+  }
+
+  ConditionFacts condition_facts(ExpressionId id) const {
+    const ExpressionSemantics& semantics =
+        model_.file(current_file_).expressions.at(id.value);
+    if (semantics.type != model_.bool_type()) {
+      return {};
+    }
+
+    ConditionFacts facts = raw_condition_facts(id);
+    const auto remove_assigned = [this, id](NonNullSet& symbols) {
+      std::erase_if(symbols, [this, id](SymbolId symbol) {
+        return expression_assigns_symbol(id, symbol);
+      });
+    };
+    remove_assigned(facts.when_true);
+    remove_assigned(facts.when_false);
+    return facts;
+  }
+
+  ConditionFacts raw_condition_facts(ExpressionId id) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return condition_facts(grouped->expression);
+    }
+    if (const auto* unary = std::get_if<UnaryExpression>(&expression.data)) {
+      if (unary->operation != TokenKind::kBang) {
+        return {};
+      }
+      ConditionFacts facts = condition_facts(unary->operand);
+      std::swap(facts.when_true, facts.when_false);
+      return facts;
+    }
+    const auto* binary = std::get_if<BinaryExpression>(&expression.data);
+    if (binary == nullptr) {
+      return {};
+    }
+
+    if (binary->operation == TokenKind::kEqualEqual ||
+        binary->operation == TokenKind::kBangEqual) {
+      std::optional<SymbolId> symbol;
+      if (is_null_expression(binary->right)) {
+        symbol = narrowable_symbol(binary->left);
+      } else if (is_null_expression(binary->left)) {
+        symbol = narrowable_symbol(binary->right);
+      }
+      if (!symbol) {
+        return {};
+      }
+      ConditionFacts facts;
+      NonNullSet& destination = binary->operation == TokenKind::kBangEqual
+                                    ? facts.when_true
+                                    : facts.when_false;
+      destination.push_back(*symbol);
+      return facts;
+    }
+
+    if (binary->operation != TokenKind::kAmpersandAmpersand &&
+        binary->operation != TokenKind::kPipePipe) {
+      return {};
+    }
+    const ConditionFacts left = condition_facts(binary->left);
+    const ConditionFacts right = condition_facts(binary->right);
+    ConditionFacts result;
+    if (binary->operation == TokenKind::kAmpersandAmpersand) {
+      result.when_true = union_symbols(left.when_true, right.when_true);
+      result.when_false = intersect_symbols(
+          left.when_false, union_symbols(left.when_true, right.when_false));
+    } else {
+      result.when_false = union_symbols(left.when_false, right.when_false);
+      result.when_true = intersect_symbols(
+          left.when_true, union_symbols(left.when_false, right.when_true));
+    }
+    return result;
+  }
+
+  std::optional<SymbolId> narrowable_symbol(ExpressionId id) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return narrowable_symbol(grouped->expression);
+    }
+    if (!std::holds_alternative<IdentifierExpression>(expression.data)) {
+      return std::nullopt;
+    }
+    const ExpressionSemantics& semantics =
+        model_.file(current_file_).expressions.at(id.value);
+    if (!semantics.symbol) {
+      return std::nullopt;
+    }
+    const SemanticSymbol& symbol = model_.symbol(*semantics.symbol);
+    if ((symbol.kind != SymbolKind::kLocal &&
+         symbol.kind != SymbolKind::kParameter) ||
+        model_.type(symbol.type).kind != TypeKind::kNullable) {
+      return std::nullopt;
+    }
+    return semantics.symbol;
+  }
+
+  bool is_null_expression(ExpressionId id) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return is_null_expression(grouped->expression);
+    }
+    const auto* literal = std::get_if<LiteralExpression>(&expression.data);
+    return literal != nullptr && literal->kind == LiteralKind::kNull;
+  }
+
+  bool expression_assigns_symbol(ExpressionId id, SymbolId symbol) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* unary = std::get_if<UnaryExpression>(&expression.data)) {
+      return expression_assigns_symbol(unary->operand, symbol);
+    }
+    if (const auto* binary = std::get_if<BinaryExpression>(&expression.data)) {
+      return expression_assigns_symbol(binary->left, symbol) ||
+             expression_assigns_symbol(binary->right, symbol);
+    }
+    if (const auto* assignment =
+            std::get_if<AssignmentExpression>(&expression.data)) {
+      return narrowable_symbol(assignment->target) == symbol ||
+             expression_assigns_symbol(assignment->target, symbol) ||
+             expression_assigns_symbol(assignment->value, symbol);
+    }
+    if (const auto* member =
+            std::get_if<MemberAccessExpression>(&expression.data)) {
+      return expression_assigns_symbol(member->object, symbol);
+    }
+    if (const auto* call = std::get_if<CallExpression>(&expression.data)) {
+      if (expression_assigns_symbol(call->callee, symbol)) {
+        return true;
+      }
+      for (const ExpressionId argument : call->arguments) {
+        if (expression_assigns_symbol(argument, symbol)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (const auto* array =
+            std::get_if<ArrayLiteralExpression>(&expression.data)) {
+      for (const ExpressionId element : array->elements) {
+        if (expression_assigns_symbol(element, symbol)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (const auto* index = std::get_if<IndexExpression>(&expression.data)) {
+      return expression_assigns_symbol(index->object, symbol) ||
+             expression_assigns_symbol(index->index, symbol);
+    }
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return expression_assigns_symbol(grouped->expression, symbol);
+    }
+    return false;
+  }
+
+  bool is_declared_nullable_null_comparison(
+      const BinaryExpression& binary) const {
+    return (is_null_expression(binary.left) &&
+            narrowable_symbol(binary.right).has_value()) ||
+           (is_null_expression(binary.right) &&
+            narrowable_symbol(binary.left).has_value());
+  }
+
+  void restore_assignment_target_type(ExpressionId id, TypeId type) {
+    model_.mutable_file(current_file_).expressions.at(id.value).type = type;
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      restore_assignment_target_type(grouped->expression, type);
+    }
   }
 
   bool can_initialize_final_field(ExpressionId target, SymbolId symbol) const {
@@ -1108,6 +1471,11 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     const SemanticType& object_type = model_.type(object.type);
+    if (object_type.kind == TypeKind::kNullable) {
+      diagnostics_.error(range, "nullable type '" + object_type.name +
+                                    "' has no members without narrowing");
+      return ExpressionState{model_.error_type()};
+    }
     if (object_type.kind == TypeKind::kArray) {
       if (member.member == "Length") {
         return ExpressionState{*model_.find_type("int32"),
@@ -1445,13 +1813,17 @@ class SemanticAnalyzer {
     if (expected == actual) {
       return true;
     }
-    return actual == model_.null_type() && is_reference(expected);
+    const SemanticType& expected_type = model_.type(expected);
+    return expected_type.kind == TypeKind::kNullable &&
+           expected_type.element_type &&
+           (actual == model_.null_type() ||
+            actual == *expected_type.element_type);
   }
 
   bool is_reference(TypeId type) const {
     const TypeKind kind = model_.type(type).kind;
     return kind == TypeKind::kString || kind == TypeKind::kFileClass ||
-           kind == TypeKind::kArray;
+           kind == TypeKind::kArray || kind == TypeKind::kNullable;
   }
 
   bool is_integer(TypeId type) const {
@@ -1498,6 +1870,7 @@ class SemanticAnalyzer {
   std::optional<SymbolKind> current_callable_kind_;
   std::vector<Scope> scopes_;
   std::vector<std::vector<VisibleFile>> visible_files_;
+  NonNullSet active_non_null_;
   std::optional<std::size_t> current_scope_;
   bool has_implicit_receiver_{false};
   std::size_t loop_depth_{0};

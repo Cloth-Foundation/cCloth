@@ -56,6 +56,7 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
     case TypeKind::kString:
     case TypeKind::kFileClass:
     case TypeKind::kArray:
+    case TypeKind::kNullable:
       return make_type_layout(type, AbiTypeKind::kReference,
                               pointer_bit_width(target), target.pointer.size,
                               target.pointer.alignment);
@@ -133,6 +134,10 @@ std::string encode_type(TypeId type, const SemanticModel& semantics) {
       return semantic_type.element_type
                  ? "a" + encode_type(*semantic_type.element_type, semantics)
                  : "ae";
+    case TypeKind::kNullable:
+      return semantic_type.element_type
+                 ? encode_type(*semantic_type.element_type, semantics)
+                 : "e";
   }
   return "e";
 }

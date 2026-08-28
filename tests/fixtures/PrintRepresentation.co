@@ -32,8 +32,8 @@ static func Main() {
     println(values.Float32Value);
     println(values.Float64Value);
     println(values);
-    PrintRepresentation missing = null;
-    println(missing);
+    PrintRepresentation? missing = null;
+    println(null);
     print("done");
     println();
 }

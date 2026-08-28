@@ -29,12 +29,12 @@ Values have these deterministic representations:
 - finite floats: the locale-independent shortest round-trippable decimal
 - infinities and NaN: `inf`, `-inf`, and `nan`
 - file-class objects: `<qualified.TypeName>`
-- null object references and the untyped `null` literal: `null`
+- the untyped `null` literal: `null`
 
-A typed null `String` still follows the String contract and traps at runtime;
-it is not silently changed into the object representation. Invalid Unicode
-scalar values also trap. Windows native output is placed in binary mode so the
-line-feed contract is byte-identical across supported hosts.
+A nullable reference must be narrowed before it can be passed to a non-null
+typed output overload. Invalid Unicode scalar values trap. Windows native
+output is placed in binary mode so the line-feed contract is byte-identical
+across supported hosts.
 
 ## Object metadata
 

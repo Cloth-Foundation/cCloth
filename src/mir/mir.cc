@@ -142,16 +142,14 @@ class BodyBuilder {
         expected == semantics_.error_type()) {
       return value;
     }
-    if (actual == semantics_.null_type() && is_reference(expected)) {
-      return emit_value(expected, range, MirConvertInstruction{value});
+    const SemanticType& target = semantics_.type(expected);
+    if (target.kind == TypeKind::kNullable && target.element_type &&
+        (actual == semantics_.null_type() || actual == *target.element_type)) {
+      return emit_value(
+          expected, range,
+          MirConvertInstruction{value, MirConversionKind::kToNullable});
     }
     return invalid_value(range);
-  }
-
-  bool is_reference(TypeId type) const {
-    const TypeKind kind = semantics_.type(type).kind;
-    return kind == TypeKind::kString || kind == TypeKind::kFileClass ||
-           kind == TypeKind::kArray;
   }
 
   void lower_block(HirBlockId id) {
@@ -324,6 +322,11 @@ class BodyBuilder {
     const MirValueId array =
         require_value(lower_expression(for_statement.iterable), iterable.type,
                       iterable.range);
+    const SemanticType& array_type = semantics_.type(iterable.type);
+    if (array_type.kind != TypeKind::kArray || !array_type.element_type ||
+        !for_statement.variable) {
+      return;
+    }
     const TypeId int32_type = *semantics_.find_type("int32");
     const MirValueId zero = emit_value(
         int32_type, range, MirLiteralInstruction{LiteralKind::kInteger, "0"});
@@ -349,16 +352,13 @@ class BodyBuilder {
     terminate(MirBranchTerminator{condition, body_block, exit_block}, range);
 
     current_block_ = body_block;
-    if (for_statement.variable) {
-      const TypeId element_type =
-          semantics_.symbol(*for_statement.variable).type;
-      const MirValueId element = emit_value(
-          element_type, range, MirArrayLoadInstruction{array, index});
-      emit_void(range,
-                MirDeclareLocalInstruction{*for_statement.variable, element});
-    } else {
-      emit_void(range, MirInvalidInstruction{});
-    }
+    const TypeId variable_type =
+        semantics_.symbol(*for_statement.variable).type;
+    MirValueId element = emit_value(*array_type.element_type, range,
+                                    MirArrayLoadInstruction{array, index});
+    element = coerce(element, variable_type, range);
+    emit_void(range,
+              MirDeclareLocalInstruction{*for_statement.variable, element});
 
     loop_targets_.push_back(LoopTargets{latch_block, exit_block});
     lower_block(for_statement.body);
@@ -452,6 +452,10 @@ class BodyBuilder {
                                              object.type, object.range);
       const MirValueId lowered_index = require_value(
           lower_expression(index->index), subscript.type, subscript.range);
+      const SemanticType& array_type = semantics_.type(object.type);
+      if (array_type.kind != TypeKind::kArray || !array_type.element_type) {
+        return invalid_value(expression.range);
+      }
       return emit_value(expression.type, expression.range,
                         MirArrayLoadInstruction{array, lowered_index});
     }
@@ -483,8 +487,17 @@ class BodyBuilder {
     }
     if (symbol.kind == SymbolKind::kParameter ||
         symbol.kind == SymbolKind::kLocal || symbol.kind == SymbolKind::kSelf) {
-      return emit_value(expression.type, expression.range,
-                        MirLoadSymbolInstruction{symbol_expression.symbol});
+      const MirValueId loaded =
+          emit_value(symbol.type, expression.range,
+                     MirLoadSymbolInstruction{symbol_expression.symbol});
+      const SemanticType& declared = semantics_.type(symbol.type);
+      if (declared.kind == TypeKind::kNullable &&
+          declared.element_type == expression.type) {
+        return emit_value(
+            expression.type, expression.range,
+            MirConvertInstruction{loaded, MirConversionKind::kFromNullable});
+      }
+      return loaded;
     }
     return invalid_value(expression.range);
   }
@@ -607,6 +620,12 @@ class BodyBuilder {
                                              object.type, object.range);
       const MirValueId lowered_index = require_value(
           lower_expression(index->index), subscript.type, subscript.range);
+      const SemanticType& array_type = semantics_.type(object.type);
+      if (array_type.kind != TypeKind::kArray || !array_type.element_type) {
+        return LoweredLocation{std::nullopt, std::nullopt,
+                               std::nullopt, semantics_.error_type(),
+                               false,        false};
+      }
       return LoweredLocation{std::nullopt,    array, lowered_index,
                              expression.type, false, true};
     }

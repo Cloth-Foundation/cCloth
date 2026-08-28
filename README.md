@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 12.2 static members
+# Cloth compiler - Stage 12.3.4 nullable flow narrowing
 
-This repository contains the deterministic Stage 12.2 compiler core for Cloth
+This repository contains the deterministic Stage 12.3.4 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -242,6 +242,7 @@ docs/printing_and_object_representation.md Stage 10.5 output contract
 docs/void_and_callable_contracts.md Stage 11 void contract
 docs/final_bindings.md   Stage 12.1 single-assignment contract
 docs/static_members.md   Stage 12.2 static ownership and entry contract
+docs/nullability.md      Stage 12.3.4 nullable reference and flow contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -309,7 +310,7 @@ hidden index. See [docs/array_iteration.md](docs/array_iteration.md).
 
 Stage 10.1 hardens that contract with malformed-header recovery, exact MIR edge
 checks, nested-loop and terminating-body coverage, native reference iteration,
-copy-semantics and evaluate-once probes, null trapping, timeouts, coverage
+copy-semantics and evaluate-once probes, runtime guards, timeouts, coverage
 instrumentation, sanitizers, and an opt-in lexer/parser fuzzer. See
 [docs/testing.md](docs/testing.md).
 
@@ -334,6 +335,23 @@ and explicit `static func Main()`. Static members belong to the implicit file
 class but not to any instance; static fields are excluded from object layout,
 and static functions have no `self` binding or receiver ABI slot. See
 [docs/static_members.md](docs/static_members.md).
+
+Stage 12.3.1 makes references non-null by default and adds `T?` as a distinct
+nullable semantic type. Array nullability composes as `T?[]`, `T[]?`, and
+`T?[]?`; MIR keeps explicit widening conversions while the ABI erases the
+qualifier to the existing opaque pointer representation. See
+[docs/nullability.md](docs/nullability.md).
+
+Stage 12.3.3 closes the construction gap: every non-null reference field must
+be definitely initialized on every constructor exit. Reads, `self` escape, and
+instance calls that could observe an uninitialized field are rejected. Mutable
+fields may still be reassigned after initialization; final fields retain their
+exactly-once contract.
+
+Stage 12.3.4 narrows nullable locals and parameters after direct `null` checks.
+True and false facts compose through `!`, `&&`, `||`, branches, and guard
+clauses; assignments invalidate them. Narrowed reads retain explicit HIR and
+MIR type evidence while erasing to the unchanged reference ABI.
 
 ## Extending the lexer
 

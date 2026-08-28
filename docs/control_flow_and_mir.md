@@ -76,9 +76,10 @@ Evaluation is left-to-right. Array element operands are evaluated before the
 array instruction, and indexed assignment evaluates the array and index before
 the assigned value. Structured loops use the same explicit jump and branch
 terminators as other control flow. Instance-qualified calls carry an explicit
-receiver; file-class-qualified calls do not. Nullable-to-reference coercion is
-an explicit MIR conversion. `&&` and `||` lower to branches and a typed phi
-value, preserving short-circuit behavior.
+receiver; file-class-qualified calls do not. Nullable widening and proof-backed
+narrowing are explicit MIR conversions; both erase at the ABI boundary. `&&`
+and `||` lower to branches and a typed phi value, preserving short-circuit
+behavior.
 
 Calls retain whether they were unqualified, file-class-qualified,
 instance-qualified, or constructor calls. This avoids choosing an implicit

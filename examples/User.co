@@ -6,7 +6,7 @@ User(String name, int32 id) {
     self.id = id;
 }
 
-func Find(int32 id): User {
+func Find(int32 id): User? {
     return Repository.Find(id);
 }
 

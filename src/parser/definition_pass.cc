@@ -112,15 +112,27 @@ bool DefinitionPass::is_local_variable_start() const noexcept {
   if (!can_start_type(peek(lookahead).kind)) {
     return false;
   }
-  return peek(lookahead + 1).kind == TokenKind::kIdentifier ||
-         (peek(lookahead + 1).kind == TokenKind::kLeftBracket &&
-          peek(lookahead + 2).kind == TokenKind::kRightBracket &&
-          peek(lookahead + 3).kind == TokenKind::kIdentifier);
+  ++lookahead;
+  if (peek(lookahead).kind == TokenKind::kQuestion) {
+    ++lookahead;
+  }
+  if (peek(lookahead).kind == TokenKind::kLeftBracket &&
+      peek(lookahead + 1).kind == TokenKind::kRightBracket) {
+    lookahead += 2;
+    if (peek(lookahead).kind == TokenKind::kQuestion) {
+      ++lookahead;
+    }
+  }
+  return peek(lookahead).kind == TokenKind::kIdentifier;
 }
 
 TypeSyntax DefinitionPass::parse_type() {
   const Token& token = advance();
   SourceRange range = token.range;
+  const bool inner_nullable = match(TokenKind::kQuestion);
+  if (inner_nullable) {
+    range.end = tokens_[current_ - 1].range.end;
+  }
   bool is_array = false;
   while (match(TokenKind::kLeftBracket)) {
     if (is_array) {
@@ -135,8 +147,16 @@ TypeSyntax DefinitionPass::parse_type() {
       break;
     }
   }
-  return TypeSyntax{token.lexeme, is_primitive_type(token.kind), range,
-                    is_array};
+  const bool outer_nullable = is_array && match(TokenKind::kQuestion);
+  if (outer_nullable) {
+    range.end = tokens_[current_ - 1].range.end;
+  }
+  return TypeSyntax{token.lexeme,
+                    is_primitive_type(token.kind),
+                    range,
+                    is_array,
+                    is_array ? outer_nullable : inner_nullable,
+                    is_array && inner_nullable};
 }
 
 void DefinitionPass::build_field(const MemberOutline& outline,

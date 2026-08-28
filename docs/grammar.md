@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 12.2.
+This document defines the syntax implemented through Stage 12.3.4.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -75,7 +75,7 @@ parameter
     = [ "final" ] type identifier ;
 
 type
-    = element_type [ "[" "]" ] ;
+    = element_type [ "?" ] [ "[" "]" [ "?" ] ] ;
 
 element_type
     = primitive_type
@@ -248,12 +248,21 @@ The declaration pass enforces these rules separately from the grammar:
 - Member declaration order does not affect declaration availability.
 - Import paths are identifier sequences rather than string literals.
 - Array types are one-dimensional; repeated `[]` suffixes are rejected.
+- `?` may qualify a reference type or an array reference independently from
+  its element type. Nullable primitives and `void?` are rejected semantically.
 - A `for` iteration declaration uses either `var` inference or an explicit
   element type.
 - A `var` local requires an initializer. A final local also requires an
   initializer.
 - A final field is initialized by its declaration or exactly once on every
   constructor exit path.
+- A non-null reference field is initialized by its declaration or on every
+  constructor exit path. Constructor initialization must be a direct assignment
+  to the current instance.
+- `self` cannot escape, and instance functions cannot be called on the current
+  object, until all non-null reference fields are initialized.
+- Direct `null` comparisons narrow nullable locals and parameters on proven
+  branches. Assignment invalidates a narrowing; fields are not narrowed.
 - A static field must also be final, must have an initializer, and currently
   accepts only a scalar literal initializer.
 - `Main` must be declared `static`.

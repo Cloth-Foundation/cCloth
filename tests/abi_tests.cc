@@ -60,7 +60,7 @@ bool has_diagnostic(const cloth::DiagnosticEngine& diagnostics,
 }
 
 void x86_64_type_layout(TestContext& test) {
-  const CompiledSource source{"byte Small;\nint64 Wide;\nString Name;\n"};
+  const CompiledSource source{"byte Small;\nint64 Wide;\nString? Name;\n"};
   const cloth::CompilationResult& result = *source.result;
   const cloth::AbiModule& abi = result.abi;
   const cloth::TypeId bool_type = *result.semantics.find_type("bool");
@@ -78,7 +78,7 @@ void x86_64_type_layout(TestContext& test) {
 }
 
 void class_field_layout(TestContext& test) {
-  const CompiledSource source{"byte Small;\nint64 Wide;\nString Name;\n"};
+  const CompiledSource source{"byte Small;\nint64 Wide;\nString? Name;\n"};
   const cloth::AbiClassLayout& layout = source.result->abi.files[0].layout;
 
   test.expect(layout.header_size == 16, "object header is not two words");
@@ -91,7 +91,7 @@ void class_field_layout(TestContext& test) {
 }
 
 void wasm32_layout(TestContext& test) {
-  const CompiledSource source{"byte Small;\nint64 Wide;\nString Name;\n",
+  const CompiledSource source{"byte Small;\nint64 Wide;\nString? Name;\n",
                               cloth::TargetDataLayout::llvm_wasm32()};
   const cloth::AbiModule& abi = source.result->abi;
   const cloth::AbiClassLayout& layout = abi.files[0].layout;
@@ -207,6 +207,29 @@ void array_abi(TestContext& test) {
               "array parameter has no structural type encoding");
 }
 
+void nullable_abi(TestContext& test) {
+  const CompiledSource source{
+      "func Maybe(Layout? value): Layout? { return value; }\n"};
+  const cloth::SemanticModel& semantics = source.result->semantics;
+  const cloth::AbiCallable& callable = source.result->abi.files[0].functions[0];
+  const cloth::TypeId nullable =
+      semantics.symbol(callable.symbol).parameter_types[0];
+  const cloth::SemanticType& semantic_type = semantics.type(nullable);
+  const cloth::AbiTypeLayout& layout = source.result->abi.types[nullable.value];
+
+  test.expect(source.result->is_valid,
+              "valid nullable ABI failed verification");
+  test.expect(
+      semantic_type.kind == cloth::TypeKind::kNullable &&
+          semantic_type.element_type == semantics.file(cloth::FileId{0}).type,
+      "nullable ABI type lost its semantic identity");
+  test.expect(layout.kind == cloth::AbiTypeKind::kReference &&
+                  layout.storage == cloth::SizeAlignment{8, 8},
+              "nullable type does not use reference layout");
+  test.expect(callable.mangled_name == "_C1F6_Layout5_MaybeP1_r6_Layout",
+              "nullable ABI mangling did not erase the source qualifier");
+}
+
 void package_qualified_mangling(TestContext& test) {
   cloth::Compilation compilation;
   compilation.add_source(
@@ -284,6 +307,7 @@ int main() {
       {"void ABI", void_abi},
       {"deterministic mangling", deterministic_mangling},
       {"array ABI", array_abi},
+      {"nullable ABI", nullable_abi},
       {"package-qualified mangling", package_qualified_mangling},
       {"verifier rejects layout corruption",
        verifier_rejects_layout_corruption},

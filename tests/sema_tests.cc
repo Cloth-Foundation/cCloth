@@ -323,6 +323,133 @@ void final_binding_contract(TestContext& test) {
               "null-only local inference was accepted");
 }
 
+void non_null_field_initialization(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Profile.co",
+            "String Name;\n"
+            "String? Nickname;\n"
+            "int32[] Scores;\n"
+            "int32 Count;\n"
+            "Profile(String name, int32[] scores, bool replace) {\n"
+            "  if (replace) { Name = name; } else { self.Name = name; }\n"
+            "  Scores = scores;\n"
+            "  Name = name;\n"
+            "  println(Name);\n"
+            "  Touch();\n"
+            "  self.Touch();\n"
+            "}\n"
+            "Profile(String name, int32[] scores) {\n"
+            "  Name = name;\n"
+            "  Scores = scores;\n"
+            "}\n"
+            "func Touch() {}\n");
+  valid.analyze();
+  test.expect(valid.error_count() == 0,
+              "valid non-null field initialization produced errors");
+
+  AnalyzedCompilation declaration_initialized;
+  declaration_initialized.add(
+      "Defaults.co",
+      "String Label = \"ready\";\nString? Optional;\nint32 Count;\n");
+  declaration_initialized.analyze();
+  test.expect(declaration_initialized.error_count() == 0,
+              "declaration-initialized non-null field was rejected");
+
+  AnalyzedCompilation missing_constructor;
+  missing_constructor.add("Missing.co",
+                          "String Name;\nString? Optional;\nint32 Count;\n");
+  missing_constructor.analyze();
+  test.expect(missing_constructor.has_diagnostic(
+                  "non-null field 'Name' requires an initializer or a "
+                  "constructor"),
+              "non-null field without construction was accepted");
+
+  AnalyzedCompilation partial;
+  partial.add("Partial.co",
+              "String Name;\n"
+              "int32[] Values;\n"
+              "Partial(bool assign, String name, int32[] values) {\n"
+              "  if (assign) { Name = name; }\n"
+              "  Values = values;\n"
+              "}\n");
+  partial.analyze();
+  test.expect(partial.has_diagnostic(
+                  "constructor exits before non-null field 'Name' is "
+                  "initialized"),
+              "partial non-null initialization was accepted");
+
+  AnalyzedCompilation early_return;
+  early_return.add("Early.co",
+                   "String Name;\n"
+                   "Early(bool stop, String name) {\n"
+                   "  if (stop) { return; }\n"
+                   "  Name = name;\n"
+                   "}\n");
+  early_return.analyze();
+  test.expect(early_return.has_diagnostic(
+                  "constructor exits before non-null field 'Name' is "
+                  "initialized"),
+              "early constructor return bypassed non-null initialization");
+
+  AnalyzedCompilation read_before_initialization;
+  read_before_initialization.add(
+      "ReadBefore.co", "String First = Second;\nString Second = \"ready\";\n");
+  read_before_initialization.analyze();
+  test.expect(read_before_initialization.has_diagnostic(
+                  "non-null field 'Second' is read before it is initialized"),
+              "non-null field initializer order was ignored");
+
+  AnalyzedCompilation indirect;
+  indirect.add("Indirect.co",
+               "String Name;\n"
+               "Indirect(String name) { println(Name = name); }\n");
+  indirect.analyze();
+  test.expect(indirect.has_diagnostic(
+                  "non-null field 'Name' initialization must be a direct "
+                  "constructor statement"),
+              "indirect non-null initialization was accepted");
+  test.expect(indirect.has_diagnostic(
+                  "constructor exits before non-null field 'Name' is "
+                  "initialized"),
+              "indirect assignment established definite initialization");
+
+  AnalyzedCompilation premature_self_use;
+  premature_self_use.add("Escape.co",
+                         "String Name;\n"
+                         "Escape(String name) {\n"
+                         "  Publish(self);\n"
+                         "  Touch();\n"
+                         "  self.Touch();\n"
+                         "  Name = name;\n"
+                         "}\n"
+                         "static func Publish(Escape value) {}\n"
+                         "func Touch() {}\n");
+  premature_self_use.analyze();
+  test.expect(premature_self_use.has_diagnostic(
+                  "cannot use 'self' before non-null field 'Name' is "
+                  "initialized"),
+              "self escaped before non-null initialization completed");
+  test.expect(premature_self_use.has_diagnostic(
+                  "instance function 'Touch' cannot be called before "
+                  "non-null field 'Name' is initialized"),
+              "instance function observed a partially initialized object");
+  test.expect(premature_self_use.error_count() == 3,
+              "implicit and self-qualified premature calls were not both "
+              "diagnosed");
+
+  AnalyzedCompilation loop;
+  loop.add("Loop.co",
+           "String Name;\n"
+           "Loop(String name) { while (false) { Name = name; } }\n");
+  loop.analyze();
+  test.expect(
+      loop.has_diagnostic("constructor exits before non-null field 'Name' is "
+                          "initialized"),
+      "loop-only non-null initialization was accepted");
+  test.expect(!loop.has_diagnostic("internal"),
+              "invalid non-null initialization leaked an internal error");
+}
+
 void core_print_intrinsic(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("HelloWorld.co",
@@ -425,9 +552,9 @@ void core_print_intrinsic(TestContext& test) {
 void cross_file_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("App.co",
-                  "func Load(int id): User { return User.Find(id); }\n");
+                  "func Load(int id): User? { return User.Find(id); }\n");
   compilation.add("User.co",
-                  "static func Find(int32 id): User { return null; }\n");
+                  "static func Find(int32 id): User? { return null; }\n");
   compilation.analyze();
 
   test.expect(compilation.error_count() == 0,
@@ -453,7 +580,7 @@ void package_imports(TestContext& test) {
   compilation.add("app/Main.co",
                   "import models::User as ModelUser;\n"
                   "import services.*;\n"
-                  "func Load(): ModelUser { return Factory.Make(); }\n"
+                  "func Load(): ModelUser? { return Factory.Make(); }\n"
                   "func Help(): int { return Helper.Value(); }\n",
                   "app");
   compilation.add("app/Helper.co", "static func Value(): int { return 8; }\n",
@@ -461,7 +588,7 @@ void package_imports(TestContext& test) {
   compilation.add("models/User.co", "", "models");
   compilation.add("services/Factory.co",
                   "import models::User;\n"
-                  "static func Make(): User { return null; }\n",
+                  "static func Make(): User? { return null; }\n",
                   "services");
   compilation.analyze();
 
@@ -472,9 +599,9 @@ void package_imports(TestContext& test) {
 
   AnalyzedCompilation cyclic;
   cyclic.add("alpha/A.co",
-             "import beta::B;\nfunc Other(): B { return null; }\n", "alpha");
+             "import beta::B;\nfunc Other(): B? { return null; }\n", "alpha");
   cyclic.add("beta/B.co",
-             "import alpha::A;\nfunc Other(): A { return null; }\n", "beta");
+             "import alpha::A;\nfunc Other(): A? { return null; }\n", "beta");
   cyclic.analyze();
   test.expect(cyclic.error_count() == 0, "cyclic type imports were rejected");
 }
@@ -715,16 +842,241 @@ void null_assignability(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("User.co", "");
   compilation.add("Nulls.co",
-                  "func Empty(): User { return null; }\n"
+                  "func Empty(): User? { return null; }\n"
+                  "func Present(User value): User? { return value; }\n"
+                  "func Missing(): User { return null; }\n"
                   "func Number(): int { return null; }\n");
   compilation.analyze();
 
   test.expect(!compilation.has_diagnostic(
+                  "return value has type 'null'; expected 'User?'"),
+              "null was rejected for a nullable reference type");
+  test.expect(compilation.has_diagnostic(
                   "return value has type 'null'; expected 'User'"),
-              "null was rejected for a reference type");
+              "null was accepted for a non-null reference type");
   test.expect(compilation.has_diagnostic(
                   "return value has type 'null'; expected 'int32'"),
               "null was accepted for a value type");
+
+  const cloth::SemanticModel& semantics = compilation.result->semantics;
+  const cloth::FileSemantics& file = semantics.file(cloth::FileId{1});
+  const cloth::SemanticType& nullable =
+      semantics.type(semantics.symbol(file.functions[0]).type);
+  test.expect(
+      nullable.kind == cloth::TypeKind::kNullable &&
+          nullable.element_type == semantics.file(cloth::FileId{0}).type &&
+          nullable.name == "User?",
+      "nullable file-class type was not canonicalized");
+}
+
+void nullable_reference_shapes(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("User.co", "String? Name;\n");
+  valid.add("Shapes.co",
+            "func Values(User first): User?[] { return [first, null]; }\n"
+            "func MaybeValues(): User[]? { return null; }\n"
+            "func Both(): User?[]? { return null; }\n"
+            "func Accept(User? value) {}\n"
+            "func Widen(User value) { Accept(value); }\n"
+            "func Text(String value): String? { return value; }\n"
+            "func Iterate(User[] values) { "
+            "for (User? value in values) {} }\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid nullable reference shapes produced semantic errors");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::TypeId user = semantics.file(cloth::FileId{0}).type;
+  const cloth::FileSemantics& shapes = semantics.file(cloth::FileId{1});
+
+  const cloth::SemanticType& values =
+      semantics.type(semantics.symbol(shapes.functions[0]).type);
+  test.expect(values.kind == cloth::TypeKind::kArray && values.element_type &&
+                  semantics.type(*values.element_type).kind ==
+                      cloth::TypeKind::kNullable &&
+                  semantics.type(*values.element_type).element_type == user,
+              "nullable array element type is structurally wrong");
+
+  const cloth::SemanticType& maybe_values =
+      semantics.type(semantics.symbol(shapes.functions[1]).type);
+  test.expect(
+      maybe_values.kind == cloth::TypeKind::kNullable &&
+          maybe_values.element_type &&
+          semantics.type(*maybe_values.element_type).kind ==
+              cloth::TypeKind::kArray &&
+          semantics.type(*maybe_values.element_type).element_type == user,
+      "nullable array type is structurally wrong");
+
+  const cloth::SemanticType& both =
+      semantics.type(semantics.symbol(shapes.functions[2]).type);
+  test.expect(
+      both.kind == cloth::TypeKind::kNullable && both.element_type &&
+          semantics.type(*both.element_type).kind == cloth::TypeKind::kArray &&
+          semantics.type(*both.element_type).element_type &&
+          semantics.type(*semantics.type(*both.element_type).element_type)
+                  .kind == cloth::TypeKind::kNullable,
+      "combined array nullability is structurally wrong");
+
+  AnalyzedCompilation invalid;
+  invalid.add("User.co", "String? Name;\n");
+  invalid.add("BadNulls.co",
+              "func Primitive(int32? value) {}\n"
+              "func PrimitiveElements(int32?[] values) {}\n"
+              "func BadVoid(): void? {}\n"
+              "func Need(User value) {}\n"
+              "func Reject(User? value) { Need(value); value.Name; }\n"
+              "func Index(User[]? values) { values[0]; }\n"
+              "func Iterate(User[]? values) { "
+              "for (var value in values) {} }\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic(
+                  "nullable marker requires a reference type; 'int32' is a "
+                  "value type"),
+              "nullable value type was accepted");
+  test.expect(invalid.has_diagnostic("'void' cannot be nullable"),
+              "nullable void type was accepted");
+  test.expect(invalid.has_diagnostic("no matching overload"),
+              "nullable argument was passed to a non-null parameter");
+  test.expect(invalid.has_diagnostic(
+                  "nullable type 'User?' has no members without narrowing"),
+              "nullable member access was accepted without narrowing");
+  test.expect(invalid.has_diagnostic(
+                  "nullable array type 'User[]?' cannot be indexed without "
+                  "narrowing"),
+              "nullable array indexing was accepted without narrowing");
+  test.expect(invalid.has_diagnostic("type 'User[]?' is not iterable"),
+              "nullable array iteration was accepted without narrowing");
+  test.expect(!invalid.has_diagnostic("internal"),
+              "invalid nullable use leaked an internal diagnostic");
+}
+
+void nullable_flow_narrowing(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("User.co", "String Name = \"Ada\";\n");
+  valid.add("Flow.co",
+            "func Read(User? value): String? {\n"
+            "  if (value != null) { return value.Name; }\n"
+            "  return null;\n"
+            "}\n"
+            "func Guard(User? value): String {\n"
+            "  if (value == null) { return \"missing\"; }\n"
+            "  return value.Name;\n"
+            "}\n"
+            "func Negated(User? value): String? {\n"
+            "  if (!(value == null)) { return value.Name; }\n"
+            "  return null;\n"
+            "}\n"
+            "func Conjunction(User? value): bool {\n"
+            "  return value != null && value.Name == \"Ada\";\n"
+            "}\n"
+            "func Disjunction(User? value): bool {\n"
+            "  return value == null || value.Name == \"Ada\";\n"
+            "}\n"
+            "func Reverse(User? value): String? {\n"
+            "  if (null != value) { return value.Name; }\n"
+            "  return null;\n"
+            "}\n"
+            "func ArrayLength(int32[]? values): int32 {\n"
+            "  if (values == null) { return 0; }\n"
+            "  return values.Length;\n"
+            "}\n"
+            "func First(int32[]? values): int32 {\n"
+            "  if (values != null) { return values[0]; }\n"
+            "  return 0;\n"
+            "}\n"
+            "func Sum(int32[]? values): int32 {\n"
+            "  if (values == null) { return 0; }\n"
+            "  int32 total = 0;\n"
+            "  for (var value in values) { total = total + value; }\n"
+            "  return total;\n"
+            "}\n"
+            "func Reset(User? value) {\n"
+            "  if (value != null) { value = null; }\n"
+            "}\n"
+            "func Consume(User? value) {\n"
+            "  while (value != null) {\n"
+            "    println(value.Name);\n"
+            "    value = null;\n"
+            "  }\n"
+            "}\n"
+            "func Final(final User? value): String? {\n"
+            "  if (value != null) { return value.Name; }\n"
+            "  return null;\n"
+            "}\n"
+            "func Local(User? value): String? {\n"
+            "  User? copy = value;\n"
+            "  if (copy != null) { return copy.Name; }\n"
+            "  return null;\n"
+            "}\n"
+            "func Both(User? left, User? right): bool {\n"
+            "  return left != null && right != null &&\n"
+            "      left.Name == right.Name;\n"
+            "}\n"
+            "func Neither(User? left, User? right): bool {\n"
+            "  if (left == null || right == null) { return true; }\n"
+            "  return left.Name == right.Name;\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid nullable flow narrowing produced errors");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::SymbolId parameter =
+      semantics.symbol(semantics.file(cloth::FileId{1}).functions[0])
+          .parameter_symbols[0];
+  const cloth::TypeId user_type = semantics.file(cloth::FileId{0}).type;
+  bool found_narrowed_read = false;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    const auto* symbol =
+        std::get_if<cloth::HirSymbolExpression>(&expression.data);
+    found_narrowed_read = found_narrowed_read ||
+                          (symbol != nullptr && symbol->symbol == parameter &&
+                           expression.type == user_type);
+  }
+  test.expect(found_narrowed_read,
+              "HIR did not retain the narrowed non-null read type");
+
+  AnalyzedCompilation invalid;
+  invalid.add("User.co", "String Name = \"Ada\";\n");
+  invalid.add("BadFlow.co",
+              "User? Current;\n"
+              "func Outside(User? value): String {\n"
+              "  if (value != null) {}\n"
+              "  return value.Name;\n"
+              "}\n"
+              "func Reassigned(User? value): String? {\n"
+              "  if (value != null) {\n"
+              "    value = null;\n"
+              "    return value.Name;\n"
+              "  }\n"
+              "  return null;\n"
+              "}\n"
+              "func Joined(User? value, bool choose): String? {\n"
+              "  if (value != null) {\n"
+              "    if (choose) { value = null; }\n"
+              "    return value.Name;\n"
+              "  }\n"
+              "  return null;\n"
+              "}\n"
+              "func Field(): String? {\n"
+              "  if (Current != null) { return Current.Name; }\n"
+              "  return null;\n"
+              "}\n"
+              "func ConditionWrite(User? value): bool {\n"
+              "  return value != null &&\n"
+              "      ((value = null) == null || value.Name == \"Ada\");\n"
+              "}\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic(
+                  "nullable type 'User?' has no members without narrowing"),
+              "unsafe nullable read was accepted");
+  test.expect(invalid.error_count() == 5,
+              "nullable refinements survived an unsafe scope or write");
+  test.expect(!invalid.has_diagnostic("internal"),
+              "invalid nullable flow leaked an internal diagnostic");
 }
 
 void assignment_requires_location(TestContext& test) {
@@ -744,7 +1096,7 @@ void array_semantics(TestContext& test) {
             "  values[1] = 4;\n"
             "  return values.Length + values[0];\n"
             "}\n"
-            "func Empty(): int32[] { return null; }\n");
+            "func Empty(): int32[]? { return null; }\n");
   valid.analyze();
 
   test.expect(valid.error_count() == 0,
@@ -752,10 +1104,14 @@ void array_semantics(TestContext& test) {
   const cloth::SemanticModel& semantics = valid.result->semantics;
   const cloth::FileSemantics& file = semantics.file(cloth::FileId{0});
   const cloth::TypeId return_type = semantics.symbol(file.functions[1]).type;
-  test.expect(semantics.type(return_type).kind == cloth::TypeKind::kArray &&
-                  semantics.type(return_type).element_type ==
+  const cloth::SemanticType& nullable_array = semantics.type(return_type);
+  test.expect(nullable_array.kind == cloth::TypeKind::kNullable &&
+                  nullable_array.element_type &&
+                  semantics.type(*nullable_array.element_type).kind ==
+                      cloth::TypeKind::kArray &&
+                  semantics.type(*nullable_array.element_type).element_type ==
                       semantics.find_type("int32"),
-              "array return type was not canonicalized");
+              "nullable array return type was not canonicalized");
 
   AnalyzedCompilation invalid;
   invalid.add("BadArrays.co",
@@ -888,7 +1244,7 @@ void for_binding_scope_and_types(TestContext& test) {
 
 void instance_member_binding(TestContext& test) {
   AnalyzedCompilation compilation;
-  compilation.add("User.co", "String Name;\n");
+  compilation.add("User.co", "String Name = \"Ada\";\n");
   compilation.add("Reader.co",
                   "func Read(User value): String { return value.Name; }\n");
   compilation.analyze();
@@ -997,6 +1353,7 @@ int main() {
       {"core types and typed HIR", core_types_and_typed_hir},
       {"void callable contract", void_callable_contract},
       {"final binding contract", final_binding_contract},
+      {"non-null field initialization", non_null_field_initialization},
       {"core print intrinsic", core_print_intrinsic},
       {"cross-file binding", cross_file_binding},
       {"package imports", package_imports},
@@ -1014,6 +1371,8 @@ int main() {
       {"complete return paths", complete_return_paths},
       {"case collision", case_collision},
       {"null assignability", null_assignability},
+      {"nullable reference shapes", nullable_reference_shapes},
+      {"nullable flow narrowing", nullable_flow_narrowing},
       {"assignment requires location", assignment_requires_location},
       {"array semantics", array_semantics},
       {"for iteration semantics", for_iteration_semantics},

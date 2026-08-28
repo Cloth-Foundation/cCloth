@@ -21,8 +21,9 @@ body. Reassigning it does not modify the array; indexed assignment remains the
 explicit element-write operation.
 
 The iterable expression is evaluated exactly once before the loop. It must have
-array type. A null reference traps when the loop first queries `Length`, and an
-empty array executes no iterations.
+non-null array type; `T[]?` must be narrowed before iteration. An empty array
+executes no iterations. Runtime null checks remain defensive for invalid
+internal or foreign values.
 
 ## Control flow
 
@@ -46,9 +47,9 @@ non-cascading errors.
 MIR tests verify the exact preheader, condition, body, latch, and exit edges;
 the two phi predecessors; and reachability after unconditional `break`,
 `continue`, or `return`. Native tests prove evaluate-once behavior, mutable-copy
-bindings, `String[]` iteration, innermost nested-loop control, and null-array
-trapping. The wasm32 backend also emits and verifies the same target-independent
-iteration shape.
+bindings, `String[]` iteration, and innermost nested-loop control. Semantic and
+CLI tests reject nullable-array iteration before lowering. The wasm32 backend
+also emits and verifies the same target-independent iteration shape.
 
 ## Deferred work
 

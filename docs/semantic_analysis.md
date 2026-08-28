@@ -33,12 +33,14 @@ The core type table contains:
 - `void`, plus internal error and null types
 - one named reference type for each valid file class
 - one canonical array reference type for each used element type
+- one canonical nullable wrapper for each used nullable reference type
 
 `int`, `uint`, and `float` are target-independent aliases of `int32`, `uint32`,
-and `float32` respectively.
-Integer and floating literals have `int32` and `float64` type respectively.
-General implicit numeric conversions are not implemented. `null` is assignable
-to `String`, file-class, and array reference types, but not to value types.
+and `float32` respectively. Integer and floating literals have `int32` and
+`float64` type respectively. General implicit numeric conversions are not
+implemented. References are non-null by default. `T?` is a distinct nullable
+wrapper, `T` widens to `T?`, and `null` is assignable only to `T?`. Nullable
+qualifiers are invalid on primitive and void types.
 
 An omitted function return annotation and explicit `: void` resolve to one
 canonical type. Void has no values or storage: it is rejected for fields,
@@ -47,7 +49,8 @@ where their result is not consumed. Void functions may fall through or use
 `return;`; value-returning functions retain complete-return requirements.
 
 An array literal infers its element type from the first non-null, non-error
-element, then requires every element to be assignable to that exact type.
+element. A compatible nullable element or `null` promotes a reference element
+type to its nullable wrapper before every element is checked.
 Empty and null-only literals are rejected until contextual literal typing is
 implemented. Index operands must be `int32`. Index expressions are mutable
 locations, and `Length` is a read-only `int32` value.
@@ -66,6 +69,15 @@ defining constructors. Constructor analysis tracks definite initialization
 through branches and early returns, rejects repeated or loop-based writes, and
 rejects reads before initialization. Every constructor must initialize each
 otherwise-uninitialized final field exactly once.
+
+The same flow analysis requires every non-null reference field to be
+initialized by its declaration or on every constructor exit. Mutable non-null
+fields may be reassigned after initialization. Reads before initialization are
+rejected, loop-only writes do not establish post-loop initialization, and
+constructor initialization must be a direct assignment to the current
+instance. Until all non-null fields are initialized, `self` cannot be used as a
+value and instance functions cannot be called on the current object. Nullable
+reference and primitive fields retain their default initialization.
 
 `static` is also stored on member symbols rather than types. Static functions
 have no implicit `self` scope entry. Unqualified instance fields and functions
@@ -91,8 +103,8 @@ The core scope provides typed `print` and `println` overloads for every
 primitive, each file-class type, and `null`; `println()` is a separate
 zero-argument intrinsic. Locals and members retain normal precedence over core
 names, so a source declaration can shadow either overload set. Exact parameter
-matches take precedence over nullable-reference conversions, keeping
-`print(null)` unambiguous as file-class overloads are added.
+matches take precedence over non-null-to-nullable widening. Callables cannot
+overload solely on nullability because the ABI erases the qualifier.
 Public static functions and fields can be qualified by a file-class name, such
 as `Repository.Find(id)`. Instance members require an object.
 
@@ -104,12 +116,20 @@ The checker currently validates:
 - boolean `if` and `while` conditions
 - `break` and `continue` placement inside loops
 - inferred or explicitly typed array iteration declarations
-- final binding assignment and final field definite initialization
+- final binding assignment and field definite initialization
 - static ownership, access form, and static `Main` validation
 - member access and visibility
 - homogeneous array literals, indexing, assignment, and `Length`
 - exact overload and constructor selection
 - return value presence and type compatibility
+
+Nullable locals and parameters are narrowed to their underlying reference type
+on paths proven by direct `null` equality or inequality checks. Parentheses,
+`!`, `&&`, and `||` compose true- and false-path facts, including guard clauses.
+Assignments invalidate a fact, and branch joins retain it only when every
+fallthrough path does. Fields are excluded until member effects and aliasing
+have a stronger contract. Without a proof, nullable values cannot be
+dereferenced, indexed, or iterated.
 
 Overload matching is exact after the portable aliases are canonicalized.
 User-defined conversions, numeric promotions, inheritance, traits, generics,

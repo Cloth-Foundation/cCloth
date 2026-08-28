@@ -80,8 +80,9 @@ discovery order.
 `int`, `uint`, and `float` are portable aliases of `int32`, `uint32`, and
 `float32`. `String` is a core reference type. General implicit numeric
 conversions are not part of the initial language; overload selection uses exact
-canonical parameter types. The null value is assignable only to reference
-types.
+canonical parameter types. References are non-null by default. `T?` is a
+distinct nullable reference type: `T` widens to `T?`, while `null` is assignable
+only to `T?`. Nullability alone does not distinguish overloads.
 
 Lexical scopes contain `self`, parameters, and locals. A nested block may shadow
 an outer name, but declarations in the same scope may not collide. Public
@@ -119,8 +120,8 @@ selection.
 Final fields are initialized in declaration order or exactly once on every
 exit path of each constructor. Constructor-body initialization is restricted
 to direct assignments on the current instance and cannot occur in loops. These
-rules establish the definite-initialization foundation that future non-null
-fields will reuse.
+rules share one definite-initialization analysis with non-null fields while
+retaining the stronger exactly-once final-field contract.
 
 ## Static members
 
@@ -137,6 +138,23 @@ separate constant storage, do not occupy object layout, and are accessed
 unqualified or through their file class. Dynamic static initialization,
 mutable static storage, and reference-valued static fields are deferred until
 initialization order and collector roots have explicit contracts.
+
+## Nullable references
+
+`?` qualifies the reference immediately to its left. This keeps array
+nullability explicit: `T?[]` has nullable elements, `T[]?` is a nullable array,
+and `T?[]?` permits both. Primitive and void types cannot be nullable.
+
+Nullable values cannot be used for member access, indexing, or iteration until
+they are narrowed. Every non-null reference field is initialized by its
+declaration or definitely assigned on every constructor exit. It cannot be read
+before initialization, and the current object cannot escape or invoke instance
+functions until all its non-null fields are initialized. Nullable reference
+fields default to `null`. Direct `null` comparisons narrow stable locals and
+parameters along proven control-flow paths; logical operators compose facts,
+and assignment invalidates them. Fields do not narrow until member effects and
+aliasing have an explicit model. The ABI erases `?` to the underlying reference
+layout and mangling.
 
 ## Path-derived packages
 
@@ -222,10 +240,11 @@ Future iteration protocols must preserve this source contract.
 
 ## Arrays
 
-`T[]` is a homogeneous, fixed-length reference collection with mutable
+`T[]` is a homogeneous, fixed-length non-null reference collection with mutable
 elements. Array literals evaluate their elements from left to right and infer
-one exact element type. Empty and null-only literals require future contextual
-typing and are currently rejected. `array[index]` accepts only `int32`, and
+one exact element type; a reference literal containing `null` infers `T?[]`.
+Empty and null-only literals require future contextual typing and are currently
+rejected. `array[index]` accepts only `int32`, and
 both reads and writes perform runtime null and bounds checks. `Length` is a
 public read-only `int32` member. Array equality compares reference identity.
 

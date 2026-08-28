@@ -83,6 +83,20 @@ TypeId SemanticModel::get_array_type(TypeId element_type) {
                                element_type});
 }
 
+TypeId SemanticModel::get_nullable_type(TypeId underlying_type) {
+  for (std::size_t index = 0; index < types_.size(); ++index) {
+    const SemanticType& type = types_[index];
+    if (type.kind == TypeKind::kNullable &&
+        type.element_type == underlying_type) {
+      return TypeId{index};
+    }
+  }
+  return add_type(SemanticType{TypeKind::kNullable,
+                               types_.at(underlying_type.value).name + "?",
+                               {},
+                               underlying_type});
+}
+
 void SemanticModel::add_type_alias(std::string name, TypeId type) {
   type_names_.push_back(TypeName{std::move(name), type});
 }
@@ -211,6 +225,8 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
       return "file class";
     case TypeKind::kArray:
       return "array";
+    case TypeKind::kNullable:
+      return "nullable reference";
   }
   return "unknown";
 }

@@ -582,6 +582,49 @@ void arrays(TestContext& test) {
               "indexed assignment target was not retained");
 }
 
+void nullable_types(TestContext& test) {
+  const ParsedSource source{
+      "Nullability.co",
+      "User? Maybe;\n"
+      "User?[] Values;\n"
+      "User[]? OptionalValues;\n"
+      "User?[]? OptionalElementsAndValues;\n"
+      "func Select(User? value, User?[] values): User[]? { return null; }\n"};
+  test.expect(error_count(source) == 0,
+              "valid nullable type syntax did not parse");
+  test.expect(source.ast().fields.size() == 4,
+              "nullable fields were not retained");
+  if (source.ast().fields.size() == 4) {
+    const cloth::TypeSyntax& nullable = source.ast().fields[0].type;
+    const cloth::TypeSyntax& nullable_elements = source.ast().fields[1].type;
+    const cloth::TypeSyntax& nullable_array = source.ast().fields[2].type;
+    const cloth::TypeSyntax& both = source.ast().fields[3].type;
+    test.expect(nullable.is_nullable && !nullable.is_array &&
+                    !nullable.is_element_nullable,
+                "nullable reference syntax has the wrong shape");
+    test.expect(nullable_elements.is_array &&
+                    nullable_elements.is_element_nullable &&
+                    !nullable_elements.is_nullable,
+                "nullable element syntax has the wrong shape");
+    test.expect(nullable_array.is_array && nullable_array.is_nullable &&
+                    !nullable_array.is_element_nullable,
+                "nullable array syntax has the wrong shape");
+    test.expect(both.is_array && both.is_nullable && both.is_element_nullable,
+                "combined array nullability has the wrong shape");
+  }
+
+  std::ostringstream output;
+  cloth::print_ast_summary(source.ast(), output);
+  test.expect(output.str().find("User?[]?") != std::string::npos,
+              "AST summary dropped nullable type suffixes");
+
+  const ParsedSource duplicate{
+      "DuplicateNullability.co",
+      "func Pick(User value) {}\nfunc Pick(User? value) {}\n"};
+  test.expect(has_diagnostic(duplicate, "duplicate function signature"),
+              "nullability alone created an overload distinction");
+}
+
 void missing_statement_semicolon_recover(TestContext& test) {
   const ParsedSource source{"Statements.co",
                             "func Values(): int { return 1 return 2; }\n"};
@@ -750,6 +793,7 @@ int main() {
       {"malformed for headers recover", malformed_for_headers_recover},
       {"calls, members, and assignment", calls_members_and_assignment},
       {"arrays", arrays},
+      {"nullable types", nullable_types},
       {"missing statement semicolon recover",
        missing_statement_semicolon_recover},
       {"mandatory if braces", mandatory_if_braces},

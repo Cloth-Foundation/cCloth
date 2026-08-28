@@ -54,6 +54,7 @@ enum class TypeKind {
   kString,
   kFileClass,
   kArray,
+  kNullable,
 };
 
 struct SemanticType {
@@ -165,6 +166,7 @@ class SemanticModel {
 
   [[nodiscard]] TypeId add_type(SemanticType type);
   [[nodiscard]] TypeId get_array_type(TypeId element_type);
+  [[nodiscard]] TypeId get_nullable_type(TypeId underlying_type);
   void add_type_alias(std::string name, TypeId type);
   void add_intrinsic(std::string name, std::vector<TypeId> parameter_types,
                      IntrinsicKind intrinsic);

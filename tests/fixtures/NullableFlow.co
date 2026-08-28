@@ -1,0 +1,12 @@
+static func Show(String? value) {
+  if (value != null) {
+    println(value);
+  } else {
+    println("missing");
+  }
+}
+
+static func Main() {
+  Show("Cloth");
+  Show(null);
+}

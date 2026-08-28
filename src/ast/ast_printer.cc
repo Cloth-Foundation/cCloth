@@ -7,6 +7,19 @@
 namespace cloth {
 namespace {
 
+void print_type(const TypeSyntax& type, std::ostream& output) {
+  output << type.name;
+  if (type.is_element_nullable) {
+    output << '?';
+  }
+  if (type.is_array) {
+    output << "[]";
+  }
+  if (type.is_nullable) {
+    output << '?';
+  }
+}
+
 void print_parameters(const std::vector<ParameterDecl>& parameters,
                       std::ostream& output) {
   for (std::size_t index = 0; index < parameters.size(); ++index) {
@@ -16,10 +29,7 @@ void print_parameters(const std::vector<ParameterDecl>& parameters,
     if (parameters[index].is_final) {
       output << "final ";
     }
-    output << parameters[index].type.name;
-    if (parameters[index].type.is_array) {
-      output << "[]";
-    }
+    print_type(parameters[index].type, output);
     output << ' ' << parameters[index].name;
   }
 }
@@ -70,10 +80,7 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
         if (field.is_final) {
           output << "final ";
         }
-        output << field.type.name;
-        if (field.type.is_array) {
-          output << "[]";
-        }
+        print_type(field.type, output);
         output << " [" << visibility_name(field.visibility) << ']';
         print_validity(field.is_valid, output);
         break;
@@ -84,10 +91,8 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
         print_parameters(function.parameters, output);
         output << ')';
         if (function.return_type) {
-          output << ": " << function.return_type->name;
-          if (function.return_type->is_array) {
-            output << "[]";
-          }
+          output << ": ";
+          print_type(*function.return_type, output);
         }
         output << " [" << visibility_name(function.visibility);
         if (function.is_static) {
