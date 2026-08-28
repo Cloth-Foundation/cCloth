@@ -2334,7 +2334,16 @@ class SemanticAnalyzer {
         files_[current_file_.value]->storage.expression(callee_id);
     if (const auto* grouped =
             std::get_if<ParenthesizedExpression>(&callee.data)) {
-      return validate_call_access(grouped->expression, callable, range);
+      const bool is_valid =
+          validate_call_access(grouped->expression, callable, range);
+      if (model_.file(current_file_)
+              .expressions.at(grouped->expression.value)
+              .is_base_qualified) {
+        model_.mutable_file(current_file_)
+            .expressions.at(callee_id.value)
+            .is_base_qualified = true;
+      }
+      return is_valid;
     }
     const auto* member = std::get_if<MemberAccessExpression>(&callee.data);
     if (member == nullptr) {
@@ -2361,6 +2370,36 @@ class SemanticAnalyzer {
       return false;
     }
     if (!callable.is_static && object.category == ValueCategory::kType) {
+      const SemanticType& qualifier = model_.type(object.type);
+      const std::optional<FileId> direct_base =
+          model_.file(current_file_).base_file;
+      if (direct_base && qualifier.file && *qualifier.file == *direct_base) {
+        if (analyzing_base_initializer_) {
+          diagnostics_.error(
+              range, "base-qualified call to '" + callable.name +
+                         "' cannot appear in a base constructor initializer");
+          return false;
+        }
+        if (!has_implicit_receiver_) {
+          diagnostics_.error(range, "base-qualified call to '" + callable.name +
+                                        "' is unavailable in a static context");
+          return false;
+        }
+        model_.mutable_file(current_file_)
+            .expressions.at(callee_id.value)
+            .is_base_qualified = true;
+        return true;
+      }
+      if (qualifier.file && *qualifier.file != current_file_ &&
+          is_file_class_subtype(model_.file(current_file_).type, object.type)) {
+        const std::string base_name =
+            direct_base ? model_.symbol(model_.file(*direct_base).symbol).name
+                        : std::string{"<none>"};
+        diagnostics_.error(
+            range,
+            "base-qualified call must name direct base '" + base_name + "'");
+        return false;
+      }
       diagnostics_.error(
           range, "function '" + callable.name + "' requires an instance");
       return false;

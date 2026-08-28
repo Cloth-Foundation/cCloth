@@ -60,7 +60,9 @@ initialization before derived fields and body. Stage 16.4 adds inherited public
 member lookup, transitive base-reference widening, and descriptor-ancestry
 checks for `is` and `as`. Stage 16.5 makes public instance functions virtual,
 requires `override func` for inherited signatures, and suppresses virtual
-dispatch while fields and constructors initialize. See
+dispatch while fields and constructors initialize. Stage 16.6 adds
+`Base.Method(...)` as a direct call through the current class's direct-base
+view. See
 [inheritance.md](inheritance.md).
 
 ## Capitalization and visibility

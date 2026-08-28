@@ -127,6 +127,7 @@ struct ExpressionSemantics {
   std::optional<SymbolId> symbol{};
   bool is_presence_test{false};
   std::optional<TypeId> checked_type{};
+  bool is_base_qualified{false};
 };
 
 struct FileSemantics {

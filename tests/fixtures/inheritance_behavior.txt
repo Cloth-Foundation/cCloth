@@ -3,8 +3,8 @@ Base
 43
 kind
 41
-Derived
-Derived
+Base->Derived
+Base->Derived
 true
 true
 true

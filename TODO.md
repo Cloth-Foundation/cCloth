@@ -1,7 +1,7 @@
 # Cloth deferred-work ledger
 
 This file is the central inventory of work deliberately left out through Stage
-16.5. Feature documents remain authoritative for existing behavior; this ledger
+16.6. Feature documents remain authoritative for existing behavior; this ledger
 records accepted gaps and their prerequisites. An unchecked item has no implied
 schedule or stage number.
 
@@ -34,8 +34,10 @@ than a general aspiration.
   `override func` for an exact inherited instance signature, preserves stable
   virtual slots, dispatches through the most-derived descriptor, and suppresses
   self dispatch during field initialization and constructor execution.
-- [ ] Add base-qualified calls, abstract members, and sealed/final override
-  contracts.
+- [x] Add base-qualified calls. Stage 16.6 uses `Base.Method(...)` only for the
+  current file class's direct base, retains ordinary overload lookup through
+  that base view, and invokes the selected implementation directly on `self`.
+- [ ] Add abstract members and sealed/final class and override contracts.
 - [ ] Design interfaces and the provisional `class : Human is InterfaceA,
   InterfaceB { ... }` conformance syntax.
 - [ ] Add flow-sensitive smart casts after a successful `value is T` test.

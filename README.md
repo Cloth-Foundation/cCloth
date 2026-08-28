@@ -29,7 +29,8 @@ The compiler has a deterministic lexer and two-pass parser, semantic analysis,
 typed HIR, control-flow MIR, a verified target ABI, and an LLVM IR backend. It
 supports path-derived packages and imports, functions and constructors,
 structured control flow, arrays, null-safe managed references, strings,
-objects, single inheritance, overriding, and virtual dispatch.
+objects, single inheritance, overriding, virtual dispatch, and direct-base
+calls.
 
 The backend can emit LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured

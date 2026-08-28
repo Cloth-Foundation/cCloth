@@ -477,6 +477,11 @@ class FieldInitializationAnalyzer {
 
   bool uses_current_instance(ExpressionId id) const {
     const Expression& expression = file_.storage.expression(id);
+    const ExpressionSemantics& expression_semantics =
+        semantics_.file(file_id_).expressions.at(id.value);
+    if (expression_semantics.is_base_qualified) {
+      return true;
+    }
     if (std::holds_alternative<IdentifierExpression>(expression.data)) {
       return true;
     }

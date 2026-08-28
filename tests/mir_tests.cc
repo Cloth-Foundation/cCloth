@@ -1082,6 +1082,52 @@ void virtual_dispatch_lowering(TestContext& test) {
               "invalid virtual dispatch produced the wrong diagnostic");
 }
 
+void base_qualified_call_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Base.co", "func Value(): int32 { return 1; }\n");
+  compilation.add("Derived.co",
+                  "class : Base {\n"
+                  "  override func Value(): int32 {\n"
+                  "    return Base.Value() + 1;\n"
+                  "  }\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid base-qualified call failed MIR lowering");
+  const cloth::SemanticModel& semantics = compilation.result->semantics;
+  const cloth::SymbolId base_value =
+      semantics.file(cloth::FileId{0}).functions[0];
+  const cloth::SymbolId derived_value =
+      semantics.file(cloth::FileId{1}).functions[0];
+  cloth::MirCallInstruction* base_call = nullptr;
+  cloth::MirModule broken = compilation.result->mir;
+  for (cloth::MirBasicBlock& block : broken.files[1].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      auto* call = std::get_if<cloth::MirCallInstruction>(&instruction.data);
+      if (call != nullptr && call->kind == cloth::MirCallKind::kBaseQualified) {
+        base_call = call;
+      }
+    }
+  }
+  test.expect(base_call != nullptr && base_call->callable == base_value &&
+                  base_call->dispatch == cloth::MirDispatchKind::kDirect &&
+                  base_call->receiver_is_self && !base_call->receiver,
+              "base-qualified call lost its direct self dispatch contract");
+
+  if (base_call != nullptr) {
+    base_call->callable = derived_value;
+  }
+  cloth::DiagnosticEngine diagnostics;
+  test.expect(base_call != nullptr &&
+                  !cloth::verify_mir(broken, semantics, diagnostics),
+              "MIR verifier accepted a base call to the derived override");
+  test.expect(has_diagnostic(
+                  diagnostics,
+                  "base-qualified call does not target a direct-base member"),
+              "invalid base-qualified call produced the wrong diagnostic");
+}
+
 void verifiers_reject_corruption(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Verify.co", "func Value(): int { return 1; }\n");
@@ -1233,6 +1279,7 @@ int main() {
       {"constructor initialization order", constructor_initialization_order},
       {"inherited reference widening", inherited_reference_widening},
       {"virtual dispatch lowering", virtual_dispatch_lowering},
+      {"base-qualified call lowering", base_qualified_call_lowering},
       {"verifiers reject corruption", verifiers_reject_corruption},
   };
 

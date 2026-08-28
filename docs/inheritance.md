@@ -1,4 +1,4 @@
-# Cloth Stage 16.5 overriding and virtual dispatch
+# Cloth Stage 16.6 base-qualified calls
 
 Stage 16.1 introduces the declaration and semantic identity of single class
 inheritance. Stage 16.2 carries that identity through HIR and MIR, defines the
@@ -7,6 +7,8 @@ defines explicit base-constructor chaining and complete-object initialization.
 Stage 16.4 adds inherited member lookup, representation-preserving base
 conversions, and hierarchy-aware checked type operations. Stage 16.5 adds an
 explicit override contract, stable virtual slots, and dynamic instance calls.
+Stage 16.6 adds explicit direct-base calls without changing object layout or
+the virtual table.
 
 ## File-class declaration
 
@@ -195,6 +197,38 @@ override from observing derived fields before initialization completes. Calls
 on unrelated receivers remain virtual, as do all instance calls in ordinary
 function bodies.
 
+## Base-qualified calls
+
+An instance context may name its direct base class to invoke one base
+implementation explicitly:
+
+```cloth
+class : Human {
+  override func Describe(): string {
+    return Human.Describe() + " -> User";
+  }
+}
+```
+
+The qualifier must resolve to the current file class's direct base. A
+transitive ancestor cannot be named to skip an intermediate base. Lookup starts
+from the direct-base view and retains the ordinary nearest-declaration-set and
+overload rules. Consequently, `Human.Method()` may select a public declaration
+in an ancestor when `Human` does not declare that name itself.
+
+The selected function must be a public instance function. The form is invalid
+in a static function and in a base-constructor initializer, where no usable
+`self` exists. `Human.StaticFunction()` remains an ordinary class-qualified
+static call rather than a base-qualified call. Fields and constructors do not
+gain a corresponding direct-base access form.
+
+A base-qualified call passes the current `self` pointer unchanged and invokes
+the selected ABI symbol directly. It bypasses the virtual table for that call
+only; calls made from inside the selected base implementation follow their
+ordinary dispatch rules. HIR retains the qualification, MIR uses a dedicated
+base-qualified call kind with direct dispatch, and the MIR verifier checks the
+direct-base lookup and implicit-self invariants.
+
 ## Subtyping and checked operations
 
 A non-null derived reference implicitly widens to any direct or transitive base
@@ -214,8 +248,8 @@ Consequently, an object satisfies its exact class and every transitive base,
 while a base-typed reference can still be tested or safely cast back to its
 actual derived type. Null and unrelated runtime kinds fail without trapping.
 
-## Deliberate Stage 16.5 boundary
+## Deliberate Stage 16.6 boundary
 
-Stage 16.5 does not define base-qualified calls, abstract members, sealed or
-final methods/classes, covariant returns, or interface dispatch. Interface
-lists, structs, and enums remain separate language work.
+Stage 16.6 does not define abstract members, sealed or final methods/classes,
+covariant returns, or interface dispatch. Interface lists, structs, and enums
+remain separate language work.

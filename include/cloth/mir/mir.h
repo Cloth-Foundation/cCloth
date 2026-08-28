@@ -132,6 +132,7 @@ enum class MirCallKind {
   kUnqualified,
   kClassQualified,
   kInstance,
+  kBaseQualified,
   kConstructor,
   kBaseConstructor,
 };

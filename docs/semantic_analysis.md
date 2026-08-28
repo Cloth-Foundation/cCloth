@@ -1,4 +1,4 @@
-# Cloth semantic analysis through Stage 16.5
+# Cloth semantic analysis through Stage 16.6
 
 Semantic analysis binds parsed syntax across a closed compilation graph, checks
 the implemented language rules, and lowers valid and recovered syntax to a
@@ -21,7 +21,8 @@ derived-constructor initializer to one constructor of the direct base. Stage
 16.4 uses the same edge for inherited lookup, assignment compatibility, and
 checked type operations. Stage 16.5 processes file classes base-first after all
 signatures are registered, validates explicit overrides, and assigns stable
-virtual slots.
+virtual slots. Stage 16.6 recognizes direct-base-qualified instance calls and
+records their non-virtual dispatch intent in typed HIR.
 
 `Compilation` owns its source files, immutable token streams, and parse results.
 This keeps token lexemes, syntax names, and source-range file names valid
@@ -165,6 +166,14 @@ bodies are direct only when their receiver is the object under construction,
 so partially initialized derived state cannot be reached. Calls on other
 receivers and ordinary function-body calls dispatch virtually.
 
+`Base.Method(arguments)` is a base-qualified call when the type qualifier
+resolves to the current file class's direct base and overload resolution
+selects a public instance function. Lookup uses the direct base as its static
+view, including inherited declarations when that base does not declare the
+name. The current `self` is the receiver. Static contexts, base-constructor
+initializers, and qualification through a transitive ancestor are rejected.
+The selected symbol is retained, but the call is marked for direct dispatch.
+
 The checker currently validates:
 
 - field and local initializers
@@ -180,7 +189,8 @@ The checker currently validates:
 - object and base widening, `::typeName`, hierarchy-aware checked `is`, and
   nullable `as`
 - single-inheritance base binding, visibility, cycle validation, and explicit
-  base-constructor selection, inherited member lookup, and override contracts
+  base-constructor selection, inherited member lookup, override contracts, and
+  base-qualified calls
 - exact overload and constructor selection
 - return value presence and type compatibility
 
@@ -198,8 +208,8 @@ with a runtime null guard.
 Overload matching prefers an exact canonical signature. If none exists, a
 unique candidate accepting the implemented implicit reference conversions is
 selected; multiple compatible candidates are ambiguous.
-User-defined conversions, numeric promotions, base-qualified calls, abstract
-members, traits, generics, primitive boxing, first-class function values, and
+User-defined conversions, numeric promotions, abstract members, traits,
+generics, primitive boxing, first-class function values, and
 implicit default constructors are deferred. Checked array casts are also
 deferred until arrays carry reified element-type metadata.
 Complete return-path and reachability checks are performed by the Stage 3.0

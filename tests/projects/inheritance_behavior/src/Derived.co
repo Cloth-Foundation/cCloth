@@ -11,7 +11,7 @@ class : Base {
   }
 
   override func Label(): string {
-    return "Derived";
+    return Base.Label() + "->Derived";
   }
 
   static func Main() {

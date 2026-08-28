@@ -273,6 +273,23 @@ void virtual_dispatch(TestContext& test) {
               "base-typed call bypassed dynamic dispatch");
 }
 
+void base_qualified_call(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Base.co", "func Value(): int32 { return 1; }\n");
+  sources.add("Derived.co",
+              "class : Base {\n"
+              "  override func Value(): int32 {\n"
+              "    return Base.Value() + 1;\n"
+              "  }\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(),
+              "base-qualified call failed LLVM emission");
+  test.expect(sources.contains("call i32 @_C1F4_Base5_ValueP0(ptr %receiver)"),
+              "base-qualified call did not use the selected base ABI symbol");
+}
+
 void arrays(TestContext& test) {
   CompiledSources sources;
   sources.add("Arrays.co",
@@ -675,6 +692,7 @@ int main() {
       {"inherited member access and subtyping",
        inherited_member_access_and_subtyping},
       {"virtual dispatch", virtual_dispatch},
+      {"base-qualified call", base_qualified_call},
       {"arrays", arrays},
       {"strings", strings},
       {"object model", object_model},

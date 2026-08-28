@@ -35,6 +35,7 @@ class MirVerifier {
 
  private:
   void verify_file(const MirFileClass& file, std::size_t file_index) {
+    current_file_ = file.file;
     const SourceRange range = symbol_range(file.symbol);
     if (file.file.value >= semantics_.files().size()) {
       report(range, "file class has an unknown FileId");
@@ -539,7 +540,9 @@ class MirVerifier {
           report(instruction.range, "callable symbol is not callable");
         }
         if (callable.kind == SymbolKind::kFunction) {
-          if (callable.is_static && call->kind == MirCallKind::kInstance) {
+          if (callable.is_static &&
+              (call->kind == MirCallKind::kInstance ||
+               call->kind == MirCallKind::kBaseQualified)) {
             report(instruction.range,
                    "static function call has an instance receiver");
           }
@@ -548,9 +551,16 @@ class MirVerifier {
             report(instruction.range,
                    "instance function call is class-qualified");
           }
+          if (call->kind == MirCallKind::kBaseQualified &&
+              (!call->receiver_is_self ||
+               !is_base_qualified_callable(call->callable))) {
+            report(instruction.range,
+                   "base-qualified call does not target a direct-base "
+                   "member");
+          }
           const bool expects_virtual = callable.virtual_slot.has_value();
           const bool should_dispatch_virtually =
-              expects_virtual &&
+              expects_virtual && call->kind != MirCallKind::kBaseQualified &&
               !(suppress_self_virtual_dispatch && call->receiver_is_self);
           if (call->dispatch == MirDispatchKind::kVirtual &&
               (!should_dispatch_virtually || callable.is_static)) {
@@ -806,6 +816,45 @@ class MirVerifier {
     return false;
   }
 
+  bool is_base_qualified_callable(SymbolId callable_id) const {
+    if (!current_file_ || current_file_->value >= semantics_.files().size() ||
+        callable_id.value >= semantics_.symbols().size()) {
+      return false;
+    }
+    const SemanticSymbol& callable = semantics_.symbol(callable_id);
+    if (callable.kind != SymbolKind::kFunction || callable.is_static ||
+        callable.visibility != Visibility::kPublic) {
+      return false;
+    }
+
+    std::optional<FileId> owner = semantics_.file(*current_file_).base_file;
+    for (std::size_t depth = 0;
+         owner && owner->value < semantics_.files().size() &&
+         depth < semantics_.files().size();
+         ++depth) {
+      const FileSemantics& file = semantics_.file(*owner);
+      bool has_named_member = false;
+      for (const SymbolId field_id : file.fields) {
+        has_named_member = has_named_member ||
+                           semantics_.symbol(field_id).name == callable.name;
+      }
+      for (const SymbolId function_id : file.functions) {
+        if (semantics_.symbol(function_id).name != callable.name) {
+          continue;
+        }
+        has_named_member = true;
+        if (function_id == callable_id) {
+          return true;
+        }
+      }
+      if (has_named_member) {
+        return false;
+      }
+      owner = file.base_file;
+    }
+    return false;
+  }
+
   void verify_value(MirValueId value,
                     const std::vector<std::optional<TypeId>>& value_types,
                     SourceRange range) {
@@ -848,6 +897,7 @@ class MirVerifier {
   const MirModule& mir_;
   const SemanticModel& semantics_;
   DiagnosticEngine& diagnostics_;
+  std::optional<FileId> current_file_;
   bool is_valid_{true};
 };
 

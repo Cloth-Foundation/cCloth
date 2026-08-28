@@ -658,6 +658,35 @@ void calls_members_and_assignment(TestContext& test) {
   }
 }
 
+void base_qualified_call_syntax(TestContext& test) {
+  const ParsedSource source{
+      "Derived.co",
+      "class : Base {\n"
+      "  override func Render(): string { return Base.Render(); }\n"
+      "}\n"};
+  test.expect(error_count(source) == 0,
+              "base-qualified call syntax should parse");
+
+  bool found = false;
+  for (const cloth::Expression& expression :
+       source.ast().storage.expressions()) {
+    const auto* call = std::get_if<cloth::CallExpression>(&expression.data);
+    if (call == nullptr) {
+      continue;
+    }
+    const auto* member = std::get_if<cloth::MemberAccessExpression>(
+        &source.ast().storage.expression(call->callee).data);
+    if (member == nullptr || member->member != "Render") {
+      continue;
+    }
+    const auto* qualifier = std::get_if<cloth::IdentifierExpression>(
+        &source.ast().storage.expression(member->object).data);
+    found = qualifier != nullptr && qualifier->name == "Base";
+  }
+  test.expect(found,
+              "base-qualified call lost its type and member expressions");
+}
+
 void meta_queries(TestContext& test) {
   const ParsedSource source{
       "Meta.co",
@@ -1031,6 +1060,7 @@ int main() {
       {"for iteration declarations", for_iteration_declarations},
       {"malformed for headers recover", malformed_for_headers_recover},
       {"calls, members, and assignment", calls_members_and_assignment},
+      {"base-qualified call syntax", base_qualified_call_syntax},
       {"meta queries", meta_queries},
       {"checked type expressions", checked_type_expressions},
       {"arrays", arrays},

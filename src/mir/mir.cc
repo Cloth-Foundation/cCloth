@@ -904,7 +904,11 @@ class BodyBuilder {
     std::optional<MirValueId> receiver;
     bool receiver_is_self = false;
     const HirExpression& callee = hir_.storage.expression(call.callee);
-    if (const auto* member = std::get_if<HirMemberExpression>(&callee.data)) {
+    if (call.is_base_qualified) {
+      kind = MirCallKind::kBaseQualified;
+      receiver_is_self = true;
+    } else if (const auto* member =
+                   std::get_if<HirMemberExpression>(&callee.data)) {
       const HirExpression& object = hir_.storage.expression(member->object);
       if (std::holds_alternative<HirTypeExpression>(object.data)) {
         kind = MirCallKind::kClassQualified;
@@ -945,7 +949,7 @@ class BodyBuilder {
     receiver_is_self = receiver_is_self || (kind == MirCallKind::kUnqualified &&
                                             !callable.is_static);
     const MirDispatchKind dispatch =
-        callable.virtual_slot &&
+        callable.virtual_slot && !call.is_base_qualified &&
                 !(suppress_self_virtual_dispatch_ && receiver_is_self)
             ? MirDispatchKind::kVirtual
             : MirDispatchKind::kDirect;

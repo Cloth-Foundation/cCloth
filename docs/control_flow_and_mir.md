@@ -103,14 +103,20 @@ evaluated. Postfix non-null assertion lowers to a dedicated checked MIR
 instruction and runtime guard before exposing the underlying reference type.
 
 Calls retain whether they were unqualified, file-class-qualified,
-instance-qualified, constructor allocation calls, or base-constructor
-initialization calls. This avoids choosing an implicit method calling
-convention before the ABI stage. Stage 16.5 additionally marks each call as
+instance-qualified, base-qualified, constructor allocation calls, or
+base-constructor initialization calls. This avoids choosing an implicit
+method calling convention before the ABI stage. Stage 16.5 additionally marks
+each call as
 direct or virtual. A virtual call retains the statically selected declaration
 and its stable slot; the backend chooses the runtime implementation through the
 receiver descriptor. MIR also records whether that receiver is `self`, allowing
 field initializers and constructors to suppress only dispatch on the object
 currently being initialized.
+
+Stage 16.6 base-qualified calls always carry direct dispatch, use implicit
+`self`, and retain the declaration selected through the direct-base view. The
+MIR verifier rejects a virtual base-qualified call or a symbol hidden by a
+nearer declaration set.
 
 Field initializers are lowered to independent MIR bodies that return the
 initialized value. The constructor marker tells the LLVM backend where to

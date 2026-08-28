@@ -83,6 +83,20 @@ class HirVerifier {
                      std::get_if<HirCallExpression>(&expression.data)) {
         verify_expression(call->callee, expression.range);
         verify_optional_symbol(call->callable, expression.range);
+        if (call->is_base_qualified) {
+          if (!call->callable) {
+            report(expression.range,
+                   "base-qualified call has no callable symbol");
+          } else if (call->callable->value < semantics_.symbols().size()) {
+            const SemanticSymbol& callable = semantics_.symbol(*call->callable);
+            if (callable.kind != SymbolKind::kFunction || callable.is_static ||
+                !callable.virtual_slot) {
+              report(expression.range,
+                     "base-qualified call does not target a virtual instance "
+                     "function");
+            }
+          }
+        }
         for (const HirExpressionId argument : call->arguments) {
           verify_expression(argument, expression.range);
         }

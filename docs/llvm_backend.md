@@ -140,6 +140,12 @@ the descriptor's virtual table, and indirectly call the selected slot. Direct
 calls remain for static and private functions and for calls on the object under
 construction from its field-initializer or constructor body. Calls on unrelated
 receivers inside those bodies remain virtual.
+
+Base-qualified calls use the same current receiver pointer but call the
+statically selected base ABI symbol directly. They perform no descriptor or
+virtual-slot load and do not adjust the pointer because the base object begins
+at byte zero.
+
 The array calls allocate typed element storage, query its fixed length, and
 perform null and bounds checked element addressing.
 `cloth_rt_require_receiver` returns for a non-null reference and traps through

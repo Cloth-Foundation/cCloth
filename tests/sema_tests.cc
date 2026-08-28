@@ -874,6 +874,88 @@ void virtual_override_contract(TestContext& test) {
               "private override was accepted");
 }
 
+void base_qualified_call_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Base.co",
+            "func Describe(): string { return \"base\"; }\n"
+            "func RootValue(): int32 { return 1; }\n");
+  valid.add("Middle.co",
+            "class : Base {\n"
+            "  override func Describe(): string { return \"middle\"; }\n"
+            "}\n");
+  valid.add("Derived.co",
+            "class : Middle {\n"
+            "  override func Describe(): string {\n"
+            "    return Middle.Describe() + \"-derived\";\n"
+            "  }\n"
+            "  func ReadRoot(): int32 { return Middle.RootValue(); }\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid base-qualified calls produced semantic errors");
+  test.expect(valid.result->is_valid,
+              "valid base-qualified calls were marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::SymbolId middle_describe =
+      semantics.file(cloth::FileId{1}).functions[0];
+  const cloth::SymbolId base_root_value =
+      semantics.file(cloth::FileId{0}).functions[1];
+  bool found_middle_call = false;
+  bool found_inherited_call = false;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    const auto* call = std::get_if<cloth::HirCallExpression>(&expression.data);
+    if (call == nullptr || !call->is_base_qualified || !call->callable) {
+      continue;
+    }
+    found_middle_call = found_middle_call || *call->callable == middle_describe;
+    found_inherited_call =
+        found_inherited_call || *call->callable == base_root_value;
+  }
+  test.expect(found_middle_call && found_inherited_call,
+              "HIR lost direct-base lookup or qualification metadata");
+
+  AnalyzedCompilation invalid;
+  invalid.add("Base.co",
+              "Base(string value) {}\n"
+              "func Describe(): string { return \"base\"; }\n");
+  invalid.add("Middle.co",
+              "class : Base {\n"
+              "  Middle(string value): Base(value) {}\n"
+              "  override func Describe(): string { return \"middle\"; }\n"
+              "}\n");
+  invalid.add("Derived.co",
+              "class : Middle {\n"
+              "  Derived(string value): Middle(Middle.Describe()) {}\n"
+              "  static func StaticBad(): string {\n"
+              "    return Middle.Describe();\n"
+              "  }\n"
+              "  func SkipBase(): string { return Base.Describe(); }\n"
+              "}\n");
+  invalid.add("Uninitialized.co",
+              "class : Middle {\n"
+              "  string Name;\n"
+              "  Uninitialized(string value): Middle(value) {\n"
+              "    Middle.Describe();\n"
+              "    Name = value;\n"
+              "  }\n"
+              "}\n");
+  invalid.analyze();
+
+  test.expect(
+      invalid.has_diagnostic("cannot appear in a base constructor initializer"),
+      "base-qualified call was accepted in a base initializer");
+  test.expect(invalid.has_diagnostic("unavailable in a static context"),
+              "base-qualified call was accepted in a static function");
+  test.expect(invalid.has_diagnostic(
+                  "base-qualified call must name direct base 'Middle'"),
+              "base-qualified call skipped the direct base");
+  test.expect(
+      invalid.has_diagnostic("cannot be called before non-null field 'Name'"),
+      "base-qualified call escaped a partially initialized self");
+}
+
 void invalid_inheritance_graph(TestContext& test) {
   AnalyzedCompilation self_cycle;
   self_cycle.add("Self.co", "class : Self {}\n");
@@ -1935,6 +2017,7 @@ int main() {
       {"constructor initialization", constructor_initialization},
       {"inherited members and subtyping", inherited_members_and_subtyping},
       {"virtual override contract", virtual_override_contract},
+      {"base-qualified call contract", base_qualified_call_contract},
       {"invalid inheritance graph", invalid_inheritance_graph},
       {"invalid package imports", invalid_package_imports},
       {"private member access", private_member_access},
