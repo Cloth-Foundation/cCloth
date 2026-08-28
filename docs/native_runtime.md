@@ -2,7 +2,11 @@
 
 Stage 6.0 turns a verified Cloth compilation into a native x86-64 executable.
 Stage 7.0 adds initial typed output, Stage 9.0 adds fixed-length arrays, and
-Stage 10.5 completes scalar output plus file-class object descriptors.
+Stage 10.5 completes scalar output, Stage 13.1 replaces name-only runtime
+descriptors with precise compiler-emitted file-class metadata, and Stage 13.2
+adds the thread-local precise-root stack. Stage 13.3 adds non-moving collection
+for file-class objects, Stage 13.4 extends it to strings and arrays, and Stage
+13.5 adds liveness-aware roots and monotonic collector diagnostics.
 
 ## Source contract
 
@@ -37,7 +41,14 @@ the receiver-free Cloth function directly.
 The static Cloth runtime exposes these C-linkage operation groups:
 
 ```text
-cloth_rt_alloc(size, alignment, type_name, type_name_size) -> reference
+cloth_rt_alloc(type_descriptor) -> reference
+cloth_rt_gc_push_frame(frame, root_slots, root_count)
+cloth_rt_gc_pop_frame(frame)
+cloth_rt_gc_collect()
+cloth_rt_gc_live_objects() -> uint64
+cloth_rt_gc_live_bytes() -> uint64
+cloth_rt_gc_collection_count() -> uint64
+cloth_rt_gc_peak_live_bytes() -> uint64
 cloth_rt_string_literal(data, size) -> String
 cloth_rt_array_alloc(length, element_size, element_alignment,
                      contains_references) -> array
@@ -54,12 +65,31 @@ cloth_rt_print_object(reference)
 cloth_rt_print_newline()
 ```
 
-Object allocation honors the verified ABI size and alignment and zeroes the
-storage. It interns the supplied qualified type name, stores the descriptor in
-the first object-header word, and clears the future collector-state word. A
-runtime string is currently an opaque byte pointer and length. Its
-representation is deliberately absent from generated LLVM IR so interning and
-garbage collection can replace the initial allocation strategy later.
+Object allocation validates the immutable descriptor, honors its verified ABI
+size and alignment, and zeroes the storage. It stores the descriptor address in
+the first object-header word and an opaque allocation-registry entry in the
+second. The descriptor also records object kind, qualified identity, and exact
+reference-field offsets. Runtime strings and arrays begin with the same managed
+header while remaining opaque to generated LLVM IR. A string retains immutable
+literal bytes and a length; its managed header is reclaimed independently of
+the program-lifetime literal storage.
+
+Root frames are stack-owned by generated callables and linked in thread-local
+LIFO order. Each registered entry is the address of a stack slot containing a
+managed reference. Push validates and links a frame without allocating; pop
+requires the active frame and clears it after unlinking. The collector consumes
+this internal stack during marking.
+
+Every managed allocation is an automatic collector safepoint. Marking uses an
+intrusive, non-allocating worklist, descriptor offsets for file classes, and
+pointer-element scans for reference arrays. Strings are leaves. Sweeping
+releases unmarked headers, array payloads, and registry entries. Cycles require
+no special case. Explicit collection and live object/byte counters support
+runtime tests and embedding diagnostics. The collector supports one Cloth
+mutator and does not scan roots belonging to concurrently executing threads.
+The diagnostics report current live objects/bytes, total completed collections,
+and peak managed bytes. They are C ABI facilities for tests and embedders, not
+Cloth source intrinsics.
 
 An array header records its fixed length, element size, payload address, and
 whether elements are references. Payload storage is zero-initialized and
@@ -90,8 +120,8 @@ LLVM IR emission but does not yet have a WebAssembly runtime or linker path.
 
 ## Deferred work
 
-The initial runtime intentionally has process-lifetime allocation. Garbage
-collection, deallocation, string interning, optimization levels, debug
-information, command-line arguments, exceptions, and platform packaging remain
-future stages. These features should extend the runtime and toolchain
-boundaries without changing the existing source contracts.
+Stage 13.5 completes the initial liveness-aware managed heap for file-class
+objects, strings, and arrays. String interning, root-slot reuse, optimization
+levels, debug information, command-line arguments, exceptions, and platform
+packaging remain future work. These features should extend the runtime and
+toolchain boundaries without changing existing source contracts.

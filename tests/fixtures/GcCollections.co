@@ -1,0 +1,19 @@
+int32 Value;
+
+GcCollections(int32 value) {
+  Value = value;
+}
+
+static func Main() {
+  String message = "managed";
+  GcCollections[] kept = [GcCollections(1), GcCollections(2)];
+
+  int32 value = 0;
+  while (value < 5000) {
+    GcCollections garbage = GcCollections(value);
+    value = value + 1;
+  }
+
+  println(message);
+  println(kept[0].Value + kept[1].Value);
+}

@@ -256,8 +256,23 @@ both reads and writes perform runtime null and bounds checks. `Length` is a
 public read-only `int32` member. Array equality compares reference identity.
 
 The array runtime stores element layout and whether elements contain references
-without exposing that representation to source or LLVM IR. This is the first
-collection boundary designed for a future tracing collector.
+without exposing that representation to source or LLVM IR. Reference arrays
+are traced element by element; primitive array payloads are not scanned.
+
+File-class descriptors are immutable compiler-emitted metadata. They retain the
+qualified type identity, verified object size and alignment, heap object kind,
+and every reference-field offset. This is an ABI and runtime contract only;
+roots, tracing, and reclamation have no source-language effect. Generated code
+registers reference-valued receivers, parameters, locals, and temporary values
+in a precise thread-local shadow stack. Root registration likewise does not
+change source semantics.
+
+The initial collector is single-mutator, stop-the-world, non-moving, and
+non-generational. Every managed allocation is an automatic safepoint. File
+classes, strings, and arrays share one managed registry; sweeping an array also
+releases its payload. Collection timing and heap thresholds are not observable
+language semantics; programs must not depend on object addresses, allocation
+order, or reclamation timing.
 
 ## Core output and native entry point
 

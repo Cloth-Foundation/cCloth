@@ -53,7 +53,19 @@ void print_abi_summary(const AbiModule& abi, const SemanticModel& semantics,
     const SemanticSymbol& class_symbol = semantics.symbol(file.symbol);
     output << "FileClass " << class_symbol.name << " [size " << file.layout.size
            << ", align " << file.layout.alignment << ", header "
-           << file.layout.header_size << "]\n";
+           << file.layout.header_size << ", references ";
+    if (file.type_descriptor.reference_offsets.empty()) {
+      output << "none";
+    } else {
+      for (std::size_t index = 0;
+           index < file.type_descriptor.reference_offsets.size(); ++index) {
+        if (index != 0) {
+          output << ',';
+        }
+        output << file.type_descriptor.reference_offsets[index];
+      }
+    }
+    output << "]\n";
     for (const MemberReference& member : file.member_order) {
       switch (member.kind) {
         case DeclarationKind::kField: {

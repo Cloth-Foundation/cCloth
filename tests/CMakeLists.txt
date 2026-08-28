@@ -11,6 +11,11 @@ target_compile_definitions(cloth_project_tests PRIVATE
 cloth_add_unit_test(cloth_sema_tests sema_tests.cc)
 cloth_add_unit_test(cloth_mir_tests mir_tests.cc)
 
+add_executable(cloth_runtime_tests runtime_tests.cc)
+target_link_libraries(cloth_runtime_tests PRIVATE cloth_runtime)
+cloth_enable_warnings(cloth_runtime_tests)
+add_test(NAME cloth_runtime_tests COMMAND cloth_runtime_tests)
+
 if(CLOTH_BUILD_FUZZERS)
     add_executable(cloth_lexer_parser_fuzzer lexer_parser_fuzzer.cc)
     target_link_libraries(cloth_lexer_parser_fuzzer PRIVATE cloth_compiler)
@@ -101,6 +106,18 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         OUTPUT "cloth null ergonomics"
         SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/NullErgonomics.co
         EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/null_ergonomics.txt
+        EXACT
+    )
+    cloth_add_native_output_test(gc_stress
+        OUTPUT "cloth gc stress"
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/GcStress.co
+        EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gc_stress.txt
+        EXACT
+    )
+    cloth_add_native_output_test(gc_collections
+        OUTPUT "cloth gc collections"
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/GcCollections.co
+        EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/gc_collections.txt
         EXACT
     )
     cloth_add_native_failure_test(null_assert_failure

@@ -38,12 +38,13 @@ available for mangling, layout, aligned loads and stores, and collector
 metadata. LLVM IR calls the runtime for allocation, length, and checked element
 addresses; generated code never reads an array header directly.
 
-## Runtime and future collection
+## Runtime and collection
 
-The initial runtime uses process-lifetime storage. Each allocation records the
-element size, alignment, length, and whether elements are references. That last
-property is deliberately present now so a tracing collector can discover array
-edges later without changing Cloth source or MIR semantics.
+Each managed array records its element size, length, aligned payload address,
+and whether elements are references. Primitive payloads are not scanned.
+Reference arrays use pointer-sized, pointer-aligned elements that the collector
+traces individually. Sweeping releases both the managed array header and its
+owned payload. This policy requires no change to Cloth source or MIR semantics.
 
 ## Deferred work
 

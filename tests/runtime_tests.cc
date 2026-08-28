@@ -1,0 +1,167 @@
+#include "cloth/runtime/runtime.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <iostream>
+#include <string_view>
+
+namespace {
+
+class TestContext {
+ public:
+  void expect(bool condition, std::string_view message) {
+    if (!condition) {
+      ++failures_;
+      std::cerr << message << '\n';
+    }
+  }
+
+  [[nodiscard]] int failures() const noexcept { return failures_; }
+
+ private:
+  int failures_{0};
+};
+
+struct TestNode {
+  const ClothTypeDescriptor* type;
+  void* runtime_state;
+  void* first;
+  void* second;
+};
+
+void store_reference(void* object, std::size_t offset, void* reference) {
+  std::memcpy(static_cast<std::byte*>(object) + offset, &reference,
+              sizeof(reference));
+}
+
+}  // namespace
+
+int main() {
+  TestContext test;
+  void* first = nullptr;
+  void* second = nullptr;
+  void** outer_roots[]{&first, &second};
+  void** inner_roots[]{&second};
+  ClothGcRootFrame outer{};
+  ClothGcRootFrame inner{};
+
+  cloth_rt_gc_push_frame(&outer, outer_roots, 2);
+  test.expect(outer.previous == nullptr && outer.roots == outer_roots &&
+                  outer.root_count == 2,
+              "outer GC root frame was not initialized");
+
+  cloth_rt_gc_push_frame(&inner, inner_roots, 1);
+  test.expect(inner.previous == &outer && inner.roots == inner_roots &&
+                  inner.root_count == 1,
+              "nested GC root frame did not link to its caller");
+
+  cloth_rt_gc_pop_frame(&inner);
+  test.expect(inner.previous == nullptr && inner.roots == nullptr &&
+                  inner.root_count == 0,
+              "popped GC root frame retained active metadata");
+
+  cloth_rt_gc_pop_frame(&outer);
+  test.expect(outer.previous == nullptr && outer.roots == nullptr &&
+                  outer.root_count == 0,
+              "outer GC root frame was not cleared");
+
+  constexpr std::uint64_t kReferenceOffsets[]{offsetof(TestNode, first),
+                                              offsetof(TestNode, second)};
+  constexpr std::string_view kNodeName = "TestNode";
+  const ClothTypeDescriptor node_type{
+      ClothHeapObjectKind::kFileClass,
+      kNodeName.data(),
+      kNodeName.size(),
+      sizeof(TestNode),
+      alignof(TestNode),
+      kReferenceOffsets,
+      2,
+  };
+
+  ClothGcRootFrame managed_frame{};
+  void* managed_root = nullptr;
+  void** managed_roots[]{&managed_root};
+  cloth_rt_gc_push_frame(&managed_frame, managed_roots, 1);
+
+  void* first_node = cloth_rt_alloc(&node_type);
+  managed_root = first_node;
+  void* second_node = cloth_rt_alloc(&node_type);
+  store_reference(first_node, offsetof(TestNode, first), second_node);
+  store_reference(second_node, offsetof(TestNode, second), first_node);
+
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 2 &&
+                  cloth_rt_gc_live_bytes() == 2 * sizeof(TestNode),
+              "marking did not preserve a rooted object cycle");
+
+  managed_root = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "sweeping did not reclaim an unreachable object cycle");
+  cloth_rt_gc_pop_frame(&managed_frame);
+
+  constexpr std::size_t kAutomaticAllocationCount = 10000;
+  const std::uint64_t automatic_collections_before =
+      cloth_rt_gc_collection_count();
+  for (std::size_t index = 0; index < kAutomaticAllocationCount; ++index) {
+    static_cast<void>(cloth_rt_alloc(&node_type));
+  }
+  test.expect(cloth_rt_gc_live_objects() < kAutomaticAllocationCount &&
+                  cloth_rt_gc_collection_count() > automatic_collections_before,
+              "managed allocation did not trigger a collection safepoint");
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "explicit collection left unreachable managed objects");
+
+  ClothGcRootFrame string_frame{};
+  void* string_root = nullptr;
+  void** string_roots[]{&string_root};
+  cloth_rt_gc_push_frame(&string_frame, string_roots, 1);
+  constexpr std::string_view kMessage = "managed";
+  string_root = cloth_rt_string_literal(kMessage.data(), kMessage.size());
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 1 && cloth_rt_gc_live_bytes() != 0,
+              "marking did not preserve a rooted String");
+  string_root = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "sweeping did not reclaim an unreachable String");
+  cloth_rt_gc_pop_frame(&string_frame);
+
+  ClothGcRootFrame array_frame{};
+  void* array_root = nullptr;
+  void** array_roots[]{&array_root};
+  cloth_rt_gc_push_frame(&array_frame, array_roots, 1);
+  array_root = cloth_rt_array_alloc(1, sizeof(void*), alignof(void*), 1);
+  void* array_node = cloth_rt_alloc(&node_type);
+  std::memcpy(cloth_rt_array_element(array_root, 0), &array_node,
+              sizeof(array_node));
+  store_reference(array_node, offsetof(TestNode, first), array_root);
+
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 2,
+              "array tracing did not preserve a cross-kind object cycle");
+  array_root = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "sweeping did not reclaim a cross-kind object cycle");
+  cloth_rt_gc_pop_frame(&array_frame);
+
+  const std::uint64_t peak_before = cloth_rt_gc_peak_live_bytes();
+  static_cast<void>(cloth_rt_alloc(&node_type));
+  test.expect(cloth_rt_gc_peak_live_bytes() >= peak_before &&
+                  cloth_rt_gc_peak_live_bytes() >= cloth_rt_gc_live_bytes(),
+              "peak managed bytes did not track live heap growth");
+  const std::uint64_t collections_before = cloth_rt_gc_collection_count();
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_collection_count() == collections_before + 1 &&
+                  cloth_rt_gc_live_objects() == 0,
+              "explicit collection diagnostics were not updated");
+
+  if (test.failures() == 0) {
+    std::cout << "6 tests passed\n";
+    return 0;
+  }
+  return 1;
+}

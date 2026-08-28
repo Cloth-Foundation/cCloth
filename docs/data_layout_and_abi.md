@@ -45,23 +45,29 @@ mangled names.
 ## File-class objects
 
 Every file-class object begins with two opaque, reference-sized runtime words.
-Stage 10.5 initializes the first with an opaque type descriptor and the second
-with null collector state. The descriptor carries the qualified file-class
-identity used by deterministic object output; generated LLVM still does not
-depend on its private runtime layout.
+The first points to immutable compiler-emitted type metadata. Stage 13.3 uses
+the second for an opaque managed-allocation registry entry. The descriptor
+carries the qualified file-class identity, complete object size and alignment,
+object kind, and the final ABI offset of every reference-valued instance field.
 
 Fields follow the header in source declaration order. Each field is aligned for
 its ABI type, padding is explicit in its recorded offset, and the complete
 object size is rounded to the largest required alignment. Empty file classes
 still contain the two-word header.
 
+Nullable references appear in descriptor reference-offset tables because their
+ABI representation is still a pointer. Primitive and static fields do not.
+Descriptor verification recomputes these tables from the final class layout.
+See [garbage_collection.md](garbage_collection.md) for the Stage 13.1 contract.
+
 Static fields are not object fields. Stage 12.2 records them in a separate ABI
 table and emits their literal value as constant global storage. Their `_C1S`
 name includes the qualified file class and field name. Static field linkage is
 still determined by capitalization.
 
-`String` remains an opaque runtime type and does not use file-class field
-layout.
+`String` and arrays remain opaque runtime types and do not use file-class field
+layout. Their private runtime representations begin with the same two-word
+managed header, but generated code accesses them only through runtime calls.
 
 ## Callable ABI
 

@@ -76,12 +76,15 @@ Generated modules declare the allocation, checking, and typed-output runtime
 boundary:
 
 ```llvm
-declare ptr @cloth_rt_alloc(i64, i64, ptr, i64)
+declare ptr @cloth_rt_alloc(ptr)
+declare void @cloth_rt_gc_push_frame(ptr, ptr, i64)
+declare void @cloth_rt_gc_pop_frame(ptr)
 declare ptr @cloth_rt_string_literal(ptr, i64)
 declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)
 declare i32 @cloth_rt_array_length(ptr)
 declare ptr @cloth_rt_array_element(ptr, i32)
 declare void @cloth_rt_require_receiver(ptr)
+declare void @cloth_rt_require_non_null(ptr)
 declare void @cloth_rt_print(ptr)
 declare void @cloth_rt_print_char(i32)
 declare void @cloth_rt_print_i8(i8)
@@ -99,8 +102,10 @@ declare void @cloth_rt_print_object(ptr)
 declare void @cloth_rt_print_newline()
 ```
 
-`cloth_rt_alloc` receives object size, alignment, and qualified type-name bytes.
-It returns zero-initialized storage with an active object descriptor or
+`cloth_rt_alloc` receives a pointer to immutable compiler-emitted type metadata.
+The descriptor supplies object kind, qualified name, verified size and
+alignment, and exact reference-field offsets. The runtime returns
+zero-initialized storage with that descriptor in its first header word or
 terminates through the runtime failure path.
 `cloth_rt_string_literal` constructs or interns an opaque Cloth string from
 immutable bytes.
@@ -111,8 +116,20 @@ the runtime null-reference path otherwise.
 The print functions cover all primitive ABI widths, file-class references, and
 line feeds. LLVM `i1` booleans are extended to the runtime ABI's `i8`.
 
-These declarations intentionally keep allocation, strings, traps, and future
-garbage-collector integration outside generated user functions.
+These declarations intentionally keep allocation, strings, traps, and
+collector mechanics outside generated user functions. Stage 13.1 emits
+descriptor globals. Stage 13.2 emits pointer-precise shadow-stack frames for
+receivers, constructor `self`, reference parameters and locals, and every
+reference-valued MIR result. Slots are initialized before registration and each
+reachable return unregisters its frame. Push and pop are not safepoints.
+
+Stage 13.5 performs backward reference liveness over the MIR CFG. It clears
+temporary and parameter/local root slots after their last use and clears values
+retained only by another predecessor when control flow joins. A collecting call
+sees all of its reference operands rooted; result roots are populated before
+any source root is cleared. The managed allocation calls are the only automatic
+safepoints. Runtime checks, output, array access, and shadow-stack maintenance
+do not collect.
 
 ## Verification and deferred work
 
@@ -123,7 +140,7 @@ and, when available, runs:
 opt -passes=verify -disable-output cloth-example.ll
 ```
 
-Stage 5.0 itself does not define optimization pipelines, debug information,
-exception handling, or collector safepoints. Stage 6.0 supplies the runtime
-definitions and external native object/link pipeline described in
-[native_runtime.md](native_runtime.md).
+Stage 5.0 itself does not define optimization pipelines, debug information, or
+exception handling. Stage 13 defines the collector safepoint and root-liveness
+contract. Stage 6.0 supplies the runtime definitions and external native
+object/link pipeline described in [native_runtime.md](native_runtime.md).

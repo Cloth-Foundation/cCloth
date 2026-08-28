@@ -1,4 +1,4 @@
-# Cloth compiler - Stage 12.3.5 null ergonomics
+# Cloth compiler - Stage 13.5 liveness-aware garbage collection
 
 This repository contains the deterministic Stage 12.3.5 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
@@ -11,11 +11,16 @@ source ranges.
 
 The project includes structured `while` and array `for` iteration, `break` and
 `continue` control flow, fixed-length mutable arrays with checked indexing, and
-a minimal native runtime for allocation, strings, null checks, object type
-descriptors, and typed `print` and `println` overloads. It intentionally
-contains no garbage collector, virtual machine, standard library, debugger, or
-external package registry. LLVM IR emission has no link-time dependency on LLVM
-libraries.
+a minimal native runtime for allocation, strings, null checks, precise object
+type metadata, and typed `print` and `println` overloads. Stage 13.1 emits exact
+reference-field layouts, and Stage 13.2 registers every managed stack reference
+in a precise thread-local shadow stack. Stage 13.3 introduces a single-mutator,
+non-moving mark-and-sweep collector. Stage 13.4 brings file-class objects,
+strings, arrays, and array payloads under that collector. Stage 13.5 clears
+reference roots after their last MIR use and exposes collection-count and
+peak-byte diagnostics for tests and embedders. The project contains no virtual
+machine, standard library, debugger, or external package registry. LLVM IR
+emission has no link-time dependency on LLVM libraries.
 
 ## Requirements
 
@@ -175,12 +180,17 @@ collisions, typed HIR, and deterministic diagnostics. MIR coverage
 includes branches, fallthrough joins, structured loop edges, short-circuit phi
 nodes, dead blocks, field initializers, array operations, iteration latches,
 explicit conversions, receivers, and verifier failures.
-ABI coverage includes primitive and reference layouts, class padding, both
-target widths, receiver slots, constructor returns, linkage, mangling, and
-verifier failures.
-Backend coverage includes arithmetic, short-circuit branches, phi values,
-objects, arrays, field initializers, receiver forms, constructors, typed output,
-and wasm32.
+ABI coverage includes primitive and reference layouts, class padding, precise
+descriptor reference maps, both target widths, receiver slots, constructor
+returns, linkage, mangling, and verifier failures. Backend coverage includes
+arithmetic, short-circuit branches, phi values, immutable descriptor globals,
+precise root frames, objects, arrays, field initializers, receiver forms,
+constructors, typed output, and wasm32. Runtime coverage checks nested LIFO root
+registration, rooted cycle preservation, cross-kind cycle reclamation, managed
+strings, managed reference arrays, and automatic allocation safepoints
+directly. Backend coverage checks linear and control-flow-sensitive dead-root
+clearing. Native stress fixtures preserve a 5,000-object chain and a string
+plus an object array across collections.
 When `opt` is available, CTest also verifies an emitted module with LLVM itself.
 When `llc` is available, CTest builds and executes the native examples and the
 multi-package project. Their output is compared exactly against golden files.
@@ -259,6 +269,7 @@ docs/void_and_callable_contracts.md Stage 11 void contract
 docs/final_bindings.md   Stage 12.1 single-assignment contract
 docs/static_members.md   Stage 12.2 static ownership and entry contract
 docs/nullability.md      Stage 12.3.5 nullable reference and operator contract
+docs/garbage_collection.md Stage 13.1-13.5 managed-heap contract
 .vscode/                Build, test, and debug integration
 ```
 
@@ -378,6 +389,32 @@ Stage 12.3.5 adds nullable presence conditions, safe reference-field access
 with `?.`, lazy null coalescing with `??`, and postfix non-null assertion with
 `!`. Assertions use an explicit runtime guard and trap on null; safe access and
 coalescing evaluate their left operand once and lower to short-circuit MIR.
+
+Stage 13.1 defines stable heap object kinds and emits one immutable descriptor
+per file class. Descriptors retain qualified identity, verified size and
+alignment, and exact reference-field offsets. The runtime validates and uses
+the descriptor for allocation.
+
+Stage 13.2 adds compiler-generated shadow-stack frames for receivers,
+constructor `self`, reference parameters and locals, and reference-valued MIR
+temporaries. Frames are thread-local and strictly LIFO, while reference-free
+callables pay no frame cost.
+
+Stage 13.3 registers file-class allocations, marks from those precise roots
+through descriptor reference offsets, and sweeps unreachable storage. The mark
+worklist is intrusive and non-recursive, cycles are reclaimed naturally, and
+allocation pressure supplies automatic safepoints.
+
+Stage 13.4 gives strings and arrays the same managed header and registry
+lifecycle. Strings are leaf objects. Reference arrays trace each element, and
+sweeping an array also releases its aligned payload. Cross-kind cycles are
+collected without changing source syntax, MIR, or the LLVM runtime calls.
+
+Stage 13.5 computes backward root liveness over MIR control flow. Reference
+temporaries and reference-valued parameter/local slots are cleared after their
+last use and on dead control-flow paths. The runtime also reports monotonic
+collection count and peak managed bytes for testing and embedding. See
+[docs/garbage_collection.md](docs/garbage_collection.md).
 
 ## Extending the lexer
 

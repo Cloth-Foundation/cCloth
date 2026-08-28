@@ -39,16 +39,18 @@ across supported hosts.
 ## Object metadata
 
 The first file-class header word points to an opaque runtime type descriptor.
-The second remains reserved for collector state and is initialized to null.
-Descriptors own the qualified file-class name and are interned by the runtime.
-Constructors initialize both words before field initializers or constructor
-statements run.
+The second stores opaque collector state owned exclusively by the runtime.
+Stage 13.1 descriptors are immutable compiler-emitted globals containing the
+qualified file-class name, verified object layout, object kind, and exact
+reference-field offsets. Stage 13.3 allocation initializes both header words
+before field initializers or constructor statements run.
 
 Default object output reads only the descriptor. It never exposes an address,
 field value, allocation order, or collector state. This keeps output stable if
 a future garbage collector moves objects.
 
 `String` and arrays remain opaque runtime reference types rather than
-file-class objects. Array rendering, user-defined string conversion,
+file-class objects, but Stage 13.4 gives them the common managed header and
+collector lifecycle. Array rendering, user-defined string conversion,
 interpolation, and type-checked formatting are deferred. Cloth does not expose
 C `printf` or an unchecked variadic formatting ABI.

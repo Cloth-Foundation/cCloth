@@ -48,6 +48,23 @@ struct AbiClassLayout {
                          const AbiClassLayout&) = default;
 };
 
+enum class AbiHeapObjectKind : std::uint64_t {
+  kFileClass = 0,
+  kString = 1,
+  kArray = 2,
+};
+
+struct AbiTypeDescriptor {
+  AbiHeapObjectKind kind;
+  std::string name;
+  std::uint64_t size;
+  std::uint64_t alignment;
+  std::vector<std::uint64_t> reference_offsets;
+
+  friend bool operator==(const AbiTypeDescriptor&,
+                         const AbiTypeDescriptor&) = default;
+};
+
 enum class AbiCallableKind {
   kFunction,
   kConstructor,
@@ -101,6 +118,7 @@ struct AbiFileClass {
   FileId file;
   SymbolId symbol;
   AbiClassLayout layout;
+  AbiTypeDescriptor type_descriptor;
   std::vector<AbiStaticField> static_fields;
   std::vector<AbiCallable> functions;
   std::vector<AbiCallable> constructors;

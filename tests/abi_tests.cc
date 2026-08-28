@@ -79,7 +79,8 @@ void x86_64_type_layout(TestContext& test) {
 
 void class_field_layout(TestContext& test) {
   const CompiledSource source{"byte Small;\nint64 Wide;\nString? Name;\n"};
-  const cloth::AbiClassLayout& layout = source.result->abi.files[0].layout;
+  const cloth::AbiFileClass& file = source.result->abi.files[0];
+  const cloth::AbiClassLayout& layout = file.layout;
 
   test.expect(layout.header_size == 16, "object header is not two words");
   test.expect(layout.size == 40 && layout.alignment == 8,
@@ -88,6 +89,14 @@ void class_field_layout(TestContext& test) {
                   layout.fields[1].offset == 24 &&
                   layout.fields[2].offset == 32,
               "fields were not laid out in declaration order");
+  test.expect(
+      file.type_descriptor.kind == cloth::AbiHeapObjectKind::kFileClass &&
+          file.type_descriptor.name == "Layout" &&
+          file.type_descriptor.size == layout.size &&
+          file.type_descriptor.alignment == layout.alignment &&
+          file.type_descriptor.reference_offsets ==
+              std::vector<std::uint64_t>{32},
+      "file-class descriptor lost its identity or reference layout");
 }
 
 void wasm32_layout(TestContext& test) {
@@ -104,6 +113,9 @@ void wasm32_layout(TestContext& test) {
                   layout.fields[1].offset == 16 &&
                   layout.fields[2].offset == 24,
               "wasm32 class layout is wrong");
+  test.expect(abi.files[0].type_descriptor.reference_offsets ==
+                  std::vector<std::uint64_t>{24},
+              "wasm32 descriptor has the wrong reference offset");
 }
 
 void callable_abi(TestContext& test) {
@@ -265,6 +277,19 @@ void verifier_rejects_layout_corruption(TestContext& test) {
               "ABI verifier accepted a misaligned field");
   test.expect(has_diagnostic(diagnostics, "class layout does not match"),
               "ABI verifier reported the wrong layout invariant");
+
+  broken = source.result->abi;
+  broken.files[0].type_descriptor.reference_offsets = {17};
+  cloth::DiagnosticEngine descriptor_diagnostics;
+  test.expect(
+      !cloth::verify_abi(broken, source.result->mir, source.result->semantics,
+                         descriptor_diagnostics),
+      "ABI verifier accepted invalid descriptor reference metadata");
+  test.expect(
+      has_diagnostic(descriptor_diagnostics,
+                     "type descriptor does not match") ||
+          has_diagnostic(descriptor_diagnostics, "invalid reference offset"),
+      "invalid descriptor produced the wrong diagnostic");
 
   broken = source.result->abi;
   const cloth::TypeId int64_type = *source.result->semantics.find_type("int64");

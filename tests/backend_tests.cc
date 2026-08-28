@@ -73,6 +73,16 @@ bool has_diagnostic(const cloth::DiagnosticEngine& diagnostics,
   return false;
 }
 
+std::size_t count_occurrences(std::string_view text, std::string_view pattern) {
+  std::size_t count = 0;
+  std::size_t offset = 0;
+  while ((offset = text.find(pattern, offset)) != std::string_view::npos) {
+    ++count;
+    offset += pattern.size();
+  }
+  return count;
+}
+
 void target_header(TestContext& test) {
   CompiledSources sources;
   sources.add("Empty.co", "");
@@ -83,9 +93,8 @@ void target_header(TestContext& test) {
               "LLVM target triple is missing");
   test.expect(sources.contains("target datalayout = "),
               "LLVM data layout is missing");
-  test.expect(
-      sources.contains("declare ptr @cloth_rt_alloc(i64, i64, ptr, i64)"),
-      "allocation runtime boundary is missing");
+  test.expect(sources.contains("declare ptr @cloth_rt_alloc(ptr)"),
+              "allocation runtime boundary is missing");
   test.expect(sources.contains("declare void @cloth_rt_print_i32(i32)"),
               "int32 print runtime boundary is missing");
   test.expect(sources.contains("declare void @cloth_rt_print_bool(i8)"),
@@ -124,12 +133,19 @@ void object_construction(TestContext& test) {
   test.expect(sources.llvm.has_value(), "object module failed to emit");
   test.expect(sources.contains("@.cloth.str.0 = private unnamed_addr constant"),
               "string literal global is missing");
+  test.expect(
+      sources.contains("@.cloth.type.references.0 = private unnamed_addr "
+                       "constant [1 x i64] [i64 16]") &&
+          sources.contains("@.cloth.type.0 = private constant { i64, ptr, "
+                           "i64, i64, i64, ptr, i64 } { i64 0, ptr "
+                           "@.cloth.str.0, i64 5, i64 32, i64 8, ptr "
+                           "@.cloth.type.references.0, i64 1 }"),
+      "file-class type descriptor metadata is missing");
   test.expect(sources.contains("define internal ptr @_C1I5_Model4_Name") &&
                   sources.contains("call ptr @_C1I5_Model4_Name(ptr %self)"),
               "field initializer was not composed with construction");
-  test.expect(sources.contains("call ptr @cloth_rt_alloc(i64 32, i64 8, ptr "
-                               "@.cloth.str.0, i64 5)"),
-              "constructor does not allocate its ABI object size");
+  test.expect(sources.contains("call ptr @cloth_rt_alloc(ptr @.cloth.type.0)"),
+              "constructor does not allocate through its type descriptor");
   test.expect(sources.contains("getelementptr i8, ptr %self, i64 16"),
               "field access does not use its verified ABI offset");
 }
@@ -232,6 +248,94 @@ void null_ergonomics(TestContext& test) {
               "non-null assertion did not emit its runtime guard");
 }
 
+void gc_root_frames(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Rooted.co",
+              "String Name;\n"
+              "Rooted(String name) { Name = name; }\n"
+              "func Choose(Rooted? value, bool keep): Rooted? {\n"
+              "  Rooted? local = value;\n"
+              "  if (keep) { return local; }\n"
+              "  return null;\n"
+              "}\n"
+              "static func Make(String name): Rooted {\n"
+              "  return Rooted(name);\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(), "GC root module failed to emit");
+  test.expect(
+      sources.contains("declare void @cloth_rt_gc_push_frame(ptr, ptr, i64)") &&
+          sources.contains("declare void @cloth_rt_gc_pop_frame(ptr)"),
+      "GC shadow-stack runtime boundary is missing");
+  test.expect(sources.contains("%gc.frame = alloca { ptr, ptr, i64 }") &&
+                  sources.contains("%gc.roots = alloca ["),
+              "GC root frame storage was not emitted");
+  test.expect(sources.contains("store ptr %receiver, ptr %gc.receiver") &&
+                  sources.contains("store ptr %self, ptr %gc.self") &&
+                  sources.contains("store ptr %v") &&
+                  sources.contains("ptr %gc.v"),
+              "receiver, constructor self, or temporary roots are missing");
+  test.expect(
+      sources.contains("call void @cloth_rt_gc_push_frame(ptr %gc.frame") &&
+          sources.contains("call void @cloth_rt_gc_pop_frame(ptr %gc.frame)\n"
+                           "  ret ptr"),
+      "GC root frames are not balanced around callable returns");
+  test.expect(count_occurrences(sources.llvm->text,
+                                "call void @cloth_rt_gc_push_frame(") == 3 &&
+                  count_occurrences(sources.llvm->text,
+                                    "call void @cloth_rt_gc_pop_frame(") == 4,
+              "GC root frames were not emitted once per call and return path");
+
+  CompiledSources scalar;
+  scalar.add("Scalar.co", "static func Value(): int32 { return 1; }\n");
+  scalar.compile();
+  test.expect(scalar.llvm.has_value() &&
+                  !scalar.contains("call void @cloth_rt_gc_push_frame("),
+              "reference-free callable emitted an empty GC root frame");
+
+  CompiledSources unreachable;
+  unreachable.add("Dead.co",
+                  "static func Maybe(): Dead? {\n"
+                  "  return null;\n"
+                  "  return null;\n"
+                  "}\n");
+  unreachable.compile();
+  test.expect(
+      unreachable.llvm.has_value() &&
+          count_occurrences(unreachable.llvm->text,
+                            "call void @cloth_rt_gc_push_frame(") == 1 &&
+          count_occurrences(unreachable.llvm->text,
+                            "call void @cloth_rt_gc_pop_frame(") == 1,
+      "unreachable return emitted an unbalanced GC frame pop");
+
+  CompiledSources liveness;
+  liveness.add("Lifetime.co",
+               "static func Observe(Lifetime value) {\n"
+               "  println(value);\n"
+               "}\n");
+  liveness.compile();
+  test.expect(liveness.llvm.has_value(), "GC liveness module failed to emit");
+  test.expect(liveness.contains("store ptr %v0, ptr %gc.v0, align 8\n"
+                                "  store ptr null, ptr %s"),
+              "last-use liveness did not clear a symbol root");
+  test.expect(liveness.contains("call void @cloth_rt_print_object(ptr %v0)") &&
+                  count_occurrences(liveness.llvm->text,
+                                    "store ptr null, ptr %gc.v0") == 2,
+              "last-use liveness did not clear a temporary root");
+
+  CompiledSources branch_liveness;
+  branch_liveness.add("BranchLifetime.co",
+                      "static func Observe(BranchLifetime value, bool keep) {\n"
+                      "  if (keep) { println(value); }\n"
+                      "}\n");
+  branch_liveness.compile();
+  test.expect(branch_liveness.llvm.has_value() &&
+                  count_occurrences(branch_liveness.llvm->text,
+                                    "store ptr null, ptr %s") >= 3,
+              "control-flow liveness did not clear a dead-path symbol root");
+}
+
 void wasm32_module(TestContext& test) {
   CompiledSources sources{cloth::TargetDataLayout::llvm_wasm32()};
   sources.add("Small.co",
@@ -250,9 +354,12 @@ void wasm32_module(TestContext& test) {
   test.expect(sources.llvm.has_value(), "wasm32 module failed to emit");
   test.expect(sources.contains("target triple = \"wasm32-unknown-unknown\""),
               "wasm32 triple is missing");
-  test.expect(sources.contains("call ptr @cloth_rt_alloc(i64 12, i64 4, ptr "
-                               "@.cloth.str.0, i64 5)"),
-              "wasm32 object size was not preserved");
+  test.expect(
+      sources.contains("@.cloth.type.0 = private constant { i64, ptr, i64, "
+                       "i64, i64, ptr, i64 } { i64 0, ptr @.cloth.str.0, "
+                       "i64 5, i64 12, i64 4, ptr null, i64 0 }") &&
+          sources.contains("call ptr @cloth_rt_alloc(ptr @.cloth.type.0)"),
+      "wasm32 object descriptor did not preserve its ABI layout");
   test.expect(sources.contains(" = phi i32 ") &&
                   sources.contains("call i32 @cloth_rt_array_length(ptr ") &&
                   sources.contains("call ptr @cloth_rt_array_element(ptr "),
@@ -389,6 +496,7 @@ int main() {
       {"call receivers", call_receivers},
       {"static members", static_members},
       {"null ergonomics", null_ergonomics},
+      {"GC root frames", gc_root_frames},
       {"wasm32 module", wasm32_module},
       {"print and native entry point", print_and_native_entry_point},
       {"rejects invalid native entry points",

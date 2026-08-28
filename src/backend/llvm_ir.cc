@@ -148,6 +148,93 @@ const MirInstruction* returned_instruction(const MirBody& body) {
   return nullptr;
 }
 
+std::vector<MirValueId> instruction_value_uses(
+    const MirInstruction& instruction) {
+  std::vector<MirValueId> uses;
+  if (const auto* declaration =
+          std::get_if<MirDeclareLocalInstruction>(&instruction.data)) {
+    if (declaration->initializer) {
+      uses.push_back(*declaration->initializer);
+    }
+  } else if (const auto* store =
+                 std::get_if<MirStoreSymbolInstruction>(&instruction.data)) {
+    uses.push_back(store->value);
+  } else if (const auto* load =
+                 std::get_if<MirLoadMemberInstruction>(&instruction.data)) {
+    uses.push_back(load->object);
+  } else if (const auto* store =
+                 std::get_if<MirStoreMemberInstruction>(&instruction.data)) {
+    uses.push_back(store->object);
+    uses.push_back(store->value);
+  } else if (const auto* array =
+                 std::get_if<MirArrayLiteralInstruction>(&instruction.data)) {
+    uses = array->elements;
+  } else if (const auto* load =
+                 std::get_if<MirArrayLoadInstruction>(&instruction.data)) {
+    uses.push_back(load->array);
+    uses.push_back(load->index);
+  } else if (const auto* store =
+                 std::get_if<MirArrayStoreInstruction>(&instruction.data)) {
+    uses.push_back(store->array);
+    uses.push_back(store->index);
+    uses.push_back(store->value);
+  } else if (const auto* length =
+                 std::get_if<MirArrayLengthInstruction>(&instruction.data)) {
+    uses.push_back(length->array);
+  } else if (const auto* unary =
+                 std::get_if<MirUnaryInstruction>(&instruction.data)) {
+    uses.push_back(unary->operand);
+  } else if (const auto* binary =
+                 std::get_if<MirBinaryInstruction>(&instruction.data)) {
+    uses.push_back(binary->left);
+    uses.push_back(binary->right);
+  } else if (const auto* conversion =
+                 std::get_if<MirConvertInstruction>(&instruction.data)) {
+    uses.push_back(conversion->value);
+  } else if (const auto* test =
+                 std::get_if<MirIsNonNullInstruction>(&instruction.data)) {
+    uses.push_back(test->value);
+  } else if (const auto* assertion =
+                 std::get_if<MirNullAssertInstruction>(&instruction.data)) {
+    uses.push_back(assertion->value);
+  } else if (const auto* call =
+                 std::get_if<MirCallInstruction>(&instruction.data)) {
+    if (call->receiver) {
+      uses.push_back(*call->receiver);
+    }
+    uses.insert(uses.end(), call->arguments.begin(), call->arguments.end());
+  }
+  return uses;
+}
+
+std::vector<MirValueId> terminator_value_uses(const MirTerminator& terminator) {
+  if (const auto* branch = std::get_if<MirBranchTerminator>(&terminator.data)) {
+    return {branch->condition};
+  }
+  if (const auto* returned = std::get_if<MirReturnTerminator>(&terminator.data);
+      returned != nullptr && returned->value) {
+    return {*returned->value};
+  }
+  return {};
+}
+
+std::vector<MirBlockId> terminator_successors(const MirTerminator& terminator) {
+  if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator.data)) {
+    return {jump->target};
+  }
+  if (const auto* branch = std::get_if<MirBranchTerminator>(&terminator.data)) {
+    return {branch->then_block, branch->else_block};
+  }
+  return {};
+}
+
+struct GcLiveSet {
+  std::vector<bool> values;
+  std::vector<bool> symbols;
+
+  friend bool operator==(const GcLiveSet&, const GcLiveSet&) = default;
+};
+
 std::string llvm_string_bytes(std::string_view value) {
   std::ostringstream output;
   output << std::uppercase << std::hex << std::setfill('0');
@@ -177,7 +264,17 @@ class BodyEmitter {
  private:
   void prepare_values();
   void collect_storage();
+  void collect_gc_roots();
+  void analyze_gc_liveness();
   void emit_prologue(std::ostringstream& output);
+  void emit_gc_value_root(const MirInstruction& instruction,
+                          std::ostringstream& output) const;
+  void emit_gc_block_entry_clears(std::size_t block,
+                                  std::ostringstream& output) const;
+  void emit_gc_dead_roots(std::size_t block, std::size_t instruction_index,
+                          const MirInstruction& instruction,
+                          std::ostringstream& output) const;
+  void emit_gc_epilogue(std::ostringstream& output) const;
   void emit_field_initializers(std::ostringstream& output);
   void emit_instruction(const MirInstruction& instruction,
                         std::ostringstream& output);
@@ -220,7 +317,7 @@ class BodyEmitter {
                  const MirCallInstruction& call, std::ostringstream& output);
   void emit_phi(const MirInstruction& instruction, const MirPhiInstruction& phi,
                 std::ostringstream& output);
-  void emit_terminator(const MirTerminator& terminator,
+  void emit_terminator(const MirTerminator& terminator, bool is_reachable,
                        std::ostringstream& output);
 
   [[nodiscard]] std::string value(MirValueId id) const;
@@ -229,6 +326,10 @@ class BodyEmitter {
       const MirInstruction& instruction) const;
   [[nodiscard]] std::string symbol_address(SymbolId symbol) const;
   [[nodiscard]] std::string argument_name(SymbolId symbol) const;
+  [[nodiscard]] std::string gc_value_address(MirValueId value) const;
+  [[nodiscard]] bool has_gc_symbol_root(SymbolId symbol) const noexcept;
+  [[nodiscard]] bool has_receiver_root() const noexcept;
+  [[nodiscard]] std::size_t gc_root_count() const noexcept;
   [[nodiscard]] std::string next_address();
 
   ModuleEmitter& module_;
@@ -241,6 +342,13 @@ class BodyEmitter {
   std::vector<std::string> values_;
   std::vector<TypeId> value_types_;
   std::vector<SymbolId> storage_symbols_;
+  std::vector<SymbolId> gc_symbol_roots_;
+  std::vector<bool> gc_value_roots_;
+  std::vector<GcLiveSet> gc_live_in_;
+  std::vector<GcLiveSet> gc_live_out_;
+  std::vector<GcLiveSet> gc_live_after_phis_;
+  std::vector<std::vector<GcLiveSet>> gc_live_after_instructions_;
+  std::size_t gc_value_root_count_{0};
   std::size_t address_count_{0};
 };
 
@@ -260,10 +368,10 @@ class ModuleEmitter {
       report(fallback_range(), "MIR and ABI file counts differ");
       return std::nullopt;
     }
-    type_name_globals_.resize(mir_.files.size());
+    type_descriptor_globals_.resize(mir_.files.size());
     for (const AbiFileClass& file : abi_.files) {
-      const std::string& name = semantics_.symbol(file.symbol).name;
-      type_name_globals_.at(file.file.value) = add_string_literal(name);
+      type_descriptor_globals_.at(file.file.value) =
+          add_type_descriptor(file.file, file.type_descriptor);
     }
     for (std::size_t index = 0; index < mir_.files.size(); ++index) {
       emit_file(mir_.files[index], abi_.files[index]);
@@ -280,7 +388,9 @@ class ModuleEmitter {
            << "source_filename = \"cloth\"\n"
            << "target datalayout = \"" << abi_.target.llvm_data_layout << "\"\n"
            << "target triple = \"" << abi_.target.target_name << "\"\n\n"
-           << "declare ptr @cloth_rt_alloc(i64, i64, ptr, i64)\n"
+           << "declare ptr @cloth_rt_alloc(ptr)\n"
+           << "declare void @cloth_rt_gc_push_frame(ptr, ptr, i64)\n"
+           << "declare void @cloth_rt_gc_pop_frame(ptr)\n"
            << "declare ptr @cloth_rt_string_literal(ptr, i64)\n"
            << "declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)\n"
            << "declare i32 @cloth_rt_array_length(ptr)\n"
@@ -345,6 +455,19 @@ class ModuleEmitter {
     return abi_.types.at(type.value).storage.alignment;
   }
 
+  [[nodiscard]] bool is_reference(TypeId type) const {
+    return type.value < abi_.types.size() &&
+           abi_.types[type.value].kind == AbiTypeKind::kReference;
+  }
+
+  [[nodiscard]] std::uint64_t pointer_alignment() const noexcept {
+    return abi_.target.pointer.alignment;
+  }
+
+  [[nodiscard]] std::uint64_t gc_frame_alignment() const noexcept {
+    return std::max(abi_.target.pointer.alignment, abi_.target.int64_alignment);
+  }
+
   [[nodiscard]] const AbiCallable* find_callable(SymbolId symbol) const {
     for (const AbiFileClass& file : abi_.files) {
       for (const AbiCallable& callable : file.functions) {
@@ -403,8 +526,44 @@ class ModuleEmitter {
     return name;
   }
 
-  [[nodiscard]] const std::string& type_name_global(FileId file) const {
-    return type_name_globals_.at(file.value);
+  std::string add_type_descriptor(FileId file,
+                                  const AbiTypeDescriptor& descriptor) {
+    const std::string name_global = add_string_literal(descriptor.name);
+    std::string references_global = "null";
+    if (!descriptor.reference_offsets.empty()) {
+      references_global =
+          "@.cloth.type.references." + std::to_string(file.value);
+      std::ostringstream references;
+      references << references_global << " = private unnamed_addr constant ["
+                 << descriptor.reference_offsets.size() << " x i64] [";
+      for (std::size_t index = 0; index < descriptor.reference_offsets.size();
+           ++index) {
+        if (index != 0) {
+          references << ", ";
+        }
+        references << "i64 " << descriptor.reference_offsets[index];
+      }
+      references << ']';
+      globals_.push_back(references.str());
+    }
+
+    const std::string descriptor_global =
+        "@.cloth.type." + std::to_string(file.value);
+    std::ostringstream global;
+    global << descriptor_global
+           << " = private constant { i64, ptr, i64, i64, i64, ptr, i64 } "
+              "{ i64 "
+           << static_cast<std::uint64_t>(descriptor.kind) << ", ptr "
+           << name_global << ", i64 " << descriptor.name.size() << ", i64 "
+           << descriptor.size << ", i64 " << descriptor.alignment << ", ptr "
+           << references_global << ", i64 "
+           << descriptor.reference_offsets.size() << " }";
+    globals_.push_back(global.str());
+    return descriptor_global;
+  }
+
+  [[nodiscard]] const std::string& type_descriptor_global(FileId file) const {
+    return type_descriptor_globals_.at(file.value);
   }
 
   void report(SourceRange range, std::string message) {
@@ -594,7 +753,7 @@ class ModuleEmitter {
   LlvmIrOptions options_;
   std::ostringstream definitions_;
   std::vector<std::string> globals_;
-  std::vector<std::string> type_name_globals_;
+  std::vector<std::string> type_descriptor_globals_;
   bool is_valid_{true};
 };
 
@@ -613,6 +772,8 @@ BodyEmitter::BodyEmitter(ModuleEmitter& module, const MirBody& body,
       value_types_(body.value_count, module.semantics().error_type()) {
   prepare_values();
   collect_storage();
+  collect_gc_roots();
+  analyze_gc_liveness();
 }
 
 std::string BodyEmitter::emit() {
@@ -630,11 +791,21 @@ std::string BodyEmitter::emit() {
       emit_prologue(output);
     }
     for (const MirInstruction& instruction : block.instructions) {
-      if (!std::holds_alternative<MirPhiInstruction>(instruction.data)) {
-        emit_instruction(instruction, output);
+      if (std::holds_alternative<MirPhiInstruction>(instruction.data)) {
+        emit_gc_value_root(instruction, output);
       }
     }
-    emit_terminator(block.terminator, output);
+    emit_gc_block_entry_clears(block_index, output);
+    for (std::size_t instruction_index = 0;
+         instruction_index < block.instructions.size(); ++instruction_index) {
+      const MirInstruction& instruction = block.instructions[instruction_index];
+      if (!std::holds_alternative<MirPhiInstruction>(instruction.data)) {
+        emit_instruction(instruction, output);
+        emit_gc_value_root(instruction, output);
+        emit_gc_dead_roots(block_index, instruction_index, instruction, output);
+      }
+    }
+    emit_terminator(block.terminator, block.is_reachable, output);
   }
   return output.str();
 }
@@ -676,12 +847,261 @@ void BodyEmitter::collect_storage() {
   }
 }
 
+void BodyEmitter::collect_gc_roots() {
+  const SemanticModel& semantics = module_.semantics();
+  for (const SymbolId symbol : storage_symbols_) {
+    if (module_.is_reference(semantics.symbol(symbol).type)) {
+      gc_symbol_roots_.push_back(symbol);
+    }
+  }
+
+  gc_value_roots_.resize(value_types_.size(), false);
+  for (const MirBasicBlock& block : body_.blocks) {
+    if (!block.is_reachable) {
+      continue;
+    }
+    for (const MirInstruction& instruction : block.instructions) {
+      if (instruction.result &&
+          instruction.result->value < gc_value_roots_.size() &&
+          !gc_value_roots_[instruction.result->value] &&
+          module_.is_reference(instruction.type)) {
+        gc_value_roots_[instruction.result->value] = true;
+        ++gc_value_root_count_;
+      }
+    }
+  }
+}
+
+void BodyEmitter::analyze_gc_liveness() {
+  const std::size_t block_count = body_.blocks.size();
+  const std::size_t value_count = gc_value_roots_.size();
+  const std::size_t symbol_count = module_.semantics().symbols().size();
+  const auto empty_set = [value_count, symbol_count] {
+    return GcLiveSet{std::vector<bool>(value_count, false),
+                     std::vector<bool>(symbol_count, false)};
+  };
+  const auto add_value = [this](GcLiveSet& set, MirValueId value) {
+    if (value.value < gc_value_roots_.size() && gc_value_roots_[value.value]) {
+      set.values[value.value] = true;
+    }
+  };
+  const auto add_symbol = [this](GcLiveSet& set, SymbolId symbol) {
+    if (has_gc_symbol_root(symbol)) {
+      set.symbols[symbol.value] = true;
+    }
+  };
+  const auto merge = [](GcLiveSet& destination, const GcLiveSet& source) {
+    for (std::size_t index = 0; index < destination.values.size(); ++index) {
+      destination.values[index] =
+          destination.values[index] || source.values[index];
+    }
+    for (std::size_t index = 0; index < destination.symbols.size(); ++index) {
+      destination.symbols[index] =
+          destination.symbols[index] || source.symbols[index];
+    }
+  };
+
+  std::vector<GcLiveSet> block_uses(block_count);
+  std::vector<GcLiveSet> block_definitions(block_count);
+  gc_live_out_.resize(block_count);
+  gc_live_in_.resize(block_count);
+  for (std::size_t block_index = 0; block_index < block_count; ++block_index) {
+    block_uses[block_index] = empty_set();
+    block_definitions[block_index] = empty_set();
+    gc_live_out_[block_index] = empty_set();
+    gc_live_in_[block_index] = empty_set();
+    const MirBasicBlock& block = body_.blocks[block_index];
+    if (!block.is_reachable) {
+      continue;
+    }
+    for (const MirInstruction& instruction : block.instructions) {
+      if (!std::holds_alternative<MirPhiInstruction>(instruction.data)) {
+        for (const MirValueId use : instruction_value_uses(instruction)) {
+          if (use.value < value_count && gc_value_roots_[use.value] &&
+              !block_definitions[block_index].values[use.value]) {
+            block_uses[block_index].values[use.value] = true;
+          }
+        }
+      }
+      if (const auto* load =
+              std::get_if<MirLoadSymbolInstruction>(&instruction.data);
+          load != nullptr && has_gc_symbol_root(load->symbol) &&
+          !block_definitions[block_index].symbols[load->symbol.value]) {
+        block_uses[block_index].symbols[load->symbol.value] = true;
+      }
+      if (const auto* declaration =
+              std::get_if<MirDeclareLocalInstruction>(&instruction.data);
+          declaration != nullptr && has_gc_symbol_root(declaration->symbol)) {
+        block_definitions[block_index].symbols[declaration->symbol.value] =
+            true;
+      } else if (const auto* store =
+                     std::get_if<MirStoreSymbolInstruction>(&instruction.data);
+                 store != nullptr && has_gc_symbol_root(store->symbol)) {
+        block_definitions[block_index].symbols[store->symbol.value] = true;
+      }
+      if (instruction.result &&
+          instruction.result->value < gc_value_roots_.size() &&
+          gc_value_roots_[instruction.result->value]) {
+        block_definitions[block_index].values[instruction.result->value] = true;
+      }
+    }
+    for (const MirValueId use : terminator_value_uses(block.terminator)) {
+      if (use.value < value_count && gc_value_roots_[use.value] &&
+          !block_definitions[block_index].values[use.value]) {
+        block_uses[block_index].values[use.value] = true;
+      }
+    }
+  }
+
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (std::size_t reverse_index = block_count; reverse_index > 0;
+         --reverse_index) {
+      const std::size_t block_index = reverse_index - 1;
+      const MirBasicBlock& block = body_.blocks[block_index];
+      if (!block.is_reachable) {
+        continue;
+      }
+      GcLiveSet next_out = empty_set();
+      for (const MirBlockId successor :
+           terminator_successors(block.terminator)) {
+        if (successor.value >= block_count ||
+            !body_.blocks[successor.value].is_reachable) {
+          continue;
+        }
+        merge(next_out, gc_live_in_[successor.value]);
+        for (const MirInstruction& instruction :
+             body_.blocks[successor.value].instructions) {
+          const auto* phi = std::get_if<MirPhiInstruction>(&instruction.data);
+          if (phi == nullptr) {
+            break;
+          }
+          for (const MirPhiIncoming& incoming : phi->incoming) {
+            if (incoming.predecessor.value == block_index) {
+              add_value(next_out, incoming.value);
+            }
+          }
+        }
+      }
+
+      GcLiveSet next_in = block_uses[block_index];
+      for (std::size_t index = 0; index < value_count; ++index) {
+        if (next_out.values[index] &&
+            !block_definitions[block_index].values[index]) {
+          next_in.values[index] = true;
+        }
+      }
+      for (std::size_t index = 0; index < symbol_count; ++index) {
+        if (next_out.symbols[index] &&
+            !block_definitions[block_index].symbols[index]) {
+          next_in.symbols[index] = true;
+        }
+      }
+      if (!(next_out == gc_live_out_[block_index]) ||
+          !(next_in == gc_live_in_[block_index])) {
+        gc_live_out_[block_index] = std::move(next_out);
+        gc_live_in_[block_index] = std::move(next_in);
+        changed = true;
+      }
+    }
+  }
+
+  gc_live_after_phis_.resize(block_count);
+  gc_live_after_instructions_.resize(block_count);
+  for (std::size_t block_index = 0; block_index < block_count; ++block_index) {
+    const MirBasicBlock& block = body_.blocks[block_index];
+    GcLiveSet live = gc_live_out_[block_index];
+    for (const MirValueId use : terminator_value_uses(block.terminator)) {
+      add_value(live, use);
+    }
+    auto& instruction_states = gc_live_after_instructions_[block_index];
+    instruction_states.resize(block.instructions.size());
+    for (std::size_t reverse_index = block.instructions.size();
+         reverse_index > 0; --reverse_index) {
+      const std::size_t instruction_index = reverse_index - 1;
+      const MirInstruction& instruction = block.instructions[instruction_index];
+      instruction_states[instruction_index] = live;
+      if (instruction.result &&
+          instruction.result->value < gc_value_roots_.size() &&
+          gc_value_roots_[instruction.result->value]) {
+        live.values[instruction.result->value] = false;
+      }
+      if (!std::holds_alternative<MirPhiInstruction>(instruction.data)) {
+        for (const MirValueId use : instruction_value_uses(instruction)) {
+          add_value(live, use);
+        }
+      }
+      if (const auto* declaration =
+              std::get_if<MirDeclareLocalInstruction>(&instruction.data);
+          declaration != nullptr && has_gc_symbol_root(declaration->symbol)) {
+        live.symbols[declaration->symbol.value] = false;
+      } else if (const auto* store =
+                     std::get_if<MirStoreSymbolInstruction>(&instruction.data);
+                 store != nullptr && has_gc_symbol_root(store->symbol)) {
+        live.symbols[store->symbol.value] = false;
+      }
+      if (const auto* load =
+              std::get_if<MirLoadSymbolInstruction>(&instruction.data);
+          load != nullptr) {
+        add_symbol(live, load->symbol);
+      }
+    }
+
+    std::size_t phi_count = 0;
+    while (phi_count < block.instructions.size() &&
+           std::holds_alternative<MirPhiInstruction>(
+               block.instructions[phi_count].data)) {
+      ++phi_count;
+    }
+    gc_live_after_phis_[block_index] = phi_count == 0
+                                           ? gc_live_in_[block_index]
+                                           : instruction_states[phi_count - 1];
+  }
+}
+
 void BodyEmitter::emit_prologue(std::ostringstream& output) {
   const SemanticModel& semantics = module_.semantics();
+  const std::uint64_t pointer_alignment = module_.pointer_alignment();
   for (const SymbolId symbol : storage_symbols_) {
     const TypeId type = semantics.symbol(symbol).type;
     output << "  " << symbol_address(symbol) << " = alloca "
            << module_.llvm_type(type) << ", align " << module_.alignment(type)
+           << '\n';
+  }
+  for (std::size_t index = 0; index < gc_value_roots_.size(); ++index) {
+    if (gc_value_roots_[index]) {
+      output << "  " << gc_value_address(MirValueId{index})
+             << " = alloca ptr, align " << pointer_alignment << '\n';
+    }
+  }
+  if (has_receiver_root()) {
+    output << "  %gc.receiver = alloca ptr, align " << pointer_alignment
+           << '\n';
+  }
+  if (is_constructor_) {
+    output << "  %gc.self = alloca ptr, align " << pointer_alignment << '\n';
+  }
+  const std::size_t root_count = gc_root_count();
+  if (root_count != 0) {
+    output << "  %gc.frame = alloca { ptr, ptr, i64 }, align "
+           << module_.gc_frame_alignment() << '\n'
+           << "  %gc.roots = alloca [" << root_count << " x ptr], align "
+           << pointer_alignment << '\n';
+  }
+
+  for (const SymbolId symbol : gc_symbol_roots_) {
+    output << "  store ptr null, ptr " << symbol_address(symbol) << ", align "
+           << pointer_alignment << '\n';
+  }
+  for (std::size_t index = 0; index < gc_value_roots_.size(); ++index) {
+    if (gc_value_roots_[index]) {
+      output << "  store ptr null, ptr " << gc_value_address(MirValueId{index})
+             << ", align " << pointer_alignment << '\n';
+    }
+  }
+  if (is_constructor_) {
+    output << "  store ptr null, ptr %gc.self, align " << pointer_alignment
            << '\n';
   }
   if (callable_ != nullptr) {
@@ -694,14 +1114,161 @@ void BodyEmitter::emit_prologue(std::ostringstream& output) {
       }
     }
   }
+  if (has_receiver_root()) {
+    output << "  store ptr " << receiver_ << ", ptr %gc.receiver, align "
+           << pointer_alignment << '\n';
+  }
+  if (root_count != 0) {
+    std::vector<std::string> root_slots;
+    root_slots.reserve(root_count);
+    if (has_receiver_root()) {
+      root_slots.emplace_back("%gc.receiver");
+    }
+    if (is_constructor_) {
+      root_slots.emplace_back("%gc.self");
+    }
+    for (const SymbolId symbol : gc_symbol_roots_) {
+      root_slots.push_back(symbol_address(symbol));
+    }
+    for (std::size_t index = 0; index < gc_value_roots_.size(); ++index) {
+      if (gc_value_roots_[index]) {
+        root_slots.push_back(gc_value_address(MirValueId{index}));
+      }
+    }
+    for (std::size_t index = 0; index < root_slots.size(); ++index) {
+      output << "  %gc.root." << index << " = getelementptr [" << root_count
+             << " x ptr], ptr %gc.roots, i64 0, i64 " << index << '\n'
+             << "  store ptr " << root_slots[index] << ", ptr %gc.root."
+             << index << ", align " << pointer_alignment << '\n';
+    }
+    output << "  call void @cloth_rt_gc_push_frame(ptr %gc.frame, ptr "
+              "%gc.roots, i64 "
+           << root_count << ")\n";
+  }
   if (is_constructor_) {
-    const std::string& type_name =
-        module_.semantics().symbol(file_.symbol).name;
-    output << "  %self = call ptr @cloth_rt_alloc(i64 " << file_.layout.size
-           << ", i64 " << file_.layout.alignment << ", ptr "
-           << module_.type_name_global(file_.file) << ", i64 "
-           << type_name.size() << ")\n";
+    output << "  %self = call ptr @cloth_rt_alloc(ptr "
+           << module_.type_descriptor_global(file_.file) << ")\n"
+           << "  store ptr %self, ptr %gc.self, align " << pointer_alignment
+           << '\n';
     emit_field_initializers(output);
+  }
+}
+
+void BodyEmitter::emit_gc_value_root(const MirInstruction& instruction,
+                                     std::ostringstream& output) const {
+  if (!instruction.result ||
+      instruction.result->value >= gc_value_roots_.size() ||
+      !gc_value_roots_[instruction.result->value]) {
+    return;
+  }
+  output << "  store ptr " << value(*instruction.result) << ", ptr "
+         << gc_value_address(*instruction.result) << ", align "
+         << module_.pointer_alignment() << '\n';
+}
+
+void BodyEmitter::emit_gc_block_entry_clears(std::size_t block,
+                                             std::ostringstream& output) const {
+  if (block >= gc_live_after_phis_.size()) {
+    return;
+  }
+  const GcLiveSet& live = gc_live_after_phis_[block];
+  GcLiveSet candidates{
+      std::vector<bool>(gc_value_roots_.size(), false),
+      std::vector<bool>(module_.semantics().symbols().size(), false)};
+  if (block == body_.entry.value && callable_ != nullptr) {
+    for (const AbiParameter& parameter : callable_->parameters) {
+      if (parameter.kind == AbiParameterKind::kExplicit &&
+          has_gc_symbol_root(parameter.symbol)) {
+        candidates.symbols[parameter.symbol.value] = true;
+      }
+    }
+  }
+  for (std::size_t predecessor = 0; predecessor < body_.blocks.size();
+       ++predecessor) {
+    for (const MirBlockId successor :
+         terminator_successors(body_.blocks[predecessor].terminator)) {
+      if (successor.value != block || predecessor >= gc_live_out_.size()) {
+        continue;
+      }
+      const GcLiveSet& predecessor_live = gc_live_out_[predecessor];
+      for (std::size_t index = 0; index < candidates.values.size(); ++index) {
+        candidates.values[index] =
+            candidates.values[index] || predecessor_live.values[index];
+      }
+      for (std::size_t index = 0; index < candidates.symbols.size(); ++index) {
+        candidates.symbols[index] =
+            candidates.symbols[index] || predecessor_live.symbols[index];
+      }
+    }
+  }
+  const std::uint64_t alignment = module_.pointer_alignment();
+  for (const SymbolId symbol : gc_symbol_roots_) {
+    if (candidates.symbols[symbol.value] && !live.symbols[symbol.value]) {
+      output << "  store ptr null, ptr " << symbol_address(symbol) << ", align "
+             << alignment << '\n';
+    }
+  }
+  for (std::size_t index = 0; index < gc_value_roots_.size(); ++index) {
+    if (candidates.values[index] && !live.values[index]) {
+      output << "  store ptr null, ptr " << gc_value_address(MirValueId{index})
+             << ", align " << alignment << '\n';
+    }
+  }
+}
+
+void BodyEmitter::emit_gc_dead_roots(std::size_t block,
+                                     std::size_t instruction_index,
+                                     const MirInstruction& instruction,
+                                     std::ostringstream& output) const {
+  if (block >= gc_live_after_instructions_.size() ||
+      instruction_index >= gc_live_after_instructions_[block].size()) {
+    return;
+  }
+  const GcLiveSet& live = gc_live_after_instructions_[block][instruction_index];
+  std::vector<bool> clear_values(gc_value_roots_.size(), false);
+  const auto request_value_clear = [this, &live,
+                                    &clear_values](MirValueId value) {
+    if (value.value < gc_value_roots_.size() && gc_value_roots_[value.value] &&
+        !live.values[value.value]) {
+      clear_values[value.value] = true;
+    }
+  };
+  for (const MirValueId use : instruction_value_uses(instruction)) {
+    request_value_clear(use);
+  }
+  if (instruction.result) {
+    request_value_clear(*instruction.result);
+  }
+
+  const std::uint64_t alignment = module_.pointer_alignment();
+  for (std::size_t index = 0; index < clear_values.size(); ++index) {
+    if (clear_values[index]) {
+      output << "  store ptr null, ptr " << gc_value_address(MirValueId{index})
+             << ", align " << alignment << '\n';
+    }
+  }
+
+  std::optional<SymbolId> touched_symbol;
+  if (const auto* load =
+          std::get_if<MirLoadSymbolInstruction>(&instruction.data)) {
+    touched_symbol = load->symbol;
+  } else if (const auto* declaration =
+                 std::get_if<MirDeclareLocalInstruction>(&instruction.data)) {
+    touched_symbol = declaration->symbol;
+  } else if (const auto* store =
+                 std::get_if<MirStoreSymbolInstruction>(&instruction.data)) {
+    touched_symbol = store->symbol;
+  }
+  if (touched_symbol && has_gc_symbol_root(*touched_symbol) &&
+      !live.symbols[touched_symbol->value]) {
+    output << "  store ptr null, ptr " << symbol_address(*touched_symbol)
+           << ", align " << alignment << '\n';
+  }
+}
+
+void BodyEmitter::emit_gc_epilogue(std::ostringstream& output) const {
+  if (gc_root_count() != 0) {
+    output << "  call void @cloth_rt_gc_pop_frame(ptr %gc.frame)\n";
   }
 }
 
@@ -1170,6 +1737,7 @@ void BodyEmitter::emit_phi(const MirInstruction& instruction,
 }
 
 void BodyEmitter::emit_terminator(const MirTerminator& terminator,
+                                  bool is_reachable,
                                   std::ostringstream& output) {
   if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator.data)) {
     output << "  br label %bb" << jump->target.value << '\n';
@@ -1180,6 +1748,9 @@ void BodyEmitter::emit_terminator(const MirTerminator& terminator,
            << branch->else_block.value << '\n';
   } else if (const auto* return_terminator =
                  std::get_if<MirReturnTerminator>(&terminator.data)) {
+    if (is_reachable) {
+      emit_gc_epilogue(output);
+    }
     if (is_constructor_) {
       output << "  ret ptr %self\n";
     } else if (return_terminator->value) {
@@ -1224,6 +1795,24 @@ std::string BodyEmitter::symbol_address(SymbolId symbol) const {
 
 std::string BodyEmitter::argument_name(SymbolId symbol) const {
   return "%arg" + std::to_string(symbol.value);
+}
+
+std::string BodyEmitter::gc_value_address(MirValueId value) const {
+  return "%gc.v" + std::to_string(value.value);
+}
+
+bool BodyEmitter::has_gc_symbol_root(SymbolId symbol) const noexcept {
+  return std::find(gc_symbol_roots_.begin(), gc_symbol_roots_.end(), symbol) !=
+         gc_symbol_roots_.end();
+}
+
+bool BodyEmitter::has_receiver_root() const noexcept {
+  return !is_constructor_ && receiver_ != "undef";
+}
+
+std::size_t BodyEmitter::gc_root_count() const noexcept {
+  return gc_symbol_roots_.size() + gc_value_root_count_ +
+         (has_receiver_root() ? 1U : 0U) + (is_constructor_ ? 1U : 0U);
 }
 
 std::string BodyEmitter::next_address() {

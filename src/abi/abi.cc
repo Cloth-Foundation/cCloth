@@ -174,6 +174,20 @@ AbiClassLayout lower_class_layout(const MirFileClass& file,
                         class_alignment, std::move(fields)};
 }
 
+AbiTypeDescriptor lower_type_descriptor(
+    const AbiClassLayout& layout, const SemanticSymbol& class_symbol,
+    const std::vector<AbiTypeLayout>& types) {
+  std::vector<std::uint64_t> reference_offsets;
+  for (const AbiFieldLayout& field : layout.fields) {
+    if (types.at(field.type.value).kind == AbiTypeKind::kReference) {
+      reference_offsets.push_back(field.offset);
+    }
+  }
+  return AbiTypeDescriptor{AbiHeapObjectKind::kFileClass, class_symbol.name,
+                           layout.size, layout.alignment,
+                           std::move(reference_offsets)};
+}
+
 AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
                            const FileSemantics& file,
                            const SemanticModel& semantics) {
@@ -250,14 +264,18 @@ AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
   abi.files.reserve(mir.files.size());
   for (const MirFileClass& mir_file : mir.files) {
     const FileSemantics& semantic_file = semantics.file(mir_file.file);
-    AbiFileClass file{
-        mir_file.file,
-        mir_file.symbol,
-        lower_class_layout(mir_file, semantics, abi.types, abi.target),
-        {},
-        {},
-        {},
-        mir_file.member_order};
+    AbiClassLayout layout =
+        lower_class_layout(mir_file, semantics, abi.types, abi.target);
+    AbiTypeDescriptor type_descriptor = lower_type_descriptor(
+        layout, semantics.symbol(mir_file.symbol), abi.types);
+    AbiFileClass file{mir_file.file,
+                      mir_file.symbol,
+                      std::move(layout),
+                      std::move(type_descriptor),
+                      {},
+                      {},
+                      {},
+                      mir_file.member_order};
     file.static_fields.reserve(mir_file.fields.size());
     for (const MirField& field : mir_file.fields) {
       const SemanticSymbol& symbol = semantics.symbol(field.symbol);

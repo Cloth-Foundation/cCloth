@@ -3,11 +3,42 @@
 
 #include <cstdint>
 
+enum class ClothHeapObjectKind : std::uint64_t {
+  kFileClass = 0,
+  kString = 1,
+  kArray = 2,
+};
+
+// Immutable compiler-emitted metadata. All offsets are object-relative bytes.
+struct ClothTypeDescriptor {
+  ClothHeapObjectKind kind;
+  const char* name;
+  std::uint64_t name_size;
+  std::uint64_t size;
+  std::uint64_t alignment;
+  const std::uint64_t* reference_offsets;
+  std::uint64_t reference_count;
+};
+
+// One frame in the per-thread precise-root stack. Roots point to pointer-sized
+// stack slots containing managed references.
+struct ClothGcRootFrame {
+  ClothGcRootFrame* previous;
+  void*** roots;
+  std::uint64_t root_count;
+};
+
 extern "C" {
 
-[[nodiscard]] void* cloth_rt_alloc(std::uint64_t size, std::uint64_t alignment,
-                                   const void* type_name,
-                                   std::uint64_t type_name_size) noexcept;
+[[nodiscard]] void* cloth_rt_alloc(const ClothTypeDescriptor* type) noexcept;
+void cloth_rt_gc_push_frame(ClothGcRootFrame* frame, void*** roots,
+                            std::uint64_t root_count) noexcept;
+void cloth_rt_gc_pop_frame(ClothGcRootFrame* frame) noexcept;
+void cloth_rt_gc_collect() noexcept;
+[[nodiscard]] std::uint64_t cloth_rt_gc_live_objects() noexcept;
+[[nodiscard]] std::uint64_t cloth_rt_gc_live_bytes() noexcept;
+[[nodiscard]] std::uint64_t cloth_rt_gc_collection_count() noexcept;
+[[nodiscard]] std::uint64_t cloth_rt_gc_peak_live_bytes() noexcept;
 [[nodiscard]] void* cloth_rt_string_literal(const void* data,
                                             std::uint64_t size) noexcept;
 [[nodiscard]] void* cloth_rt_array_alloc(

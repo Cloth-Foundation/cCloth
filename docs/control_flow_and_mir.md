@@ -95,6 +95,11 @@ Field initializers are lowered to independent MIR bodies that return the
 initialized value. The LLVM backend composes those bodies with constructor
 execution using the Stage 4 object layout; MIR does not assume that layout.
 
+MIR's explicit value types let the LLVM backend identify every reference-valued
+parameter, binding, and temporary without scanning native stack bytes. Stage
+13.2 uses that information to construct precise shadow-stack frames; root-frame
+operations do not appear in target-independent MIR.
+
 ## Deferred boundaries
 
 Stage 3.0 does not define object size or alignment, vtables, calling

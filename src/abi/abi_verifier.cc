@@ -83,6 +83,9 @@ class AbiVerifier {
     if (file.layout != expected.layout) {
       report(range, "class layout does not match its fields and target");
     }
+    if (file.type_descriptor != expected.type_descriptor) {
+      report(range, "type descriptor does not match its class layout");
+    }
     if (file.static_fields != expected.static_fields) {
       report(range, "static field ABI does not match semantics");
     }
@@ -90,9 +93,32 @@ class AbiVerifier {
       report(range, "member order does not match MIR");
     }
     verify_class_layout(file.layout, range);
+    verify_type_descriptor(file.type_descriptor, file.layout, range);
     verify_callables(file.functions, expected.functions, range, "function");
     verify_callables(file.constructors, expected.constructors, range,
                      "constructor");
+  }
+
+  void verify_type_descriptor(const AbiTypeDescriptor& descriptor,
+                              const AbiClassLayout& layout, SourceRange range) {
+    if (descriptor.kind != AbiHeapObjectKind::kFileClass ||
+        descriptor.name.empty() || descriptor.size != layout.size ||
+        descriptor.alignment != layout.alignment) {
+      report(range, "file-class type descriptor is invalid");
+    }
+    std::uint64_t previous_offset = 0;
+    bool has_previous_offset = false;
+    for (const std::uint64_t offset : descriptor.reference_offsets) {
+      if (offset < layout.header_size || offset > layout.size ||
+          abi_.target.pointer.size > layout.size - offset ||
+          offset % abi_.target.pointer.alignment != 0 ||
+          (has_previous_offset && offset <= previous_offset)) {
+        report(range, "type descriptor has an invalid reference offset");
+        return;
+      }
+      previous_offset = offset;
+      has_previous_offset = true;
+    }
   }
 
   void verify_class_layout(const AbiClassLayout& layout, SourceRange range) {
