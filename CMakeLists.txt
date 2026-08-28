@@ -143,7 +143,7 @@ add_library(cloth_compiler
     src/parser/parser.cc
     src/project/project_layout.cc
     src/sema/file_class_symbols.cc
-    src/sema/final_field_analysis.cc
+    src/sema/field_initialization_analysis.cc
     src/sema/semantic_analyzer.cc
     src/sema/semantic_model.cc
     src/sema/visibility.cc
@@ -442,6 +442,30 @@ if(BUILD_TESTING)
         )
 
         if(WIN32)
+            set(CLOTH_TEST_NULLABLE_FLOW_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth nullable flow.exe")
+        else()
+            set(CLOTH_TEST_NULLABLE_FLOW_EXECUTABLE
+                "${CMAKE_CURRENT_BINARY_DIR}/cloth nullable flow")
+        endif()
+        add_test(
+            NAME cloth_cli_build_nullable_flow
+            COMMAND clothc "--build=${CLOTH_TEST_NULLABLE_FLOW_EXECUTABLE}"
+                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/NullableFlow.co
+        )
+        add_test(
+            NAME cloth_nullable_flow
+            COMMAND ${CMAKE_COMMAND}
+                    "-DCLOTH_PROGRAM=${CLOTH_TEST_NULLABLE_FLOW_EXECUTABLE}"
+                    "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/nullable_flow.txt"
+                    -DCLOTH_EXACT_OUTPUT=ON
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_output.cmake
+        )
+        set_tests_properties(cloth_nullable_flow PROPERTIES
+            DEPENDS cloth_cli_build_nullable_flow
+        )
+
+        if(WIN32)
             set(CLOTH_TEST_FIZZBUZZ_EXECUTABLE
                 "${CMAKE_CURRENT_BINARY_DIR}/cloth fizzbuzz.exe")
         else()
@@ -628,28 +652,6 @@ if(BUILD_TESTING)
             DEPENDS cloth_cli_build_for_contract
         )
 
-        if(WIN32)
-            set(CLOTH_TEST_FOR_NULL_EXECUTABLE
-                "${CMAKE_CURRENT_BINARY_DIR}/cloth for null.exe")
-        else()
-            set(CLOTH_TEST_FOR_NULL_EXECUTABLE
-                "${CMAKE_CURRENT_BINARY_DIR}/cloth for null")
-        endif()
-        add_test(
-            NAME cloth_cli_build_for_null
-            COMMAND clothc "--build=${CLOTH_TEST_FOR_NULL_EXECUTABLE}"
-                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/ForNull.co
-        )
-        add_test(
-            NAME cloth_for_null
-            COMMAND ${CMAKE_COMMAND}
-                    "-DCLOTH_PROGRAM=${CLOTH_TEST_FOR_NULL_EXECUTABLE}"
-                    "-DCLOTH_EXPECTED_ERROR=null array"
-                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_program_failure.cmake
-        )
-        set_tests_properties(cloth_for_null PROPERTIES
-            DEPENDS cloth_cli_build_for_null
-        )
     endif()
     add_test(
         NAME cloth_cli_lexical_error
@@ -676,6 +678,12 @@ if(BUILD_TESTING)
         COMMAND clothc ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/FinalErrors.co
     )
     set_tests_properties(cloth_cli_final_error PROPERTIES WILL_FAIL TRUE)
+    add_test(
+        NAME cloth_cli_nullable_error
+        COMMAND clothc
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/NullableErrors.co
+    )
+    set_tests_properties(cloth_cli_nullable_error PROPERTIES WILL_FAIL TRUE)
 
     get_property(CLOTH_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
     set_tests_properties(${CLOTH_REGISTERED_TESTS} PROPERTIES
