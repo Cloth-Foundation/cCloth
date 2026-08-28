@@ -29,6 +29,7 @@ struct MemberSymbol {
   bool is_valid{true};
   bool is_final{false};
   bool is_static{false};
+  bool is_override{false};
 };
 
 class FileClassSymbols {

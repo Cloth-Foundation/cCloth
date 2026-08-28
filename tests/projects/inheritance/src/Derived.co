@@ -1,0 +1,21 @@
+class : Middle {
+  int32 DerivedMarker = Report(6);
+
+  Derived(): Middle(Argument()) {
+    println(7);
+  }
+
+  static func Argument(): int32 {
+    println(0);
+    return 1;
+  }
+
+  override func Report(int32 value): int32 {
+    println(value);
+    return value;
+  }
+
+  static func Main() {
+    Derived value = Derived();
+  }
+}

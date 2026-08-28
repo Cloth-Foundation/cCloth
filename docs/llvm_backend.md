@@ -59,16 +59,22 @@ zero.
 
 Instance functions receive the Stage 4 receiver slot followed by explicit
 parameters. Instance calls pass their receiver, and unqualified instance calls
-forward the current receiver. Static functions and constructor calls have no
-receiver argument; constructors return the allocated object reference.
+forward the current receiver. Static functions and public constructor calls
+have no receiver argument; constructors return the allocated object reference.
+A private constructor initializer instead receives the existing object as its
+leading `self` argument and returns `void`.
 
 Static scalar fields lower to constant LLVM globals using their verified ABI
 names. Loads address those globals directly; they never use an object offset.
 
 Each field initializer becomes an internal LLVM helper taking the new object as
-its receiver. Constructor entry points allocate the verified class size, invoke
-initializers in field declaration order, run the constructor MIR body, and
-return the object.
+its receiver. A public constructor entry allocates the verified most-derived
+class size, installs that class's descriptor, executes the constructor MIR, and
+returns the object. Every constructor also has an internal initializer entry
+that executes the same MIR on an incoming `self` without allocating. A derived
+constructor invokes the selected base initializer first; the MIR field marker
+then invokes only the derived class's local field helpers in declaration order
+before its body continues.
 
 ## Runtime boundary
 
@@ -111,8 +117,11 @@ declare void @cloth_rt_print_newline()
 ```
 
 `cloth_rt_alloc` receives a pointer to immutable compiler-emitted type metadata.
-The descriptor supplies object kind, qualified name, verified size and
-alignment, and exact reference-field offsets. The runtime returns
+The descriptor supplies object kind, a nullable direct-parent descriptor,
+qualified name, verified size and alignment, and exact reference-field
+offsets. Stage 16.2 derived descriptors contain the complete inherited and
+local reference map. Stage 16.5 descriptors also point to a constant array of
+function pointers with one entry per stable virtual slot. The runtime returns
 zero-initialized storage with that descriptor in its first header word or
 terminates through the runtime failure path.
 `cloth_rt_string_literal` constructs an opaque Cloth string over immutable
@@ -120,9 +129,17 @@ program-lifetime bytes. Concatenation returns a new managed string with owned
 bytes. Equality compares byte content, and meta-query calls expose cached scalar
 and byte lengths without revealing the runtime layout.
 Object widening is pointer-preserving. `::typeName` calls the runtime and
-returns a managed string. Exact file-class checks pass the compiler-emitted
-descriptor; string checks pass the stable heap-kind value. Safe `as T?`
-lowering selects the original pointer or null from the resulting predicate.
+returns a managed string. Stage 16.4 base widening is equally pointer-preserving
+because the base object is a byte-zero prefix. File-class checks pass the
+compiler-emitted target descriptor, and the runtime walks from the object's
+most-derived descriptor through its parent links. String checks pass the stable
+heap-kind value. Safe `as T?` lowering selects the original pointer or null from
+the resulting predicate.
+Virtual calls null-check the receiver, load its most-derived descriptor, load
+the descriptor's virtual table, and indirectly call the selected slot. Direct
+calls remain for static and private functions and for calls on the object under
+construction from its field-initializer or constructor body. Calls on unrelated
+receivers inside those bodies remain virtual.
 The array calls allocate typed element storage, query its fixed length, and
 perform null and bounds checked element addressing.
 `cloth_rt_require_receiver` returns for a non-null reference and traps through

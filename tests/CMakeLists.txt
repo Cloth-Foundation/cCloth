@@ -132,6 +132,18 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/object_model.txt
         EXACT
     )
+    cloth_add_native_output_test(inheritance_construction
+        OUTPUT "cloth inheritance construction"
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/projects/inheritance/src/Derived.co
+        EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/inheritance_construction.txt
+        EXACT
+    )
+    cloth_add_native_output_test(inheritance_behavior
+        OUTPUT "cloth inheritance behavior"
+        SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/projects/inheritance_behavior/src/Derived.co
+        EXPECTED ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/inheritance_behavior.txt
+        EXACT
+    )
     cloth_add_native_failure_test(null_assert_failure
         OUTPUT "cloth null assert failure"
         SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/NullAssertFailure.co
@@ -194,5 +206,7 @@ cloth_add_cli_failure_test(nullable_error
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/NullableErrors.co)
 cloth_add_cli_failure_test(object_model_error
     ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/ObjectModelErrors.co)
+cloth_add_cli_failure_test(inheritance_error
+    ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/InheritanceErrors.co)
 
 cloth_finalize_tests()

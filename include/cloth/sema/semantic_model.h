@@ -104,9 +104,13 @@ struct SemanticSymbol {
   SourceRange range;
   bool is_valid{true};
   std::vector<SymbolId> parameter_symbols{};
+  std::optional<SymbolId> base_constructor{};
   IntrinsicKind intrinsic{IntrinsicKind::kNone};
   bool is_final{false};
   bool is_static{false};
+  bool is_override{false};
+  std::optional<std::size_t> virtual_slot{};
+  std::optional<SymbolId> overridden_symbol{};
 };
 
 enum class ValueCategory {
@@ -135,6 +139,8 @@ struct FileSemantics {
   std::vector<ExpressionSemantics> expressions;
   std::vector<std::optional<SymbolId>> statement_symbols;
   bool is_valid{true};
+  std::optional<FileId> base_file{};
+  std::vector<SymbolId> virtual_functions{};
 };
 
 class SemanticModel {

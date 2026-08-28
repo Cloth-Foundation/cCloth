@@ -112,7 +112,9 @@ class SemanticAnalyzer {
   SemanticAnalysisResult run() {
     register_file_classes();
     register_imports();
+    register_base_classes();
     register_members();
+    validate_overrides();
     analyze_definitions();
     return SemanticAnalysisResult{std::move(model_),
                                   !diagnostics_.has_errors()};
@@ -308,6 +310,101 @@ class SemanticAnalyzer {
     bindings.push_back(VisibleFile{std::string{name}, target, kind, range});
   }
 
+  void register_base_classes() {
+    for (std::size_t index = 0; index < files_.size(); ++index) {
+      const FileId file_id{index};
+      const FileClassDecl& syntax = *files_[index];
+      if (!syntax.base_class) {
+        continue;
+      }
+
+      const TypeId base_type = resolve_type(*syntax.base_class, file_id);
+      if (base_type == model_.error_type()) {
+        continue;
+      }
+      const SemanticType& base = model_.type(base_type);
+      if (base.kind != TypeKind::kFileClass || !base.file) {
+        diagnostics_.error(
+            syntax.base_class->range,
+            "base type '" + base.name + "' must be a file class");
+        model_.mutable_file(file_id).is_valid = false;
+        continue;
+      }
+      if (*base.file == file_id) {
+        diagnostics_.error(syntax.base_class->range,
+                           "file class '" + syntax.qualified_name +
+                               "' cannot inherit from itself");
+        model_.mutable_file(file_id).is_valid = false;
+        continue;
+      }
+      model_.mutable_file(file_id).base_file = *base.file;
+    }
+    validate_inheritance_cycles();
+  }
+
+  void validate_inheritance_cycles() {
+    enum class VisitState {
+      kUnvisited,
+      kVisiting,
+      kComplete,
+    };
+
+    std::vector<VisitState> states(files_.size(), VisitState::kUnvisited);
+    std::vector<bool> hierarchy_invalid(files_.size(), false);
+    std::vector<FileId> path;
+    std::vector<FileId> order;
+    order.reserve(files_.size());
+    for (std::size_t index = 0; index < files_.size(); ++index) {
+      order.push_back(FileId{index});
+    }
+    std::ranges::sort(order, {}, [this](FileId file) {
+      return files_[file.value]->qualified_name;
+    });
+
+    for (const FileId root : order) {
+      if (states[root.value] != VisitState::kUnvisited) {
+        continue;
+      }
+      path.clear();
+      std::optional<FileId> current = root;
+      while (current && states[current->value] == VisitState::kUnvisited) {
+        states[current->value] = VisitState::kVisiting;
+        path.push_back(*current);
+        current = model_.file(*current).base_file;
+      }
+
+      if (current && states[current->value] == VisitState::kVisiting) {
+        const auto cycle_begin = std::find(path.begin(), path.end(), *current);
+        std::string message = "inheritance cycle detected: ";
+        for (auto member = cycle_begin; member != path.end(); ++member) {
+          if (member != cycle_begin) {
+            message += " -> ";
+          }
+          message += files_[member->value]->qualified_name;
+          hierarchy_invalid[member->value] = true;
+        }
+        message += " -> " + files_[current->value]->qualified_name;
+        const FileClassDecl& syntax = *files_[path.back().value];
+        diagnostics_.error(syntax.base_class->range, std::move(message));
+      }
+
+      for (auto member = path.rbegin(); member != path.rend(); ++member) {
+        const std::optional<FileId> base = model_.file(*member).base_file;
+        if (base && hierarchy_invalid[base->value]) {
+          hierarchy_invalid[member->value] = true;
+        }
+        states[member->value] = VisitState::kComplete;
+      }
+    }
+    for (std::size_t index = 0; index < hierarchy_invalid.size(); ++index) {
+      if (hierarchy_invalid[index]) {
+        FileSemantics& file = model_.mutable_file(FileId{index});
+        file.is_valid = false;
+        file.base_file.reset();
+      }
+    }
+  }
+
   void register_members() {
     for (std::size_t file_index = 0; file_index < files_.size(); ++file_index) {
       const FileId file_id{file_index};
@@ -367,12 +464,115 @@ class SemanticAnalyzer {
                        return_type, std::move(parameters), function.visibility,
                        file_id, function.range, valid});
     model_.mutable_symbol(symbol).is_static = function.is_static;
+    model_.mutable_symbol(symbol).is_override = function.is_override;
     if (function.name == "Main" && !function.is_static) {
       diagnostics_.error(function.range,
                          "entry point 'Main' must be declared static");
       model_.mutable_symbol(symbol).is_valid = false;
     }
     model_.mutable_file(file_id).functions.at(index) = symbol;
+  }
+
+  void validate_overrides() {
+    std::vector<bool> complete(files_.size(), false);
+    std::size_t remaining = files_.size();
+    while (remaining != 0) {
+      bool made_progress = false;
+      for (std::size_t index = 0; index < files_.size(); ++index) {
+        if (complete[index]) {
+          continue;
+        }
+        const FileId file_id{index};
+        const std::optional<FileId> base = model_.file(file_id).base_file;
+        if (base && !complete[base->value]) {
+          continue;
+        }
+        validate_file_overrides(file_id);
+        complete[index] = true;
+        --remaining;
+        made_progress = true;
+      }
+      if (!made_progress) {
+        break;
+      }
+    }
+  }
+
+  void validate_file_overrides(FileId file_id) {
+    FileSemantics& file = model_.mutable_file(file_id);
+    std::vector<SymbolId> virtual_functions;
+    if (file.base_file) {
+      virtual_functions = model_.file(*file.base_file).virtual_functions;
+    }
+
+    for (const SymbolId symbol_id : file.functions) {
+      SemanticSymbol& symbol = model_.mutable_symbol(symbol_id);
+      if (symbol.is_static || symbol.visibility == Visibility::kPrivate) {
+        if (symbol.is_override) {
+          diagnostics_.error(symbol.range,
+                             symbol.is_static
+                                 ? "static function '" + symbol.name +
+                                       "' cannot be declared override"
+                                 : "private function '" + symbol.name +
+                                       "' cannot be declared override");
+          symbol.is_valid = false;
+          file.is_valid = false;
+        }
+        continue;
+      }
+
+      std::optional<std::size_t> matching_slot;
+      for (std::size_t slot = 0; slot < virtual_functions.size(); ++slot) {
+        const SemanticSymbol& candidate =
+            model_.symbol(virtual_functions[slot]);
+        if (candidate.name == symbol.name &&
+            candidate.parameter_types == symbol.parameter_types) {
+          matching_slot = slot;
+          break;
+        }
+      }
+
+      if (!matching_slot) {
+        if (symbol.is_override) {
+          diagnostics_.error(symbol.range, "function '" + symbol.name +
+                                               "' does not override an "
+                                               "inherited function");
+          symbol.is_valid = false;
+          file.is_valid = false;
+        }
+        symbol.virtual_slot = virtual_functions.size();
+        virtual_functions.push_back(symbol_id);
+        continue;
+      }
+
+      const SemanticSymbol& inherited =
+          model_.symbol(virtual_functions[*matching_slot]);
+      if (symbol.type != inherited.type) {
+        diagnostics_.error(symbol.range, "override of '" + symbol.name +
+                                             "' returns '" +
+                                             type_name(symbol.type) +
+                                             "'; inherited function returns '" +
+                                             type_name(inherited.type) + "'");
+        diagnostics_.note(inherited.range,
+                          "inherited function is declared here");
+        symbol.is_valid = false;
+        file.is_valid = false;
+        continue;
+      }
+      if (!symbol.is_override) {
+        diagnostics_.error(symbol.range, "function '" + symbol.name +
+                                             "' overrides an inherited "
+                                             "function; add 'override'");
+        diagnostics_.note(inherited.range,
+                          "inherited function is declared here");
+        symbol.is_valid = false;
+        file.is_valid = false;
+      }
+      symbol.virtual_slot = *matching_slot;
+      symbol.overridden_symbol = virtual_functions[*matching_slot];
+      virtual_functions[*matching_slot] = symbol_id;
+    }
+    file.virtual_functions = std::move(virtual_functions);
   }
 
   void register_constructor(FileId file_id, std::size_t index) {
@@ -552,23 +752,26 @@ class SemanticAnalyzer {
         files_[current_file_.value]->functions.at(index);
     const SymbolId symbol = model_.file(current_file_).functions.at(index);
     analyze_callable(symbol, function.parameters, function.body,
-                     model_.symbol(symbol).type);
+                     model_.symbol(symbol).type, nullptr);
   }
 
   void analyze_constructor(std::size_t index) {
     const ConstructorDecl& constructor =
         files_[current_file_.value]->constructors.at(index);
     const SymbolId symbol = model_.file(current_file_).constructors.at(index);
-    analyze_callable(symbol, constructor.parameters, constructor.body,
-                     model_.void_type());
+    analyze_callable(
+        symbol, constructor.parameters, constructor.body, model_.void_type(),
+        constructor.initializer ? &*constructor.initializer : nullptr);
   }
 
   void analyze_callable(SymbolId callable_symbol,
                         std::span<const ParameterDecl> parameters, BlockId body,
-                        TypeId return_type) {
-    const SemanticSymbol& callable = model_.symbol(callable_symbol);
-    begin_root_scope(callable.kind == SymbolKind::kConstructor ||
-                     !callable.is_static);
+                        TypeId return_type,
+                        const ConstructorInitializer* initializer) {
+    const bool is_constructor =
+        model_.symbol(callable_symbol).kind == SymbolKind::kConstructor;
+    const bool is_static = model_.symbol(callable_symbol).is_static;
+    begin_root_scope(is_constructor || !is_static);
     const std::vector<TypeId> parameter_types =
         model_.symbol(callable_symbol).parameter_types;
     for (std::size_t index = 0; index < parameters.size(); ++index) {
@@ -591,12 +794,113 @@ class SemanticAnalyzer {
       bind_name(parameter.name, symbol, parameter.range);
     }
 
+    if (is_constructor) {
+      analyze_constructor_initializer(callable_symbol, initializer);
+    }
+
     expected_return_type_ = return_type;
     current_callable_kind_ = model_.symbol(callable_symbol).kind;
     static_cast<void>(analyze_block(body, false));
     current_callable_kind_.reset();
     expected_return_type_ = model_.void_type();
     end_root_scope();
+  }
+
+  void analyze_constructor_initializer(
+      SymbolId constructor_symbol, const ConstructorInitializer* initializer) {
+    const FileSemantics& file = model_.file(current_file_);
+    if (!file.base_file) {
+      if (initializer != nullptr) {
+        diagnostics_.error(initializer->range,
+                           "root class constructor cannot have a base "
+                           "initializer");
+      }
+      return;
+    }
+
+    const FileSemantics& base = model_.file(*file.base_file);
+    const std::string& base_name = model_.symbol(base.symbol).name;
+    if (initializer == nullptr) {
+      if (model_.symbol(constructor_symbol).is_valid) {
+        diagnostics_.error(model_.symbol(constructor_symbol).range,
+                           "constructor for derived class '" +
+                               model_.symbol(file.symbol).name +
+                               "' must initialize base '" + base_name + "'");
+      }
+      return;
+    }
+
+    const TypeId initialized_type =
+        resolve_type(initializer->base_type, current_file_);
+    if (initialized_type != base.type) {
+      diagnostics_.error(
+          initializer->base_type.range,
+          "constructor initializer must name direct base '" + base_name + "'");
+    }
+
+    std::vector<ExpressionState> arguments;
+    arguments.reserve(initializer->arguments.size());
+    bool has_error_argument = false;
+    analyzing_base_initializer_ = true;
+    for (const ExpressionId argument : initializer->arguments) {
+      ExpressionState value = analyze_expression(argument);
+      check_value(value, expression_range(argument));
+      has_error_argument =
+          has_error_argument || value.type == model_.error_type();
+      arguments.push_back(std::move(value));
+    }
+    analyzing_base_initializer_ = false;
+
+    if (initialized_type != base.type) {
+      return;
+    }
+    std::vector<SymbolId> matches;
+    std::vector<SymbolId> exact_matches;
+    for (const SymbolId candidate : base.constructors) {
+      const SemanticSymbol& symbol = model_.symbol(candidate);
+      if (!symbol.is_valid ||
+          symbol.parameter_types.size() != arguments.size()) {
+        continue;
+      }
+      bool matches_types = true;
+      bool matches_exactly = true;
+      for (std::size_t index = 0; index < arguments.size(); ++index) {
+        if (!is_assignable(symbol.parameter_types[index],
+                           arguments[index].type)) {
+          matches_types = false;
+          break;
+        }
+        matches_exactly = matches_exactly && symbol.parameter_types[index] ==
+                                                 arguments[index].type;
+      }
+      if (matches_types) {
+        matches.push_back(candidate);
+        if (matches_exactly) {
+          exact_matches.push_back(candidate);
+        }
+      }
+    }
+    if (!exact_matches.empty()) {
+      matches = std::move(exact_matches);
+    }
+    if (has_error_argument) {
+      return;
+    }
+    if (matches.empty()) {
+      diagnostics_.error(initializer->range,
+                         "no matching base constructor '" + base_name +
+                             "' for " + std::to_string(arguments.size()) +
+                             " argument(s)");
+      return;
+    }
+    if (matches.size() > 1) {
+      diagnostics_.error(initializer->range,
+                         "base constructor call is ambiguous between " +
+                             std::to_string(matches.size()) + " overloads");
+      return;
+    }
+    model_.mutable_symbol(constructor_symbol).base_constructor =
+        matches.front();
   }
 
   void begin_root_scope(bool include_self = true) {
@@ -953,6 +1257,11 @@ class SemanticAnalyzer {
                                      SourceRange range) {
     if (const std::optional<SymbolId> local = lookup_local(identifier.name)) {
       const SemanticSymbol& symbol = model_.symbol(*local);
+      if (analyzing_base_initializer_ && symbol.kind == SymbolKind::kSelf) {
+        diagnostics_.error(
+            range, "cannot use 'self' in a base constructor initializer");
+        return ExpressionState{model_.error_type()};
+      }
       const ValueCategory category = symbol.kind == SymbolKind::kSelf
                                          ? ValueCategory::kValue
                                          : ValueCategory::kMutableLocation;
@@ -961,10 +1270,15 @@ class SemanticAnalyzer {
     }
 
     std::vector<SymbolId> members =
-        find_members(current_file_, identifier.name, false);
+        find_members(current_file_, identifier.name);
     if (!members.empty()) {
       const SemanticSymbol& first = model_.symbol(members.front());
       if (first.kind == SymbolKind::kField) {
+        if (analyzing_base_initializer_ && !first.is_static) {
+          diagnostics_.error(range, "cannot use instance field '" + first.name +
+                                        "' in a base constructor initializer");
+          return ExpressionState{model_.error_type()};
+        }
         if (!first.is_static && !has_implicit_receiver_) {
           diagnostics_.error(range, "instance field '" + first.name +
                                         "' is unavailable in a static context");
@@ -977,6 +1291,13 @@ class SemanticAnalyzer {
                              ValueCategory::kCallable,
                              {},
                              std::move(members)};
+    }
+
+    if (has_inaccessible_member(current_file_, identifier.name)) {
+      diagnostics_.error(
+          range,
+          "inherited member '" + std::string{identifier.name} + "' is private");
+      return ExpressionState{model_.error_type()};
     }
 
     if (const std::optional<FileId> file =
@@ -1302,6 +1623,12 @@ class SemanticAnalyzer {
     }
     if (source == model_.null_type() || source_kind == TypeKind::kObject ||
         target_kind == TypeKind::kObject || source_base == target) {
+      return true;
+    }
+    if (source_kind == TypeKind::kFileClass &&
+        target_kind == TypeKind::kFileClass &&
+        (is_file_class_subtype(source_base, target) ||
+         is_file_class_subtype(target, source_base))) {
       return true;
     }
     diagnostics_.error(range, "types '" + type_name(source) + "' and '" +
@@ -1661,8 +1988,7 @@ class SemanticAnalyzer {
     }
 
     const FileId target_file = *object_type.file;
-    std::vector<SymbolId> members =
-        find_members(target_file, member.member, true);
+    std::vector<SymbolId> members = find_members(target_file, member.member);
     if (members.empty()) {
       if (has_inaccessible_member(target_file, member.member)) {
         diagnostics_.error(range, "member '" + std::string{member.member} +
@@ -1797,8 +2123,7 @@ class SemanticAnalyzer {
     }
 
     const FileId target_file = *object_type.file;
-    std::vector<SymbolId> members =
-        find_members(target_file, member.member, true);
+    std::vector<SymbolId> members = find_members(target_file, member.member);
     if (members.empty()) {
       if (has_inaccessible_member(target_file, member.member)) {
         diagnostics_.error(range, "member '" + std::string{member.member} +
@@ -2013,6 +2338,12 @@ class SemanticAnalyzer {
     }
     const auto* member = std::get_if<MemberAccessExpression>(&callee.data);
     if (member == nullptr) {
+      if (analyzing_base_initializer_ && !callable.is_static) {
+        diagnostics_.error(range, "cannot call instance function '" +
+                                      callable.name +
+                                      "' in a base constructor initializer");
+        return false;
+      }
       if (!callable.is_static && !has_implicit_receiver_) {
         diagnostics_.error(range, "instance function '" + callable.name +
                                       "' is unavailable in a static context");
@@ -2067,45 +2398,55 @@ class SemanticAnalyzer {
     return state;
   }
 
-  std::vector<SymbolId> find_members(FileId file_id, std::string_view name,
-                                     bool enforce_visibility) const {
+  std::vector<SymbolId> declared_members(FileId file_id,
+                                         std::string_view name) const {
     const FileSemantics& file = model_.file(file_id);
     std::vector<SymbolId> matches;
     for (const SymbolId symbol_id : file.fields) {
       const SemanticSymbol& symbol = model_.symbol(symbol_id);
-      if (symbol.name == name &&
-          (!enforce_visibility || file_id == current_file_ ||
-           symbol.visibility == Visibility::kPublic)) {
+      if (symbol.name == name) {
         matches.push_back(symbol_id);
       }
     }
     for (const SymbolId symbol_id : file.functions) {
       const SemanticSymbol& symbol = model_.symbol(symbol_id);
-      if (symbol.name == name &&
-          (!enforce_visibility || file_id == current_file_ ||
-           symbol.visibility == Visibility::kPublic)) {
+      if (symbol.name == name) {
         matches.push_back(symbol_id);
       }
     }
     return matches;
   }
 
+  std::vector<SymbolId> find_members(FileId file_id,
+                                     std::string_view name) const {
+    std::optional<FileId> owner = file_id;
+    for (std::size_t depth = 0; owner && depth < files_.size(); ++depth) {
+      std::vector<SymbolId> matches = declared_members(*owner, name);
+      if (!matches.empty()) {
+        std::erase_if(matches, [this, owner](SymbolId symbol_id) {
+          const SemanticSymbol& symbol = model_.symbol(symbol_id);
+          return *owner != current_file_ &&
+                 symbol.visibility == Visibility::kPrivate;
+        });
+        return matches;
+      }
+      owner = model_.file(*owner).base_file;
+    }
+    return {};
+  }
+
   bool has_inaccessible_member(FileId file_id, std::string_view name) const {
-    if (file_id == current_file_) {
-      return false;
-    }
-    const FileSemantics& file = model_.file(file_id);
-    for (const SymbolId symbol_id : file.fields) {
-      const SemanticSymbol& symbol = model_.symbol(symbol_id);
-      if (symbol.name == name && symbol.visibility == Visibility::kPrivate) {
-        return true;
+    std::optional<FileId> owner = file_id;
+    for (std::size_t depth = 0; owner && depth < files_.size(); ++depth) {
+      const std::vector<SymbolId> matches = declared_members(*owner, name);
+      if (!matches.empty()) {
+        return *owner != current_file_ &&
+               std::ranges::any_of(matches, [this](SymbolId symbol_id) {
+                 return model_.symbol(symbol_id).visibility ==
+                        Visibility::kPrivate;
+               });
       }
-    }
-    for (const SymbolId symbol_id : file.functions) {
-      const SemanticSymbol& symbol = model_.symbol(symbol_id);
-      if (symbol.name == name && symbol.visibility == Visibility::kPrivate) {
-        return true;
-      }
+      owner = model_.file(*owner).base_file;
     }
     return false;
   }
@@ -2213,6 +2554,11 @@ class SemanticAnalyzer {
     }
     const SemanticType& expected_type = model_.type(expected);
     const SemanticType& actual_type = model_.type(actual);
+    if (expected_type.kind == TypeKind::kFileClass &&
+        actual_type.kind == TypeKind::kFileClass &&
+        is_file_class_subtype(actual, expected)) {
+      return true;
+    }
     if (expected_type.kind == TypeKind::kObject) {
       return actual_type.kind == TypeKind::kString ||
              actual_type.kind == TypeKind::kFileClass ||
@@ -2230,6 +2576,26 @@ class SemanticAnalyzer {
            actual_type.element_type &&
            is_assignable(*expected_type.element_type,
                          *actual_type.element_type);
+  }
+
+  bool is_file_class_subtype(TypeId subtype, TypeId supertype) const {
+    if (subtype == supertype) {
+      return true;
+    }
+    const SemanticType& subtype_info = model_.type(subtype);
+    const SemanticType& supertype_info = model_.type(supertype);
+    if (subtype_info.kind != TypeKind::kFileClass || !subtype_info.file ||
+        supertype_info.kind != TypeKind::kFileClass || !supertype_info.file) {
+      return false;
+    }
+    std::optional<FileId> current = model_.file(*subtype_info.file).base_file;
+    for (std::size_t depth = 0; current && depth < files_.size(); ++depth) {
+      if (*current == *supertype_info.file) {
+        return true;
+      }
+      current = model_.file(*current).base_file;
+    }
+    return false;
   }
 
   bool is_reference(TypeId type) const {
@@ -2286,6 +2652,7 @@ class SemanticAnalyzer {
   NonNullSet active_non_null_;
   std::optional<std::size_t> current_scope_;
   bool has_implicit_receiver_{false};
+  bool analyzing_base_initializer_{false};
   std::size_t loop_depth_{0};
 };
 

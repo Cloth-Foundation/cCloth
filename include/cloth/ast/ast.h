@@ -257,12 +257,21 @@ struct FunctionDecl {
   SourceRange range;
   bool is_valid{true};
   bool is_static{false};
+  bool is_override{false};
+};
+
+struct ConstructorInitializer {
+  TypeSyntax base_type;
+  std::vector<ExpressionId> arguments;
+  SourceRange range;
+  bool is_valid{true};
 };
 
 struct ConstructorDecl {
   std::string_view name;
   Visibility visibility;
   std::vector<ParameterDecl> parameters;
+  std::optional<ConstructorInitializer> initializer;
   BlockId body;
   SourceRange range;
   bool is_valid{true};
@@ -311,6 +320,8 @@ struct FileClassDecl {
   std::vector<ConstructorDecl> constructors;
   std::vector<MemberReference> member_order;
   bool is_valid{true};
+  std::optional<TypeSyntax> base_class{};
+  bool has_explicit_class_declaration{false};
 };
 
 [[nodiscard]] std::string_view declaration_kind_name(

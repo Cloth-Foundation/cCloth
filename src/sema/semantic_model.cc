@@ -119,6 +119,7 @@ void SemanticModel::add_intrinsic(std::string name,
       point_range(core_location),
       true,
       {},
+      {},
       intrinsic,
   }));
 }

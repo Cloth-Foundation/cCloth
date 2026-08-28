@@ -38,13 +38,16 @@ ParseResult Parser::parse() {
 
   DeclarationPassResult declarations =
       DeclarationPass{source_, tokens_, diagnostics_}.run();
-  FileClassDecl file_class = DefinitionPass{source_,
-                                            tokens_,
-                                            declarations.symbols,
-                                            declarations.imports,
-                                            declarations.outlines,
-                                            diagnostics_}
-                                 .run();
+  FileClassDecl file_class =
+      DefinitionPass{source_,
+                     tokens_,
+                     declarations.symbols,
+                     declarations.imports,
+                     declarations.outlines,
+                     declarations.base_class,
+                     declarations.has_explicit_class_declaration,
+                     diagnostics_}
+          .run();
   file_class.is_valid = file_class.is_valid && declarations.is_valid;
   const bool is_valid = file_class.is_valid && !diagnostics_.has_errors();
   return ParseResult{std::move(file_class), std::move(declarations.symbols),

@@ -29,7 +29,12 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
     const SemanticSymbol& class_symbol = semantics.symbol(file.symbol);
     output << "FileClass " << class_symbol.name << " : "
            << semantics.type(class_symbol.type).name << " ["
-           << visibility_name(class_symbol.visibility) << "]\n";
+           << visibility_name(class_symbol.visibility);
+    if (file.base_file) {
+      output << ", base "
+             << semantics.symbol(semantics.file(*file.base_file).symbol).name;
+    }
+    output << "]\n";
     for (const MemberReference& reference : file.member_order) {
       switch (reference.kind) {
         case DeclarationKind::kField: {
@@ -56,6 +61,12 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
           if (symbol.is_static) {
             output << ", static";
           }
+          if (symbol.is_override) {
+            output << ", override";
+          }
+          if (symbol.virtual_slot) {
+            output << ", virtual slot " << *symbol.virtual_slot;
+          }
           output << "]\n";
           break;
         }
@@ -64,6 +75,15 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
               semantics.symbol(file.constructors.at(reference.index).symbol);
           output << "|- Constructor " << symbol.name;
           print_parameters(symbol, semantics, output);
+          const HirCallable& constructor =
+              file.constructors.at(reference.index);
+          if (constructor.initializer) {
+            output
+                << " : "
+                << semantics.symbol(constructor.initializer->constructor).name
+                << '(' << constructor.initializer->arguments.size()
+                << " argument(s))";
+          }
           output << " -> " << semantics.type(symbol.type).name << " ["
                  << visibility_name(symbol.visibility) << "]\n";
           break;

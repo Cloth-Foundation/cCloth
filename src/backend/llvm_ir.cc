@@ -234,7 +234,7 @@ class BodyEmitter {
   BodyEmitter(ModuleEmitter& module, const MirBody& body,
               const AbiFileClass& file, TypeId return_type,
               std::string receiver, bool is_constructor,
-              const AbiCallable* callable);
+              bool allocates_constructor, const AbiCallable* callable);
 
   [[nodiscard]] std::string emit();
 
@@ -331,6 +331,7 @@ class BodyEmitter {
   TypeId return_type_;
   std::string receiver_;
   bool is_constructor_;
+  bool allocates_constructor_;
   const AbiCallable* callable_;
   std::vector<std::string> values_;
   std::vector<TypeId> value_types_;
@@ -362,9 +363,13 @@ class ModuleEmitter {
       return std::nullopt;
     }
     type_descriptor_globals_.resize(mir_.files.size());
+    for (std::size_t index = 0; index < type_descriptor_globals_.size();
+         ++index) {
+      type_descriptor_globals_[index] =
+          type_descriptor_global_name(FileId{index});
+    }
     for (const AbiFileClass& file : abi_.files) {
-      type_descriptor_globals_.at(file.file.value) =
-          add_type_descriptor(file.file, file.type_descriptor);
+      add_type_descriptor(file.file, file.type_descriptor);
     }
     for (std::size_t index = 0; index < mir_.files.size(); ++index) {
       emit_file(mir_.files[index], abi_.files[index]);
@@ -548,23 +553,56 @@ class ModuleEmitter {
       globals_.push_back(references.str());
     }
 
-    const std::string descriptor_global =
-        "@.cloth.type." + std::to_string(file.value);
+    std::string virtuals_global = "null";
+    if (!descriptor.virtual_functions.empty()) {
+      virtuals_global = "@.cloth.type.virtuals." + std::to_string(file.value);
+      std::ostringstream virtuals;
+      virtuals << virtuals_global << " = private constant ["
+               << descriptor.virtual_functions.size() << " x ptr] [";
+      for (std::size_t index = 0; index < descriptor.virtual_functions.size();
+           ++index) {
+        if (index != 0) {
+          virtuals << ", ";
+        }
+        const AbiCallable* callable =
+            find_callable(descriptor.virtual_functions[index]);
+        if (callable == nullptr) {
+          report(semantics_.symbol(descriptor.virtual_functions[index]).range,
+                 "virtual function has no ABI declaration");
+          virtuals << "ptr null";
+        } else {
+          virtuals << "ptr @" << callable->mangled_name;
+        }
+      }
+      virtuals << ']';
+      globals_.push_back(virtuals.str());
+    }
+
+    const std::string descriptor_global = type_descriptor_global_name(file);
+    const std::string parent_global =
+        descriptor.parent_file
+            ? type_descriptor_global_name(*descriptor.parent_file)
+            : "null";
     std::ostringstream global;
     global << descriptor_global
-           << " = private constant { i64, ptr, i64, i64, i64, ptr, i64 } "
-              "{ i64 "
+           << " = private constant { i64, ptr, ptr, i64, i64, i64, ptr, i64, "
+              "ptr, i64 } { i64 "
            << static_cast<std::uint64_t>(descriptor.kind) << ", ptr "
-           << name_global << ", i64 " << descriptor.name.size() << ", i64 "
-           << descriptor.size << ", i64 " << descriptor.alignment << ", ptr "
-           << references_global << ", i64 "
-           << descriptor.reference_offsets.size() << " }";
+           << parent_global << ", ptr " << name_global << ", i64 "
+           << descriptor.name.size() << ", i64 " << descriptor.size << ", i64 "
+           << descriptor.alignment << ", ptr " << references_global << ", i64 "
+           << descriptor.reference_offsets.size() << ", ptr " << virtuals_global
+           << ", i64 " << descriptor.virtual_functions.size() << " }";
     globals_.push_back(global.str());
     return descriptor_global;
   }
 
   [[nodiscard]] const std::string& type_descriptor_global(FileId file) const {
     return type_descriptor_globals_.at(file.value);
+  }
+
+  static std::string type_descriptor_global_name(FileId file) {
+    return "@.cloth.type." + std::to_string(file.value);
   }
 
   void report(SourceRange range, std::string message) {
@@ -647,14 +685,35 @@ class ModuleEmitter {
         field_initializer_name(class_symbol.name, field_symbol.name);
     definitions_ << "define internal " << llvm_type(field->type) << " @" << name
                  << "(ptr %receiver) {\n"
-                 << BodyEmitter{*this,       body,  file,   field->type,
-                                "%receiver", false, nullptr}
+                 << BodyEmitter{*this,       body,  file,  field->type,
+                                "%receiver", false, false, nullptr}
+                        .emit()
+                 << "}\n\n";
+  }
+
+  void emit_constructor_initializer(const AbiFileClass& file,
+                                    const MirCallable& mir_callable,
+                                    const AbiCallable& callable) {
+    definitions_ << "define internal void @"
+                 << callable.initializer_mangled_name << "(ptr %self";
+    for (const AbiParameter& parameter : callable.parameters) {
+      definitions_ << ", " << llvm_type(parameter.type) << " %arg"
+                   << parameter.symbol.value;
+    }
+    definitions_ << ") {\n"
+                 << BodyEmitter{*this,   mir_callable.body,
+                                file,    semantics_.void_type(),
+                                "%self", true,
+                                false,   &callable}
                         .emit()
                  << "}\n\n";
   }
 
   void emit_callable(const AbiFileClass& file, const MirCallable& mir_callable,
                      const AbiCallable& callable) {
+    if (callable.kind == AbiCallableKind::kConstructor) {
+      emit_constructor_initializer(file, mir_callable, callable);
+    }
     if (callable.linkage == AbiLinkage::kInternal) {
       definitions_ << "define internal ";
     } else {
@@ -686,6 +745,7 @@ class ModuleEmitter {
                                 is_constructor
                                     ? "%self"
                                     : (has_receiver ? "%receiver" : "undef"),
+                                is_constructor,
                                 is_constructor,
                                 &callable}
                         .emit()
@@ -761,6 +821,7 @@ class ModuleEmitter {
 BodyEmitter::BodyEmitter(ModuleEmitter& module, const MirBody& body,
                          const AbiFileClass& file, TypeId return_type,
                          std::string receiver, bool is_constructor,
+                         bool allocates_constructor,
                          const AbiCallable* callable)
     : module_(module),
       body_(body),
@@ -768,6 +829,7 @@ BodyEmitter::BodyEmitter(ModuleEmitter& module, const MirBody& body,
       return_type_(return_type),
       receiver_(std::move(receiver)),
       is_constructor_(is_constructor),
+      allocates_constructor_(allocates_constructor),
       callable_(callable),
       values_(body.value_count),
       value_types_(body.value_count, module.semantics().error_type()) {
@@ -1102,8 +1164,8 @@ void BodyEmitter::emit_prologue(std::ostringstream& output) {
     }
   }
   if (is_constructor_) {
-    output << "  store ptr null, ptr %gc.self, align " << pointer_alignment
-           << '\n';
+    output << "  store ptr " << (allocates_constructor_ ? "null" : receiver_)
+           << ", ptr %gc.self, align " << pointer_alignment << '\n';
   }
   if (callable_ != nullptr) {
     for (const AbiParameter& parameter : callable_->parameters) {
@@ -1146,12 +1208,11 @@ void BodyEmitter::emit_prologue(std::ostringstream& output) {
               "%gc.roots, i64 "
            << root_count << ")\n";
   }
-  if (is_constructor_) {
+  if (allocates_constructor_) {
     output << "  %self = call ptr @cloth_rt_alloc(ptr "
            << module_.type_descriptor_global(file_.file) << ")\n"
            << "  store ptr %self, ptr %gc.self, align " << pointer_alignment
            << '\n';
-    emit_field_initializers(output);
   }
 }
 
@@ -1371,6 +1432,9 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* call =
                  std::get_if<MirCallInstruction>(&instruction.data)) {
     emit_call(instruction, *call, output);
+  } else if (std::holds_alternative<MirInitializeFieldsInstruction>(
+                 instruction.data)) {
+    emit_field_initializers(output);
   } else if (std::holds_alternative<MirInvalidInstruction>(instruction.data)) {
     module_.report(instruction.range, "invalid MIR reached LLVM lowering");
   }
@@ -1802,24 +1866,67 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     module_.report(instruction.range, "call has no ABI declaration");
     return;
   }
+  if (call.kind == MirCallKind::kBaseConstructor) {
+    if (callable->kind != AbiCallableKind::kConstructor ||
+        callable->initializer_mangled_name.empty() || instruction.result) {
+      module_.report(instruction.range,
+                     "invalid base constructor call reached LLVM lowering");
+      return;
+    }
+    output << "  call void @" << callable->initializer_mangled_name << "(ptr "
+           << receiver_;
+    for (std::size_t index = 0; index < call.arguments.size(); ++index) {
+      const TypeId type = callable->parameters.at(index).type;
+      output << ", " << module_.llvm_type(type) << ' '
+             << value(call.arguments[index]);
+    }
+    output << ")\n";
+    return;
+  }
+  const bool has_receiver =
+      !callable->parameters.empty() &&
+      callable->parameters.front().kind == AbiParameterKind::kReceiver;
+  std::string receiver = receiver_;
+  if (call.kind == MirCallKind::kClassQualified) {
+    receiver = "null";
+  } else if (call.kind == MirCallKind::kInstance && call.receiver) {
+    receiver = value(*call.receiver);
+  }
+  std::string target = "@" + callable->mangled_name;
+  if (call.dispatch == MirDispatchKind::kVirtual) {
+    if (!has_receiver || !symbol.virtual_slot) {
+      module_.report(instruction.range,
+                     "invalid virtual call reached LLVM lowering");
+      return;
+    }
+    output << "  call void @cloth_rt_require_receiver(ptr " << receiver
+           << ")\n";
+    const std::string descriptor = next_address();
+    const std::string virtuals_address = next_address();
+    const std::string virtuals = next_address();
+    const std::string slot_address = next_address();
+    const std::string function = next_address();
+    output << "  " << descriptor << " = load ptr, ptr " << receiver << "\n"
+           << "  " << virtuals_address
+           << " = getelementptr inbounds { i64, ptr, ptr, i64, i64, i64, ptr, "
+              "i64, ptr, i64 }, ptr "
+           << descriptor << ", i32 0, i32 8\n"
+           << "  " << virtuals << " = load ptr, ptr " << virtuals_address
+           << "\n"
+           << "  " << slot_address << " = getelementptr inbounds ptr, ptr "
+           << virtuals << ", i64 " << *symbol.virtual_slot << "\n"
+           << "  " << function << " = load ptr, ptr " << slot_address << "\n";
+    target = function;
+  }
   if (instruction.result) {
     output << "  " << result_name(instruction) << " = ";
   } else {
     output << "  ";
   }
-  output << "call " << module_.llvm_type(callable->return_type) << " @"
-         << callable->mangled_name << '(';
+  output << "call " << module_.llvm_type(callable->return_type) << ' ' << target
+         << '(';
   bool needs_comma = false;
-  const bool has_receiver =
-      !callable->parameters.empty() &&
-      callable->parameters.front().kind == AbiParameterKind::kReceiver;
   if (has_receiver) {
-    std::string receiver = receiver_;
-    if (call.kind == MirCallKind::kClassQualified) {
-      receiver = "null";
-    } else if (call.kind == MirCallKind::kInstance && call.receiver) {
-      receiver = value(*call.receiver);
-    }
     output << "ptr " << receiver;
     needs_comma = true;
   }
@@ -1866,7 +1973,7 @@ void BodyEmitter::emit_terminator(const MirTerminator& terminator,
       emit_gc_epilogue(output);
     }
     if (is_constructor_) {
-      output << "  ret ptr %self\n";
+      output << (allocates_constructor_ ? "  ret ptr %self\n" : "  ret void\n");
     } else if (return_terminator->value) {
       output << "  ret " << module_.llvm_type(return_type_) << ' '
              << value(*return_terminator->value) << '\n';

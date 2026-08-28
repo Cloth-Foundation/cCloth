@@ -1,0 +1,19 @@
+string Name;
+int32 Value;
+
+Base(int32 value) {
+  Name = "Base";
+  Value = value;
+}
+
+func Read(): int32 {
+  return Value;
+}
+
+func Label(): string {
+  return "Base";
+}
+
+static func Kind(): string {
+  return "kind";
+}

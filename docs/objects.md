@@ -38,7 +38,8 @@ Nullable receivers must first be narrowed or asserted non-null.
 
 ## Checked type operations
 
-`is` tests an exact runtime type and never traps. Its target is non-nullable:
+`is` tests runtime type compatibility and never traps. Its target is
+non-nullable:
 
 ```cloth
 bool isUser = value is User;
@@ -53,8 +54,10 @@ User? user = value as User?;
 ```
 
 File-class checks compare canonical descriptor identity within the emitted
-module. String checks use the stable runtime heap kind. `object` checks only
-for a non-null managed reference. Stage 15 has no inheritance, so unrelated
+module. Stage 16.4 additionally follows parent descriptor links, so a derived
+object matches every transitive base and a base-typed reference can be checked
+against a possible derived runtime type. String checks use the stable runtime
+heap kind. `object` checks only for a non-null managed reference. Unrelated
 concrete source and target types are rejected statically. `is` does not yet
 smart-cast the source binding; use `as T?` followed by existing null narrowing.
 

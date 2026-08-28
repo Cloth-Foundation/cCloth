@@ -41,6 +41,12 @@ Widening a managed reference to `object` is also representation preserving.
 The canonical mangling code for an explicitly declared `object` parameter is
 `o`; a concrete source type keeps its own encoding.
 
+Stage 16.4 derived-to-base widening is likewise representation preserving.
+Because the complete base layout begins at byte zero, neither non-null nor
+nullable upcasts adjust the pointer. Callable mangling still records the
+declared base parameter type; the conversion exists only in typed MIR and
+erases at the LLVM boundary.
+
 `final` is a source binding contract and has no ABI representation. It does not
 change field layout, parameter types, return types, overload identity, or
 mangled names.
@@ -51,16 +57,25 @@ Every file-class object begins with two opaque, reference-sized runtime words.
 The first points to immutable compiler-emitted type metadata. Stage 13.3 uses
 the second for an opaque managed-allocation registry entry. The descriptor
 carries the qualified file-class identity, complete object size and alignment,
-object kind, and the final ABI offset of every reference-valued instance field.
+object kind, the final ABI offset of every reference-valued instance field, and
+the Stage 16.5 virtual-function table and slot count.
 
 Fields follow the header in source declaration order. Each field is aligned for
 its ABI type, padding is explicit in its recorded offset, and the complete
 object size is rounded to the largest required alignment. Empty file classes
 still contain the two-word header.
 
+Stage 16.2 lays out a derived file class by copying the complete, padded base
+layout as its prefix and appending local instance fields. Base tail padding is
+not reused. The flattened derived field table therefore begins with exactly the
+base symbols, types, and offsets, and its descriptor points to the direct base
+descriptor. Layout lowering resolves bases before dependents even when source
+files arrive in the opposite order.
+
 Nullable references appear in descriptor reference-offset tables because their
 ABI representation is still a pointer. Primitive and static fields do not.
-Descriptor verification recomputes these tables from the final class layout.
+Descriptor verification recomputes these tables from the final flattened class
+layout, so a derived table covers inherited and local references.
 See [garbage_collection.md](garbage_collection.md) for the Stage 13.1 contract.
 
 Static fields are not object fields. Stage 12.2 records them in a separate ABI
@@ -85,11 +100,24 @@ the receiver slot entirely. Semantic analysis rejects class-qualified instance
 calls and instance-qualified static calls, so null is never used as a stand-in
 receiver for a valid function call.
 
-Constructor entry points accept only their declared parameters and return the
-new file-class reference. Backend lowering allocates the object, makes it
-available as `self` to the constructor MIR body, and returns it after successful
-initialization. Field initializer composition and failure behavior remain a
-runtime-lowering responsibility.
+Every public instance function receives a stable virtual slot. A derived ABI
+copies its base table, replaces override implementations in place, and appends
+new public instance functions in declaration order. Because an override must
+preserve its parameter and return types exactly, every implementation in one
+slot has one callable ABI. Generated virtual calls load the slot from the
+most-derived descriptor; private and static calls retain their direct mangled
+target. Calls on the object under construction are also direct until its field
+and constructor initialization completes.
+
+Each constructor has a public allocation entry and a private initialization
+entry. The `_C1C` allocation entry accepts only declared parameters, returns the
+new file-class reference, allocates the complete most-derived object, and runs
+its constructor MIR. The `_C1I` initialization entry accepts a leading `self`
+slot followed by the same parameters and returns `void`. A derived constructor
+calls the selected base `_C1I` entry on the same object before initializing its
+local fields. No base-chain step allocates another object, and the most-derived
+descriptor remains installed throughout construction. Field initializer
+composition and failure behavior remain a backend-lowering responsibility.
 
 Public capitalization produces external linkage. Private capitalization
 produces internal linkage. Callable entry points use the target's C calling
@@ -102,6 +130,11 @@ callable kind, length-prefixed qualified file-class and member names, parameter
 count, and canonical parameter types. Return types are omitted because Cloth
 does not overload on a return type. Package qualification prevents equal class
 stems in different packages from producing the same native symbol.
+
+Constructor allocation and initialization entries differ only in their callable
+kind code (`C` and `I`). Their shared suffix therefore identifies the same
+source constructor unambiguously while keeping the internal entry outside the
+source-level overload set.
 
 For example:
 

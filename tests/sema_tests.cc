@@ -606,6 +606,316 @@ void package_imports(TestContext& test) {
   test.expect(cyclic.error_count() == 0, "cyclic type imports were rejected");
 }
 
+void inheritance_graph(TestContext& test) {
+  AnalyzedCompilation compilation;
+  compilation.add("models/Base.co", "class {}\n", "models");
+  compilation.add("app/Middle.co",
+                  "import models::Base as Parent;\n"
+                  "class : Parent {}\n",
+                  "app");
+  compilation.add("app/Leaf.co", "class : Middle {}\n", "app");
+  compilation.analyze();
+
+  test.expect(compilation.error_count() == 0,
+              "valid inheritance graph produced semantic errors");
+  test.expect(compilation.result->is_valid,
+              "valid inheritance graph was marked invalid");
+  const cloth::SemanticModel& semantics = compilation.result->semantics;
+  test.expect(!semantics.file(cloth::FileId{0}).base_file,
+              "root class unexpectedly has a base");
+  test.expect(semantics.file(cloth::FileId{1}).base_file == cloth::FileId{0},
+              "import alias did not resolve as the base class");
+  test.expect(semantics.file(cloth::FileId{2}).base_file == cloth::FileId{1},
+              "same-package base class did not resolve");
+}
+
+void constructor_initialization(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Base.co", "Base(object value) {}\nBase(string value) {}\n");
+  valid.add("Derived.co",
+            "class : Base {\n"
+            "  Derived(string value): Base(value) {}\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid base constructor initializer produced errors");
+  test.expect(valid.result->is_valid,
+              "valid constructor chain was marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::SymbolId base_constructor =
+      semantics.file(cloth::FileId{0}).constructors[1];
+  const cloth::SymbolId derived_constructor =
+      semantics.file(cloth::FileId{1}).constructors[0];
+  test.expect(semantics.symbol(derived_constructor).base_constructor ==
+                  base_constructor,
+              "derived constructor lost its bound base constructor");
+  test.expect(
+      valid.result->hir.files[1].constructors[0].initializer &&
+          valid.result->hir.files[1].constructors[0].initializer->constructor ==
+              base_constructor,
+      "HIR lost the base constructor binding");
+
+  AnalyzedCompilation invalid;
+  invalid.add("Base.co", "Base(int32 value) {}\n");
+  invalid.add("Other.co", "Other() {}\n");
+  invalid.add("Missing.co", "class : Base {\nMissing(int32 value) {}\n}\n");
+  invalid.add("Wrong.co", "class : Base {\nWrong(): Other() {}\n}\n");
+  invalid.add("Mismatch.co",
+              "class : Base {\nMismatch(): Base(\"bad\") {}\n}\n");
+  invalid.add("Premature.co",
+              "class : Base {\n"
+              "  int32 Value;\n"
+              "  Premature(): Base(Value) {}\n"
+              "}\n");
+  invalid.add("PrematureSelf.co",
+              "class : Base { PrematureSelf(): Base(self) {} }\n");
+  invalid.add("PrematureCall.co",
+              "class : Base {\n"
+              "  func Value(): int32 { return 0; }\n"
+              "  PrematureCall(): Base(Value()) {}\n"
+              "}\n");
+  invalid.add("Root.co", "Root(): Root() {}\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic("must initialize base 'Base'"),
+              "missing base initializer was accepted");
+  test.expect(invalid.has_diagnostic("must name direct base 'Base'"),
+              "non-base constructor initializer was accepted");
+  test.expect(invalid.has_diagnostic("no matching base constructor 'Base'"),
+              "mismatched base constructor arguments were accepted");
+  test.expect(invalid.has_diagnostic(
+                  "cannot use instance field 'Value' in a base constructor"),
+              "derived instance state was available before base construction");
+  test.expect(invalid.has_diagnostic(
+                  "cannot use 'self' in a base constructor initializer"),
+              "self was available before base construction");
+  test.expect(
+      invalid.has_diagnostic(
+          "cannot call instance function 'Value' in a base constructor"),
+      "instance behavior was available before base construction");
+  test.expect(invalid.has_diagnostic(
+                  "root class constructor cannot have a base initializer"),
+              "root constructor accepted a base initializer");
+}
+
+void inherited_members_and_subtyping(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Base.co",
+            "string Name;\n"
+            "Base(string name) { Name = name; }\n"
+            "func Read(): string { return Name; }\n"
+            "static func Kind(): string { return \"base\"; }\n");
+  valid.add("Middle.co",
+            "class : Base { Middle(string name): Base(name) {} }\n");
+  valid.add("Derived.co",
+            "class : Middle {\n"
+            "  Derived(string name): Middle(name) {}\n"
+            "  func Rename(string name) { Name = name; }\n"
+            "  func Own(): string { return Read(); }\n"
+            "}\n");
+  valid.add("Use.co",
+            "func TakeBase(Base value): string { return value.Read(); }\n"
+            "func Test(Derived value): string {\n"
+            "  Base parent = value;\n"
+            "  Base? maybe = value;\n"
+            "  string direct = value.Name;\n"
+            "  string called = value.Read();\n"
+            "  string staticValue = Derived.Kind();\n"
+            "  string? safe = maybe?.Name;\n"
+            "  bool ancestor = value is Base;\n"
+            "  bool descendant = parent is Derived;\n"
+            "  Derived? cast = parent as Derived?;\n"
+            "  return TakeBase(value);\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid inherited lookup and subtyping produced errors");
+  test.expect(valid.result->is_valid,
+              "valid inherited lookup and subtyping were marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::SymbolId base_name = semantics.file(cloth::FileId{0}).fields[0];
+  const cloth::SymbolId base_read =
+      semantics.file(cloth::FileId{0}).functions[0];
+  bool derived_bound_field = false;
+  bool derived_bound_function = false;
+  for (const cloth::ExpressionSemantics& expression :
+       semantics.file(cloth::FileId{2}).expressions) {
+    derived_bound_field = derived_bound_field || expression.symbol == base_name;
+    derived_bound_function =
+        derived_bound_function || expression.symbol == base_read;
+  }
+  test.expect(derived_bound_field && derived_bound_function,
+              "unqualified inherited members lost their base symbols");
+
+  AnalyzedCompilation invalid;
+  invalid.add("Base.co",
+              "int32 secret;\n"
+              "Base() {}\n"
+              "func hidden(): int32 { return secret; }\n");
+  invalid.add("Derived.co",
+              "class : Base {\n"
+              "  Derived(): Base() {}\n"
+              "  func HiddenCall(): int32 { return hidden(); }\n"
+              "  func HiddenField(): int32 { return secret; }\n"
+              "}\n");
+  invalid.add("Other.co", "Other() {}\n");
+  invalid.add("Use.co",
+              "func Reverse(Base parent, Other other) {\n"
+              "  Derived child = parent;\n"
+              "  Base unrelated = other;\n"
+              "  Other? cast = parent as Other?;\n"
+              "}\n"
+              "func Explicit(Derived value): int32 {\n"
+              "  return value.hidden();\n"
+              "}\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic("inherited member 'hidden' is private"),
+              "private inherited function was accessible without a receiver");
+  test.expect(invalid.has_diagnostic("inherited member 'secret' is private"),
+              "private inherited field was accessible without a receiver");
+  test.expect(invalid.has_diagnostic("member 'hidden' is private"),
+              "private inherited function was accessible through a receiver");
+  test.expect(invalid.has_diagnostic(
+                  "local initializer has type 'Base'; expected 'Derived'"),
+              "base-to-derived assignment was accepted implicitly");
+  test.expect(invalid.has_diagnostic(
+                  "local initializer has type 'Other'; expected 'Base'"),
+              "unrelated file classes were assignment-compatible");
+  test.expect(
+      invalid.has_diagnostic(
+          "types 'Base' and 'Other' cannot overlap without inheritance"),
+      "unrelated checked cast was accepted");
+}
+
+void virtual_override_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Base.co",
+            "func Describe(): string { return \"base\"; }\n"
+            "func Count(): int32 { return 1; }\n"
+            "func hidden(): int32 { return 2; }\n");
+  valid.add("Middle.co",
+            "class : Base {\n"
+            "  override func Describe(): string { return \"middle\"; }\n"
+            "}\n");
+  valid.add("Derived.co",
+            "class : Middle {\n"
+            "  override func Describe(): string { return \"derived\"; }\n"
+            "  func Extra(): int32 { return Count(); }\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid override hierarchy produced semantic errors");
+  test.expect(valid.result->is_valid,
+              "valid override hierarchy was marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::SemanticSymbol& base_describe =
+      semantics.symbol(semantics.file(cloth::FileId{0}).functions[0]);
+  const cloth::SemanticSymbol& middle_describe =
+      semantics.symbol(semantics.file(cloth::FileId{1}).functions[0]);
+  const cloth::SemanticSymbol& derived_describe =
+      semantics.symbol(semantics.file(cloth::FileId{2}).functions[0]);
+  test.expect(base_describe.virtual_slot == 0 &&
+                  middle_describe.virtual_slot == 0 &&
+                  derived_describe.virtual_slot == 0,
+              "override chain did not retain a stable virtual slot");
+  test.expect(middle_describe.overridden_symbol ==
+                      semantics.file(cloth::FileId{0}).functions[0] &&
+                  derived_describe.overridden_symbol ==
+                      semantics.file(cloth::FileId{1}).functions[0],
+              "override declarations lost their immediate base symbols");
+  test.expect(semantics.file(cloth::FileId{2}).virtual_functions.size() == 3 &&
+                  semantics.file(cloth::FileId{2}).virtual_functions[0] ==
+                      semantics.file(cloth::FileId{2}).functions[0],
+              "derived virtual table has the wrong implementations");
+  const cloth::SemanticSymbol& hidden =
+      semantics.symbol(semantics.file(cloth::FileId{0}).functions[2]);
+  test.expect(!hidden.virtual_slot,
+              "private function unexpectedly received a virtual slot");
+
+  AnalyzedCompilation invalid;
+  invalid.add("Base.co", "func Describe(): string { return \"base\"; }\n");
+  invalid.add("Missing.co",
+              "class : Base {\n"
+              "  func Describe(): string { return \"missing\"; }\n"
+              "}\n");
+  invalid.add("WrongReturn.co",
+              "class : Base {\n"
+              "  override func Describe(): int32 { return 1; }\n"
+              "}\n");
+  invalid.add("NoTarget.co",
+              "class : Base {\n"
+              "  override func Other(): string { return \"other\"; }\n"
+              "}\n");
+  invalid.add("Static.co",
+              "class : Base {\n"
+              "  static override func Utility() {}\n"
+              "}\n");
+  invalid.add("Private.co",
+              "class : Base {\n"
+              "  override func hidden() {}\n"
+              "}\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic("add 'override'"),
+              "accidental override was accepted");
+  test.expect(invalid.has_diagnostic("inherited function returns 'string'"),
+              "incompatible override return type was accepted");
+  test.expect(invalid.has_diagnostic("does not override an inherited function"),
+              "override without a target was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "static function 'Utility' cannot be declared override"),
+              "static override was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "private function 'hidden' cannot be declared override"),
+              "private override was accepted");
+}
+
+void invalid_inheritance_graph(TestContext& test) {
+  AnalyzedCompilation self_cycle;
+  self_cycle.add("Self.co", "class : Self {}\n");
+  self_cycle.analyze();
+  test.expect(
+      self_cycle.has_diagnostic("file class 'Self' cannot inherit from itself"),
+      "direct inheritance cycle was accepted");
+
+  AnalyzedCompilation indirect_cycle;
+  indirect_cycle.add("B.co", "class : C {}\n");
+  indirect_cycle.add("C.co", "class : A {}\n");
+  indirect_cycle.add("A.co", "class : B {}\n");
+  indirect_cycle.analyze();
+  test.expect(indirect_cycle.has_diagnostic(
+                  "inheritance cycle detected: A -> B -> C -> A"),
+              "indirect inheritance cycle was not diagnosed deterministically");
+  test.expect(
+      !indirect_cycle.result->semantics.file(cloth::FileId{0}).is_valid &&
+          !indirect_cycle.result->semantics.file(cloth::FileId{1}).is_valid &&
+          !indirect_cycle.result->semantics.file(cloth::FileId{2}).is_valid,
+      "cycle participants were not marked invalid");
+
+  AnalyzedCompilation reordered_cycle;
+  reordered_cycle.add("C.co", "class : A {}\n");
+  reordered_cycle.add("A.co", "class : B {}\n");
+  reordered_cycle.add("B.co", "class : C {}\n");
+  reordered_cycle.analyze();
+  test.expect(reordered_cycle.has_diagnostic(
+                  "inheritance cycle detected: A -> B -> C -> A"),
+              "cycle diagnostic changed with source registration order");
+
+  AnalyzedCompilation inaccessible;
+  inaccessible.add("secret.co", "class {}\n");
+  inaccessible.add("Derived.co", "class : secret {}\n");
+  inaccessible.add("Unknown.co", "class : Missing {}\n");
+  inaccessible.analyze();
+  test.expect(inaccessible.has_diagnostic("file class 'secret' is private"),
+              "private base class was accepted");
+  test.expect(inaccessible.has_diagnostic("unknown type 'Missing'"),
+              "unknown base class was accepted");
+}
+
 void invalid_package_imports(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("app/Main.co",
@@ -1621,6 +1931,11 @@ int main() {
       {"core print intrinsic", core_print_intrinsic},
       {"cross-file binding", cross_file_binding},
       {"package imports", package_imports},
+      {"inheritance graph", inheritance_graph},
+      {"constructor initialization", constructor_initialization},
+      {"inherited members and subtyping", inherited_members_and_subtyping},
+      {"virtual override contract", virtual_override_contract},
+      {"invalid inheritance graph", invalid_inheritance_graph},
       {"invalid package imports", invalid_package_imports},
       {"private member access", private_member_access},
       {"private file class access", private_file_class_access},

@@ -72,9 +72,20 @@ allocation/load/store/length operations, local declarations, unary and binary
 operations, calls, explicit conversions, and phi values. Source ranges,
 `TypeId`, and `SymbolId` identities survive lowering.
 
-Stage 15 adds explicit object widening, object metadata, exact type-test, and
-checked-cast instructions. Widening erases to the same pointer. A checked cast
-retains both the nullable result type and its non-null runtime target.
+Stage 16.2 also carries each validated optional base `FileId` through HIR and
+MIR so ABI lowering can schedule and flatten class layouts without
+rediscovering semantic ancestry. Stage 16.3 gives constructor MIR an explicit
+base-constructor call and a local-field initialization marker. The base call,
+when present, must precede that marker; constructor-body statements follow it.
+The MIR verifier checks the call against the semantic constructor binding and
+requires exactly one field marker in every constructor.
+
+Stage 15 adds explicit object widening, object metadata, type-test, and
+checked-cast instructions. Stage 16.4 extends the same widening instruction to
+direct, transitive, and nullable base conversions. The MIR verifier reconstructs
+semantic ancestry and rejects unrelated source and target types. Every
+reference widening erases to the same pointer. A checked cast retains both the
+nullable result type and its non-null runtime target.
 
 Evaluation is left-to-right. Array element operands are evaluated before the
 array instruction, and indexed assignment evaluates the array and index before
@@ -92,12 +103,20 @@ evaluated. Postfix non-null assertion lowers to a dedicated checked MIR
 instruction and runtime guard before exposing the underlying reference type.
 
 Calls retain whether they were unqualified, file-class-qualified,
-instance-qualified, or constructor calls. This avoids choosing an implicit
-method calling convention before the ABI stage.
+instance-qualified, constructor allocation calls, or base-constructor
+initialization calls. This avoids choosing an implicit method calling
+convention before the ABI stage. Stage 16.5 additionally marks each call as
+direct or virtual. A virtual call retains the statically selected declaration
+and its stable slot; the backend chooses the runtime implementation through the
+receiver descriptor. MIR also records whether that receiver is `self`, allowing
+field initializers and constructors to suppress only dispatch on the object
+currently being initialized.
 
 Field initializers are lowered to independent MIR bodies that return the
-initialized value. The LLVM backend composes those bodies with constructor
-execution using the Stage 4 object layout; MIR does not assume that layout.
+initialized value. The constructor marker tells the LLVM backend where to
+compose only the current file class's local initializer bodies. Recursive base
+initializer entries handle inherited fields, so each field runs exactly once.
+MIR does not assume the Stage 4 object layout.
 
 MIR's explicit value types let the LLVM backend identify every reference-valued
 parameter, binding, and temporary without scanning native stack bytes. Stage
@@ -106,7 +125,7 @@ operations do not appear in target-independent MIR.
 
 ## Deferred boundaries
 
-Stage 3.0 does not define object size or alignment, vtables, calling
+Stage 3.0 does not define object size or alignment, calling
 conventions, name mangling, exception handling, target machine types, LLVM IR,
 machine code, runtime services, or garbage-collector barriers. Stage 4.0 defines
 the data-layout and ABI boundary in

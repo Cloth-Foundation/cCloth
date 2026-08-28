@@ -21,6 +21,8 @@ class DefinitionPass {
                  const FileClassSymbols& symbols,
                  std::span<const ImportDecl> imports,
                  std::span<const MemberOutline> outlines,
+                 const std::optional<TypeSyntax>& base_class,
+                 bool has_explicit_class_declaration,
                  DiagnosticEngine& diagnostics);
 
   [[nodiscard]] FileClassDecl run();
@@ -39,6 +41,8 @@ class DefinitionPass {
   void build_function(const MemberOutline& outline, const MemberSymbol& symbol);
   void build_constructor(const MemberOutline& outline,
                          const MemberSymbol& symbol);
+  [[nodiscard]] std::optional<ConstructorInitializer>
+  parse_constructor_initializer(TokenIndexRange tokens);
   [[nodiscard]] std::vector<ParameterDecl> copy_parameters(
       const MemberSymbol& symbol) const;
 

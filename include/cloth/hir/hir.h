@@ -235,14 +235,22 @@ struct HirField {
   std::optional<HirExpressionId> initializer;
 };
 
+struct HirConstructorInitializer {
+  SymbolId constructor;
+  std::vector<HirExpressionId> arguments;
+  SourceRange range;
+};
+
 struct HirCallable {
   SymbolId symbol;
+  std::optional<HirConstructorInitializer> initializer;
   HirBlockId body;
 };
 
 struct HirFileClass {
   FileId file;
   SymbolId symbol;
+  std::optional<FileId> base_file;
   std::vector<HirField> fields;
   std::vector<HirCallable> functions;
   std::vector<HirCallable> constructors;

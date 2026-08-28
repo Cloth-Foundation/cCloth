@@ -117,7 +117,9 @@ nullability a static contract without changing pointers or mangled symbols.
 
 Stage 15 permits file-class, string, and array nullable references to widen to
 `object?`. Safe `value as T?` uses the same nullable representation, returning
-the original reference on an exact type match and `null` otherwise.
+the original reference on a compatible runtime type match and `null` otherwise.
+Stage 16.4 makes derived-to-base nullable widening implicit and makes
+file-class casts follow descriptor ancestry.
 
 ## Construction guarantee
 

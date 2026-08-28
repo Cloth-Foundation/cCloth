@@ -23,6 +23,7 @@ struct MemberOutline {
   std::size_t symbol_index;
   std::size_t begin_token;
   std::optional<TokenIndexRange> initializer_tokens;
+  std::optional<TokenIndexRange> constructor_initializer_tokens;
   std::optional<TokenIndexRange> body_tokens;
   SourceRange range;
   bool is_valid{true};
@@ -32,6 +33,8 @@ struct DeclarationPassResult {
   FileClassSymbols symbols;
   std::vector<ImportDecl> imports;
   std::vector<MemberOutline> outlines;
+  std::optional<TypeSyntax> base_class;
+  bool has_explicit_class_declaration{false};
   bool is_valid{true};
 };
 
@@ -59,6 +62,7 @@ class DeclarationPass {
   void parse_function();
   void parse_constructor();
   void parse_import();
+  void parse_file_class_declaration();
   void skip_deferred_nested_type();
   void synchronize_member();
 
@@ -74,7 +78,11 @@ class DeclarationPass {
   FileClassSymbols symbols_;
   std::vector<ImportDecl> imports_;
   std::vector<MemberOutline> outlines_;
+  std::optional<TypeSyntax> base_class_;
   std::size_t current_{0};
+  bool has_explicit_class_declaration_{false};
+  bool class_body_started_{false};
+  bool class_body_closed_{false};
   bool is_valid_{true};
 };
 

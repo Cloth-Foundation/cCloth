@@ -9,7 +9,10 @@ for file-class objects, Stage 13.4 extends it to strings and arrays, and Stage
 13.5 adds liveness-aware roots and monotonic collector diagnostics.
 Stage 14 adds immutable UTF-8 concatenation, content equality, and string meta
 queries. Stage 15 adds universal object queries and checked runtime type
-operations.
+operations. Stage 16.2 adds parent-linked file-class descriptors and flattened
+inherited reference maps. Stage 16.4 makes checked file-class operations follow
+those parent links. Stage 16.5 adds immutable virtual-function tables to
+file-class descriptors; generated code performs the dispatch directly.
 
 ## Source contract
 
@@ -80,18 +83,23 @@ cloth_rt_print_newline()
 Object allocation validates the immutable descriptor, honors its verified ABI
 size and alignment, and zeroes the storage. It stores the descriptor address in
 the first object-header word and an opaque allocation-registry entry in the
-second. The descriptor also records object kind, qualified identity, and exact
-reference-field offsets. Runtime strings and arrays begin with the same managed
-header while remaining opaque to generated LLVM IR. A literal string borrows
+second. The descriptor also records object kind, a nullable direct-parent
+descriptor, qualified identity, and exact reference-field offsets. Derived
+descriptors contain inherited and local offsets in one ordered table. A
+file-class descriptor also records an immutable virtual-function table and
+count; allocation rejects inconsistent or null slot metadata. Runtime
+strings and arrays begin with the same managed header while remaining opaque to
+generated LLVM IR. A literal string borrows
 immutable program-lifetime bytes. A concatenated string owns its separately
 allocated bytes. Both cache byte and Unicode scalar lengths; collection reclaims
 owned payloads together with their managed headers.
 
 Object type-name queries return a managed immutable string over stable
 program-lifetime name bytes. File classes use qualified descriptor names,
-strings use `string`, and arrays use the erased name `array`. Exact file-class
-checks compare canonical descriptor addresses; string checks compare the
-runtime heap kind. Null fails every concrete type check without trapping.
+strings use `string`, and arrays use the erased name `array`. File-class checks
+compare the object's canonical descriptor and then walk direct-parent links,
+so every transitive base matches. String checks compare the runtime heap kind.
+Null fails every concrete type check without trapping.
 
 Root frames are stack-owned by generated callables and linked in thread-local
 LIFO order. Each registered entry is the address of a stack slot containing a
@@ -142,8 +150,8 @@ LLVM IR emission but does not yet have a WebAssembly runtime or linker path.
 ## Deferred work
 
 Stage 15 completes the first universal managed-reference contract. Primitive
-boxing, inheritance-aware checks, reified array casts, string indexing,
-slicing, iteration, formatting, normalization, interning, root-slot reuse,
+boxing, reified array casts, string indexing, slicing, iteration, formatting,
+normalization, interning, root-slot reuse,
 optimization levels, debug information, command-line arguments, exceptions, and platform
 packaging remain future work. These features should extend the runtime and
 toolchain boundaries without changing existing source contracts.

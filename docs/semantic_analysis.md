@@ -1,4 +1,4 @@
-# Cloth Stage 2.0 semantic analysis
+# Cloth semantic analysis through Stage 16.5
 
 Semantic analysis binds parsed syntax across a closed compilation graph, checks
 the implemented language rules, and lowers valid and recovered syntax to a
@@ -11,6 +11,17 @@ entry files, imported files, and project package siblings. All file classes are
 registered before member signatures are resolved, and all member signatures
 are registered before any initializer or body is checked. Forward references,
 same-package references, and import cycles therefore have deterministic meaning.
+
+After imports are bound, Stage 16.1 resolves every optional file-class base and
+stores its `FileId` in `FileSemantics::base_file`. A base must be a visible file
+class. Qualified-name-ordered graph traversal rejects self-inheritance and
+indirect cycles without depending on discovery order. Stage 16.2 carries the
+validated edge into HIR and MIR for ABI layout. Stage 16.3 binds every explicit
+derived-constructor initializer to one constructor of the direct base. Stage
+16.4 uses the same edge for inherited lookup, assignment compatibility, and
+checked type operations. Stage 16.5 processes file classes base-first after all
+signatures are registered, validates explicit overrides, and assigns stable
+virtual slots.
 
 `Compilation` owns its source files, immutable token streams, and parse results.
 This keeps token lexemes, syntax names, and source-range file names valid
@@ -48,6 +59,12 @@ forms widen to `object?`. The conversion is not available to primitives and
 does not imply boxing. Arrays remain invariant: `User[]` does not widen to
 `object[]`.
 
+A file-class reference also widens to any direct or transitive base class.
+Non-null-to-nullable and nullable-to-nullable forms compose with that
+conversion. Base-to-derived and unrelated file-class assignments remain
+invalid. Since the complete base is a prefix of the derived object, widening
+does not change the runtime pointer.
+
 `string` is a managed reference with immutable UTF-8 value semantics. String
 literals are decoded and validated as UTF-8 during semantic analysis. Exact
 `string + string` produces `string`; `==` and `!=` produce `bool` and use
@@ -83,6 +100,15 @@ defining constructors. Constructor analysis tracks definite initialization
 through branches and early returns, rejects repeated or loop-based writes, and
 rejects reads before initialization. Every constructor must initialize each
 otherwise-uninitialized final field exactly once.
+
+Every declared constructor in a derived file class must explicitly initialize
+its direct base with `Derived(...): Base(...)`. A root constructor cannot have
+that clause, the named type must be the direct base, and the arguments must
+select one base constructor using normal overload rules. The initializer
+is checked after parameter binding and before the constructor body. Because the
+base subobject is not initialized yet, its expressions cannot use `self`, read
+instance fields, or call unqualified instance functions. Cloth does not
+synthesize constructors or silently choose a zero-argument base constructor.
 
 The same flow analysis requires every non-null reference field to be
 initialized by its declaration or on every constructor exit. Mutable non-null
@@ -123,6 +149,22 @@ overload solely on nullability because the ABI erases the qualifier.
 Public static functions and fields can be qualified by a file-class name, such
 as `Repository.Find(id)`. Instance members require an object.
 
+File-class member lookup walks from the receiver's static type toward the root.
+The nearest class declaring a name supplies the declaration set and hides
+farther ancestors. Public declarations are inherited; private declarations are
+visible only while analyzing their owning file class. Constructors are not
+inherited. The selected public instance signature supplies a virtual slot, so a
+base-typed receiver invokes the most-derived compatible implementation.
+
+Every public instance function receives a virtual slot. A derived declaration
+with the same name and canonical parameter types must use `override`, retain
+the exact return type, and replace the inherited implementation in that slot.
+New overloads append slots in declaration order. Private and static functions
+remain direct and reject `override`. Calls in field initializers and constructor
+bodies are direct only when their receiver is the object under construction,
+so partially initialized derived state cannot be reached. Calls on other
+receivers and ordinary function-body calls dispatch virtually.
+
 The checker currently validates:
 
 - field and local initializers
@@ -135,7 +177,10 @@ The checker currently validates:
 - static ownership, access form, and static `Main` validation
 - member access and visibility
 - array literal inference, indexing, assignment, and `::length`
-- object widening, `::typeName`, checked `is`, and nullable `as`
+- object and base widening, `::typeName`, hierarchy-aware checked `is`, and
+  nullable `as`
+- single-inheritance base binding, visibility, cycle validation, and explicit
+  base-constructor selection, inherited member lookup, and override contracts
 - exact overload and constructor selection
 - return value presence and type compatibility
 
@@ -150,11 +195,13 @@ Safe reference-field access produces a nullable result, null coalescing checks
 a compatible lazy fallback, and postfix assertion produces the underlying type
 with a runtime null guard.
 
-Overload matching is exact after the portable aliases are canonicalized.
-User-defined conversions, numeric promotions, inheritance, traits, generics,
-primitive boxing, first-class function values, and implicit default constructors
-are deferred. Checked array casts are also deferred until arrays carry reified
-element-type metadata.
+Overload matching prefers an exact canonical signature. If none exists, a
+unique candidate accepting the implemented implicit reference conversions is
+selected; multiple compatible candidates are ambiguous.
+User-defined conversions, numeric promotions, base-qualified calls, abstract
+members, traits, generics, primitive boxing, first-class function values, and
+implicit default constructors are deferred. Checked array casts are also
+deferred until arrays carry reified element-type metadata.
 Complete return-path and reachability checks are performed by the Stage 3.0
 control-flow analysis after HIR verification.
 
@@ -171,6 +218,10 @@ HIR owns stable numeric handles and records a `TypeId` on every expression.
 Names, member accesses, calls, constructors, parameters, and locals carry bound
 `SymbolId` values where resolution succeeded. Invalid nodes remain representable
 so tooling and later compiler stages can inspect recovered compilations.
+
+A derived `HirCallable` also carries its selected base-constructor `SymbolId`
+and typed argument expressions. This preserves the semantic decision without
+introducing target layout or a calling convention into HIR.
 
 HIR is intentionally independent of target layout, ABI, object representation,
 runtime calling conventions, and garbage-collector strategy. Those decisions

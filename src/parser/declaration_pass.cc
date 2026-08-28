@@ -51,13 +51,32 @@ DeclarationPassResult DeclarationPass::run() {
   bool saw_member = false;
   while (!at_end()) {
     const std::size_t before = current_;
-    if (current().kind == TokenKind::kKwImport) {
-      if (saw_member) {
+    if (class_body_started_ && current().kind == TokenKind::kRightBrace) {
+      advance();
+      class_body_closed_ = true;
+      if (!at_end()) {
         diagnostics_.error(current().range,
-                           "imports must appear before member declarations");
+                           "expected end of file after class declaration");
+        is_valid_ = false;
+        while (!at_end()) {
+          advance();
+        }
+      }
+      break;
+    }
+    if (current().kind == TokenKind::kKwImport) {
+      if (saw_member || has_explicit_class_declaration_) {
+        diagnostics_.error(
+            current().range,
+            has_explicit_class_declaration_
+                ? "imports must appear before the class declaration"
+                : "imports must appear before member declarations");
         is_valid_ = false;
       }
       parse_import();
+    } else if (current().kind == TokenKind::kKwClass && !saw_member &&
+               !has_explicit_class_declaration_) {
+      parse_file_class_declaration();
     } else if (current().kind == TokenKind::kKwModule) {
       diagnostics_.error(
           current().range,
@@ -66,8 +85,10 @@ DeclarationPassResult DeclarationPass::run() {
       is_valid_ = false;
       synchronize_member();
     } else if (current().kind == TokenKind::kKwFunc ||
+               current().kind == TokenKind::kKwOverride ||
                (current().kind == TokenKind::kKwStatic &&
-                peek(1).kind == TokenKind::kKwFunc)) {
+                (peek(1).kind == TokenKind::kKwFunc ||
+                 peek(1).kind == TokenKind::kKwOverride))) {
       saw_member = true;
       parse_function();
     } else if (is_nested_type_keyword(current().kind)) {
@@ -95,8 +116,18 @@ DeclarationPassResult DeclarationPass::run() {
     }
   }
 
-  return DeclarationPassResult{std::move(symbols_), std::move(imports_),
-                               std::move(outlines_), is_valid_};
+  if (class_body_started_ && !class_body_closed_) {
+    diagnostics_.error(current().range,
+                       "expected '}' to close class declaration");
+    is_valid_ = false;
+  }
+
+  return DeclarationPassResult{std::move(symbols_),
+                               std::move(imports_),
+                               std::move(outlines_),
+                               base_class_,
+                               has_explicit_class_declaration_,
+                               is_valid_};
 }
 
 bool DeclarationPass::at_end() const noexcept {
@@ -318,8 +349,10 @@ void DeclarationPass::parse_field() {
       }
       if (parenthesis_depth == 0 &&
           (current().kind == TokenKind::kSemicolon ||
+           (class_body_started_ && current().kind == TokenKind::kRightBrace) ||
            current().kind == TokenKind::kKwFunc ||
            current().kind == TokenKind::kKwStatic ||
+           current().kind == TokenKind::kKwOverride ||
            is_nested_type_keyword(current().kind) ||
            (current().kind == TokenKind::kKwFinal &&
             can_start_type(peek(1).kind)) ||
@@ -357,16 +390,31 @@ void DeclarationPass::parse_field() {
   symbol.is_static = is_static;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kField, symbol_index,
-                                    begin, initializer, std::nullopt, range,
-                                    declaration_valid});
+                                    begin, initializer, std::nullopt,
+                                    std::nullopt, range, declaration_valid});
 }
 
 void DeclarationPass::parse_function() {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
   const std::size_t begin = current_;
-  const bool is_static = match(TokenKind::kKwStatic);
+  bool is_static = false;
+  bool is_override = false;
+  while (current().kind == TokenKind::kKwStatic ||
+         current().kind == TokenKind::kKwOverride) {
+    const Token& modifier = advance();
+    bool& present =
+        modifier.kind == TokenKind::kKwStatic ? is_static : is_override;
+    if (present) {
+      diagnostics_.error(
+          modifier.range,
+          "duplicate '" + std::string{modifier.lexeme} + "' function modifier");
+      is_valid_ = false;
+    }
+    present = true;
+  }
   if (!match(TokenKind::kKwFunc)) {
-    diagnostics_.error(current().range, "expected 'func' after 'static'");
+    diagnostics_.error(current().range,
+                       "expected 'func' after function modifiers");
     is_valid_ = false;
     synchronize_member();
     return;
@@ -398,10 +446,11 @@ void DeclarationPass::parse_function() {
                       return_type,
                       declaration_valid};
   symbol.is_static = is_static;
+  symbol.is_override = is_override;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kFunction, symbol_index,
-                                    begin, std::nullopt, body, range,
-                                    declaration_valid});
+                                    begin, std::nullopt, std::nullopt, body,
+                                    range, declaration_valid});
 }
 
 void DeclarationPass::parse_constructor() {
@@ -409,6 +458,29 @@ void DeclarationPass::parse_constructor() {
   const std::size_t begin = current_;
   const Token& name = advance();
   auto parameters = parse_parameters(name.lexeme);
+  std::optional<TokenIndexRange> initializer;
+  if (match(TokenKind::kColon)) {
+    const std::size_t initializer_begin = current_;
+    std::size_t parenthesis_depth = 0;
+    while (!at_end()) {
+      if (current().kind == TokenKind::kLeftBrace && parenthesis_depth == 0) {
+        break;
+      }
+      if (current().kind == TokenKind::kLeftParen) {
+        ++parenthesis_depth;
+      } else if (current().kind == TokenKind::kRightParen &&
+                 parenthesis_depth != 0) {
+        --parenthesis_depth;
+      }
+      advance();
+    }
+    initializer = TokenIndexRange{initializer_begin, current_};
+    if (initializer_begin == current_) {
+      diagnostics_.error(current().range,
+                         "expected base constructor after ':'");
+      is_valid_ = false;
+    }
+  }
   const auto body = locate_body(name.lexeme);
 
   bool declaration_valid = body.has_value();
@@ -430,8 +502,8 @@ void DeclarationPass::parse_constructor() {
                       declaration_valid};
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kConstructor, symbol_index,
-                                    begin, std::nullopt, body, range,
-                                    declaration_valid});
+                                    begin, std::nullopt, initializer, body,
+                                    range, declaration_valid});
 }
 
 void DeclarationPass::parse_import() {
@@ -544,6 +616,38 @@ void DeclarationPass::parse_import() {
                                 import_valid});
 }
 
+void DeclarationPass::parse_file_class_declaration() {
+  has_explicit_class_declaration_ = true;
+  advance();
+
+  if (current().kind == TokenKind::kIdentifier) {
+    diagnostics_.error(current().range,
+                       "the source file already defines implicit class '" +
+                           std::string{source_.stem()} +
+                           "'; do not repeat its name");
+    is_valid_ = false;
+    advance();
+  }
+
+  if (match(TokenKind::kColon)) {
+    if (current().kind == TokenKind::kIdentifier) {
+      const Token& base = advance();
+      base_class_ = TypeSyntax{base.lexeme, false, base.range};
+    } else {
+      diagnostics_.error(current().range,
+                         "expected a file class name after ':'");
+      is_valid_ = false;
+    }
+  }
+
+  if (match(TokenKind::kLeftBrace)) {
+    class_body_started_ = true;
+    return;
+  }
+  diagnostics_.error(current().range, "expected '{' after class declaration");
+  is_valid_ = false;
+}
+
 void DeclarationPass::skip_deferred_nested_type() {
   diagnostics_.error(
       current().range,
@@ -564,6 +668,9 @@ void DeclarationPass::skip_deferred_nested_type() {
 
 void DeclarationPass::synchronize_member() {
   while (!at_end()) {
+    if (class_body_started_ && current().kind == TokenKind::kRightBrace) {
+      return;
+    }
     if (match(TokenKind::kSemicolon)) {
       return;
     }
@@ -615,7 +722,8 @@ bool DeclarationPass::looks_like_member_start(
     std::size_t index) const noexcept {
   const TokenKind kind = tokens_[index].kind;
   if (kind == TokenKind::kKwFunc || kind == TokenKind::kKwFinal ||
-      kind == TokenKind::kKwStatic || is_nested_type_keyword(kind)) {
+      kind == TokenKind::kKwStatic || kind == TokenKind::kKwOverride ||
+      is_nested_type_keyword(kind)) {
     return true;
   }
   if (!can_start_type(kind)) {

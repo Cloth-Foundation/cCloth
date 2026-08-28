@@ -86,8 +86,9 @@ class Lowerer {
     }
 
     const FileSemantics& semantic_file = semantics_.file(file_id);
-    HirFileClass file{file_id, semantic_file.symbol, {}, {},
-                      {},      syntax.member_order};
+    HirFileClass file{
+        file_id, semantic_file.symbol, semantic_file.base_file, {}, {},
+        {},      syntax.member_order};
     file.fields.reserve(syntax.fields.size());
     for (std::size_t index = 0; index < syntax.fields.size(); ++index) {
       const FieldDecl& field = syntax.fields[index];
@@ -99,14 +100,29 @@ class Lowerer {
     }
     file.functions.reserve(syntax.functions.size());
     for (std::size_t index = 0; index < syntax.functions.size(); ++index) {
-      file.functions.push_back(HirCallable{
-          semantic_file.functions[index], block(syntax.functions[index].body)});
+      file.functions.push_back(
+          HirCallable{semantic_file.functions[index], std::nullopt,
+                      block(syntax.functions[index].body)});
     }
     file.constructors.reserve(syntax.constructors.size());
     for (std::size_t index = 0; index < syntax.constructors.size(); ++index) {
-      file.constructors.push_back(
-          HirCallable{semantic_file.constructors[index],
-                      block(syntax.constructors[index].body)});
+      const ConstructorDecl& constructor = syntax.constructors[index];
+      std::optional<HirConstructorInitializer> initializer;
+      const SemanticSymbol& symbol =
+          semantics_.symbol(semantic_file.constructors[index]);
+      if (constructor.initializer && symbol.base_constructor) {
+        std::vector<HirExpressionId> arguments;
+        arguments.reserve(constructor.initializer->arguments.size());
+        for (const ExpressionId argument : constructor.initializer->arguments) {
+          arguments.push_back(expression(argument));
+        }
+        initializer = HirConstructorInitializer{*symbol.base_constructor,
+                                                std::move(arguments),
+                                                constructor.initializer->range};
+      }
+      file.constructors.push_back(HirCallable{semantic_file.constructors[index],
+                                              std::move(initializer),
+                                              block(constructor.body)});
     }
     module_.files.push_back(std::move(file));
   }

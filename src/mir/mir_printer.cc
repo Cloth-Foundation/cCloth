@@ -68,6 +68,12 @@ void print_callable(const MirCallable& callable, const SemanticModel& semantics,
   if (symbol.is_static) {
     output << " [static]";
   }
+  if (symbol.virtual_slot) {
+    output << " [virtual slot " << *symbol.virtual_slot << ']';
+  }
+  if (symbol.is_override) {
+    output << " [override]";
+  }
   output << '\n';
   print_body(callable.body, output);
 }
@@ -77,7 +83,12 @@ void print_callable(const MirCallable& callable, const SemanticModel& semantics,
 void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
                        std::ostream& output) {
   for (const MirFileClass& file : mir.files) {
-    output << "FileClass " << semantics.symbol(file.symbol).name << '\n';
+    output << "FileClass " << semantics.symbol(file.symbol).name;
+    if (file.base_file) {
+      output << " : "
+             << semantics.symbol(semantics.file(*file.base_file).symbol).name;
+    }
+    output << '\n';
     for (const MemberReference& member : file.member_order) {
       switch (member.kind) {
         case DeclarationKind::kField: {

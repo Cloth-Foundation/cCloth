@@ -20,8 +20,9 @@ User.co -> User
 ```
 
 Fields, functions, and nested types declared at file scope are members of that
-class. Source code does not repeat an enclosing `class User { ... }`
-declaration.
+class. Source code never repeats an enclosing `class User { ... }` declaration.
+Stage 16.1 optionally permits an unnamed `class { ... }` envelope while keeping
+the file stem as the sole class name.
 The compiler retains the file-class identity through all compilation stages so
 other files can reference `User` as a normal type.
 
@@ -35,6 +36,32 @@ User(string name, int32 id) {
 
 The parser must diagnose a file name that cannot form a valid Cloth type name.
 Package directory components follow the same identifier grammar.
+
+## Single-inheritance identity
+
+An explicit file-class envelope may declare one base file class:
+
+```cloth
+import models::Human;
+
+class : Human {
+  // User.co still defines User.
+}
+```
+
+The base name follows ordinary import, alias, package, and capitalization-based
+visibility rules. The compiler registers the relationship only after closing
+the complete source graph and rejects self-inheritance and indirect cycles in a
+deterministic qualified-name order. Stage 16.2 gives the graph a stable
+base-prefix object layout and descriptor ancestry. Stage 16.3 requires every
+declared derived constructor to select its direct base explicitly with
+`Derived(...): Base(...)`; construction allocates once and completes base
+initialization before derived fields and body. Stage 16.4 adds inherited public
+member lookup, transitive base-reference widening, and descriptor-ancestry
+checks for `is` and `as`. Stage 16.5 makes public instance functions virtual,
+requires `override func` for inherited signatures, and suppresses virtual
+dispatch while fields and constructors initialize. See
+[inheritance.md](inheritance.md).
 
 ## Capitalization and visibility
 
@@ -216,9 +243,10 @@ generation. MIR preserves source evaluation order, uses body-local value and
 basic-block handles, and ends every block with an explicit terminator. Logical
 `&&` and `||` retain short-circuit behavior through branches and phi values.
 
-Field initializers remain independent executable bodies until object layout and
-constructor composition are specified. MIR must not encode host pointer size,
-ABI rules, runtime object headers, or garbage-collector barriers.
+Field initializers remain independent executable bodies. Constructor MIR marks
+where the backend composes the current class's initializers after an explicit
+base-constructor call. MIR must not encode host pointer size, ABI rules, runtime
+object headers, or garbage-collector barriers.
 
 ## Void functions
 

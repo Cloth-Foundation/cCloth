@@ -43,8 +43,12 @@ void print_validity(bool is_valid, std::ostream& output) {
 }  // namespace
 
 void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
-  output << "FileClass " << file_class.qualified_name << " ["
-         << visibility_name(file_class.visibility) << ']';
+  output << "FileClass " << file_class.qualified_name;
+  if (file_class.base_class) {
+    output << " : ";
+    print_type(*file_class.base_class, output);
+  }
+  output << " [" << visibility_name(file_class.visibility) << ']';
   print_validity(file_class.is_valid, output);
   output << '\n';
 
@@ -98,6 +102,9 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
         if (function.is_static) {
           output << ", static";
         }
+        if (function.is_override) {
+          output << ", override";
+        }
         output << ']';
         print_validity(function.is_valid, output);
         break;
@@ -107,7 +114,13 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
             file_class.constructors[member.index];
         output << "Constructor " << constructor.name << '(';
         print_parameters(constructor.parameters, output);
-        output << ") [" << visibility_name(constructor.visibility) << ']';
+        output << ')';
+        if (constructor.initializer) {
+          output << " : " << constructor.initializer->base_type.name << " ("
+                 << constructor.initializer->arguments.size()
+                 << " argument(s))";
+        }
+        output << " [" << visibility_name(constructor.visibility) << ']';
         print_validity(constructor.is_valid, output);
         break;
       }

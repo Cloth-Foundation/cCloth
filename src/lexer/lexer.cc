@@ -32,6 +32,7 @@ constexpr std::array kKeywords{
     Keyword{"const", TokenKind::kKwConst},
     Keyword{"final", TokenKind::kKwFinal},
     Keyword{"static", TokenKind::kKwStatic},
+    Keyword{"override", TokenKind::kKwOverride},
     Keyword{"true", TokenKind::kKwTrue},
     Keyword{"false", TokenKind::kKwFalse},
     Keyword{"null", TokenKind::kKwNull},

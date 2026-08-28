@@ -99,6 +99,99 @@ void class_field_layout(TestContext& test) {
       "file-class descriptor lost its identity or reference layout");
 }
 
+void inherited_class_layout(TestContext& test) {
+  cloth::Compilation compilation;
+  compilation.add_source(cloth::SourceFile::from_memory(
+      "Derived.co", "class : Base {\nint32 Count;\nBase? Owner;\n}\n"));
+  compilation.add_source(cloth::SourceFile::from_memory(
+      "Base.co", "class {\nstring? Name;\nbyte Tag;\n}\n"));
+  cloth::DiagnosticEngine diagnostics;
+  const cloth::CompilationResult result = compilation.analyze(diagnostics);
+
+  test.expect(result.is_valid,
+              "valid derived class failed ABI lowering or verification");
+  const cloth::AbiFileClass& derived = result.abi.files[0];
+  const cloth::AbiFileClass& base = result.abi.files[1];
+  test.expect(result.hir.files[0].base_file == cloth::FileId{1} &&
+                  result.mir.files[0].base_file == cloth::FileId{1} &&
+                  derived.base_file == cloth::FileId{1},
+              "base identity was lost between semantic and layout IR");
+  test.expect(base.layout.size == 32 && base.layout.fields.size() == 2 &&
+                  base.layout.fields[0].offset == 16 &&
+                  base.layout.fields[1].offset == 24,
+              "base class layout is wrong");
+  test.expect(derived.layout.size == 48 && derived.layout.alignment == 8 &&
+                  derived.layout.fields.size() == 4 &&
+                  derived.layout.fields[0] == base.layout.fields[0] &&
+                  derived.layout.fields[1] == base.layout.fields[1] &&
+                  derived.layout.fields[2].offset == 32 &&
+                  derived.layout.fields[3].offset == 40,
+              "derived class did not preserve the complete base prefix");
+  test.expect(
+      derived.type_descriptor.parent_file == cloth::FileId{1} &&
+          derived.type_descriptor.reference_offsets ==
+              std::vector<std::uint64_t>{16, 40} &&
+          !base.type_descriptor.parent_file,
+      "derived descriptor lost its parent or inherited reference metadata");
+
+  cloth::AbiModule broken = result.abi;
+  broken.files[0].type_descriptor.parent_file.reset();
+  cloth::DiagnosticEngine verifier_diagnostics;
+  test.expect(!cloth::verify_abi(broken, result.mir, result.semantics,
+                                 verifier_diagnostics),
+              "ABI verifier accepted a missing descriptor parent");
+  test.expect(has_diagnostic(verifier_diagnostics,
+                             "type descriptor parent does not match") ||
+                  has_diagnostic(verifier_diagnostics,
+                                 "type descriptor does not match"),
+              "descriptor parent corruption produced the wrong diagnostic");
+}
+
+void virtual_table_layout(TestContext& test) {
+  cloth::Compilation compilation;
+  compilation.add_source(cloth::SourceFile::from_memory(
+      "Base.co",
+      "func First(): int32 { return 1; }\n"
+      "func Second(string value): string { return value; }\n"
+      "func hidden(): int32 { return 0; }\n"));
+  compilation.add_source(cloth::SourceFile::from_memory(
+      "Derived.co",
+      "class : Base {\n"
+      "  override func First(): int32 { return 2; }\n"
+      "  func Third(): int32 { return 3; }\n"
+      "}\n"));
+  cloth::DiagnosticEngine diagnostics;
+  const cloth::CompilationResult result = compilation.analyze(diagnostics);
+
+  test.expect(result.is_valid, "valid virtual table failed ABI lowering");
+  const cloth::AbiTypeDescriptor& base = result.abi.files[0].type_descriptor;
+  const cloth::AbiTypeDescriptor& derived = result.abi.files[1].type_descriptor;
+  const cloth::FileSemantics& base_semantics =
+      result.semantics.file(cloth::FileId{0});
+  const cloth::FileSemantics& derived_semantics =
+      result.semantics.file(cloth::FileId{1});
+  test.expect(base.virtual_functions ==
+                  std::vector<cloth::SymbolId>{base_semantics.functions[0],
+                                               base_semantics.functions[1]},
+              "base virtual table has unstable declaration-order slots");
+  test.expect(derived.virtual_functions ==
+                  std::vector<cloth::SymbolId>{derived_semantics.functions[0],
+                                               base_semantics.functions[1],
+                                               derived_semantics.functions[1]},
+              "derived virtual table did not replace and extend base slots");
+
+  cloth::AbiModule broken = result.abi;
+  broken.files[1].type_descriptor.virtual_functions[0] =
+      base_semantics.functions[0];
+  cloth::DiagnosticEngine verifier_diagnostics;
+  test.expect(!cloth::verify_abi(broken, result.mir, result.semantics,
+                                 verifier_diagnostics),
+              "ABI verifier accepted a corrupted override slot");
+  test.expect(
+      has_diagnostic(verifier_diagnostics, "type descriptor does not match"),
+      "corrupted virtual slot produced the wrong diagnostic");
+}
+
 void wasm32_layout(TestContext& test) {
   const CompiledSource source{"byte Small;\nint64 Wide;\nstring? Name;\n",
                               cloth::TargetDataLayout::llvm_wasm32()};
@@ -138,12 +231,14 @@ void callable_abi(TestContext& test) {
           build.parameters[0].kind == cloth::AbiParameterKind::kReceiver &&
           build.parameters[1].kind == cloth::AbiParameterKind::kExplicit,
       "function ABI does not contain its uniform receiver slot");
-  test.expect(constructor.parameters.size() == 1 &&
-                  constructor.parameters[0].kind ==
-                      cloth::AbiParameterKind::kExplicit &&
-                  constructor.return_type ==
-                      source.result->semantics.file(cloth::FileId{0}).type,
-              "constructor ABI does not return the allocated object");
+  test.expect(
+      constructor.parameters.size() == 1 &&
+          constructor.parameters[0].kind ==
+              cloth::AbiParameterKind::kExplicit &&
+          constructor.return_type ==
+              source.result->semantics.file(cloth::FileId{0}).type &&
+          constructor.initializer_mangled_name == "_C1I6_Layout6_LayoutP1_i32",
+      "constructor allocation or initialization ABI is wrong");
 }
 
 void static_member_abi(TestContext& test) {
@@ -326,6 +421,8 @@ int main() {
   const std::vector<TestCase> tests{
       {"x86-64 type layout", x86_64_type_layout},
       {"class field layout", class_field_layout},
+      {"inherited class layout", inherited_class_layout},
+      {"virtual table layout", virtual_table_layout},
       {"wasm32 layout", wasm32_layout},
       {"callable ABI", callable_abi},
       {"static member ABI", static_member_abi},

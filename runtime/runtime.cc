@@ -60,17 +60,23 @@ constexpr char kArrayTypeName[] = "Array";
 constexpr char kArrayMetaTypeName[] = "array";
 constexpr ClothTypeDescriptor kStringTypeDescriptor{
     ClothHeapObjectKind::kString,
+    nullptr,
     kStringTypeName,
     sizeof(kStringTypeName) - 1,
     sizeof(ClothString),
     alignof(ClothString),
     nullptr,
+    0,
+    nullptr,
     0};
 constexpr ClothTypeDescriptor kArrayTypeDescriptor{ClothHeapObjectKind::kArray,
+                                                   nullptr,
                                                    kArrayTypeName,
                                                    sizeof(kArrayTypeName) - 1,
                                                    sizeof(ClothArray),
                                                    alignof(ClothArray),
+                                                   nullptr,
+                                                   0,
                                                    nullptr,
                                                    0};
 
@@ -263,6 +269,14 @@ void validate_type_descriptor(const ClothTypeDescriptor* type) noexcept {
   if (type->kind != ClothHeapObjectKind::kFileClass) {
     runtime_failure("object type descriptor has the wrong kind");
   }
+  if (type->parent != nullptr &&
+      (type->parent == type ||
+       type->parent->kind != ClothHeapObjectKind::kFileClass ||
+       type->parent->size > type->size ||
+       type->parent->alignment > type->alignment ||
+       type->parent->virtual_function_count > type->virtual_function_count)) {
+    runtime_failure("object type descriptor has an invalid parent");
+  }
   if (type->name == nullptr && type->name_size != 0) {
     runtime_failure("object type name has null storage");
   }
@@ -274,6 +288,15 @@ void validate_type_descriptor(const ClothTypeDescriptor* type) noexcept {
   }
   if ((type->reference_offsets == nullptr) != (type->reference_count == 0)) {
     runtime_failure("object reference metadata is inconsistent");
+  }
+  if ((type->virtual_functions == nullptr) !=
+      (type->virtual_function_count == 0)) {
+    runtime_failure("object virtual-function metadata is inconsistent");
+  }
+  for (std::uint64_t index = 0; index < type->virtual_function_count; ++index) {
+    if (type->virtual_functions[index] == nullptr) {
+      runtime_failure("object virtual-function slot is null");
+    }
   }
 
   std::uint64_t previous_offset = 0;
@@ -739,7 +762,32 @@ extern "C" std::uint8_t cloth_rt_object_is_type(
   if (value == nullptr) {
     return 0;
   }
-  return require_object(value).type == type ? 1 : 0;
+  const ClothTypeDescriptor* current = require_object(value).type;
+  const ClothTypeDescriptor* slow = current;
+  const ClothTypeDescriptor* fast = current;
+  while (current != nullptr) {
+    if (current->kind != ClothHeapObjectKind::kFileClass) {
+      return 0;
+    }
+    validate_type_descriptor(current);
+    if (current == type) {
+      return 1;
+    }
+    current = current->parent;
+
+    if (slow != nullptr) {
+      validate_type_descriptor(slow);
+      slow = slow->parent;
+    }
+    for (std::size_t step = 0; step < 2 && fast != nullptr; ++step) {
+      validate_type_descriptor(fast);
+      fast = fast->parent;
+    }
+    if (slow != nullptr && slow == fast) {
+      runtime_failure("object type descriptor ancestry contains a cycle");
+    }
+  }
+  return 0;
 }
 
 extern "C" void* cloth_rt_array_alloc(

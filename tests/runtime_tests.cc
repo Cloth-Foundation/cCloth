@@ -68,15 +68,32 @@ int main() {
 
   constexpr std::uint64_t kReferenceOffsets[]{offsetof(TestNode, first),
                                               offsetof(TestNode, second)};
+  constexpr std::uint64_t kBaseReferenceOffsets[]{offsetof(TestNode, first)};
+  constexpr std::string_view kBaseName = "TestBase";
+  const ClothTypeDescriptor base_type{
+      ClothHeapObjectKind::kFileClass,
+      nullptr,
+      kBaseName.data(),
+      kBaseName.size(),
+      offsetof(TestNode, second),
+      alignof(TestNode),
+      kBaseReferenceOffsets,
+      1,
+      nullptr,
+      0,
+  };
   constexpr std::string_view kNodeName = "TestNode";
   const ClothTypeDescriptor node_type{
       ClothHeapObjectKind::kFileClass,
+      &base_type,
       kNodeName.data(),
       kNodeName.size(),
       sizeof(TestNode),
       alignof(TestNode),
       kReferenceOffsets,
       2,
+      nullptr,
+      0,
   };
 
   ClothGcRootFrame managed_frame{};
@@ -219,8 +236,9 @@ int main() {
       cloth_rt_string_literal(kArrayName.data(), kArrayName.size());
 
   test.expect(cloth_rt_object_is_type(meta_node, &node_type) == 1 &&
+                  cloth_rt_object_is_type(meta_node, &base_type) == 1 &&
                   cloth_rt_object_is_type(meta_string, &node_type) == 0,
-              "exact runtime type identity is wrong");
+              "runtime descriptor ancestry is wrong");
   test.expect(
       cloth_rt_object_is_kind(
           meta_string,

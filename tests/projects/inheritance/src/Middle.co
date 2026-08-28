@@ -1,0 +1,17 @@
+class : Base {
+  int32 MiddleMarker = Report(4);
+
+  Middle(int32 value): Base(BaseArgument(value)) {
+    println(5);
+  }
+
+  static func BaseArgument(int32 value): int32 {
+    println(value);
+    return 3;
+  }
+
+  override func Report(int32 value): int32 {
+    println(value);
+    return value;
+  }
+}

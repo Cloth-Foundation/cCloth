@@ -26,6 +26,12 @@ void print_callable(const AbiCallable& callable, const SemanticModel& semantics,
   if (symbol.is_static) {
     output << ", static";
   }
+  if (symbol.virtual_slot) {
+    output << ", virtual slot " << *symbol.virtual_slot;
+  }
+  if (symbol.is_override) {
+    output << ", override";
+  }
   output << "]\n";
   output << "|  |- ABI " << callable.mangled_name << '(';
   for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
@@ -39,6 +45,14 @@ void print_callable(const AbiCallable& callable, const SemanticModel& semantics,
     output << semantics.type(parameter.type).name;
   }
   output << ") -> " << semantics.type(callable.return_type).name << '\n';
+  if (callable.kind == AbiCallableKind::kConstructor) {
+    output << "|  |- InitializerABI " << callable.initializer_mangled_name
+           << "(receiver";
+    for (const AbiParameter& parameter : callable.parameters) {
+      output << ", " << semantics.type(parameter.type).name;
+    }
+    output << ") -> void\n";
+  }
 }
 
 }  // namespace
@@ -51,9 +65,14 @@ void print_abi_summary(const AbiModule& abi, const SemanticModel& semantics,
          << abi.target.pointer.alignment << "]\n";
   for (const AbiFileClass& file : abi.files) {
     const SemanticSymbol& class_symbol = semantics.symbol(file.symbol);
-    output << "FileClass " << class_symbol.name << " [size " << file.layout.size
-           << ", align " << file.layout.alignment << ", header "
-           << file.layout.header_size << ", references ";
+    output << "FileClass " << class_symbol.name;
+    if (file.base_file) {
+      output << " : "
+             << semantics.symbol(semantics.file(*file.base_file).symbol).name;
+    }
+    output << " [size " << file.layout.size << ", align "
+           << file.layout.alignment << ", header " << file.layout.header_size
+           << ", references ";
     if (file.type_descriptor.reference_offsets.empty()) {
       output << "none";
     } else {
@@ -65,7 +84,8 @@ void print_abi_summary(const AbiModule& abi, const SemanticModel& semantics,
         output << file.type_descriptor.reference_offsets[index];
       }
     }
-    output << "]\n";
+    output << ", virtuals " << file.type_descriptor.virtual_functions.size()
+           << "]\n";
     for (const MemberReference& member : file.member_order) {
       switch (member.kind) {
         case DeclarationKind::kField: {

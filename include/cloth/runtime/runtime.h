@@ -12,12 +12,15 @@ enum class ClothHeapObjectKind : std::uint64_t {
 // Immutable compiler-emitted metadata. All offsets are object-relative bytes.
 struct ClothTypeDescriptor {
   ClothHeapObjectKind kind;
+  const ClothTypeDescriptor* parent;
   const char* name;
   std::uint64_t name_size;
   std::uint64_t size;
   std::uint64_t alignment;
   const std::uint64_t* reference_offsets;
   std::uint64_t reference_count;
+  const void* const* virtual_functions;
+  std::uint64_t virtual_function_count;
 };
 
 // One frame in the per-thread precise-root stack. Roots point to pointer-sized

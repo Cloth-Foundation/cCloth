@@ -133,14 +133,24 @@ enum class MirCallKind {
   kClassQualified,
   kInstance,
   kConstructor,
+  kBaseConstructor,
+};
+
+enum class MirDispatchKind {
+  kDirect,
+  kVirtual,
 };
 
 struct MirCallInstruction {
   MirCallKind kind;
+  MirDispatchKind dispatch;
+  bool receiver_is_self;
   SymbolId callable;
   std::optional<MirValueId> receiver;
   std::vector<MirValueId> arguments;
 };
+
+struct MirInitializeFieldsInstruction {};
 
 struct MirPhiIncoming {
   MirBlockId predecessor;
@@ -160,7 +170,7 @@ using MirInstructionData = std::variant<
     MirStringMetaInstruction, MirObjectMetaInstruction, MirUnaryInstruction,
     MirBinaryInstruction, MirConvertInstruction, MirIsNonNullInstruction,
     MirNullAssertInstruction, MirTypeTestInstruction, MirCheckedCastInstruction,
-    MirCallInstruction, MirPhiInstruction>;
+    MirCallInstruction, MirInitializeFieldsInstruction, MirPhiInstruction>;
 
 struct MirInstruction {
   std::optional<MirValueId> result;
@@ -221,6 +231,7 @@ struct MirCallable {
 struct MirFileClass {
   FileId file;
   SymbolId symbol;
+  std::optional<FileId> base_file;
   std::vector<MirField> fields;
   std::vector<MirCallable> functions;
   std::vector<MirCallable> constructors;

@@ -1,0 +1,43 @@
+class : Base {
+  int32 Extra;
+
+  Derived(int32 value): Base(value) {
+    Extra = 2;
+    Value = Value + 1;
+  }
+
+  func Total(): int32 {
+    return Read() + Extra;
+  }
+
+  override func Label(): string {
+    return "Derived";
+  }
+
+  static func Main() {
+    Derived value = Derived(40);
+    println(value.Name);
+    println(value.Value);
+    println(value.Total());
+    println(Derived.Kind());
+
+    Base parent = value;
+    println(parent.Read());
+    println(value.Label());
+    println(parent.Label());
+    println(parent is Base);
+    println(parent is Derived);
+
+    Derived? restored = parent as Derived?;
+    println(restored != null);
+    Base? maybe = value;
+    println(maybe?.Name ?? "missing");
+
+    object boxed = value;
+    Base? fromObject = boxed as Base?;
+    println(fromObject != null);
+    object unrelated = "cloth";
+    Base? rejected = unrelated as Base?;
+    println(rejected == null);
+  }
+}

@@ -1,0 +1,10 @@
+int32 BaseMarker = Report(2);
+
+Base(int32 value) {
+  println(value);
+}
+
+func Report(int32 value): int32 {
+  println(value);
+  return value;
+}

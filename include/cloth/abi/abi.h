@@ -7,6 +7,7 @@
 #include "cloth/target/data_layout.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -56,10 +57,12 @@ enum class AbiHeapObjectKind : std::uint64_t {
 
 struct AbiTypeDescriptor {
   AbiHeapObjectKind kind;
+  std::optional<FileId> parent_file;
   std::string name;
   std::uint64_t size;
   std::uint64_t alignment;
   std::vector<std::uint64_t> reference_offsets;
+  std::vector<SymbolId> virtual_functions;
 
   friend bool operator==(const AbiTypeDescriptor&,
                          const AbiTypeDescriptor&) = default;
@@ -108,6 +111,7 @@ struct AbiCallable {
   AbiLinkage linkage;
   AbiCallingConvention calling_convention;
   std::string mangled_name;
+  std::string initializer_mangled_name;
   TypeId return_type;
   std::vector<AbiParameter> parameters;
 
@@ -117,6 +121,7 @@ struct AbiCallable {
 struct AbiFileClass {
   FileId file;
   SymbolId symbol;
+  std::optional<FileId> base_file;
   AbiClassLayout layout;
   AbiTypeDescriptor type_descriptor;
   std::vector<AbiStaticField> static_fields;
@@ -141,6 +146,9 @@ struct AbiModule {
 
 [[nodiscard]] std::string mangle_abi_symbol(const SemanticSymbol& symbol,
                                             const SemanticModel& semantics);
+
+[[nodiscard]] std::string mangle_abi_constructor_initializer(
+    const SemanticSymbol& symbol, const SemanticModel& semantics);
 
 [[nodiscard]] std::string mangle_abi_static_field(
     const SemanticSymbol& symbol, const SemanticModel& semantics);

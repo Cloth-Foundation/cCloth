@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -45,6 +46,14 @@ class MirVerifier {
       if (file.symbol != semantic_file.symbol) {
         report(range, "file class symbol does not match semantics");
       }
+      if (file.base_file != semantic_file.base_file) {
+        report(range, "file class base does not match semantics");
+      }
+      if (file.base_file &&
+          (file.base_file->value >= semantics_.files().size() ||
+           *file.base_file == file.file)) {
+        report(range, "file class has an invalid base FileId");
+      }
       if (file.fields.size() != semantic_file.fields.size() ||
           file.functions.size() != semantic_file.functions.size() ||
           file.constructors.size() != semantic_file.constructors.size()) {
@@ -56,7 +65,7 @@ class MirVerifier {
       verify_symbol(field.symbol, range);
       if (field.initializer) {
         verify_body(*field.initializer,
-                    symbol_type(field.symbol, semantics_.error_type()));
+                    symbol_type(field.symbol, semantics_.error_type()), true);
       }
     }
     for (const MirCallable& function : file.functions) {
@@ -106,6 +115,7 @@ class MirVerifier {
       return_type = expected_kind == SymbolKind::kConstructor
                         ? semantics_.void_type()
                         : symbol.type;
+      verify_constructor_initialization(callable, symbol, expected_kind, range);
     }
     for (const SymbolId parameter : callable.parameters) {
       verify_symbol(parameter, range);
@@ -114,10 +124,65 @@ class MirVerifier {
         report(range, "callable parameter has the wrong symbol kind");
       }
     }
-    verify_body(callable.body, return_type);
+    verify_body(callable.body, return_type,
+                expected_kind == SymbolKind::kConstructor);
   }
 
-  void verify_body(const MirBody& body, TypeId return_type) {
+  void verify_constructor_initialization(const MirCallable& callable,
+                                         const SemanticSymbol& symbol,
+                                         SymbolKind expected_kind,
+                                         SourceRange range) {
+    std::size_t field_initializers = 0;
+    std::size_t base_calls = 0;
+    std::optional<std::pair<std::size_t, std::size_t>> field_position;
+    std::optional<std::pair<std::size_t, std::size_t>> base_position;
+    for (std::size_t block_index = 0; block_index < callable.body.blocks.size();
+         ++block_index) {
+      const MirBasicBlock& block = callable.body.blocks[block_index];
+      for (std::size_t instruction_index = 0;
+           instruction_index < block.instructions.size(); ++instruction_index) {
+        const MirInstruction& instruction =
+            block.instructions[instruction_index];
+        if (std::holds_alternative<MirInitializeFieldsInstruction>(
+                instruction.data)) {
+          ++field_initializers;
+          field_position = {block_index, instruction_index};
+        }
+        const auto* call = std::get_if<MirCallInstruction>(&instruction.data);
+        if (call != nullptr && call->kind == MirCallKind::kBaseConstructor) {
+          ++base_calls;
+          base_position = {block_index, instruction_index};
+          if (symbol.base_constructor != call->callable) {
+            report(instruction.range,
+                   "base constructor call does not match semantics");
+          }
+        }
+      }
+    }
+
+    if (expected_kind != SymbolKind::kConstructor) {
+      if (field_initializers != 0 || base_calls != 0) {
+        report(range, "non-constructor contains initialization instructions");
+      }
+      return;
+    }
+    if (field_initializers != 1) {
+      report(range,
+             "constructor must contain exactly one field initialization");
+    }
+    const std::size_t expected_base_calls = symbol.base_constructor ? 1U : 0U;
+    if (base_calls != expected_base_calls) {
+      report(range, "constructor has the wrong number of base calls");
+    }
+    if (base_position && field_position &&
+        (base_position->first != field_position->first ||
+         base_position->second >= field_position->second)) {
+      report(range, "base constructor call must precede field initialization");
+    }
+  }
+
+  void verify_body(const MirBody& body, TypeId return_type,
+                   bool suppress_self_virtual_dispatch) {
     if (body.blocks.empty()) {
       report(body.range, "body has no basic blocks");
       return;
@@ -152,7 +217,8 @@ class MirVerifier {
          ++block_index) {
       const MirBasicBlock& block = body.blocks[block_index];
       for (const MirInstruction& instruction : block.instructions) {
-        verify_instruction(instruction, body, value_types);
+        verify_instruction(instruction, body, value_types,
+                           suppress_self_virtual_dispatch);
       }
       verify_terminator(block.terminator, body, value_types, return_type);
     }
@@ -195,9 +261,10 @@ class MirVerifier {
     }
   }
 
-  void verify_instruction(
-      const MirInstruction& instruction, const MirBody& body,
-      const std::vector<std::optional<TypeId>>& value_types) {
+  void verify_instruction(const MirInstruction& instruction,
+                          const MirBody& body,
+                          const std::vector<std::optional<TypeId>>& value_types,
+                          bool suppress_self_virtual_dispatch) {
     if (const auto* load =
             std::get_if<MirLoadSymbolInstruction>(&instruction.data)) {
       verify_symbol(load->symbol, instruction.range);
@@ -236,10 +303,17 @@ class MirVerifier {
       verify_symbol(load->member, instruction.range);
       require_result(instruction);
       verify_symbol_type(load->member, instruction.type, instruction.range);
-      if (load->member.value < semantics_.symbols().size() &&
-          semantics_.symbol(load->member).is_static) {
-        report(instruction.range, "static field was lowered as a member load");
+      if (load->member.value < semantics_.symbols().size()) {
+        const SemanticSymbol& symbol = semantics_.symbol(load->member);
+        if (symbol.kind != SymbolKind::kField) {
+          report(instruction.range, "member load does not reference a field");
+        } else if (symbol.is_static) {
+          report(instruction.range,
+                 "static field was lowered as a member load");
+        }
       }
+      verify_member_receiver(load->object, load->member, value_types,
+                             instruction.range);
     } else if (const auto* store =
                    std::get_if<MirStoreMemberInstruction>(&instruction.data)) {
       verify_value(store->object, value_types, instruction.range);
@@ -249,6 +323,17 @@ class MirVerifier {
       verify_value_type(store->value,
                         symbol_type(store->member, semantics_.error_type()),
                         value_types, instruction.range);
+      if (store->member.value < semantics_.symbols().size()) {
+        const SemanticSymbol& symbol = semantics_.symbol(store->member);
+        if (symbol.kind != SymbolKind::kField) {
+          report(instruction.range, "member store does not reference a field");
+        } else if (symbol.is_static) {
+          report(instruction.range,
+                 "static field was lowered as a member store");
+        }
+      }
+      verify_member_receiver(store->object, store->member, value_types,
+                             instruction.range);
     } else if (const auto* array =
                    std::get_if<MirArrayLiteralInstruction>(&instruction.data)) {
       verify_type(array->element_type, instruction.range);
@@ -436,10 +521,17 @@ class MirVerifier {
       for (const MirValueId argument : call->arguments) {
         verify_value(argument, value_types, instruction.range);
       }
+      if (call->receiver) {
+        verify_member_receiver(*call->receiver, call->callable, value_types,
+                               instruction.range);
+      }
       if (call->callable.value < semantics_.symbols().size()) {
         const SemanticSymbol& callable = semantics_.symbol(call->callable);
         const bool is_constructor = callable.kind == SymbolKind::kConstructor;
-        if ((call->kind == MirCallKind::kConstructor) != is_constructor) {
+        const bool is_constructor_call =
+            call->kind == MirCallKind::kConstructor ||
+            call->kind == MirCallKind::kBaseConstructor;
+        if (is_constructor_call != is_constructor) {
           report(instruction.range,
                  "call kind does not match its callable symbol");
         }
@@ -456,8 +548,29 @@ class MirVerifier {
             report(instruction.range,
                    "instance function call is class-qualified");
           }
+          const bool expects_virtual = callable.virtual_slot.has_value();
+          const bool should_dispatch_virtually =
+              expects_virtual &&
+              !(suppress_self_virtual_dispatch && call->receiver_is_self);
+          if (call->dispatch == MirDispatchKind::kVirtual &&
+              (!should_dispatch_virtually || callable.is_static)) {
+            report(instruction.range,
+                   "call has invalid virtual dispatch metadata");
+          }
+          if (should_dispatch_virtually &&
+              call->dispatch != MirDispatchKind::kVirtual) {
+            report(instruction.range,
+                   "virtual function was lowered as a direct call");
+          }
+          if (call->receiver_is_self && callable.is_static) {
+            report(instruction.range,
+                   "static function call has a self receiver");
+          }
         }
-        if (instruction.type != callable.type) {
+        const TypeId expected_type = call->kind == MirCallKind::kBaseConstructor
+                                         ? semantics_.void_type()
+                                         : callable.type;
+        if (instruction.type != expected_type) {
           report(instruction.range,
                  "call result type does not match its callable");
         }
@@ -479,6 +592,13 @@ class MirVerifier {
         require_no_result(instruction);
       } else {
         require_result(instruction);
+      }
+    } else if (std::holds_alternative<MirInitializeFieldsInstruction>(
+                   instruction.data)) {
+      require_no_result(instruction);
+      if (instruction.type != semantics_.void_type()) {
+        report(instruction.range,
+               "field initialization instruction does not have void type");
       }
     } else if (const auto* phi =
                    std::get_if<MirPhiInstruction>(&instruction.data)) {
@@ -621,6 +741,9 @@ class MirVerifier {
         target == semantics_.error_type()) {
       return true;
     }
+    if (source == target) {
+      return true;
+    }
     if (target == semantics_.object_type()) {
       return is_non_null_reference(source);
     }
@@ -630,12 +753,57 @@ class MirVerifier {
     }
     const SemanticType& source_type = semantics_.type(source);
     const SemanticType& target_type = semantics_.type(target);
-    return source_type.kind == TypeKind::kNullable &&
-           target_type.kind == TypeKind::kNullable &&
-           source_type.element_type && target_type.element_type &&
-           (*source_type.element_type == *target_type.element_type ||
-            (*target_type.element_type == semantics_.object_type() &&
-             is_non_null_reference(*source_type.element_type)));
+    if (source_type.kind == TypeKind::kNullable && source_type.element_type &&
+        target_type.kind == TypeKind::kNullable && target_type.element_type) {
+      return can_widen_reference(*source_type.element_type,
+                                 *target_type.element_type);
+    }
+    if (source_type.kind != TypeKind::kFileClass || !source_type.file ||
+        target_type.kind != TypeKind::kFileClass || !target_type.file) {
+      return false;
+    }
+    std::optional<FileId> current =
+        semantics_.file(*source_type.file).base_file;
+    for (std::size_t depth = 0; current && depth < semantics_.files().size();
+         ++depth) {
+      if (*current == *target_type.file) {
+        return true;
+      }
+      current = semantics_.file(*current).base_file;
+    }
+    return false;
+  }
+
+  void verify_member_receiver(
+      MirValueId receiver, SymbolId member,
+      const std::vector<std::optional<TypeId>>& value_types,
+      SourceRange range) {
+    if (receiver.value >= value_types.size() || !value_types[receiver.value] ||
+        member.value >= semantics_.symbols().size()) {
+      return;
+    }
+    const TypeId receiver_type = *value_types[receiver.value];
+    if (receiver_type.value >= semantics_.types().size()) {
+      return;
+    }
+    const SemanticType& type = semantics_.type(receiver_type);
+    const std::optional<FileId> owner = semantics_.symbol(member).file;
+    if (type.kind != TypeKind::kFileClass || !type.file || !owner ||
+        !is_file_subtype(*type.file, *owner)) {
+      report(range, "member receiver is unrelated to its declaring class");
+    }
+  }
+
+  bool is_file_subtype(FileId subtype, FileId supertype) const {
+    std::optional<FileId> current = subtype;
+    for (std::size_t depth = 0; current && depth < semantics_.files().size();
+         ++depth) {
+      if (*current == supertype) {
+        return true;
+      }
+      current = semantics_.file(*current).base_file;
+    }
+    return false;
   }
 
   void verify_value(MirValueId value,

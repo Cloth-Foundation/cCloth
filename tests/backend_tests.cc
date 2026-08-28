@@ -136,10 +136,14 @@ void object_construction(TestContext& test) {
   test.expect(
       sources.contains("@.cloth.type.references.0 = private unnamed_addr "
                        "constant [1 x i64] [i64 16]") &&
+          sources.contains("@.cloth.type.virtuals.0 = private constant [1 x "
+                           "ptr] [ptr @_C1F5_Model3_GetP0]") &&
           sources.contains("@.cloth.type.0 = private constant { i64, ptr, "
-                           "i64, i64, i64, ptr, i64 } { i64 0, ptr "
-                           "@.cloth.str.0, i64 5, i64 32, i64 8, ptr "
-                           "@.cloth.type.references.0, i64 1 }"),
+                           "ptr, i64, i64, i64, ptr, i64, ptr, i64 } { i64 "
+                           "0, ptr "
+                           "null, ptr @.cloth.str.0, i64 5, i64 32, i64 8, ptr "
+                           "@.cloth.type.references.0, i64 1, ptr "
+                           "@.cloth.type.virtuals.0, i64 1 }"),
       "file-class type descriptor metadata is missing");
   test.expect(sources.contains("define internal ptr @_C1I5_Model4_Name") &&
                   sources.contains("call ptr @_C1I5_Model4_Name(ptr %self)"),
@@ -148,6 +152,125 @@ void object_construction(TestContext& test) {
               "constructor does not allocate through its type descriptor");
   test.expect(sources.contains("getelementptr i8, ptr %self, i64 16"),
               "field access does not use its verified ABI offset");
+}
+
+void inherited_type_descriptors(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Derived.co", "class : Base {\nint32 Count;\nBase? Owner;\n}\n");
+  sources.add("Base.co", "class {\nstring? Name;\nbyte Tag;\n}\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(), "derived class module failed to emit");
+  test.expect(
+      sources.contains("@.cloth.type.references.0 = private unnamed_addr "
+                       "constant [2 x i64] [i64 16, i64 40]") &&
+          sources.contains(
+              "@.cloth.type.0 = private constant { i64, ptr, ptr, i64, i64, "
+              "i64, ptr, i64, ptr, i64 } { i64 0, ptr @.cloth.type.1, ptr "
+              "@.cloth.str.0, i64 7, i64 48, i64 8, ptr "
+              "@.cloth.type.references.0, i64 2, ptr null, i64 0 }"),
+      "derived descriptor lost its parent pointer or inherited GC map");
+  test.expect(sources.contains(
+                  "@.cloth.type.1 = private constant { i64, ptr, ptr, i64, "
+                  "i64, i64, ptr, i64, ptr, i64 } { i64 0, ptr null, ptr "),
+              "root descriptor unexpectedly gained a parent pointer");
+}
+
+void constructor_chaining(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Base.co", "Base(int32 value) { println(value); }\n");
+  sources.add("Derived.co",
+              "class : Base {\n"
+              "  Derived(int32 value): Base(value) { println(value + 1); }\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(),
+              "constructor chain failed LLVM lowering");
+  test.expect(
+      sources.contains(
+          "define internal void @_C1I4_Base4_BaseP1_i32(ptr %self, i32 ") &&
+          sources.contains(
+              "define internal void @_C1I7_Derived7_DerivedP1_i32(ptr %self, "
+              "i32 "),
+      "constructor initializer entry points were not emitted");
+  test.expect(
+      count_occurrences(sources.llvm->text,
+                        "call void @_C1I4_Base4_BaseP1_i32(ptr %self, i32 ") ==
+          2,
+      "derived allocation and initializer entries did not chain to the base");
+  test.expect(
+      count_occurrences(sources.llvm->text,
+                        "call ptr @cloth_rt_alloc(ptr @.cloth.type.1)") == 1,
+      "derived constructor did not allocate exactly one object");
+}
+
+void inherited_member_access_and_subtyping(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Base.co",
+              "int32 Value;\n"
+              "Base(int32 value) { Value = value; }\n"
+              "func Read(): int32 { return Value; }\n"
+              "static func Kind(): int32 { return 1; }\n");
+  sources.add("Derived.co",
+              "class : Base { Derived(int32 value): Base(value) {} }\n");
+  sources.add("Use.co",
+              "func Upcast(Derived value): Base { return value; }\n"
+              "func Read(Derived value): int32 {\n"
+              "  value.Value = 2;\n"
+              "  return value.Read() + Derived.Kind();\n"
+              "}\n"
+              "func Check(Base value): bool { return value is Base; }\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(),
+              "inherited behavior failed LLVM lowering");
+  test.expect(sources.contains("@.cloth.type.virtuals.0 = private constant "
+                               "[1 x ptr] [ptr @_C1F4_Base4_ReadP0]") &&
+                  sources.contains(" = getelementptr inbounds ptr, ptr ") &&
+                  sources.contains("call i32 @_C1F4_Base4_KindP0()"),
+              "inherited virtual or static calls lost their ABI targets");
+  test.expect(sources.contains("getelementptr i8, ptr ") &&
+                  sources.contains(", i64 16\n"),
+              "inherited field access lost its base offset");
+  test.expect(sources.contains("call i8 @cloth_rt_object_is_type(ptr ") &&
+                  sources.contains(", ptr @.cloth.type.0)"),
+              "base type test lost its ancestry-aware runtime boundary");
+}
+
+void virtual_dispatch(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Base.co",
+              "func Value(): int32 { return 1; }\n"
+              "func Name(): string { return \"base\"; }\n");
+  sources.add("Derived.co",
+              "class : Base {\n"
+              "  override func Value(): int32 { return 2; }\n"
+              "  func Extra(): int32 { return 3; }\n"
+              "}\n");
+  sources.add("Use.co",
+              "func Read(Base value): int32 { return value.Value(); }\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(),
+              "virtual dispatch module failed LLVM emission");
+  test.expect(
+      sources.contains(
+          "@.cloth.type.virtuals.0 = private constant [2 x ptr] [ptr "
+          "@_C1F4_Base5_ValueP0, ptr @_C1F4_Base4_NameP0]") &&
+          sources.contains(
+              "@.cloth.type.virtuals.1 = private constant [3 x ptr] [ptr "
+              "@_C1F7_Derived5_ValueP0, ptr @_C1F4_Base4_NameP0, ptr "
+              "@_C1F7_Derived5_ExtraP0]"),
+      "derived vtable did not replace and extend stable base slots");
+  test.expect(sources.contains(
+                  "getelementptr inbounds { i64, ptr, ptr, i64, i64, i64, ptr, "
+                  "i64, ptr, i64 }, ptr ") &&
+                  sources.contains("getelementptr inbounds ptr, ptr ") &&
+                  sources.contains("call i32 %"),
+              "virtual call was not emitted through descriptor slot zero");
+  test.expect(!sources.contains("call i32 @_C1F4_Base5_ValueP0(ptr %receiver"),
+              "base-typed call bypassed dynamic dispatch");
 }
 
 void arrays(TestContext& test) {
@@ -245,11 +368,10 @@ void call_receivers(TestContext& test) {
   test.expect(sources.llvm.has_value(), "call module failed to emit");
   test.expect(sources.contains("call i32 @_C1F4_User4_EchoP1_i32(i32 1)"),
               "static call gained an ABI receiver");
-  test.expect(sources.contains(
-                  "call i32 @_C1F4_User12_InstanceEchoP1_i32(ptr %receiver"),
-              "unqualified call did not forward its receiver");
-  test.expect(sources.contains(
-                  "call i32 @_C1F4_User12_InstanceEchoP1_i32(ptr %v0, i32 2)"),
+  test.expect(
+      sources.contains("call void @cloth_rt_require_receiver(ptr %receiver)"),
+      "unqualified call did not forward its receiver");
+  test.expect(sources.contains("call void @cloth_rt_require_receiver(ptr %v0)"),
               "instance-qualified call did not pass its object");
   test.expect(sources.contains("call ptr @_C1C4_User4_UserP0()"),
               "constructor call gained an ABI receiver");
@@ -336,9 +458,9 @@ void gc_root_frames(TestContext& test) {
                            "  ret ptr"),
       "GC root frames are not balanced around callable returns");
   test.expect(count_occurrences(sources.llvm->text,
-                                "call void @cloth_rt_gc_push_frame(") == 3 &&
+                                "call void @cloth_rt_gc_push_frame(") == 4 &&
                   count_occurrences(sources.llvm->text,
-                                    "call void @cloth_rt_gc_pop_frame(") == 4,
+                                    "call void @cloth_rt_gc_pop_frame(") == 5,
               "GC root frames were not emitted once per call and return path");
 
   CompiledSources scalar;
@@ -409,9 +531,11 @@ void wasm32_module(TestContext& test) {
   test.expect(sources.contains("target triple = \"wasm32-unknown-unknown\""),
               "wasm32 triple is missing");
   test.expect(
-      sources.contains("@.cloth.type.0 = private constant { i64, ptr, i64, "
-                       "i64, i64, ptr, i64 } { i64 0, ptr @.cloth.str.0, "
-                       "i64 5, i64 12, i64 4, ptr null, i64 0 }") &&
+      sources.contains("@.cloth.type.0 = private constant { i64, ptr, ptr, "
+                       "i64, i64, i64, ptr, i64, ptr, i64 } { i64 0, ptr "
+                       "null, ptr "
+                       "@.cloth.str.0, i64 5, i64 12, i64 4, ptr null, "
+                       "i64 0, ptr @.cloth.type.virtuals.0, i64 2 }") &&
           sources.contains("call ptr @cloth_rt_alloc(ptr @.cloth.type.0)"),
       "wasm32 object descriptor did not preserve its ABI layout");
   test.expect(sources.contains(" = phi i32 ") &&
@@ -546,6 +670,11 @@ int main() {
       {"target header", target_header},
       {"arithmetic and control flow", arithmetic_and_control_flow},
       {"object construction", object_construction},
+      {"inherited type descriptors", inherited_type_descriptors},
+      {"constructor chaining", constructor_chaining},
+      {"inherited member access and subtyping",
+       inherited_member_access_and_subtyping},
+      {"virtual dispatch", virtual_dispatch},
       {"arrays", arrays},
       {"strings", strings},
       {"object model", object_model},

@@ -1,7 +1,7 @@
 # Cloth deferred-work ledger
 
 This file is the central inventory of work deliberately left out through Stage
-15. Feature documents remain authoritative for existing behavior; this ledger
+16.5. Feature documents remain authoritative for existing behavior; this ledger
 records accepted gaps and their prerequisites. An unchecked item has no implied
 schedule or stage number.
 
@@ -12,19 +12,32 @@ than a general aspiration.
 
 ## Language and object model
 
-- [ ] Design file-kind declarations for an implicit file class. The working
-  proposal is a top-level `class {}`, `interface {}`, `struct {}`, or `enum {}`
-  block, with `class` remaining the default when no block is present. Define
-  layout, value/reference semantics, construction, visibility, and import
-  behavior before reserving final syntax.
+- [x] Add the optional unnamed `class {}` envelope and validated
+  single-inheritance graph. Completed in Stage 16.1.
+- [ ] Design the remaining file-kind declarations for an implicit file class.
+  The working proposal is a top-level `interface {}`, `struct {}`, or `enum {}`
+  block. Define layout, value/reference semantics, construction, visibility,
+  and import behavior before reserving final syntax.
 - [ ] Implement nested type declarations. `class`, `struct`, and `enum` are
   reserved declaration starters today but are intentionally diagnosed as
   unsupported.
-- [ ] Design inheritance and interfaces. The provisional constructor spelling
-  is `User(...): Human(...) is InterfaceA, InterfaceB { ... }`; it is not yet a
-  frozen grammar. This work must define superclass initialization order,
-  overrides, dispatch/vtables, object layout, interface conformance, visibility,
-  descriptor identity, and inheritance-aware `is`/`as` behavior.
+- [x] Define inherited object layout and descriptor ancestry. Stage 16.2 uses a
+  complete padded base prefix, flattened GC reference maps, and a direct-parent
+  descriptor link.
+- [x] Define explicit base-constructor chaining. Stage 16.3 freezes
+  `User(...): Human(...) { ... }`, allocates the most-derived object once, and
+  runs each base's fields and constructor before derived initialization.
+- [x] Add inherited lookup, base-reference conversions, and hierarchy-aware
+  `is`/`as`. Stage 16.4 follows the base chain for visibility and runtime type
+  identity.
+- [x] Define explicit overrides and dynamic dispatch. Stage 16.5 requires
+  `override func` for an exact inherited instance signature, preserves stable
+  virtual slots, dispatches through the most-derived descriptor, and suppresses
+  self dispatch during field initialization and constructor execution.
+- [ ] Add base-qualified calls, abstract members, and sealed/final override
+  contracts.
+- [ ] Design interfaces and the provisional `class : Human is InterfaceA,
+  InterfaceB { ... }` conformance syntax.
 - [ ] Add flow-sensitive smart casts after a successful `value is T` test.
 - [ ] Add primitive boxing before primitives may widen to `object`.
 - [ ] Define the intended reflection surface; Stage 15 exposes only the stable
@@ -32,8 +45,8 @@ than a general aspiration.
 - [ ] Add generics and traits or their eventual interface-based equivalent.
 - [ ] Add first-class function values.
 - [ ] Decide and implement user-defined conversions and implicit numeric
-  promotions. Current overload resolution remains exact after alias
-  canonicalization.
+  promotions. Current overload resolution prefers exact canonical signatures
+  and otherwise requires one uniquely compatible candidate.
 - [ ] Add implicit default constructors if Cloth should synthesize them.
 - [ ] Decide whether distinct unit and never types belong beside `void`.
 

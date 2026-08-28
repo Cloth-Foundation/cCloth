@@ -193,6 +193,14 @@ class HirVerifier {
         if (file.symbol != semantic_file.symbol) {
           report(range, "file class symbol does not match semantics");
         }
+        if (file.base_file != semantic_file.base_file) {
+          report(range, "file class base does not match semantics");
+        }
+        if (file.base_file &&
+            (file.base_file->value >= semantics_.files().size() ||
+             *file.base_file == file.file)) {
+          report(range, "file class has an invalid base FileId");
+        }
         if (file.fields.size() != semantic_file.fields.size() ||
             file.functions.size() != semantic_file.functions.size() ||
             file.constructors.size() != semantic_file.constructors.size()) {
@@ -238,6 +246,21 @@ class HirVerifier {
 
   void verify_callable(const HirCallable& callable, SourceRange range) {
     verify_symbol(callable.symbol, range);
+    if (callable.initializer) {
+      verify_symbol(callable.initializer->constructor, range);
+      for (const HirExpressionId argument : callable.initializer->arguments) {
+        verify_expression(argument, range);
+      }
+      if (callable.symbol.value < semantics_.symbols().size() &&
+          semantics_.symbol(callable.symbol).base_constructor !=
+              callable.initializer->constructor) {
+        report(range,
+               "constructor initializer does not match semantic binding");
+      }
+    } else if (callable.symbol.value < semantics_.symbols().size() &&
+               semantics_.symbol(callable.symbol).base_constructor) {
+      report(range, "constructor lost its semantic base initializer");
+    }
     verify_block(callable.body, range);
   }
 

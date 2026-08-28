@@ -29,11 +29,13 @@ struct LoopTargets {
 class BodyBuilder {
  public:
   BodyBuilder(const HirModule& hir, const SemanticModel& semantics, FileId file,
-              SourceRange range, TypeId return_type)
+              SourceRange range, TypeId return_type,
+              bool suppress_self_virtual_dispatch)
       : hir_(hir),
         semantics_(semantics),
         file_(file),
         return_type_(return_type),
+        suppress_self_virtual_dispatch_(suppress_self_virtual_dispatch),
         body_{range, MirBlockId{0}, {}, 0} {
     body_.entry = add_block(true);
     current_block_ = body_.entry;
@@ -51,6 +53,37 @@ class BodyBuilder {
     finish_unterminated_blocks();
     body_.value_count = value_types_.size();
     return std::move(body_);
+  }
+
+  MirBody lower_constructor(
+      const std::optional<HirConstructorInitializer>& initializer,
+      HirBlockId block) {
+    if (initializer) {
+      const SemanticSymbol& base_constructor =
+          semantics_.symbol(initializer->constructor);
+      std::vector<MirValueId> arguments;
+      arguments.reserve(initializer->arguments.size());
+      for (std::size_t index = 0; index < initializer->arguments.size();
+           ++index) {
+        const HirExpressionId argument_id = initializer->arguments[index];
+        const HirExpression& argument = hir_.storage.expression(argument_id);
+        MirValueId value = require_value(lower_expression(argument_id),
+                                         argument.type, argument.range);
+        if (index < base_constructor.parameter_types.size()) {
+          value = coerce(value, base_constructor.parameter_types[index],
+                         argument.range);
+        }
+        arguments.push_back(value);
+      }
+      emit_void(initializer->range,
+                MirCallInstruction{MirCallKind::kBaseConstructor,
+                                   MirDispatchKind::kDirect, true,
+                                   initializer->constructor, std::nullopt,
+                                   std::move(arguments)});
+    }
+    emit_void(hir_.storage.block(block).range,
+              MirInitializeFieldsInstruction{});
+    return lower_callable(block);
   }
 
   MirBody lower_initializer(HirExpressionId expression, TypeId field_type) {
@@ -143,7 +176,8 @@ class BodyBuilder {
       return value;
     }
     const SemanticType& target = semantics_.type(expected);
-    if (target.kind == TypeKind::kObject && is_non_null_reference(actual)) {
+    if (can_widen_reference(actual, expected) &&
+        is_non_null_reference(actual)) {
       return emit_value(
           expected, range,
           MirConvertInstruction{value, MirConversionKind::kWidenReference});
@@ -182,8 +216,28 @@ class BodyBuilder {
   }
 
   bool can_widen_reference(TypeId source, TypeId target) const {
-    return source == target || (target == semantics_.object_type() &&
-                                is_non_null_reference(source));
+    if (source == target) {
+      return true;
+    }
+    if (target == semantics_.object_type()) {
+      return is_non_null_reference(source);
+    }
+    const SemanticType& source_type = semantics_.type(source);
+    const SemanticType& target_type = semantics_.type(target);
+    if (source_type.kind != TypeKind::kFileClass || !source_type.file ||
+        target_type.kind != TypeKind::kFileClass || !target_type.file) {
+      return false;
+    }
+    std::optional<FileId> current =
+        semantics_.file(*source_type.file).base_file;
+    for (std::size_t depth = 0; current && depth < semantics_.files().size();
+         ++depth) {
+      if (*current == *target_type.file) {
+        return true;
+      }
+      current = semantics_.file(*current).base_file;
+    }
+    return false;
   }
 
   void lower_block(HirBlockId id) {
@@ -848,6 +902,7 @@ class BodyBuilder {
                                        const HirExpression& expression) {
     MirCallKind kind = MirCallKind::kUnqualified;
     std::optional<MirValueId> receiver;
+    bool receiver_is_self = false;
     const HirExpression& callee = hir_.storage.expression(call.callee);
     if (const auto* member = std::get_if<HirMemberExpression>(&callee.data)) {
       const HirExpression& object = hir_.storage.expression(member->object);
@@ -855,6 +910,7 @@ class BodyBuilder {
         kind = MirCallKind::kClassQualified;
       } else {
         kind = MirCallKind::kInstance;
+        receiver_is_self = is_self_expression(member->object);
         receiver = require_value(lower_expression(member->object), object.type,
                                  object.range);
       }
@@ -885,8 +941,17 @@ class BodyBuilder {
     if (!call.callable) {
       return invalid_value(expression.range);
     }
-    MirCallInstruction instruction{kind, *call.callable, receiver,
-                                   std::move(arguments)};
+    const SemanticSymbol& callable = semantics_.symbol(*call.callable);
+    receiver_is_self = receiver_is_self || (kind == MirCallKind::kUnqualified &&
+                                            !callable.is_static);
+    const MirDispatchKind dispatch =
+        callable.virtual_slot &&
+                !(suppress_self_virtual_dispatch_ && receiver_is_self)
+            ? MirDispatchKind::kVirtual
+            : MirDispatchKind::kDirect;
+    MirCallInstruction instruction{
+        kind,           dispatch, receiver_is_self,
+        *call.callable, receiver, std::move(arguments)};
     if (expression.type == semantics_.void_type()) {
       emit_void(expression.range, std::move(instruction));
       return std::nullopt;
@@ -930,6 +995,19 @@ class BodyBuilder {
     incoming.push_back(MirPhiIncoming{short_end, short_result});
     return emit_value(expression.type, expression.range,
                       MirPhiInstruction{std::move(incoming)});
+  }
+
+  bool is_self_expression(HirExpressionId id) const {
+    const HirExpression& expression = hir_.storage.expression(id);
+    if (const auto* symbol =
+            std::get_if<HirSymbolExpression>(&expression.data)) {
+      return symbol->symbol == semantics_.file(file_).self_symbol;
+    }
+    if (const auto* grouped =
+            std::get_if<HirGroupedExpression>(&expression.data)) {
+      return is_self_expression(grouped->expression);
+    }
+    return false;
   }
 
   MirValueId emit_self(SourceRange range) {
@@ -978,6 +1056,7 @@ class BodyBuilder {
   const SemanticModel& semantics_;
   FileId file_;
   TypeId return_type_;
+  bool suppress_self_virtual_dispatch_;
   MirBody body_;
   std::vector<TypeId> value_types_;
   std::vector<bool> terminated_;
@@ -992,9 +1071,13 @@ MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,
   const TypeId return_type = symbol.kind == SymbolKind::kConstructor
                                  ? semantics.void_type()
                                  : symbol.type;
+  BodyBuilder builder{hir,         semantics,
+                      file,        range,
+                      return_type, symbol.kind == SymbolKind::kConstructor};
   MirBody body =
-      BodyBuilder{hir, semantics, file, range, return_type}.lower_callable(
-          callable.body);
+      symbol.kind == SymbolKind::kConstructor
+          ? builder.lower_constructor(callable.initializer, callable.body)
+          : builder.lower_callable(callable.body);
   return MirCallable{callable.symbol, symbol.parameter_symbols,
                      std::move(body)};
 }
@@ -1005,8 +1088,9 @@ MirModule lower_to_mir(const HirModule& hir, const SemanticModel& semantics) {
   MirModule module;
   module.files.reserve(hir.files.size());
   for (const HirFileClass& hir_file : hir.files) {
-    MirFileClass file{hir_file.file,        hir_file.symbol, {}, {}, {},
-                      hir_file.member_order};
+    MirFileClass file{
+        hir_file.file,        hir_file.symbol, hir_file.base_file, {}, {}, {},
+        hir_file.member_order};
     file.fields.reserve(hir_file.fields.size());
     for (const HirField& hir_field : hir_file.fields) {
       std::optional<MirBody> initializer;
@@ -1014,8 +1098,12 @@ MirModule lower_to_mir(const HirModule& hir, const SemanticModel& semantics) {
         const SourceRange range =
             hir.storage.expression(*hir_field.initializer).range;
         initializer =
-            BodyBuilder{hir, semantics, hir_file.file, range,
-                        semantics.symbol(hir_field.symbol).type}
+            BodyBuilder{hir,
+                        semantics,
+                        hir_file.file,
+                        range,
+                        semantics.symbol(hir_field.symbol).type,
+                        true}
                 .lower_initializer(*hir_field.initializer,
                                    semantics.symbol(hir_field.symbol).type);
       }

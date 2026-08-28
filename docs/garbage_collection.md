@@ -28,6 +28,7 @@ Verified ABI lowering builds one `AbiTypeDescriptor` for each file class. It
 contains:
 
 - the file-class object kind;
+- the nullable direct-parent descriptor identity;
 - the qualified file-class name;
 - the complete object size and alignment;
 - an ordered list containing the byte offset of every reference-valued instance
@@ -37,6 +38,16 @@ Nullable references use the same pointer representation and therefore appear
 in the offset list. Primitive fields and static fields do not. Offsets are
 derived from the final class layout rather than source syntax, so padding and
 target pointer width are already accounted for.
+
+Stage 16.2 flattens a base layout into every derived layout. Consequently, a
+derived descriptor's offset list includes both inherited and local reference
+fields. Its parent pointer records ancestry for Stage 16.4 subtype operations,
+but the collector scans the complete flattened list directly and never walks the
+descriptor chain.
+
+Stage 16.5 appends a virtual-function table pointer and count to file-class
+descriptors. They are immutable execution metadata and are not managed
+references, so they do not participate in tracing.
 
 The ABI verifier recomputes every descriptor. Reference offsets must be unique,
 strictly increasing, pointer-aligned, outside the two-word object header, and
@@ -49,12 +60,15 @@ order:
 
 ```text
 kind:              uint64
+parent:            pointer to the direct base descriptor, or null
 name:              pointer to immutable bytes
 name_size:         uint64
 size:              uint64
 alignment:         uint64
 reference_offsets: pointer to immutable uint64 offsets, or null
 reference_count:   uint64
+virtual_functions: pointer to immutable function pointers, or null
+virtual_count:     uint64
 ```
 
 The explicit integer widths and target-native pointers make the same contract
@@ -105,7 +119,8 @@ code may continue using the corresponding LLVM SSA value between safepoints.
 The LLVM backend roots these categories:
 
 - instance receivers and field-initializer receivers;
-- constructor `self`, before any field initializer or constructor statement;
+- constructor `self` in both allocation and base-initializer entries, before
+  any field initializer or constructor statement;
 - reference-valued parameters and local bindings, including nullable forms;
 - every reference-producing MIR value, including strings, arrays, object calls,
   object widenings, checked casts, type-name strings, nullable conversions,

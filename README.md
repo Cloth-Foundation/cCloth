@@ -1,6 +1,6 @@
-# Cloth compiler - Stage 15 core object model
+# Cloth compiler - Stage 16.5 virtual dispatch
 
-This repository contains the deterministic Stage 15 compiler core for Cloth
+This repository contains the deterministic Stage 16.5 compiler core for Cloth
 source files (`.co`). It discovers a path-derived package graph, lexes and
 parses its implicit file classes, checks imports, arrays, types, and visibility,
 verifies typed HIR, analyzes control flow, and lowers executable definitions to
@@ -24,8 +24,17 @@ peak-byte diagnostics for tests and embedders. Stage 14 makes lowercase
 universal managed-reference type `object`, identity equality, stable
 `::typeName`, checked `is`/`as` operations, and heterogeneous `object[]`
 literals without primitive boxing or array covariance. The project contains no
-virtual machine, standard library, debugger, or external package registry. LLVM IR
-emission has no link-time dependency on LLVM libraries.
+virtual machine, standard library, debugger, or external package registry.
+Stage 16.1 adds the optional unnamed `class : Base { ... }` file envelope and a
+validated single-inheritance semantic graph. Stage 16.2 gives derived objects a
+stable base-layout prefix and emits parent-linked descriptors with complete GC
+reference maps. Stage 16.3 adds explicit direct-base constructor initializers,
+single-allocation constructor chaining, and deterministic base-before-derived
+initialization. Stage 16.4 adds visibility-aware inherited lookup, transitive
+base-reference widening, and hierarchy-aware `is`/`as`. Stage 16.5 adds
+explicit `override func` declarations, stable virtual slots, descriptor-backed
+dynamic dispatch, and construction-time dispatch suppression. LLVM IR emission
+has no link-time dependency on LLVM libraries.
 
 ## Requirements
 
@@ -176,22 +185,26 @@ ctest --test-dir build --build-config Debug --output-on-failure
 The internal test executables use no external test framework. Lexer coverage
 includes tokens, comments, literals, operators, invalid input, ranges, and EOF.
 Parser coverage includes imports, declarations, arrays, `for` bindings,
-visibility, constructors, overload candidates, statements, expressions, source
-ranges, and recovery.
+visibility, constructor initializers, overload candidates, statements,
+expressions, source ranges, and recovery.
 Semantic coverage includes package and cross-file binding, aliases, wildcards,
 privacy, core types, exact overload and constructor resolution, lexical scopes,
-type checking, object widening and checked casts, heterogeneous array inference
-and access, return paths, portable file-name
+base-constructor binding, inherited lookup, transitive base conversions, type
+checking, object widening and hierarchy-aware checked casts, heterogeneous
+array inference and access, return paths, portable file-name
 collisions, typed HIR, and deterministic diagnostics. MIR coverage
 includes branches, fallthrough joins, structured loop edges, short-circuit phi
 nodes, dead blocks, field initializers, array operations, iteration latches,
-explicit conversions, receivers, and verifier failures.
-ABI coverage includes primitive and reference layouts, class padding, precise
-descriptor reference maps, both target widths, receiver slots, constructor
-returns, linkage, mangling, and verifier failures. Backend coverage includes
-arithmetic, short-circuit branches, phi values, immutable descriptor globals,
+explicit object/base conversions, constructor ordering, inherited receivers,
+and verifier failures.
+ABI coverage includes primitive and reference layouts, class padding, inherited
+base prefixes, precise descriptor reference maps, both target widths, receiver
+slots, constructor returns, linkage, mangling, and verifier failures. Backend
+coverage includes arithmetic, short-circuit branches, phi values,
+parent-linked immutable descriptor globals,
 precise root frames, objects, arrays, field initializers, receiver forms,
-constructors, typed output, and wasm32. Runtime coverage checks nested LIFO root
+constructor chaining, inherited access, typed output, and wasm32. Runtime
+coverage checks nested LIFO root
 registration, rooted cycle preservation, cross-kind cycle reclamation, managed
 strings, managed reference arrays, exact object identity, stable runtime type
 names, and automatic allocation safepoints directly. Backend coverage checks
@@ -279,6 +292,7 @@ docs/nullability.md      Stage 12.3.5 nullable reference and operator contract
 docs/garbage_collection.md Stage 13.1-13.5 managed-heap contract
 docs/strings.md           Stage 14 immutable UTF-8 string contract
 docs/objects.md           Stage 15 universal object and checked-type contract
+docs/inheritance.md       Stage 16.5 inheritance and dispatch contract
 TODO.md                   Central deferred-work ledger and design guardrails
 .vscode/                Build, test, and debug integration
 ```
@@ -437,6 +451,34 @@ File classes, strings, and arrays widen without representation changes;
 primitives are not boxed. It adds identity equality, `::typeName`, exact `is`,
 nullable safe `as`, and heterogeneous `object[]` literals while preserving
 array invariance. See [docs/objects.md](docs/objects.md).
+
+Stage 16.1 accepts an optional unnamed `class { ... }` envelope and
+`class : Base { ... }` for one visible file-class base. Semantic analysis
+records stable base edges and rejects private bases, self-inheritance, and
+indirect cycles deterministically.
+
+Stage 16.2 carries those edges through HIR, MIR, and ABI lowering. Derived
+storage begins with the complete base layout, inherited and local reference
+offsets form one precise GC map, and each generated descriptor points to its
+base descriptor.
+
+Stage 16.3 requires every declared derived constructor to select its direct
+base explicitly with `Derived(...): Base(...)`. The most-derived public entry
+allocates once; private initializer entries recursively run base fields and
+body before derived fields and body.
+
+Stage 16.4 searches public members through the base chain, preserves declaring
+symbols and base-field offsets, and permits pointer-preserving widening to any
+transitive base, including nullable forms. Runtime `is` and `as` checks follow
+descriptor parent links.
+
+Stage 16.5 makes every public instance function virtual. A derived function
+with the same name and canonical parameter signature must use `override func`
+and exactly preserve the return type. Vtable slots remain stable across the
+hierarchy, so a base-typed receiver dispatches to the most-derived override.
+Private and static functions use direct calls. Field initializers and
+constructors also bind calls on the object under construction directly. See
+[docs/inheritance.md](docs/inheritance.md).
 
 ## Extending the lexer
 

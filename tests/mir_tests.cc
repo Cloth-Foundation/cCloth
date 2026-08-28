@@ -805,17 +805,281 @@ void call_receivers(TestContext& test) {
   const cloth::MirCallInstruction* constructor_call =
       call_in(calls.functions[2].body);
   test.expect(class_call != nullptr && !class_call->receiver &&
-                  class_call->kind == cloth::MirCallKind::kClassQualified,
+                  class_call->kind == cloth::MirCallKind::kClassQualified &&
+                  class_call->dispatch == cloth::MirDispatchKind::kDirect,
               "class-qualified call lost its call kind");
   test.expect(instance_call != nullptr && instance_call->receiver &&
-                  instance_call->kind == cloth::MirCallKind::kInstance,
+                  instance_call->kind == cloth::MirCallKind::kInstance &&
+                  instance_call->dispatch == cloth::MirDispatchKind::kVirtual,
               "instance-qualified call lost its receiver or call kind");
-  test.expect(unqualified_call != nullptr && !unqualified_call->receiver &&
-                  unqualified_call->kind == cloth::MirCallKind::kUnqualified,
-              "unqualified call lost its call kind");
+  test.expect(
+      unqualified_call != nullptr && !unqualified_call->receiver &&
+          unqualified_call->kind == cloth::MirCallKind::kUnqualified &&
+          unqualified_call->dispatch == cloth::MirDispatchKind::kVirtual,
+      "unqualified call lost its call kind");
   test.expect(constructor_call != nullptr && !constructor_call->receiver &&
-                  constructor_call->kind == cloth::MirCallKind::kConstructor,
+                  constructor_call->kind == cloth::MirCallKind::kConstructor &&
+                  constructor_call->dispatch == cloth::MirDispatchKind::kDirect,
               "constructor call lost its call kind");
+}
+
+void constructor_initialization_order(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Base.co", "int32 BaseValue = 1;\nBase(int32 value) {}\n");
+  compilation.add("Derived.co",
+                  "class : Base {\n"
+                  "  int32 DerivedValue = 2;\n"
+                  "  Derived(int32 value): Base(value) {}\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid constructor chain failed MIR lowering");
+  const cloth::MirCallable& constructor =
+      compilation.result->mir.files[1].constructors[0];
+  bool found_base_call = false;
+  bool found_field_initialization = false;
+  for (const cloth::MirBasicBlock& block : constructor.body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* call =
+              std::get_if<cloth::MirCallInstruction>(&instruction.data);
+          call != nullptr &&
+          call->kind == cloth::MirCallKind::kBaseConstructor) {
+        found_base_call = true;
+        test.expect(!found_field_initialization && call->arguments.size() == 1,
+                    "base constructor call has the wrong position or args");
+      }
+      if (std::holds_alternative<cloth::MirInitializeFieldsInstruction>(
+              instruction.data)) {
+        test.expect(found_base_call,
+                    "derived fields initialize before the base constructor");
+        found_field_initialization = true;
+      }
+    }
+  }
+  test.expect(found_base_call && found_field_initialization,
+              "constructor MIR lost an initialization phase");
+}
+
+void inherited_reference_widening(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Base.co",
+                  "string Name;\n"
+                  "Base(string name) { Name = name; }\n"
+                  "func Read(): string { return Name; }\n");
+  compilation.add("Derived.co",
+                  "class : Base {\n"
+                  "  Derived(string name): Base(name) {}\n"
+                  "  func Own(): string { return Read(); }\n"
+                  "}\n");
+  compilation.add("Other.co", "int32 Wrong;\n");
+  compilation.add("Use.co",
+                  "func Upcast(Derived value): Base { return value; }\n"
+                  "func Maybe(Derived? value): Base? { return value; }\n"
+                  "func Field(Derived value): string {\n"
+                  "  value.Name = \"updated\";\n"
+                  "  return value.Read();\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid inherited references failed MIR lowering");
+  const cloth::SemanticModel& semantics = compilation.result->semantics;
+  const cloth::TypeId base_type = semantics.file(cloth::FileId{0}).type;
+  const cloth::TypeId other_type = semantics.file(cloth::FileId{2}).type;
+  const cloth::SymbolId base_name = semantics.file(cloth::FileId{0}).fields[0];
+  const cloth::SymbolId base_read =
+      semantics.file(cloth::FileId{0}).functions[0];
+  const cloth::MirFileClass& use = compilation.result->mir.files[3];
+
+  bool found_base_widening = false;
+  bool found_nullable_base_widening = false;
+  for (const cloth::MirCallable& callable : use.functions) {
+    for (const cloth::MirBasicBlock& block : callable.body.blocks) {
+      for (const cloth::MirInstruction& instruction : block.instructions) {
+        const auto* conversion =
+            std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+        if (conversion == nullptr ||
+            conversion->kind != cloth::MirConversionKind::kWidenReference) {
+          continue;
+        }
+        found_base_widening =
+            found_base_widening || instruction.type == base_type;
+        if (instruction.type.value < semantics.types().size()) {
+          const cloth::SemanticType& target = semantics.type(instruction.type);
+          found_nullable_base_widening =
+              found_nullable_base_widening ||
+              (target.kind == cloth::TypeKind::kNullable &&
+               target.element_type == base_type);
+        }
+      }
+    }
+  }
+  test.expect(found_base_widening && found_nullable_base_widening,
+              "base-reference widenings were not explicit in MIR");
+
+  bool found_inherited_store = false;
+  bool found_inherited_call = false;
+  for (const cloth::MirBasicBlock& block : use.functions[2].body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* store = std::get_if<cloth::MirStoreMemberInstruction>(
+              &instruction.data)) {
+        found_inherited_store =
+            found_inherited_store || store->member == base_name;
+      }
+      if (const auto* call =
+              std::get_if<cloth::MirCallInstruction>(&instruction.data)) {
+        found_inherited_call =
+            found_inherited_call ||
+            (call->callable == base_read &&
+             call->kind == cloth::MirCallKind::kInstance &&
+             call->dispatch == cloth::MirDispatchKind::kVirtual);
+      }
+    }
+  }
+  test.expect(found_inherited_store && found_inherited_call,
+              "inherited member symbols were not preserved in MIR");
+
+  const cloth::MirCallInstruction* unqualified = nullptr;
+  for (const cloth::MirBasicBlock& block :
+       compilation.result->mir.files[1].functions[0].body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* call =
+              std::get_if<cloth::MirCallInstruction>(&instruction.data)) {
+        unqualified = call;
+      }
+    }
+  }
+  test.expect(unqualified != nullptr && unqualified->callable == base_read &&
+                  unqualified->kind == cloth::MirCallKind::kUnqualified &&
+                  unqualified->dispatch == cloth::MirDispatchKind::kVirtual,
+              "unqualified inherited call lost its base virtual slot");
+
+  cloth::MirModule broken = compilation.result->mir;
+  for (cloth::MirBasicBlock& block : broken.files[3].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* conversion =
+              std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+          conversion != nullptr &&
+          conversion->kind == cloth::MirConversionKind::kWidenReference) {
+        instruction.type = other_type;
+      }
+    }
+  }
+  cloth::DiagnosticEngine diagnostics;
+  test.expect(!cloth::verify_mir(broken, semantics, diagnostics),
+              "MIR verifier accepted an unrelated reference widening");
+  test.expect(has_diagnostic(diagnostics,
+                             "reference widening consumes incompatible types"),
+              "invalid inherited widening produced the wrong diagnostic");
+
+  cloth::MirModule broken_member = compilation.result->mir;
+  const cloth::SymbolId unrelated_field =
+      semantics.file(cloth::FileId{2}).fields[0];
+  for (cloth::MirBasicBlock& block :
+       broken_member.files[3].functions[2].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (auto* store = std::get_if<cloth::MirStoreMemberInstruction>(
+              &instruction.data)) {
+        store->member = unrelated_field;
+      }
+    }
+  }
+  cloth::DiagnosticEngine member_diagnostics;
+  test.expect(!cloth::verify_mir(broken_member, semantics, member_diagnostics),
+              "MIR verifier accepted an unrelated member receiver");
+  test.expect(
+      has_diagnostic(member_diagnostics,
+                     "member receiver is unrelated to its declaring class"),
+      "invalid inherited member produced the wrong diagnostic");
+}
+
+void virtual_dispatch_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Base.co",
+                  "int32 Marker = Hook();\n"
+                  "Base() { self.Hook(); }\n"
+                  "Base(Base other) { other.Hook(); }\n"
+                  "func Hook(): int32 { return 1; }\n");
+  compilation.add("Derived.co",
+                  "class : Base {\n"
+                  "  Derived(): Base() {}\n"
+                  "  override func Hook(): int32 { return 2; }\n"
+                  "}\n");
+  compilation.add("Use.co",
+                  "func ThroughBase(Base value): int32 { "
+                  "return value.Hook(); }\n"
+                  "func ThroughDerived(Derived value): int32 { "
+                  "return value.Hook(); }\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid virtual calls failed MIR lowering");
+  const cloth::SemanticModel& semantics = compilation.result->semantics;
+  const cloth::SymbolId base_hook =
+      semantics.file(cloth::FileId{0}).functions[0];
+  const cloth::SymbolId derived_hook =
+      semantics.file(cloth::FileId{1}).functions[0];
+  const auto first_call =
+      [](const cloth::MirBody& body) -> const cloth::MirCallInstruction* {
+    for (const cloth::MirBasicBlock& block : body.blocks) {
+      for (const cloth::MirInstruction& instruction : block.instructions) {
+        if (const auto* call =
+                std::get_if<cloth::MirCallInstruction>(&instruction.data)) {
+          return call;
+        }
+      }
+    }
+    return nullptr;
+  };
+
+  const cloth::MirCallInstruction* through_base =
+      first_call(compilation.result->mir.files[2].functions[0].body);
+  const cloth::MirCallInstruction* through_derived =
+      first_call(compilation.result->mir.files[2].functions[1].body);
+  test.expect(through_base != nullptr && through_base->callable == base_hook &&
+                  through_base->dispatch == cloth::MirDispatchKind::kVirtual,
+              "base-typed call lost virtual dispatch");
+  test.expect(through_derived != nullptr &&
+                  through_derived->callable == derived_hook &&
+                  through_derived->dispatch == cloth::MirDispatchKind::kVirtual,
+              "derived-typed call lost its override slot");
+
+  const cloth::MirCallInstruction* initializer_call =
+      first_call(*compilation.result->mir.files[0].fields[0].initializer);
+  const cloth::MirCallInstruction* constructor_call =
+      first_call(compilation.result->mir.files[0].constructors[0].body);
+  const cloth::MirCallInstruction* other_receiver_call =
+      first_call(compilation.result->mir.files[0].constructors[1].body);
+  test.expect(
+      initializer_call != nullptr &&
+          initializer_call->dispatch == cloth::MirDispatchKind::kDirect &&
+          constructor_call != nullptr &&
+          constructor_call->dispatch == cloth::MirDispatchKind::kDirect,
+      "construction-time calls were lowered virtually");
+  test.expect(
+      other_receiver_call != nullptr &&
+          !other_receiver_call->receiver_is_self &&
+          other_receiver_call->dispatch == cloth::MirDispatchKind::kVirtual,
+      "constructor suppressed dispatch on an unrelated receiver");
+
+  cloth::MirModule broken = compilation.result->mir;
+  bool corrupted = false;
+  for (cloth::MirBasicBlock& block : broken.files[2].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (auto* call =
+              std::get_if<cloth::MirCallInstruction>(&instruction.data)) {
+        call->dispatch = cloth::MirDispatchKind::kDirect;
+        corrupted = true;
+      }
+    }
+  }
+  cloth::DiagnosticEngine diagnostics;
+  test.expect(corrupted && !cloth::verify_mir(broken, semantics, diagnostics),
+              "MIR verifier accepted a direct virtual-function call");
+  test.expect(has_diagnostic(diagnostics,
+                             "virtual function was lowered as a direct call"),
+              "invalid virtual dispatch produced the wrong diagnostic");
 }
 
 void verifiers_reject_corruption(TestContext& test) {
@@ -853,6 +1117,59 @@ void verifiers_reject_corruption(TestContext& test) {
               "MIR verifier accepted an invalid nullable conversion type");
   test.expect(has_diagnostic(conversion_diagnostics, "unknown type"),
               "invalid nullable conversion did not report its type");
+
+  CompiledSources inheritance;
+  inheritance.add("Base.co", "Base() {}\n");
+  inheritance.add("Derived.co", "class : Base { Derived(): Base() {} }\n");
+  inheritance.compile();
+  cloth::HirModule broken_base_hir = inheritance.result->hir;
+  broken_base_hir.files[1].base_file.reset();
+  cloth::DiagnosticEngine base_hir_diagnostics;
+  test.expect(!cloth::verify_hir(broken_base_hir, inheritance.result->semantics,
+                                 base_hir_diagnostics),
+              "HIR verifier accepted a missing base identity");
+  test.expect(
+      has_diagnostic(base_hir_diagnostics, "base does not match semantics"),
+      "HIR base corruption produced the wrong diagnostic");
+
+  cloth::MirModule broken_base_mir = inheritance.result->mir;
+  broken_base_mir.files[1].base_file = cloth::FileId{999};
+  cloth::DiagnosticEngine base_mir_diagnostics;
+  test.expect(!cloth::verify_mir(broken_base_mir, inheritance.result->semantics,
+                                 base_mir_diagnostics),
+              "MIR verifier accepted an invalid base identity");
+  test.expect(
+      has_diagnostic(base_mir_diagnostics, "base does not match semantics") &&
+          has_diagnostic(base_mir_diagnostics, "invalid base FileId"),
+      "MIR base corruption produced the wrong diagnostics");
+
+  cloth::HirModule broken_initializer_hir = inheritance.result->hir;
+  broken_initializer_hir.files[1].constructors[0].initializer.reset();
+  cloth::DiagnosticEngine initializer_hir_diagnostics;
+  test.expect(
+      !cloth::verify_hir(broken_initializer_hir, inheritance.result->semantics,
+                         initializer_hir_diagnostics),
+      "HIR verifier accepted a missing constructor initializer");
+  test.expect(has_diagnostic(initializer_hir_diagnostics,
+                             "lost its semantic base initializer"),
+              "HIR initializer corruption produced the wrong diagnostic");
+
+  cloth::MirModule broken_initializer_mir = inheritance.result->mir;
+  for (cloth::MirBasicBlock& block :
+       broken_initializer_mir.files[1].constructors[0].body.blocks) {
+    std::erase_if(block.instructions, [](const cloth::MirInstruction& value) {
+      return std::holds_alternative<cloth::MirInitializeFieldsInstruction>(
+          value.data);
+    });
+  }
+  cloth::DiagnosticEngine initializer_mir_diagnostics;
+  test.expect(
+      !cloth::verify_mir(broken_initializer_mir, inheritance.result->semantics,
+                         initializer_mir_diagnostics),
+      "MIR verifier accepted a missing field-initialization phase");
+  test.expect(has_diagnostic(initializer_mir_diagnostics,
+                             "exactly one field initialization"),
+              "MIR initializer corruption produced the wrong diagnostic");
 
   cloth::HirModule broken_hir;
   const cloth::SourceRange range =
@@ -913,6 +1230,9 @@ int main() {
       {"nullable narrowing conversion", nullable_narrowing_conversion},
       {"null ergonomics lowering", null_ergonomics_lowering},
       {"call receivers", call_receivers},
+      {"constructor initialization order", constructor_initialization_order},
+      {"inherited reference widening", inherited_reference_widening},
+      {"virtual dispatch lowering", virtual_dispatch_lowering},
       {"verifiers reject corruption", verifiers_reject_corruption},
   };
 

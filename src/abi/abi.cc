@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -153,14 +154,20 @@ AbiLinkage lower_linkage(Visibility visibility) noexcept {
 AbiClassLayout lower_class_layout(const MirFileClass& file,
                                   const SemanticModel& semantics,
                                   const std::vector<AbiTypeLayout>& types,
-                                  const TargetDataLayout& target) {
+                                  const TargetDataLayout& target,
+                                  const AbiClassLayout* base_layout) {
   const std::uint64_t header_size =
       multiply_size(target.pointer.size, target.object_header_words);
-  std::uint64_t offset = header_size;
+  std::uint64_t offset =
+      base_layout == nullptr ? header_size : base_layout->size;
   std::uint64_t class_alignment =
       target.pointer.alignment == 0 ? 1 : target.pointer.alignment;
   std::vector<AbiFieldLayout> fields;
-  fields.reserve(file.fields.size());
+  if (base_layout != nullptr) {
+    class_alignment = std::max(class_alignment, base_layout->alignment);
+    fields = base_layout->fields;
+  }
+  fields.reserve(fields.size() + file.fields.size());
   for (const MirField& field : file.fields) {
     const SemanticSymbol& symbol = semantics.symbol(field.symbol);
     if (symbol.is_static) {
@@ -177,18 +184,24 @@ AbiClassLayout lower_class_layout(const MirFileClass& file,
                         class_alignment, std::move(fields)};
 }
 
-AbiTypeDescriptor lower_type_descriptor(
-    const AbiClassLayout& layout, const SemanticSymbol& class_symbol,
-    const std::vector<AbiTypeLayout>& types) {
+AbiTypeDescriptor lower_type_descriptor(const AbiClassLayout& layout,
+                                        const SemanticSymbol& class_symbol,
+                                        const std::vector<AbiTypeLayout>& types,
+                                        std::optional<FileId> parent_file,
+                                        const FileSemantics& file) {
   std::vector<std::uint64_t> reference_offsets;
   for (const AbiFieldLayout& field : layout.fields) {
     if (types.at(field.type.value).kind == AbiTypeKind::kReference) {
       reference_offsets.push_back(field.offset);
     }
   }
-  return AbiTypeDescriptor{AbiHeapObjectKind::kFileClass, class_symbol.name,
-                           layout.size, layout.alignment,
-                           std::move(reference_offsets)};
+  return AbiTypeDescriptor{AbiHeapObjectKind::kFileClass,
+                           parent_file,
+                           class_symbol.name,
+                           layout.size,
+                           layout.alignment,
+                           std::move(reference_offsets),
+                           file.virtual_functions};
 }
 
 AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
@@ -216,6 +229,9 @@ AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
                      lower_linkage(symbol.visibility),
                      AbiCallingConvention::kC,
                      mangle_abi_symbol(symbol, semantics),
+                     kind == AbiCallableKind::kConstructor
+                         ? mangle_abi_constructor_initializer(symbol, semantics)
+                         : std::string{},
                      return_type,
                      std::move(parameters)};
 }
@@ -255,6 +271,15 @@ std::string mangle_abi_static_field(const SemanticSymbol& symbol,
   return result;
 }
 
+std::string mangle_abi_constructor_initializer(const SemanticSymbol& symbol,
+                                               const SemanticModel& semantics) {
+  std::string result = mangle_abi_symbol(symbol, semantics);
+  if (result.starts_with("_C1C")) {
+    result[3] = 'I';
+  }
+  return result;
+}
+
 AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
                        TargetDataLayout target) {
   AbiModule abi{std::move(target), {}, {}};
@@ -264,15 +289,57 @@ AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
     abi.types.push_back(lower_type(type, semantics.type(type), abi.target));
   }
 
+  std::vector<std::optional<AbiClassLayout>> layouts(mir.files.size());
+  std::size_t remaining_layouts = mir.files.size();
+  while (remaining_layouts != 0) {
+    bool made_progress = false;
+    for (const MirFileClass& mir_file : mir.files) {
+      if (mir_file.file.value >= layouts.size() ||
+          layouts[mir_file.file.value]) {
+        continue;
+      }
+      const AbiClassLayout* base_layout = nullptr;
+      if (mir_file.base_file) {
+        if (mir_file.base_file->value >= layouts.size() ||
+            *mir_file.base_file == mir_file.file) {
+          continue;
+        }
+        const std::optional<AbiClassLayout>& candidate =
+            layouts[mir_file.base_file->value];
+        if (!candidate) {
+          continue;
+        }
+        base_layout = &*candidate;
+      }
+      layouts[mir_file.file.value] = lower_class_layout(
+          mir_file, semantics, abi.types, abi.target, base_layout);
+      --remaining_layouts;
+      made_progress = true;
+    }
+    if (!made_progress) {
+      // Invalid hierarchies are rejected before ABI lowering. Keep this
+      // boundary total if a malformed MIR module reaches it regardless.
+      for (const MirFileClass& mir_file : mir.files) {
+        if (mir_file.file.value < layouts.size() &&
+            !layouts[mir_file.file.value]) {
+          layouts[mir_file.file.value] = lower_class_layout(
+              mir_file, semantics, abi.types, abi.target, nullptr);
+          --remaining_layouts;
+        }
+      }
+    }
+  }
+
   abi.files.reserve(mir.files.size());
   for (const MirFileClass& mir_file : mir.files) {
     const FileSemantics& semantic_file = semantics.file(mir_file.file);
-    AbiClassLayout layout =
-        lower_class_layout(mir_file, semantics, abi.types, abi.target);
-    AbiTypeDescriptor type_descriptor = lower_type_descriptor(
-        layout, semantics.symbol(mir_file.symbol), abi.types);
+    AbiClassLayout layout = std::move(*layouts.at(mir_file.file.value));
+    AbiTypeDescriptor type_descriptor =
+        lower_type_descriptor(layout, semantics.symbol(mir_file.symbol),
+                              abi.types, mir_file.base_file, semantic_file);
     AbiFileClass file{mir_file.file,
                       mir_file.symbol,
+                      mir_file.base_file,
                       std::move(layout),
                       std::move(type_descriptor),
                       {},

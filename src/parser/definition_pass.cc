@@ -20,6 +20,8 @@ DefinitionPass::DefinitionPass(const SourceFile& source,
                                const FileClassSymbols& symbols,
                                std::span<const ImportDecl> imports,
                                std::span<const MemberOutline> outlines,
+                               const std::optional<TypeSyntax>& base_class,
+                               bool has_explicit_class_declaration,
                                DiagnosticEngine& diagnostics)
     : tokens_(tokens),
       symbols_(symbols),
@@ -38,7 +40,10 @@ DefinitionPass::DefinitionPass(const SourceFile& source,
                   {},
                   {},
                   {},
-                  true} {}
+                  true} {
+  file_class_.base_class = base_class;
+  file_class_.has_explicit_class_declaration = has_explicit_class_declaration;
+}
 
 FileClassDecl DefinitionPass::run() {
   for (const MemberOutline& outline : outlines_) {
@@ -203,9 +208,10 @@ void DefinitionPass::build_function(const MemberOutline& outline,
                         file_class_.storage.block(body).is_valid &&
                         diagnostics_.diagnostics().size() == diagnostic_count;
   const std::size_t index = file_class_.functions.size();
-  file_class_.functions.push_back(FunctionDecl{
-      symbol.name, symbol.visibility, copy_parameters(symbol),
-      symbol.declared_type, body, outline.range, is_valid, symbol.is_static});
+  file_class_.functions.push_back(
+      FunctionDecl{symbol.name, symbol.visibility, copy_parameters(symbol),
+                   symbol.declared_type, body, outline.range, is_valid,
+                   symbol.is_static, symbol.is_override});
   file_class_.member_order.push_back(
       MemberReference{DeclarationKind::kFunction, index});
   file_class_.is_valid = file_class_.is_valid && is_valid;
@@ -214,6 +220,11 @@ void DefinitionPass::build_function(const MemberOutline& outline,
 void DefinitionPass::build_constructor(const MemberOutline& outline,
                                        const MemberSymbol& symbol) {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
+  std::optional<ConstructorInitializer> initializer;
+  if (outline.constructor_initializer_tokens) {
+    initializer =
+        parse_constructor_initializer(*outline.constructor_initializer_tokens);
+  }
   BlockId body = file_class_.storage.add_block(
       Block{point_range(outline.range.end), {}, false});
   if (outline.body_tokens) {
@@ -228,10 +239,46 @@ void DefinitionPass::build_constructor(const MemberOutline& outline,
   const std::size_t index = file_class_.constructors.size();
   file_class_.constructors.push_back(
       ConstructorDecl{symbol.name, symbol.visibility, copy_parameters(symbol),
-                      body, outline.range, is_valid});
+                      std::move(initializer), body, outline.range, is_valid});
   file_class_.member_order.push_back(
       MemberReference{DeclarationKind::kConstructor, index});
   file_class_.is_valid = file_class_.is_valid && is_valid;
+}
+
+std::optional<ConstructorInitializer>
+DefinitionPass::parse_constructor_initializer(TokenIndexRange tokens) {
+  const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
+  current_ = tokens.begin;
+  limit_ = tokens.end;
+  if (at_limit() || !can_start_type(current().kind)) {
+    diagnostics_.error(current().range,
+                       "expected base class name in constructor initializer");
+    return std::nullopt;
+  }
+  TypeSyntax base_type = parse_type();
+  const SourceLocation begin = base_type.range.begin;
+  expect(TokenKind::kLeftParen,
+         "expected '(' after base class name in constructor initializer");
+
+  std::vector<ExpressionId> arguments;
+  if (!at_limit() && current().kind != TokenKind::kRightParen) {
+    do {
+      arguments.push_back(parse_expression());
+    } while (match(TokenKind::kComma));
+  }
+  expect(TokenKind::kRightParen,
+         "expected ')' after base constructor arguments");
+  if (!at_limit()) {
+    diagnostics_.error(current().range,
+                       "expected constructor body after base initializer");
+  }
+
+  const SourceLocation end = current_ == tokens.begin
+                                 ? base_type.range.end
+                                 : tokens_[current_ - 1].range.end;
+  return ConstructorInitializer{
+      std::move(base_type), std::move(arguments), SourceRange{begin, end},
+      diagnostics_.diagnostics().size() == diagnostic_count};
 }
 
 std::vector<ParameterDecl> DefinitionPass::copy_parameters(

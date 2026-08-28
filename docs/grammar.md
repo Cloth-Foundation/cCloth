@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 12.3.5.
+This document defines the syntax implemented through Stage 16.5.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -33,7 +33,12 @@ by the lexer. Keywords cannot be used as identifiers.
 
 ```ebnf
 compilation_unit
-    = { import_declaration } { member_declaration } ;
+    = { import_declaration }
+      ( explicit_file_class | { member_declaration } ) ;
+
+explicit_file_class
+    = "class" [ ":" named_type ]
+      "{" { member_declaration } "}" ;
 
 import_declaration
     = "import" identifier [ "as" identifier ] ";"
@@ -54,10 +59,14 @@ field_declaration
       [ "=" expression ] ";" ;
 
 function_declaration
-    = [ "static" ] "func" identifier
+    = { function_modifier } "func" identifier
       "(" [ parameter_list ] ")"
       [ ":" return_type ]
       block ;
+
+function_modifier
+    = "static"
+    | "override" ;
 
 return_type
     = type
@@ -66,6 +75,7 @@ return_type
 constructor_declaration
     = identifier
       "(" [ parameter_list ] ")"
+      [ ":" type "(" [ argument_list ] ")" ]
       block ;
 
 parameter_list
@@ -91,16 +101,25 @@ named_type
     = identifier ;
 ```
 
-`struct`, `class`, and `enum` are reserved as possible nested-type declaration
-starters, but Stage 1.0 diagnoses them as unsupported.
+At file scope, `class` opens the optional envelope for the implicit file class;
+the file name is never repeated. Inside that envelope or after an unwrapped
+member, `class` remains a reserved nested-type declaration starter. `struct`
+and `enum` are also reserved for future type declarations. These nested forms
+are diagnosed as unsupported.
 
 `void` is accepted only as a function return type. An omitted function return
 type defaults to `void`. Fields, parameters, locals, arrays, and iteration
 bindings require a value-producing `type`.
 
-Imports must precede every member declaration. A `module` declaration is not
-part of Cloth: the source path relative to the project source root supplies the
-package identity.
+Imports must precede the explicit class declaration or every unwrapped member
+declaration. An explicit class body consumes the remainder of the file. A
+`module` declaration is not part of Cloth: the source path relative to the
+project source root supplies the package identity.
+
+Function modifiers may appear in either order but may not be repeated.
+`override` is valid only on a public instance function that exactly matches an
+inherited name and canonical parameter signature. It cannot be combined with
+`static`; semantic analysis enforces the complete override contract.
 
 ## Statements
 
@@ -254,7 +273,18 @@ bitwise binary operators, and shifts even though the lexer recognizes them.
 The declaration pass enforces these rules separately from the grammar:
 
 - The source file stem must be a valid Cloth identifier.
+- An explicit `class` declaration never repeats the implicit file-class name.
+- A base clause names at most one visible file class. The inheritance graph
+  cannot contain direct or indirect cycles.
+- Member lookup uses the nearest class in the base chain that declares a name.
+  Private declarations remain visible only in their owning file class.
+- Derived references implicitly widen to direct or transitive base types,
+  including compatible nullable forms. The reverse conversion requires `as`.
 - A constructor name must exactly match the implicit file-class name.
+- Every declared constructor in a derived file class must include a base
+  initializer naming its direct base. Root constructors cannot include one.
+- Base-initializer arguments use ordinary constructor overload selection and
+  cannot access `self`, instance fields, or unqualified instance functions.
 - Declaration visibility is inferred from the first ASCII character.
 - Constructors inherit file-class visibility.
 - Conflicting fields and exact duplicate callable signatures are rejected.

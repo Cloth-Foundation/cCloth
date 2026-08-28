@@ -152,6 +152,77 @@ void imports(TestContext& test) {
               "module declaration did not explain path-derived packages");
 }
 
+void explicit_file_class_declaration(TestContext& test) {
+  const ParsedSource derived{"Derived.co",
+                             "import models::Base;\n"
+                             "class : Base {\n"
+                             "  int32 Value;\n"
+                             "  func Read(): int32 { return Value; }\n"
+                             "}\n"};
+  test.expect(error_count(derived) == 0,
+              "valid explicit file class did not parse");
+  test.expect(derived.ast().has_explicit_class_declaration,
+              "explicit file class marker was not retained");
+  test.expect(derived.ast().base_class &&
+                  derived.ast().base_class->name == "Base" &&
+                  !derived.ast().base_class->is_array &&
+                  !derived.ast().base_class->is_nullable,
+              "base class syntax was not retained");
+  test.expect(
+      derived.ast().fields.size() == 1 && derived.ast().functions.size() == 1,
+      "explicit class body members were not discovered");
+  std::ostringstream summary;
+  cloth::print_ast_summary(derived.ast(), summary);
+  test.expect(summary.str().starts_with("FileClass Derived : Base [public]\n"),
+              "AST summary omitted the base class");
+
+  const ParsedSource explicit_root{"Root.co", "class {}\n"};
+  test.expect(error_count(explicit_root) == 0 &&
+                  explicit_root.ast().has_explicit_class_declaration &&
+                  !explicit_root.ast().base_class,
+              "explicit root class did not parse");
+
+  const ParsedSource implicit{"Implicit.co", "int32 Value;\n"};
+  test.expect(error_count(implicit) == 0 &&
+                  !implicit.ast().has_explicit_class_declaration &&
+                  !implicit.ast().base_class,
+              "legacy implicit file class contract changed");
+}
+
+void malformed_file_class_declaration(TestContext& test) {
+  const ParsedSource repeated{"Derived.co",
+                              "class Derived : Base { int32 Value; }\n"};
+  test.expect(
+      repeated.ast().base_class && repeated.ast().base_class->name == "Base",
+      "named class recovery lost the base clause");
+  test.expect(has_diagnostic(repeated, "do not repeat its name"),
+              "repeated implicit class name was accepted");
+
+  const ParsedSource invalid_base{"Derived.co", "class : int32 {}\n"};
+  test.expect(
+      has_diagnostic(invalid_base, "expected a file class name after ':'"),
+      "primitive base class syntax was accepted");
+
+  const ParsedSource missing_close{"Derived.co",
+                                   "class : Base { int32 Value;\n"};
+  test.expect(
+      has_diagnostic(missing_close, "expected '}' to close class declaration"),
+      "unterminated explicit class was accepted");
+
+  const ParsedSource late_import{
+      "Derived.co", "class { import models::Base; int32 Value; }\n"};
+  test.expect(
+      has_diagnostic(late_import,
+                     "imports must appear before the class declaration"),
+      "import inside explicit class was accepted");
+
+  const ParsedSource trailing{"Derived.co",
+                              "class { int32 Value; } int32 Other;\n"};
+  test.expect(
+      has_diagnostic(trailing, "expected end of file after class declaration"),
+      "declaration after explicit class body was accepted");
+}
+
 void fields_and_visibility(TestContext& test) {
   const ParsedSource source{"Fields.co",
                             "string Name;\nint32 id;\nbool active = true;\n"
@@ -198,10 +269,11 @@ void functions(TestContext& test) {
       "Functions.co",
       "func shutdown() {}\n"
       "static func Add(final int a, int b): int { return a + b; }\n"
-      "func Flush(): void { return; }\n"};
+      "func Flush(): void { return; }\n"
+      "override func Render(): string { return \"cloth\"; }\n"};
   test.expect(error_count(source) == 0, "valid functions should parse");
-  test.expect(source.ast().functions.size() == 3, "wrong function count");
-  if (source.ast().functions.size() != 3) {
+  test.expect(source.ast().functions.size() == 4, "wrong function count");
+  if (source.ast().functions.size() != 4) {
     return;
   }
   const cloth::FunctionDecl& shutdown = source.ast().functions[0];
@@ -228,6 +300,9 @@ void functions(TestContext& test) {
                   flush.return_type->is_primitive &&
                   !flush.return_type->is_array,
               "explicit void return type was not retained");
+  test.expect(source.ast().functions[3].is_override &&
+                  !source.ast().functions[3].is_static,
+              "override function modifier was not retained");
 }
 
 void legacy_function_keyword_rejected(TestContext& test) {
@@ -250,6 +325,44 @@ void constructors(TestContext& test) {
                 cloth::Visibility::kPublic,
         "constructor visibility should come from the file class");
   }
+}
+
+void constructor_initializers(TestContext& test) {
+  const ParsedSource source{
+      "Derived.co",
+      "class : Base {\n"
+      "  Derived(int32 value, string name): Base(value + 1, name) {}\n"
+      "}\n"};
+
+  test.expect(error_count(source) == 0,
+              "valid base constructor initializer should parse");
+  test.expect(source.ast().constructors.size() == 1,
+              "constructor initializer lost its constructor");
+  if (source.ast().constructors.empty()) {
+    return;
+  }
+  const cloth::ConstructorDecl& constructor = source.ast().constructors[0];
+  test.expect(constructor.initializer.has_value(),
+              "base constructor initializer was not retained");
+  if (constructor.initializer) {
+    test.expect(constructor.initializer->base_type.name == "Base" &&
+                    constructor.initializer->arguments.size() == 2 &&
+                    constructor.initializer->is_valid,
+                "base constructor name or arguments are wrong");
+  }
+
+  const ParsedSource missing_base{"Derived.co",
+                                  "class : Base { Derived(): () {} }\n"};
+  test.expect(
+      has_diagnostic(missing_base, "expected base class name in constructor"),
+      "missing base initializer name was not diagnosed");
+
+  const ParsedSource trailing_tokens{
+      "Derived.co", "class : Base { Derived(): Base() extra {} }\n"};
+  test.expect(
+      has_diagnostic(trailing_tokens,
+                     "expected constructor body after base initializer"),
+      "trailing base initializer tokens were accepted");
 }
 
 void wrong_constructor(TestContext& test) {
@@ -895,10 +1008,13 @@ int main() {
       {"empty source", empty_source},
       {"parser requires eof", parser_requires_eof},
       {"imports", imports},
+      {"explicit file class declaration", explicit_file_class_declaration},
+      {"malformed file class declaration", malformed_file_class_declaration},
       {"fields and visibility", fields_and_visibility},
       {"functions", functions},
       {"legacy function keyword rejected", legacy_function_keyword_rejected},
       {"constructors", constructors},
+      {"constructor initializers", constructor_initializers},
       {"wrong constructor", wrong_constructor},
       {"invalid file class name", invalid_file_class_name},
       {"duplicate declarations", duplicate_declarations},
