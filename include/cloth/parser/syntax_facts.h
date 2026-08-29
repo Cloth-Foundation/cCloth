@@ -37,7 +37,7 @@ namespace cloth {
 
 [[nodiscard]] constexpr bool is_nested_type_keyword(TokenKind kind) noexcept {
   return kind == TokenKind::kKwStruct || kind == TokenKind::kKwClass ||
-         kind == TokenKind::kKwEnum;
+         kind == TokenKind::kKwInterface || kind == TokenKind::kKwEnum;
 }
 
 }  // namespace cloth

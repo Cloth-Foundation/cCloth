@@ -132,6 +132,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "struct";
     case TokenKind::kKwClass:
       return "class";
+    case TokenKind::kKwInterface:
+      return "interface";
     case TokenKind::kKwAbstract:
       return "abstract";
     case TokenKind::kKwSealed:
@@ -140,8 +142,6 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "enum";
     case TokenKind::kKwTrait:
       return "trait";
-    case TokenKind::kKwImplements:
-      return "implements";
     case TokenKind::kKwLet:
       return "let";
     case TokenKind::kKwVar:

@@ -1,6 +1,12 @@
 {
     "recommendations": [
         "ms-vscode.cpptools",
-        "ms-vscode.cmake-tools"
+        "ms-vscode.cmake-tools",
+        "bazelbuild.vscode-bazel",
+        "bierner.github-markdown-preview",
+        "esbenp.prettier-vscode",
+        "rvben.rumdl",
+        "charliermarsh.ruff",
+        "astral-sh.ty"
     ]
 }

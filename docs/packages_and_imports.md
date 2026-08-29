@@ -1,6 +1,6 @@
 # Cloth Stage 8.0 packages and imports
 
-Stage 8.0 gives every file class a stable, portable identity derived from its
+Stage 8.0 gives every file type a stable, portable identity derived from its
 source path. Source code does not repeat that identity in a module declaration
 and does not embed filesystem paths as string literals.
 
@@ -37,7 +37,7 @@ import RootType;
 ```
 
 - `.` traverses package directories.
-- `::` selects one implicit file class.
+- `::` selects one implicit file type.
 - `.*` imports every public `.co` file directly in a package.
 - `as` creates a file-local type alias.
 - A single identifier selects a class in the root package.
@@ -54,13 +54,13 @@ to one `.co` file. Wildcard packages are enumerated in logical-name order.
 Project packages include all direct sibling `.co` files so same-package public
 classes require no import.
 
-The completed graph is sorted by qualified file-class identity before semantic
+The completed graph is sorted by qualified file-type identity before semantic
 handles and ABI names are allocated. Canonical paths are deduplicated. Sources
 outside the source root, invalid package components, case-only identity
 collisions, and unresolved imports are errors.
 
 Import cycles are valid. Imports do not execute code and are not textual
-includes; the existing two-pass architecture registers all file classes and
+includes; the existing two-pass architecture registers all file types and
 member signatures before checking executable bodies.
 
 ## Visibility and ambiguity

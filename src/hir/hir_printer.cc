@@ -27,7 +27,10 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
                        std::ostream& output) {
   for (const HirFileClass& file : hir.files) {
     const SemanticSymbol& class_symbol = semantics.symbol(file.symbol);
-    output << "FileClass " << class_symbol.name << " : "
+    const FileSemantics& file_semantics = semantics.file(file.file);
+    output << (file_semantics.kind == FileTypeKind::kInterface ? "Interface "
+                                                               : "FileClass ")
+           << class_symbol.name << " : "
            << semantics.type(class_symbol.type).name << " ["
            << visibility_name(class_symbol.visibility);
     if (file.base_file) {
@@ -39,6 +42,9 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
     }
     if (semantics.file(file.file).is_sealed) {
       output << ", sealed";
+    }
+    if (!file_semantics.interfaces.empty()) {
+      output << ", interfaces " << file_semantics.interfaces.size();
     }
     output << "]\n";
     for (const MemberReference& reference : file.member_order) {

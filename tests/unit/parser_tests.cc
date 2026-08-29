@@ -233,6 +233,50 @@ void abstract_declarations(TestContext& test) {
       "unterminated abstract declaration was accepted");
 }
 
+void interface_declarations(TestContext& test) {
+  const ParsedSource contract{"Renderable.co",
+                              "interface : Named, Resettable {\n"
+                              "  func Render(int32 width): string;\n"
+                              "  func Reset();\n"
+                              "}\n"};
+  test.expect(error_count(contract) == 0,
+              "valid interface declaration did not parse");
+  test.expect(contract.ast().kind == cloth::FileTypeKind::kInterface &&
+                  contract.ast().interfaces.size() == 2 &&
+                  contract.ast().interfaces[0].name == "Named" &&
+                  contract.ast().interfaces[1].name == "Resettable",
+              "interface identity or inherited contracts were not retained");
+  test.expect(contract.ast().functions.size() == 2 &&
+                  contract.ast().functions[0].is_abstract &&
+                  contract.ast().functions[1].is_abstract,
+              "interface functions were not retained as contracts");
+
+  const ParsedSource implementation{
+      "Widget.co",
+      "class : Base is Renderable, Resettable {\n"
+      "  func Render(int32 width): string { return \"widget\"; }\n"
+      "  func Reset() {}\n"
+      "}\n"};
+  test.expect(error_count(implementation) == 0 &&
+                  implementation.ast().base_class &&
+                  implementation.ast().base_class->name == "Base" &&
+                  implementation.ast().interfaces.size() == 2,
+              "class conformance clause was not retained");
+
+  const ParsedSource field{"Invalid.co", "interface { int32 Value; }\n"};
+  test.expect(has_diagnostic(field, "interfaces cannot declare fields"),
+              "interface field was accepted");
+  const ParsedSource body{
+      "Invalid.co",
+      "interface { func Render(): string { return \"invalid\"; } }\n"};
+  test.expect(has_diagnostic(body, "cannot have a body"),
+              "default interface body was accepted");
+  const ParsedSource modifiers{
+      "Invalid.co", "interface { abstract func Render(): string; }\n"};
+  test.expect(has_diagnostic(modifiers, "do not accept function modifiers"),
+              "redundant interface modifier was accepted");
+}
+
 void malformed_file_class_declaration(TestContext& test) {
   const ParsedSource repeated{"Derived.co",
                               "class Derived : Base { int32 Value; }\n"};
@@ -249,22 +293,22 @@ void malformed_file_class_declaration(TestContext& test) {
 
   const ParsedSource missing_close{"Derived.co",
                                    "class : Base { int32 Value;\n"};
-  test.expect(
-      has_diagnostic(missing_close, "expected '}' to close class declaration"),
-      "unterminated explicit class was accepted");
+  test.expect(has_diagnostic(missing_close,
+                             "expected '}' to close file type declaration"),
+              "unterminated explicit class was accepted");
 
   const ParsedSource late_import{
       "Derived.co", "class { import models::Base; int32 Value; }\n"};
   test.expect(
       has_diagnostic(late_import,
-                     "imports must appear before the class declaration"),
+                     "imports must appear before the file type declaration"),
       "import inside explicit class was accepted");
 
   const ParsedSource trailing{"Derived.co",
                               "class { int32 Value; } int32 Other;\n"};
-  test.expect(
-      has_diagnostic(trailing, "expected end of file after class declaration"),
-      "declaration after explicit class body was accepted");
+  test.expect(has_diagnostic(
+                  trailing, "expected end of file after file type declaration"),
+              "declaration after explicit class body was accepted");
 }
 
 void fields_and_visibility(TestContext& test) {
@@ -1076,6 +1120,7 @@ int main() {
       {"imports", imports},
       {"explicit file class declaration", explicit_file_class_declaration},
       {"abstract declarations", abstract_declarations},
+      {"interface declarations", interface_declarations},
       {"malformed file class declaration", malformed_file_class_declaration},
       {"fields and visibility", fields_and_visibility},
       {"functions", functions},

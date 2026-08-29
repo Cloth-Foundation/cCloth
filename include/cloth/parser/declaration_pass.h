@@ -37,6 +37,8 @@ struct DeclarationPassResult {
   bool has_explicit_class_declaration{false};
   bool is_abstract{false};
   bool is_sealed{false};
+  FileTypeKind file_type_kind{FileTypeKind::kClass};
+  std::vector<TypeSyntax> interfaces;
   bool is_valid{true};
 };
 
@@ -64,7 +66,9 @@ class DeclarationPass {
   void parse_function();
   void parse_constructor();
   void parse_import();
-  void parse_file_class_declaration();
+  void parse_file_type_declaration();
+  void parse_interface_list(std::vector<TypeSyntax>& interfaces,
+                            std::string_view context);
   void skip_deferred_nested_type();
   void synchronize_member();
 
@@ -85,6 +89,8 @@ class DeclarationPass {
   bool has_explicit_class_declaration_{false};
   bool class_is_abstract_{false};
   bool class_is_sealed_{false};
+  FileTypeKind file_type_kind_{FileTypeKind::kClass};
+  std::vector<TypeSyntax> interfaces_;
   bool class_body_started_{false};
   bool class_body_closed_{false};
   bool is_valid_{true};

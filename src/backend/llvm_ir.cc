@@ -369,10 +369,14 @@ class ModuleEmitter {
           type_descriptor_global_name(FileId{index});
     }
     for (const AbiFileClass& file : abi_.files) {
-      add_type_descriptor(file.file, file.type_descriptor);
+      if (file.kind == FileTypeKind::kClass) {
+        add_type_descriptor(file.file, file.type_descriptor);
+      }
     }
     for (std::size_t index = 0; index < mir_.files.size(); ++index) {
-      emit_file(mir_.files[index], abi_.files[index]);
+      if (abi_.files[index].kind == FileTypeKind::kClass) {
+        emit_file(mir_.files[index], abi_.files[index]);
+      }
     }
     if (options_.emit_native_entry_point) {
       emit_native_entry_point();
@@ -398,6 +402,8 @@ class ModuleEmitter {
            << "declare ptr @cloth_rt_object_type_name(ptr)\n"
            << "declare i8 @cloth_rt_object_is_kind(ptr, i64)\n"
            << "declare i8 @cloth_rt_object_is_type(ptr, ptr)\n"
+           << "declare i8 @cloth_rt_object_is_interface(ptr, i64)\n"
+           << "declare ptr @cloth_rt_interface_function(ptr, i64, i64)\n"
            << "declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)\n"
            << "declare i32 @cloth_rt_array_length(ptr)\n"
            << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
@@ -578,6 +584,63 @@ class ModuleEmitter {
       globals_.push_back(virtuals.str());
     }
 
+    std::string interfaces_global = "null";
+    if (!descriptor.interfaces.empty()) {
+      std::vector<std::string> function_globals;
+      function_globals.reserve(descriptor.interfaces.size());
+      for (std::size_t interface_index = 0;
+           interface_index < descriptor.interfaces.size(); ++interface_index) {
+        const AbiTypeDescriptor::InterfaceDispatch& interface =
+            descriptor.interfaces[interface_index];
+        std::string functions_global = "null";
+        if (!interface.functions.empty()) {
+          functions_global = "@.cloth.type.interface.functions." +
+                             std::to_string(file.value) + "." +
+                             std::to_string(interface_index);
+          std::ostringstream functions;
+          functions << functions_global << " = private constant ["
+                    << interface.functions.size() << " x ptr] [";
+          for (std::size_t function_index = 0;
+               function_index < interface.functions.size(); ++function_index) {
+            if (function_index != 0) {
+              functions << ", ";
+            }
+            const AbiCallable* callable =
+                find_callable(interface.functions[function_index]);
+            if (callable == nullptr) {
+              report(
+                  semantics_.symbol(interface.functions[function_index]).range,
+                  "interface implementation has no ABI declaration");
+              functions << "ptr null";
+            } else {
+              functions << "ptr @" << callable->mangled_name;
+            }
+          }
+          functions << ']';
+          globals_.push_back(functions.str());
+        }
+        function_globals.push_back(std::move(functions_global));
+      }
+
+      interfaces_global =
+          "@.cloth.type.interfaces." + std::to_string(file.value);
+      std::ostringstream interfaces;
+      interfaces << interfaces_global << " = private constant ["
+                 << descriptor.interfaces.size() << " x { i64, ptr, i64 }] [";
+      for (std::size_t index = 0; index < descriptor.interfaces.size();
+           ++index) {
+        if (index != 0) {
+          interfaces << ", ";
+        }
+        interfaces << "{ i64, ptr, i64 } { i64 "
+                   << descriptor.interfaces[index].interface_id << ", ptr "
+                   << function_globals[index] << ", i64 "
+                   << descriptor.interfaces[index].functions.size() << " }";
+      }
+      interfaces << ']';
+      globals_.push_back(interfaces.str());
+    }
+
     const std::string descriptor_global = type_descriptor_global_name(file);
     const std::string parent_global =
         descriptor.parent_file
@@ -586,13 +649,15 @@ class ModuleEmitter {
     std::ostringstream global;
     global << descriptor_global
            << " = private constant { i64, ptr, ptr, i64, i64, i64, ptr, i64, "
-              "ptr, i64 } { i64 "
+              "ptr, i64, ptr, i64 } { i64 "
            << static_cast<std::uint64_t>(descriptor.kind) << ", ptr "
            << parent_global << ", ptr " << name_global << ", i64 "
            << descriptor.name.size() << ", i64 " << descriptor.size << ", i64 "
            << descriptor.alignment << ", ptr " << references_global << ", i64 "
            << descriptor.reference_offsets.size() << ", ptr " << virtuals_global
-           << ", i64 " << descriptor.virtual_functions.size() << " }";
+           << ", i64 " << descriptor.virtual_functions.size() << ", ptr "
+           << interfaces_global << ", i64 " << descriptor.interfaces.size()
+           << " }";
     globals_.push_back(global.str());
     return descriptor_global;
   }
@@ -1778,6 +1843,15 @@ void BodyEmitter::emit_type_condition(std::string_view result,
     output << "  " << raw << " = call i8 @cloth_rt_object_is_type(ptr "
            << value(source) << ", ptr "
            << module_.type_descriptor_global(*type.file) << ")\n";
+  } else if (type.kind == TypeKind::kInterface && type.file) {
+    const FileSemantics& interface_file = module_.semantics().file(*type.file);
+    if (!interface_file.interface_id) {
+      module_.report(range, "interface checked target has no runtime identity");
+      return;
+    }
+    output << "  " << raw << " = call i8 @cloth_rt_object_is_interface(ptr "
+           << value(source) << ", i64 " << *interface_file.interface_id
+           << ")\n";
   } else {
     module_.report(range, "unsupported checked target reached LLVM lowering");
     return;
@@ -1909,13 +1983,32 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     output << "  " << descriptor << " = load ptr, ptr " << receiver << "\n"
            << "  " << virtuals_address
            << " = getelementptr inbounds { i64, ptr, ptr, i64, i64, i64, ptr, "
-              "i64, ptr, i64 }, ptr "
+              "i64, ptr, i64, ptr, i64 }, ptr "
            << descriptor << ", i32 0, i32 8\n"
            << "  " << virtuals << " = load ptr, ptr " << virtuals_address
            << "\n"
            << "  " << slot_address << " = getelementptr inbounds ptr, ptr "
            << virtuals << ", i64 " << *symbol.virtual_slot << "\n"
            << "  " << function << " = load ptr, ptr " << slot_address << "\n";
+    target = function;
+  } else if (call.dispatch == MirDispatchKind::kInterface) {
+    if (!has_receiver || !call.interface_file || !call.interface_slot) {
+      module_.report(instruction.range,
+                     "invalid interface call reached LLVM lowering");
+      return;
+    }
+    const FileSemantics& interface_file =
+        module_.semantics().file(*call.interface_file);
+    if (!interface_file.interface_id) {
+      module_.report(instruction.range,
+                     "interface call has no runtime identity");
+      return;
+    }
+    const std::string function = next_address();
+    output << "  " << function
+           << " = call ptr @cloth_rt_interface_function(ptr " << receiver
+           << ", i64 " << *interface_file.interface_id << ", i64 "
+           << *call.interface_slot << ")\n";
     target = function;
   }
   if (instruction.result) {

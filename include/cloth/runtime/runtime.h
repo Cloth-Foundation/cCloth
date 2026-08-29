@@ -9,6 +9,12 @@ enum class ClothHeapObjectKind : std::uint64_t {
   kArray = 2,
 };
 
+struct ClothInterfaceDispatch {
+  std::uint64_t interface_id;
+  const void* const* functions;
+  std::uint64_t function_count;
+};
+
 // Immutable compiler-emitted metadata. All offsets are object-relative bytes.
 struct ClothTypeDescriptor {
   ClothHeapObjectKind kind;
@@ -21,6 +27,8 @@ struct ClothTypeDescriptor {
   std::uint64_t reference_count;
   const void* const* virtual_functions;
   std::uint64_t virtual_function_count;
+  const ClothInterfaceDispatch* interfaces;
+  std::uint64_t interface_count;
 };
 
 // One frame in the per-thread precise-root stack. Roots point to pointer-sized
@@ -57,6 +65,11 @@ void cloth_rt_gc_collect() noexcept;
                                                    std::uint64_t kind) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_object_is_type(
     const void* value, const ClothTypeDescriptor* type) noexcept;
+[[nodiscard]] std::uint8_t cloth_rt_object_is_interface(
+    const void* value, std::uint64_t interface_id) noexcept;
+[[nodiscard]] const void* cloth_rt_interface_function(
+    const void* value, std::uint64_t interface_id,
+    std::uint64_t function_slot) noexcept;
 [[nodiscard]] void* cloth_rt_array_alloc(
     std::int32_t length, std::uint64_t element_size,
     std::uint64_t element_alignment, std::uint8_t contains_references) noexcept;

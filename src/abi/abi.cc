@@ -57,6 +57,7 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
     case TypeKind::kString:
     case TypeKind::kObject:
     case TypeKind::kFileClass:
+    case TypeKind::kInterface:
     case TypeKind::kArray:
     case TypeKind::kNullable:
       return make_type_layout(type, AbiTypeKind::kReference,
@@ -134,6 +135,8 @@ std::string encode_type(TypeId type, const SemanticModel& semantics) {
       return "o";
     case TypeKind::kFileClass:
       return "r" + encode_name(semantic_type.name);
+    case TypeKind::kInterface:
+      return "i" + encode_name(semantic_type.name);
     case TypeKind::kArray:
       return semantic_type.element_type
                  ? "a" + encode_type(*semantic_type.element_type, semantics)
@@ -188,20 +191,34 @@ AbiTypeDescriptor lower_type_descriptor(const AbiClassLayout& layout,
                                         const SemanticSymbol& class_symbol,
                                         const std::vector<AbiTypeLayout>& types,
                                         std::optional<FileId> parent_file,
-                                        const FileSemantics& file) {
+                                        const FileSemantics& file,
+                                        const SemanticModel& semantics) {
   std::vector<std::uint64_t> reference_offsets;
   for (const AbiFieldLayout& field : layout.fields) {
     if (types.at(field.type.value).kind == AbiTypeKind::kReference) {
       reference_offsets.push_back(field.offset);
     }
   }
+  std::vector<AbiTypeDescriptor::InterfaceDispatch> interfaces;
+  interfaces.reserve(file.interface_implementations.size());
+  for (const InterfaceImplementation& implementation :
+       file.interface_implementations) {
+    const FileSemantics& interface_file =
+        semantics.file(implementation.interface_file);
+    interfaces.push_back(AbiTypeDescriptor::InterfaceDispatch{
+        implementation.interface_file, interface_file.interface_id.value_or(0),
+        implementation.functions});
+  }
+  std::ranges::sort(interfaces, {},
+                    &AbiTypeDescriptor::InterfaceDispatch::interface_id);
   return AbiTypeDescriptor{AbiHeapObjectKind::kFileClass,
                            parent_file,
                            class_symbol.name,
                            layout.size,
                            layout.alignment,
                            std::move(reference_offsets),
-                           file.virtual_functions};
+                           file.virtual_functions,
+                           std::move(interfaces)};
 }
 
 AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
@@ -334,9 +351,9 @@ AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
   for (const MirFileClass& mir_file : mir.files) {
     const FileSemantics& semantic_file = semantics.file(mir_file.file);
     AbiClassLayout layout = std::move(*layouts.at(mir_file.file.value));
-    AbiTypeDescriptor type_descriptor =
-        lower_type_descriptor(layout, semantics.symbol(mir_file.symbol),
-                              abi.types, mir_file.base_file, semantic_file);
+    AbiTypeDescriptor type_descriptor = lower_type_descriptor(
+        layout, semantics.symbol(mir_file.symbol), abi.types,
+        mir_file.base_file, semantic_file, semantics);
     AbiFileClass file{mir_file.file,
                       mir_file.symbol,
                       mir_file.base_file,
@@ -346,6 +363,7 @@ AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
                       {},
                       {},
                       mir_file.member_order};
+    file.kind = semantic_file.kind;
     file.static_fields.reserve(mir_file.fields.size());
     for (const MirField& field : mir_file.fields) {
       const SemanticSymbol& symbol = semantics.symbol(field.symbol);

@@ -7,6 +7,7 @@
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -89,6 +90,23 @@ class HirVerifier {
                      std::get_if<HirCallExpression>(&expression.data)) {
         verify_expression(call->callee, expression.range);
         verify_optional_symbol(call->callable, expression.range);
+        if (call->interface_dispatch) {
+          if (!call->callable || call->is_base_qualified ||
+              call->interface_dispatch->value >= semantics_.files().size()) {
+            report(expression.range,
+                   "interface call has incomplete dispatch metadata");
+          } else {
+            const FileSemantics& interface_file =
+                semantics_.file(*call->interface_dispatch);
+            if (interface_file.kind != FileTypeKind::kInterface ||
+                std::ranges::find(interface_file.interface_functions,
+                                  *call->callable) ==
+                    interface_file.interface_functions.end()) {
+              report(expression.range,
+                     "interface call has invalid dispatch metadata");
+            }
+          }
+        }
         if (call->is_base_qualified) {
           if (!call->callable) {
             report(expression.range,

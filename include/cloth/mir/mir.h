@@ -140,6 +140,7 @@ enum class MirCallKind {
 enum class MirDispatchKind {
   kDirect,
   kVirtual,
+  kInterface,
 };
 
 struct MirCallInstruction {
@@ -149,6 +150,8 @@ struct MirCallInstruction {
   SymbolId callable;
   std::optional<MirValueId> receiver;
   std::vector<MirValueId> arguments;
+  std::optional<FileId> interface_file{};
+  std::optional<std::size_t> interface_slot{};
 };
 
 struct MirInitializeFieldsInstruction {};

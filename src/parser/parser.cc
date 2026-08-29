@@ -48,6 +48,8 @@ ParseResult Parser::parse() {
                      declarations.has_explicit_class_declaration,
                      declarations.is_abstract,
                      declarations.is_sealed,
+                     declarations.file_type_kind,
+                     declarations.interfaces,
                      diagnostics_}
           .run();
   file_class.is_valid = file_class.is_valid && declarations.is_valid;

@@ -230,6 +230,8 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
       return "object";
     case TypeKind::kFileClass:
       return "file class";
+    case TypeKind::kInterface:
+      return "interface";
     case TypeKind::kArray:
       return "array";
     case TypeKind::kNullable:
@@ -254,6 +256,8 @@ std::string_view symbol_kind_name(SymbolKind kind) noexcept {
       return "local";
     case SymbolKind::kSelf:
       return "self";
+    case SymbolKind::kInterface:
+      return "interface";
   }
   return "unknown";
 }

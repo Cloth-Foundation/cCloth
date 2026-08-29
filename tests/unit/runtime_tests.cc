@@ -12,6 +12,8 @@ namespace {
 
 using cloth::test::TestContext;
 
+constexpr int kInterfaceFunctionSentinel = 0;
+
 struct TestNode {
   const ClothTypeDescriptor* type;
   void* runtime_state;
@@ -58,6 +60,10 @@ int main() {
   constexpr std::uint64_t kReferenceOffsets[]{offsetof(TestNode, first),
                                               offsetof(TestNode, second)};
   constexpr std::uint64_t kBaseReferenceOffsets[]{offsetof(TestNode, first)};
+  constexpr std::uint64_t kInterfaceId = 0xC10F18U;
+  const void* interface_functions[]{&kInterfaceFunctionSentinel};
+  const ClothInterfaceDispatch interface_dispatch{kInterfaceId,
+                                                  interface_functions, 1};
   constexpr std::string_view kBaseName = "TestBase";
   const ClothTypeDescriptor base_type{
       ClothHeapObjectKind::kFileClass,
@@ -70,6 +76,8 @@ int main() {
       1,
       nullptr,
       0,
+      &interface_dispatch,
+      1,
   };
   constexpr std::string_view kNodeName = "TestNode";
   const ClothTypeDescriptor node_type{
@@ -83,6 +91,8 @@ int main() {
       2,
       nullptr,
       0,
+      &interface_dispatch,
+      1,
   };
 
   ClothGcRootFrame managed_frame{};
@@ -91,6 +101,13 @@ int main() {
   cloth_rt_gc_push_frame(&managed_frame, managed_roots, 1);
 
   void* first_node = cloth_rt_alloc(&node_type);
+  test.expect(
+      cloth_rt_object_is_interface(first_node, kInterfaceId) == 1 &&
+          cloth_rt_object_is_interface(first_node, kInterfaceId + 1) == 0,
+      "runtime interface membership lookup is incorrect");
+  test.expect(cloth_rt_interface_function(first_node, kInterfaceId, 0) ==
+                  interface_functions[0],
+              "runtime interface dispatch returned the wrong function");
   managed_root = first_node;
   void* second_node = cloth_rt_alloc(&node_type);
   store_reference(first_node, offsetof(TestNode, first), second_node);

@@ -23,7 +23,9 @@ class DefinitionPass {
                  std::span<const MemberOutline> outlines,
                  const std::optional<TypeSyntax>& base_class,
                  bool has_explicit_class_declaration, bool is_abstract,
-                 bool is_sealed, DiagnosticEngine& diagnostics);
+                 bool is_sealed, FileTypeKind file_type_kind,
+                 std::span<const TypeSyntax> interfaces,
+                 DiagnosticEngine& diagnostics);
 
   [[nodiscard]] FileClassDecl run();
 

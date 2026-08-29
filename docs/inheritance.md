@@ -1,4 +1,4 @@
-# Cloth inheritance through Stage 17.4
+# Cloth inheritance and interface integration through Stage 18
 
 Stage 16.1 introduces the declaration and semantic identity of single class
 inheritance. Stage 16.2 carries that identity through HIR and MIR, defines the
@@ -12,7 +12,8 @@ the virtual table. Stage 17.1 adds declaration identity for abstract file
 classes and abstract instance functions. Stage 17.2 makes those declarations
 enforceable by construction and subclass-completeness rules. Stage 17.3 closes
 inheritance hierarchies with sealed file classes and final overrides. Stage
-17.4 permits sound covariant reference returns.
+17.4 permits sound covariant reference returns. Stage 18 adds multiple
+interface conformance without changing Cloth's single class-inheritance graph.
 
 ## File-class declaration
 
@@ -379,9 +380,23 @@ Consequently, an object satisfies its exact class and every transitive base,
 while a base-typed reference can still be tested or safely cast back to its
 actual derived type. Null and unrelated runtime kinds fail without trapping.
 
-## Deliberate Stage 17.4 boundary
+## Interface integration
 
-Abstract classes, sealed classes, abstract functions, and final overrides now
-have complete declaration and inheritance contracts. Reference-return
-covariance is supported; parameter variance and interface dispatch remain
-separate language work.
+Classes retain one physical base and may conform to multiple interfaces using
+`class : Base is InterfaceA, InterfaceB`. Interface conformance is inherited
+through the class graph. Every derived descriptor rebuilds its flattened
+interface tables from the final class virtual table, so an override updates
+both class and interface dispatch while preserving one implementation body.
+
+Interfaces have no object layout, constructor chain, field state, or `super`
+view. Interface values remain unchanged managed object pointers, and checked
+class/interface operations inspect the most-derived class descriptor. The
+complete contract is defined in [Interfaces](interfaces.md).
+
+## Deliberate Stage 18 boundary
+
+Interfaces are pure function contracts with multiple interface inheritance,
+transitive class conformance, covariant returns, and runtime dispatch. Default
+interface implementations, parameter variance, traits, and generic contracts
+remain separate language work because each changes method resolution or type
+identity.

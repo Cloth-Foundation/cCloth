@@ -71,10 +71,34 @@ void print_abi_summary(const AbiModule& abi, const SemanticModel& semantics,
          << abi.target.pointer.alignment << "]\n";
   for (const AbiFileClass& file : abi.files) {
     const SemanticSymbol& class_symbol = semantics.symbol(file.symbol);
+    if (file.kind == FileTypeKind::kInterface) {
+      const FileSemantics& interface_file = semantics.file(file.file);
+      output << "Interface " << class_symbol.name << " [id "
+             << interface_file.interface_id.value_or(0) << ", contracts "
+             << interface_file.interface_functions.size() << "]\n";
+      for (const MemberReference& member : file.member_order) {
+        if (member.kind == DeclarationKind::kFunction) {
+          print_callable(file.functions.at(member.index), semantics, output);
+        }
+      }
+      continue;
+    }
     output << "FileClass " << class_symbol.name;
     if (file.base_file) {
       output << " : "
              << semantics.symbol(semantics.file(*file.base_file).symbol).name;
+    }
+    if (!file.type_descriptor.interfaces.empty()) {
+      output << " is ";
+      for (std::size_t index = 0;
+           index < file.type_descriptor.interfaces.size(); ++index) {
+        if (index != 0) {
+          output << ", ";
+        }
+        const FileId interface_file =
+            file.type_descriptor.interfaces[index].interface_file;
+        output << semantics.symbol(semantics.file(interface_file).symbol).name;
+      }
     }
     output << " [size " << file.layout.size << ", align "
            << file.layout.alignment << ", header " << file.layout.header_size

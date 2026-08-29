@@ -12,7 +12,9 @@ queries. Stage 15 adds universal object queries and checked runtime type
 operations. Stage 16.2 adds parent-linked file-class descriptors and flattened
 inherited reference maps. Stage 16.4 makes checked file-class operations follow
 those parent links. Stage 16.5 adds immutable virtual-function tables to
-file-class descriptors; generated code performs the dispatch directly.
+file-class descriptors; generated code performs the dispatch directly. Stage
+18 adds sorted interface dispatch tables and checked interface lookup without
+changing the managed-reference representation.
 
 ## Source contract
 
@@ -65,6 +67,8 @@ cloth_rt_string_is_empty(value) -> uint8
 cloth_rt_object_type_name(value) -> string
 cloth_rt_object_is_kind(value, kind) -> uint8
 cloth_rt_object_is_type(value, type_descriptor) -> uint8
+cloth_rt_object_is_interface(value, interface_id) -> uint8
+cloth_rt_interface_function(value, interface_id, function_slot) -> pointer
 cloth_rt_array_alloc(length, element_size, element_alignment,
                      contains_references) -> array
 cloth_rt_array_length(array) -> int32
@@ -87,7 +91,10 @@ second. The descriptor also records object kind, a nullable direct-parent
 descriptor, qualified identity, and exact reference-field offsets. Derived
 descriptors contain inherited and local offsets in one ordered table. A
 file-class descriptor also records an immutable virtual-function table and
-count; allocation rejects inconsistent or null slot metadata. Runtime
+count. It also records a sorted interface table whose entries contain an
+interface identity, function table, and contract slot count. Allocation rejects
+inconsistent tables, duplicate or unsorted identities, null function slots,
+and derived descriptors that lose inherited interface metadata. Runtime
 strings and arrays begin with the same managed header while remaining opaque to
 generated LLVM IR. A literal string borrows
 immutable program-lifetime bytes. A concatenated string owns its separately
@@ -100,6 +107,13 @@ strings use `string`, and arrays use the erased name `array`. File-class checks
 compare the object's canonical descriptor and then walk direct-parent links,
 so every transitive base matches. String checks compare the runtime heap kind.
 Null fails every concrete type check without trapping.
+
+Interface membership uses binary search over the most-derived class
+descriptor. Interface dispatch performs the same lookup, validates the
+contract slot, and returns its function pointer. Generated code invokes that
+pointer with the original receiver. Missing entries and invalid slots are
+compiler or metadata failures and trap; source-level checked casts use the
+non-trapping membership operation.
 
 Root frames are stack-owned by generated callables and linked in thread-local
 LIFO order. Each registered entry is the address of a stack slot containing a

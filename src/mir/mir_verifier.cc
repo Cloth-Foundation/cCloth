@@ -567,6 +567,30 @@ class MirVerifier {
                    "member");
           }
           const bool expects_virtual = callable.virtual_slot.has_value();
+          const bool is_interface_dispatch =
+              call->dispatch == MirDispatchKind::kInterface;
+          if (is_interface_dispatch) {
+            if (call->kind != MirCallKind::kInstance || !call->receiver ||
+                !call->interface_file || !call->interface_slot ||
+                call->interface_file->value >= semantics_.files().size()) {
+              report(instruction.range,
+                     "interface call has incomplete dispatch metadata");
+            } else {
+              const FileSemantics& interface_file =
+                  semantics_.file(*call->interface_file);
+              if (interface_file.kind != FileTypeKind::kInterface ||
+                  *call->interface_slot >=
+                      interface_file.interface_functions.size() ||
+                  interface_file.interface_functions[*call->interface_slot] !=
+                      call->callable) {
+                report(instruction.range,
+                       "interface call has invalid dispatch metadata");
+              }
+            }
+          } else if (call->interface_file || call->interface_slot) {
+            report(instruction.range,
+                   "non-interface call retains interface dispatch metadata");
+          }
           const bool should_dispatch_virtually =
               expects_virtual && call->kind != MirCallKind::kBaseQualified &&
               !(suppress_self_virtual_dispatch && call->receiver_is_self);
@@ -575,7 +599,7 @@ class MirVerifier {
             report(instruction.range,
                    "call has invalid virtual dispatch metadata");
           }
-          if (should_dispatch_virtually &&
+          if (should_dispatch_virtually && !is_interface_dispatch &&
               call->dispatch != MirDispatchKind::kVirtual) {
             report(instruction.range,
                    "virtual function was lowered as a direct call");
@@ -751,7 +775,8 @@ class MirVerifier {
     }
     const TypeKind kind = semantics_.type(type).kind;
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
-           kind == TypeKind::kFileClass || kind == TypeKind::kArray;
+           kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
+           kind == TypeKind::kArray;
   }
 
   bool can_widen_reference(TypeId source, TypeId target) const {
@@ -775,6 +800,15 @@ class MirVerifier {
         target_type.kind == TypeKind::kNullable && target_type.element_type) {
       return can_widen_reference(*source_type.element_type,
                                  *target_type.element_type);
+    }
+    if ((source_type.kind == TypeKind::kFileClass ||
+         source_type.kind == TypeKind::kInterface) &&
+        source_type.file && target_type.kind == TypeKind::kInterface &&
+        target_type.file) {
+      const std::vector<FileId>& interfaces =
+          semantics_.file(*source_type.file).interfaces;
+      return std::ranges::find(interfaces, *target_type.file) !=
+             interfaces.end();
     }
     if (source_type.kind != TypeKind::kFileClass || !source_type.file ||
         target_type.kind != TypeKind::kFileClass || !target_type.file) {
@@ -806,8 +840,15 @@ class MirVerifier {
     }
     const SemanticType& type = semantics_.type(receiver_type);
     const std::optional<FileId> owner = semantics_.symbol(member).file;
-    if (type.kind != TypeKind::kFileClass || !type.file || !owner ||
-        !is_file_subtype(*type.file, *owner)) {
+    bool related = false;
+    if (type.kind == TypeKind::kFileClass && type.file && owner) {
+      related = is_file_subtype(*type.file, *owner);
+    } else if (type.kind == TypeKind::kInterface && type.file && owner) {
+      const std::vector<FileId>& interfaces =
+          semantics_.file(*type.file).interfaces;
+      related = std::ranges::find(interfaces, *owner) != interfaces.end();
+    }
+    if (!related) {
       report(range, "member receiver is unrelated to its declaring class");
     }
   }

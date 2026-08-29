@@ -15,15 +15,14 @@ SourceRange range_ending_at(SourceRange begin, SourceLocation end) noexcept {
 
 }  // namespace
 
-DefinitionPass::DefinitionPass(const SourceFile& source,
-                               std::span<const Token> tokens,
-                               const FileClassSymbols& symbols,
-                               std::span<const ImportDecl> imports,
-                               std::span<const MemberOutline> outlines,
-                               const std::optional<TypeSyntax>& base_class,
-                               bool has_explicit_class_declaration,
-                               bool is_abstract, bool is_sealed,
-                               DiagnosticEngine& diagnostics)
+DefinitionPass::DefinitionPass(
+    const SourceFile& source, std::span<const Token> tokens,
+    const FileClassSymbols& symbols, std::span<const ImportDecl> imports,
+    std::span<const MemberOutline> outlines,
+    const std::optional<TypeSyntax>& base_class,
+    bool has_explicit_class_declaration, bool is_abstract, bool is_sealed,
+    FileTypeKind file_type_kind, std::span<const TypeSyntax> interfaces,
+    DiagnosticEngine& diagnostics)
     : tokens_(tokens),
       symbols_(symbols),
       imports_(imports),
@@ -46,6 +45,8 @@ DefinitionPass::DefinitionPass(const SourceFile& source,
   file_class_.has_explicit_class_declaration = has_explicit_class_declaration;
   file_class_.is_abstract = is_abstract;
   file_class_.is_sealed = is_sealed;
+  file_class_.kind = file_type_kind;
+  file_class_.interfaces.assign(interfaces.begin(), interfaces.end());
 }
 
 FileClassDecl DefinitionPass::run() {

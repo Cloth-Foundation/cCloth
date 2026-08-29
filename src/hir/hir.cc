@@ -219,7 +219,8 @@ class Lowerer {
                                          .expressions.at(call->callee.value)
                                          .is_base_qualified;
       data = HirCallExpression{expression(call->callee), semantic.symbol,
-                               std::move(arguments), is_base_qualified};
+                               std::move(arguments), is_base_qualified,
+                               semantic.interface_dispatch};
     } else if (const auto* array =
                    std::get_if<ArrayLiteralExpression>(&syntax.data)) {
       std::vector<HirExpressionId> elements;

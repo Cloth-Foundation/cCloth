@@ -89,7 +89,10 @@ void print_callable(const MirCallable& callable, const SemanticModel& semantics,
 void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
                        std::ostream& output) {
   for (const MirFileClass& file : mir.files) {
-    output << "FileClass " << semantics.symbol(file.symbol).name;
+    const FileSemantics& file_semantics = semantics.file(file.file);
+    output << (file_semantics.kind == FileTypeKind::kInterface ? "Interface "
+                                                               : "FileClass ")
+           << semantics.symbol(file.symbol).name;
     if (file.base_file) {
       output << " : "
              << semantics.symbol(semantics.file(*file.base_file).symbol).name;
@@ -99,6 +102,9 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
     }
     if (semantics.file(file.file).is_sealed) {
       output << " [sealed]";
+    }
+    if (!file_semantics.interfaces.empty()) {
+      output << " [interfaces " << file_semantics.interfaces.size() << ']';
     }
     output << '\n';
     for (const MemberReference& member : file.member_order) {

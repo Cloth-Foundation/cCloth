@@ -94,6 +94,8 @@ declare i8 @cloth_rt_string_is_empty(ptr)
 declare ptr @cloth_rt_object_type_name(ptr)
 declare i8 @cloth_rt_object_is_kind(ptr, i64)
 declare i8 @cloth_rt_object_is_type(ptr, ptr)
+declare i8 @cloth_rt_object_is_interface(ptr, i64)
+declare ptr @cloth_rt_interface_function(ptr, i64, i64)
 declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)
 declare i32 @cloth_rt_array_length(ptr)
 declare ptr @cloth_rt_array_element(ptr, i32)
@@ -124,6 +126,10 @@ local reference map. Stage 16.5 descriptors also point to a constant array of
 function pointers with one entry per stable virtual slot. The runtime returns
 zero-initialized storage with that descriptor in its first header word or
 terminates through the runtime failure path.
+Stage 18 descriptors additionally point to a sorted array of interface entries.
+Each entry contains the deterministic interface identity, a constant function
+table in contract-slot order, and the table length. Interface declarations do
+not emit allocatable class descriptors.
 `cloth_rt_string_literal` constructs an opaque Cloth string over immutable
 program-lifetime bytes. Concatenation returns a new managed string with owned
 bytes. Equality compares byte content, and meta-query calls expose cached scalar
@@ -135,6 +141,10 @@ compiler-emitted target descriptor, and the runtime walks from the object's
 most-derived descriptor through its parent links. String checks pass the stable
 heap-kind value. Safe `as T?` lowering selects the original pointer or null from
 the resulting predicate.
+Interface checks pass the deterministic interface identity to the runtime.
+Interface calls pass that identity and the statically selected contract slot,
+receive the matching implementation pointer, and call it with the unchanged
+managed receiver.
 Virtual calls null-check the receiver, load its most-derived descriptor, load
 the descriptor's virtual table, and indirectly call the selected slot. Direct
 calls remain for static and private functions and for calls on the object under

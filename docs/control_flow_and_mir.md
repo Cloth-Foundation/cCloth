@@ -105,13 +105,20 @@ instruction and runtime guard before exposing the underlying reference type.
 Calls retain whether they were unqualified, file-class-qualified,
 instance-qualified, base-qualified, constructor allocation calls, or
 base-constructor initialization calls. This avoids choosing an implicit
-method calling convention before the ABI stage. Stage 16.5 additionally marks
-each call as
-direct or virtual. A virtual call retains the statically selected declaration
+method calling convention before the ABI stage. Calls are marked as direct,
+class-virtual, or interface dispatch. A class-virtual call retains the
+statically selected declaration
 and its stable slot; the backend chooses the runtime implementation through the
 receiver descriptor. MIR also records whether that receiver is `self`, allowing
 field initializers and constructors to suppress only dispatch on the object
 currently being initialized.
+
+An interface call retains the static interface `FileId` and flattened contract
+slot in addition to its callable signature and explicit receiver. The MIR
+verifier checks that the slot selects that exact contract and rejects interface
+metadata on any non-interface call. Class-to-interface and child-to-parent
+interface conversions use the existing pointer-preserving reference-widening
+instruction.
 
 Stage 16.6 base-qualified calls always carry direct dispatch, use implicit
 `self`, and retain the declaration selected through the direct-base view. The

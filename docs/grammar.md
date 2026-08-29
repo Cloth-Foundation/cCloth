@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 17.4.
+This document defines the syntax implemented through Stage 18.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -34,11 +34,24 @@ by the lexer. Keywords cannot be used as identifiers.
 ```ebnf
 compilation_unit
     = { import_declaration }
-      ( explicit_file_class | { member_declaration } ) ;
+      ( explicit_file_type | { member_declaration } ) ;
+
+explicit_file_type
+    = explicit_file_class
+    | explicit_interface ;
 
 explicit_file_class
     = { file_class_modifier } "class" [ ":" named_type ]
+      [ "is" named_type { "," named_type } ]
       "{" { member_declaration } "}" ;
+
+explicit_interface
+    = "interface" [ ":" named_type { "," named_type } ]
+      "{" { interface_function_declaration } "}" ;
+
+interface_function_declaration
+    = "func" identifier "(" [ parameter_list ] ")"
+      [ ":" return_type ] ";" ;
 
 file_class_modifier
     = "abstract"
@@ -107,11 +120,12 @@ named_type
     = identifier ;
 ```
 
-At file scope, `class` opens the optional envelope for the implicit file class;
-the file name is never repeated. Inside that envelope or after an unwrapped
-member, `class` remains a reserved nested-type declaration starter. `struct`
-and `enum` are also reserved for future type declarations. These nested forms
-are diagnosed as unsupported.
+At file scope, `class` opens the optional envelope for the implicit file class,
+and `interface` changes that file identity into an interface. The file name is
+never repeated. Inside an envelope or after an unwrapped member, `class` and
+`interface` are nested-type declaration starters. `struct` and `enum` are also
+reserved for future type declarations. These nested forms are diagnosed as
+unsupported.
 
 `void` is accepted only as a function return type. An omitted function return
 type defaults to `void`. Fields, parameters, locals, arrays, and iteration
@@ -141,6 +155,12 @@ ends with `;` instead of a body. Concrete functions still require a block.
 A `sealed class` is concrete and cannot be named as another file class's base.
 `abstract sealed class` and `abstract final override func` are contradictory
 and rejected.
+
+An interface function is implicitly abstract and accepts no function
+modifiers. It must be public, non-static, and bodyless. Interfaces cannot
+declare fields or constructors. An interface may inherit multiple visible
+interfaces after `:`, while a class declares conformance after `is`. A class
+may retain one implementation base and any number of interfaces.
 
 ## Statements
 
@@ -296,6 +316,8 @@ The declaration pass enforces these rules separately from the grammar:
 
 - The source file stem must be a valid Cloth identifier.
 - An explicit `class` declaration never repeats the implicit file-class name.
+- An explicit `interface` declaration never repeats the implicit file-type
+  name. It may contain only public instance function contracts.
 - `abstract func` is permitted only in an `abstract class`, must be public and
   non-static, and cannot have a body.
 - An abstract file class cannot be constructed directly. A concrete subclass
@@ -309,8 +331,14 @@ The declaration pass enforces these rules separately from the grammar:
   preserving assignment compatibility. It cannot widen nullability or class
   identity; array types remain invariant. Primitive and `void` returns are
   exact.
-- A base clause names at most one visible file class. The inheritance graph
-  cannot contain direct or indirect cycles.
+- A class base clause names at most one visible file class. A class conformance
+  clause and an interface inheritance clause name visible interfaces. Neither
+  the class graph nor the interface graph may contain a cycle.
+- A concrete class satisfies every transitive interface function by public
+  name, canonical parameter types, and a compatible covariant return. Abstract
+  classes may carry unresolved interface requirements to a concrete subclass.
+- Interface references widen from conforming classes and child interfaces,
+  compose with nullability, and use checked `is`/`as` in the reverse direction.
 - Member lookup uses the nearest class in the base chain that declares a name.
   Private declarations remain visible only in their owning file class.
 - `super.Method(arguments)` is a direct-base call when `Method` selects a

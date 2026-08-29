@@ -38,12 +38,14 @@ bool is_function_modifier(TokenKind kind) noexcept {
          kind == TokenKind::kKwStatic || kind == TokenKind::kKwFinal;
 }
 
-bool looks_like_file_class_declaration(std::span<const Token> tokens,
-                                       std::size_t index) noexcept {
+bool looks_like_file_type_declaration(std::span<const Token> tokens,
+                                      std::size_t index) noexcept {
   while (index < tokens.size() && is_file_class_modifier(tokens[index].kind)) {
     ++index;
   }
-  return index < tokens.size() && tokens[index].kind == TokenKind::kKwClass;
+  return index < tokens.size() &&
+         (tokens[index].kind == TokenKind::kKwClass ||
+          tokens[index].kind == TokenKind::kKwInterface);
 }
 
 bool looks_like_function_declaration(std::span<const Token> tokens,
@@ -81,7 +83,7 @@ DeclarationPassResult DeclarationPass::run() {
       class_body_closed_ = true;
       if (!at_end()) {
         diagnostics_.error(current().range,
-                           "expected end of file after class declaration");
+                           "expected end of file after file type declaration");
         is_valid_ = false;
         while (!at_end()) {
           advance();
@@ -94,14 +96,14 @@ DeclarationPassResult DeclarationPass::run() {
         diagnostics_.error(
             current().range,
             has_explicit_class_declaration_
-                ? "imports must appear before the class declaration"
+                ? "imports must appear before the file type declaration"
                 : "imports must appear before member declarations");
         is_valid_ = false;
       }
       parse_import();
     } else if (!saw_member && !has_explicit_class_declaration_ &&
-               looks_like_file_class_declaration(tokens_, current_)) {
-      parse_file_class_declaration();
+               looks_like_file_type_declaration(tokens_, current_)) {
+      parse_file_type_declaration();
     } else if (looks_like_function_declaration(tokens_, current_)) {
       saw_member = true;
       parse_function();
@@ -111,11 +113,20 @@ DeclarationPassResult DeclarationPass::run() {
     } else if (current().kind == TokenKind::kIdentifier &&
                peek(1).kind == TokenKind::kLeftParen) {
       saw_member = true;
+      if (file_type_kind_ == FileTypeKind::kInterface) {
+        diagnostics_.error(current().range,
+                           "interfaces cannot declare constructors");
+        is_valid_ = false;
+      }
       parse_constructor();
     } else if (current().kind == TokenKind::kKwStatic ||
                current().kind == TokenKind::kKwFinal ||
                can_start_type(current().kind)) {
       saw_member = true;
+      if (file_type_kind_ == FileTypeKind::kInterface) {
+        diagnostics_.error(current().range, "interfaces cannot declare fields");
+        is_valid_ = false;
+      }
       parse_field();
     } else {
       diagnostics_.error(
@@ -132,7 +143,7 @@ DeclarationPassResult DeclarationPass::run() {
 
   if (class_body_started_ && !class_body_closed_) {
     diagnostics_.error(current().range,
-                       "expected '}' to close class declaration");
+                       "expected '}' to close file type declaration");
     is_valid_ = false;
   }
 
@@ -143,6 +154,8 @@ DeclarationPassResult DeclarationPass::run() {
                                has_explicit_class_declaration_,
                                class_is_abstract_,
                                class_is_sealed_,
+                               file_type_kind_,
+                               std::move(interfaces_),
                                is_valid_};
 }
 
@@ -435,6 +448,15 @@ void DeclarationPass::parse_function() {
     }
     *present = true;
   }
+  const bool is_interface_member = file_type_kind_ == FileTypeKind::kInterface;
+  if (is_interface_member &&
+      (is_static || is_override || is_abstract || is_final)) {
+    diagnostics_.error(
+        tokens_[begin].range,
+        "interface function contracts do not accept function modifiers");
+    is_valid_ = false;
+  }
+  is_abstract = is_abstract || is_interface_member;
   if (!match(TokenKind::kKwFunc)) {
     diagnostics_.error(current().range,
                        "expected 'func' after function modifiers");
@@ -661,7 +683,7 @@ void DeclarationPass::parse_import() {
                                 import_valid});
 }
 
-void DeclarationPass::parse_file_class_declaration() {
+void DeclarationPass::parse_file_type_declaration() {
   has_explicit_class_declaration_ = true;
   while (is_file_class_modifier(current().kind)) {
     const Token& modifier = advance();
@@ -675,23 +697,34 @@ void DeclarationPass::parse_file_class_declaration() {
     }
     present = true;
   }
-  if (!match(TokenKind::kKwClass)) {
+  const bool is_interface = match(TokenKind::kKwInterface);
+  if (!is_interface && !match(TokenKind::kKwClass)) {
     diagnostics_.error(current().range,
-                       "expected 'class' after file class modifiers");
+                       "expected 'class' or 'interface' after file type "
+                       "modifiers");
     is_valid_ = false;
     return;
+  }
+  file_type_kind_ =
+      is_interface ? FileTypeKind::kInterface : FileTypeKind::kClass;
+  if (is_interface && (class_is_abstract_ || class_is_sealed_)) {
+    diagnostics_.error(tokens_[current_ - 1].range,
+                       "interfaces cannot be declared abstract or sealed");
+    is_valid_ = false;
   }
 
   if (current().kind == TokenKind::kIdentifier) {
     diagnostics_.error(current().range,
-                       "the source file already defines implicit class '" +
+                       "the source file already defines implicit type '" +
                            std::string{source_.stem()} +
                            "'; do not repeat its name");
     is_valid_ = false;
     advance();
   }
 
-  if (match(TokenKind::kColon)) {
+  if (is_interface && match(TokenKind::kColon)) {
+    parse_interface_list(interfaces_, "interface inheritance clause");
+  } else if (!is_interface && match(TokenKind::kColon)) {
     if (current().kind == TokenKind::kIdentifier) {
       const Token& base = advance();
       base_class_ = TypeSyntax{base.lexeme, false, base.range};
@@ -701,13 +734,42 @@ void DeclarationPass::parse_file_class_declaration() {
       is_valid_ = false;
     }
   }
+  if (!is_interface && match(TokenKind::kKwIs)) {
+    parse_interface_list(interfaces_, "class conformance clause");
+  }
 
   if (match(TokenKind::kLeftBrace)) {
     class_body_started_ = true;
     return;
   }
-  diagnostics_.error(current().range, "expected '{' after class declaration");
+  diagnostics_.error(current().range,
+                     "expected '{' after file type declaration");
   is_valid_ = false;
+}
+
+void DeclarationPass::parse_interface_list(std::vector<TypeSyntax>& interfaces,
+                                           std::string_view context) {
+  bool expects_name = true;
+  while (!at_end()) {
+    if (current().kind != TokenKind::kIdentifier) {
+      diagnostics_.error(current().range, "expected an interface name in " +
+                                              std::string{context});
+      is_valid_ = false;
+      return;
+    }
+    const Token& interface_name = advance();
+    interfaces.push_back(
+        TypeSyntax{interface_name.lexeme, false, interface_name.range});
+    expects_name = false;
+    if (!match(TokenKind::kComma)) {
+      return;
+    }
+    expects_name = true;
+  }
+  if (expects_name) {
+    diagnostics_.error(current().range, "expected an interface name after ','");
+    is_valid_ = false;
+  }
 }
 
 void DeclarationPass::skip_deferred_nested_type() {

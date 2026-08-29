@@ -771,10 +771,9 @@ void inherited_members_and_subtyping(TestContext& test) {
   test.expect(invalid.has_diagnostic(
                   "local initializer has type 'Other'; expected 'Base'"),
               "unrelated file classes were assignment-compatible");
-  test.expect(
-      invalid.has_diagnostic(
-          "types 'Base' and 'Other' cannot overlap without inheritance"),
-      "unrelated checked cast was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "types 'Base' and 'Other' cannot overlap at runtime"),
+              "unrelated checked cast was accepted");
 }
 
 void virtual_override_contract(TestContext& test) {
@@ -1269,6 +1268,95 @@ void covariant_override_return_contract(TestContext& test) {
                   "override of 'Nothing' returns 'int32'; inherited function "
                   "returns 'void'"),
               "void override return mismatch was accepted");
+}
+
+void interface_conformance_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Named.co", "interface { func Name(): string; }\n");
+  valid.add("Renderable.co",
+            "interface : Named { func Render(int32 width): string; }\n");
+  valid.add("Widget.co",
+            "class is Renderable {\n"
+            "  func Name(): string { return \"widget\"; }\n"
+            "  func Render(int32 width): string { return Name(); }\n"
+            "}\n");
+  valid.add("Use.co",
+            "func Upcast(Widget value): Renderable { return value; }\n"
+            "func Parent(Renderable value): Named { return value; }\n"
+            "func Read(Renderable value): string {\n"
+            "  return value.Name() + value.Render(1);\n"
+            "}\n"
+            "func Check(object value): bool { return value is Renderable; }\n"
+            "func Cast(object value): Renderable? {\n"
+            "  return value as Renderable?;\n"
+            "}\n");
+  valid.add("AbstractWidget.co", "abstract class is Renderable {}\n");
+  valid.add("ConcreteWidget.co",
+            "class : AbstractWidget {\n"
+            "  func Name(): string { return \"concrete\"; }\n"
+            "  func Render(int32 width): string { return Name(); }\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(!valid.diagnostics.has_errors() && valid.result->is_valid,
+              "valid interface conformance produced semantic errors");
+  const cloth::FileSemantics& named = valid.result->semantics.file({0});
+  const cloth::FileSemantics& renderable = valid.result->semantics.file({1});
+  const cloth::FileSemantics& widget = valid.result->semantics.file({2});
+  test.expect(named.kind == cloth::FileTypeKind::kInterface &&
+                  named.interface_functions.size() == 1 &&
+                  named.interface_id.has_value(),
+              "root interface identity was not retained");
+  test.expect(renderable.interfaces.size() == 2 &&
+                  renderable.interface_functions.size() == 2,
+              "inherited interface contract was not flattened");
+  test.expect(widget.interfaces.size() == 2 &&
+                  widget.interface_implementations.size() == 2,
+              "class interface dispatch maps were not completed");
+  test.expect(
+      valid.result->semantics.file({4}).is_abstract &&
+          valid.result->semantics.file({4}).interface_implementations.empty() &&
+          valid.result->semantics.file({5}).interface_implementations.size() ==
+              2,
+      "abstract interface obligations did not reach the concrete "
+      "subclass");
+
+  AnalyzedCompilation invalid;
+  invalid.add("Renderable.co",
+              "interface { func Render(): string; func Reset(); }\n");
+  invalid.add(
+      "Missing.co",
+      "class is Renderable { func Render(): string { return \"x\"; } }\n");
+  invalid.add("Wrong.co",
+              "class is Renderable {\n"
+              "  func Render(): object { return \"x\"; }\n"
+              "  func Reset() {}\n"
+              "}\n");
+  invalid.add("CycleA.co", "interface : CycleB { func A(); }\n");
+  invalid.add("CycleB.co", "interface : CycleA { func B(); }\n");
+  invalid.add("NotInterface.co", "class {}\n");
+  invalid.add("BadClause.co", "class is NotInterface {}\n");
+  invalid.add("Construct.co",
+              "func Make(): Renderable { return Renderable(); }\n");
+  invalid.add("Left.co", "interface { func Value(): string; }\n");
+  invalid.add("Right.co", "interface { func Value(): int32; }\n");
+  invalid.add("Conflicted.co", "interface : Left, Right {}\n");
+  invalid.analyze();
+
+  test.expect(
+      invalid.has_diagnostic("does not implement interface function 'Reset"),
+      "missing concrete interface implementation was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "implementation of interface function 'Render' returns"),
+              "incompatible interface return was accepted");
+  test.expect(invalid.has_diagnostic("interface inheritance cycle includes"),
+              "interface inheritance cycle was accepted");
+  test.expect(invalid.has_diagnostic("is not an interface"),
+              "class conformance to a non-interface was accepted");
+  test.expect(invalid.has_diagnostic("cannot be constructed"),
+              "interface construction was accepted");
+  test.expect(invalid.has_diagnostic("conflicts with inherited return type"),
+              "incompatible inherited interface contracts were accepted");
 }
 
 void invalid_inheritance_graph(TestContext& test) {
@@ -2331,6 +2419,7 @@ int main() {
       {"sealed and final contract", sealed_and_final_contract},
       {"covariant override return contract",
        covariant_override_return_contract},
+      {"interface conformance contract", interface_conformance_contract},
       {"invalid inheritance graph", invalid_inheritance_graph},
       {"invalid package imports", invalid_package_imports},
       {"private member access", private_member_access},

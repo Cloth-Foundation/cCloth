@@ -1,0 +1,15 @@
+class is Scored {
+  int32 value;
+
+  Base(int32 value) {
+    self.value = value;
+  }
+
+  func Name(): string {
+    return "Base";
+  }
+
+  func Score(): int32 {
+    return value;
+  }
+}

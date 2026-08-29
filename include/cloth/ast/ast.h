@@ -309,6 +309,11 @@ struct ImportDecl {
   bool is_valid{true};
 };
 
+enum class FileTypeKind {
+  kClass,
+  kInterface,
+};
+
 struct FileClassDecl {
   std::string name;
   std::string package_name;
@@ -327,6 +332,8 @@ struct FileClassDecl {
   bool has_explicit_class_declaration{false};
   bool is_abstract{false};
   bool is_sealed{false};
+  FileTypeKind kind{FileTypeKind::kClass};
+  std::vector<TypeSyntax> interfaces{};
 };
 
 [[nodiscard]] std::string_view declaration_kind_name(

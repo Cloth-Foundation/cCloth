@@ -63,6 +63,15 @@ struct AbiTypeDescriptor {
   std::uint64_t alignment;
   std::vector<std::uint64_t> reference_offsets;
   std::vector<SymbolId> virtual_functions;
+  struct InterfaceDispatch {
+    FileId interface_file;
+    std::uint64_t interface_id;
+    std::vector<SymbolId> functions;
+
+    friend bool operator==(const InterfaceDispatch&,
+                           const InterfaceDispatch&) = default;
+  };
+  std::vector<InterfaceDispatch> interfaces{};
 
   friend bool operator==(const AbiTypeDescriptor&,
                          const AbiTypeDescriptor&) = default;
@@ -128,6 +137,7 @@ struct AbiFileClass {
   std::vector<AbiCallable> functions;
   std::vector<AbiCallable> constructors;
   std::vector<MemberReference> member_order;
+  FileTypeKind kind{FileTypeKind::kClass};
 
   friend bool operator==(const AbiFileClass&, const AbiFileClass&) = default;
 };

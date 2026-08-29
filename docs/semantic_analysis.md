@@ -1,4 +1,4 @@
-# Cloth semantic analysis through Stage 17.4
+# Cloth semantic analysis through Stage 18
 
 Semantic analysis binds parsed syntax across a closed compilation graph, checks
 the implemented language rules, and lowers valid and recovered syntax to a
@@ -6,8 +6,9 @@ typed, target-independent high-level intermediate representation (HIR).
 
 ## Compilation model
 
-Each source contributes one implicit file class. The graph includes explicit
-entry files, imported files, and project package siblings. All file classes are
+Each source contributes one implicit file type, which defaults to a class and
+may be declared as an interface. The graph includes explicit entry files,
+imported files, and project package siblings. All file types are
 registered before member signatures are resolved, and all member signatures
 are registered before any initializer or body is checked. Forward references,
 same-package references, and import cycles therefore have deterministic meaning.
@@ -27,6 +28,22 @@ introduce abstract declarations and enforce construction and subclass
 completeness. Stage 17.3 rejects inheritance from sealed file classes and
 replacement of final virtual slots. Stage 17.4 admits reference-return
 covariance when the overriding return is assignable to the inherited return.
+Stage 18 resolves interface-parent and class-conformance edges, flattens
+interface contracts, validates concrete completeness, and records deterministic
+interface dispatch maps.
+
+Interface processing is dependency ordered independently from class layout.
+Parent interface contracts are merged by canonical name and parameter types.
+Compatible covariant returns select the narrowest contract; incompatible
+returns are diagnosed at the contributing declarations. Interface cycles and
+runtime-identity collisions are rejected deterministically.
+
+After class overrides are finalized, conformance maps each interface contract
+slot to the selected most-derived public virtual function. Abstract classes may
+retain an incomplete map. Concrete classes must complete every transitive
+interface, and their maps are carried into the ABI descriptor. Interface
+member calls retain the static interface identity in expression semantics and
+HIR so MIR can distinguish interface dispatch from ordinary class dispatch.
 
 `Compilation` owns its source files, immutable token streams, and parse results.
 This keeps token lexemes, syntax names, and source-range file names valid
@@ -48,7 +65,7 @@ The core type table contains:
 - `string`
 - `object`, the universal non-null managed-reference type
 - `void`, plus internal error and null types
-- one named reference type for each valid file class
+- one named reference type for each valid file class or interface
 - one canonical array reference type for each used element type
 - one canonical nullable wrapper for each used nullable reference type
 
@@ -59,7 +76,7 @@ implemented. References are non-null by default. `T?` is a distinct nullable
 wrapper, `T` widens to `T?`, and `null` is assignable only to `T?`. Nullable
 qualifiers are invalid on primitive and void types.
 
-File-class, string, and array references widen to `object`, and those nullable
+File-class, interface, string, and array references widen to `object`, and those nullable
 forms widen to `object?`. The conversion is not available to primitives and
 does not imply boxing. Arrays remain invariant: `User[]` does not widen to
 `object[]`.
@@ -69,6 +86,12 @@ Non-null-to-nullable and nullable-to-nullable forms compose with that
 conversion. Base-to-derived and unrelated file-class assignments remain
 invalid. Since the complete base is a prefix of the derived object, widening
 does not change the runtime pointer.
+
+A class reference widens to every interface in its transitive conformance set.
+An interface reference widens to each transitive parent interface. Both
+conversions preserve the object pointer and compose with nullability. Reverse
+and cross-interface conversions use the existing checked `is` and `as`
+operations.
 
 `string` is a managed reference with immutable UTF-8 value semantics. String
 literals are decoded and validated as UTF-8 during semantic analysis. Exact

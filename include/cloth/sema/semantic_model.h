@@ -6,6 +6,7 @@
 #include "cloth/source/source_range.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -54,6 +55,7 @@ enum class TypeKind {
   kString,
   kObject,
   kFileClass,
+  kInterface,
   kArray,
   kNullable,
 };
@@ -73,6 +75,7 @@ enum class SymbolKind {
   kParameter,
   kLocal,
   kSelf,
+  kInterface,
 };
 
 enum class IntrinsicKind {
@@ -130,6 +133,15 @@ struct ExpressionSemantics {
   bool is_presence_test{false};
   std::optional<TypeId> checked_type{};
   bool is_base_qualified{false};
+  std::optional<FileId> interface_dispatch{};
+};
+
+struct InterfaceImplementation {
+  FileId interface_file;
+  std::vector<SymbolId> functions;
+
+  friend bool operator==(const InterfaceImplementation&,
+                         const InterfaceImplementation&) = default;
 };
 
 struct FileSemantics {
@@ -147,6 +159,12 @@ struct FileSemantics {
   std::vector<SymbolId> abstract_functions{};
   bool is_abstract{false};
   bool is_sealed{false};
+  FileTypeKind kind{FileTypeKind::kClass};
+  std::vector<FileId> direct_interfaces{};
+  std::vector<FileId> interfaces{};
+  std::vector<SymbolId> interface_functions{};
+  std::vector<InterfaceImplementation> interface_implementations{};
+  std::optional<std::uint64_t> interface_id{};
 };
 
 class SemanticModel {

@@ -11,9 +11,10 @@ be isolated behind explicit compiler or runtime boundaries. Source meaning must
 not depend on host pointer size, path syntax, locale, iteration order, or other
 ambient platform state.
 
-## Implicit file classes
+## Implicit file types
 
-Every `.co` source file defines one implicit class whose name is the file stem:
+Every `.co` source file defines one implicit type whose name is the file stem.
+The type is a class unless the file uses an explicit file-kind envelope:
 
 ```text
 User.co -> User
@@ -25,6 +26,10 @@ Stage 16.1 optionally permits an unnamed `class { ... }` envelope while keeping
 the file stem as the sole class name.
 The compiler retains the file-class identity through all compilation stages so
 other files can reference `User` as a normal type.
+
+Stage 18 adds `interface { ... }` as the first alternate file kind. The file
+stem remains its only type name. Interfaces carry public function contracts but
+no fields, constructors, or object layout.
 
 Constructors use the implicit class name:
 
@@ -72,6 +77,30 @@ virtual-table layout. Stage 17.4 permits a managed-reference override return
 that is assignable to the inherited return. Static call-site typing and the
 shared reference representation keep the existing slot and ABI unchanged. See
 [inheritance.md](inheritance.md).
+
+## Interface contracts
+
+Interfaces use multiple contract inheritance while classes retain single
+implementation inheritance. A class lists conformance after `is`, independently
+from its optional class base:
+
+```cloth
+class : Human is Named, Serializable {
+  // User.co still defines User.
+}
+```
+
+Conformance is structural at the member boundary but nominal at the type
+boundary: a matching public function satisfies a declared interface contract,
+while the class becomes an interface subtype only through an explicit or
+inherited `is` clause. Concrete classes complete every transitive contract;
+abstract classes may defer requirements to a concrete descendant.
+
+Interface values use the same managed pointer as class values. Class and child
+interface references widen without representation changes. Checked reverse
+conversions use `is` and `as`, and interface calls use deterministic dispatch
+tables on the most-derived class descriptor. See
+[interfaces.md](interfaces.md).
 
 ## Capitalization and visibility
 
@@ -349,7 +378,7 @@ order, or reclamation timing.
 ## Core output and native entry point
 
 `print(T)` and `println(T)` are compiler-provided core intrinsics for all
-primitive types, `object`, and `null`. File classes and arrays widen to the
+primitive types, `object`, and `null`. File classes, interfaces, and arrays widen to the
 `object` overload. `print` appends nothing;
 `println` appends exactly one line feed, and its zero-argument overload writes
 only that line feed. File-class objects use `<qualified.Type>` without an

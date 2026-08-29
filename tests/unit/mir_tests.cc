@@ -1115,6 +1115,43 @@ void base_qualified_call_lowering(TestContext& test) {
               "invalid base-qualified call produced the wrong diagnostic");
 }
 
+void interface_dispatch_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Renderable.co", "interface { func Render(): string; }\n");
+  compilation.add("Widget.co",
+                  "class is Renderable {\n"
+                  "  func Render(): string { return \"widget\"; }\n"
+                  "}\n");
+  compilation.add("Use.co",
+                  "func Upcast(Widget value): Renderable { return value; }\n"
+                  "func Read(Renderable value): string {\n"
+                  "  return value.Render();\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid interface program failed MIR lowering");
+  const cloth::MirFileClass& use = compilation.result->mir.files[2];
+  test.expect(body_has_conversion(use.functions[0].body,
+                                  cloth::MirConversionKind::kWidenReference),
+              "class-to-interface conversion was not explicit in MIR");
+  const cloth::MirCallInstruction* interface_call = nullptr;
+  for (const cloth::MirBasicBlock& block : use.functions[1].body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* call =
+              std::get_if<cloth::MirCallInstruction>(&instruction.data)) {
+        interface_call = call;
+      }
+    }
+  }
+  test.expect(
+      interface_call != nullptr && interface_call->receiver &&
+          interface_call->dispatch == cloth::MirDispatchKind::kInterface &&
+          interface_call->interface_file == cloth::FileId{0} &&
+          interface_call->interface_slot == 0,
+      "interface call lost its receiver, identity, or contract slot");
+}
+
 void verifiers_reject_corruption(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Verify.co", "func Value(): int { return 1; }\n");
@@ -1260,6 +1297,7 @@ int main() {
       {"inherited reference widening", inherited_reference_widening},
       {"virtual dispatch lowering", virtual_dispatch_lowering},
       {"base-qualified call lowering", base_qualified_call_lowering},
+      {"interface dispatch lowering", interface_dispatch_lowering},
       {"verifiers reject corruption", verifiers_reject_corruption},
   };
 

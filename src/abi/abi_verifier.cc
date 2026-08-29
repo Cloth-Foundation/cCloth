@@ -80,6 +80,10 @@ class AbiVerifier {
         file.symbol != expected.symbol) {
       report(range, "file identity does not match MIR");
     }
+    if (file.kind != expected.kind ||
+        file.kind != semantics_.file(file.file).kind) {
+      report(range, "file type kind does not match semantics");
+    }
     if (file.base_file != expected.base_file) {
       report(range, "file-class base does not match MIR");
     }
@@ -95,8 +99,18 @@ class AbiVerifier {
     if (file.member_order != expected.member_order) {
       report(range, "member order does not match MIR");
     }
+    if (file.kind == FileTypeKind::kInterface) {
+      if (file.base_file || !file.layout.fields.empty() ||
+          !file.static_fields.empty() || !file.constructors.empty() ||
+          !file.type_descriptor.interfaces.empty()) {
+        report(range, "interface ABI contains class storage or construction");
+      }
+      verify_callables(file.functions, expected.functions, range, "function");
+      return;
+    }
     verify_class_layout(file.layout, range);
     verify_type_descriptor(file.type_descriptor, file.layout, range);
+    verify_interface_dispatches(file, range);
     verify_inheritance(file, range);
     verify_callables(file.functions, expected.functions, range, "function");
     verify_callables(file.constructors, expected.constructors, range,
@@ -162,6 +176,40 @@ class AbiVerifier {
           symbol.virtual_slot != slot) {
         report(range, "type descriptor has an invalid virtual function");
       }
+    }
+  }
+
+  void verify_interface_dispatches(const AbiFileClass& file,
+                                   SourceRange range) {
+    std::uint64_t previous_id = 0;
+    bool has_previous = false;
+    for (const AbiTypeDescriptor::InterfaceDispatch& interface :
+         file.type_descriptor.interfaces) {
+      if (interface.interface_file.value >= semantics_.files().size()) {
+        report(range, "type descriptor has an unknown interface");
+        continue;
+      }
+      const FileSemantics& contract = semantics_.file(interface.interface_file);
+      if (contract.kind != FileTypeKind::kInterface || !contract.interface_id ||
+          interface.interface_id != *contract.interface_id ||
+          interface.functions.size() != contract.interface_functions.size() ||
+          (has_previous && interface.interface_id <= previous_id)) {
+        report(range, "type descriptor has invalid interface metadata");
+      }
+      for (std::size_t slot = 0; slot < interface.functions.size(); ++slot) {
+        const SymbolId implementation = interface.functions[slot];
+        if (implementation.value >= semantics_.symbols().size()) {
+          report(range, "interface dispatch has an unknown function");
+          continue;
+        }
+        const SemanticSymbol& function = semantics_.symbol(implementation);
+        if (function.kind != SymbolKind::kFunction || function.is_static ||
+            function.visibility != Visibility::kPublic) {
+          report(range, "interface dispatch has an invalid function");
+        }
+      }
+      previous_id = interface.interface_id;
+      has_previous = true;
     }
   }
 

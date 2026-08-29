@@ -1,0 +1,29 @@
+class : Base {
+  Derived(int32 value): Base(value) {}
+
+  override func Name(): string {
+    return "Derived";
+  }
+
+  override func Score(): int32 {
+    return super.Score() + 1;
+  }
+
+  static func Main() {
+    Derived value = Derived(41);
+    Scored scored = value;
+    Named named = scored;
+
+    println(scored.Name());
+    println(scored.Score());
+    println(named.Name());
+
+    object boxed = value;
+    println(boxed is Scored);
+    println(boxed is Named);
+
+    Scored? restored = boxed as Scored?;
+    println(restored != null);
+    println(restored!.Score());
+  }
+}

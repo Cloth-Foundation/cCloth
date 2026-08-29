@@ -1,7 +1,7 @@
 # Cloth deferred-work ledger
 
 This file is the central inventory of work deliberately left out through Stage
-17.4. Feature documents remain authoritative for existing behavior; this
+18. Feature documents remain authoritative for existing behavior; this
 ledger records accepted gaps and their prerequisites. An unchecked item has no
 implied schedule or stage number.
 
@@ -14,10 +14,10 @@ than a general aspiration.
 
 - [x] Add the optional unnamed `class {}` envelope and validated
   single-inheritance graph. Completed in Stage 16.1.
-- [ ] Design the remaining file-kind declarations for an implicit file class.
-  The working proposal is a top-level `interface {}`, `struct {}`, or `enum {}`
-  block. Define layout, value/reference semantics, construction, visibility,
-  and import behavior before reserving final syntax.
+- [ ] Complete the remaining file-kind declarations for an implicit file type.
+  Stage 18 defines `interface {}`. `struct {}` and `enum {}` still require
+  layout, value/reference semantics, construction, visibility, and import
+  contracts before implementation.
 - [ ] Implement nested type declarations. `class`, `struct`, and `enum` are
   reserved declaration starters today but are intentionally diagnosed as
   unsupported.
@@ -51,8 +51,10 @@ than a general aspiration.
 - [x] Add covariant managed-reference override returns. Stage 17.4 accepts a
   narrower return assignable to the inherited return while keeping primitives,
   `void`, and invariant array-to-array returns exact.
-- [ ] Design interfaces and the provisional `class : Human is InterfaceA,
-  InterfaceB { ... }` conformance syntax.
+- [x] Add interfaces and class conformance. Stage 18 defines interface files,
+  multiple interface inheritance, `class : Human is InterfaceA, InterfaceB`,
+  transitive conformance, checked conversions, deterministic dispatch tables,
+  and runtime interface lookup.
 - [ ] Add flow-sensitive smart casts after a successful `value is T` test.
 - [ ] Add primitive boxing before primitives may widen to `object`.
 - [ ] Define the intended reflection surface; Stage 15 exposes only the stable

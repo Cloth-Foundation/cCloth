@@ -58,7 +58,9 @@ The first points to immutable compiler-emitted type metadata. Stage 13.3 uses
 the second for an opaque managed-allocation registry entry. The descriptor
 carries the qualified file-class identity, complete object size and alignment,
 object kind, the final ABI offset of every reference-valued instance field, and
-the Stage 16.5 virtual-function table and slot count.
+the class virtual-function table and slot count. Stage 18 appends a sorted array
+of interface dispatch entries. Each entry contains a deterministic interface
+identity, a function-pointer table in contract-slot order, and its slot count.
 
 Fields follow the header in source declaration order. Each field is aligned for
 its ABI type, padding is explicit in its recorded offset, and the complete
@@ -86,6 +88,12 @@ still determined by capitalization.
 `string` and arrays remain opaque runtime types and do not use file-class field
 layout. Their private runtime representations begin with the same two-word
 managed header, but generated code accesses them only through runtime calls.
+Interfaces have no object layout or allocatable type descriptor. Interface
+references retain the ordinary managed pointer representation. A conforming
+class descriptor flattens every inherited interface entry, and a derived class
+rebuilds each function table from its final virtual implementations. Interface
+conversions therefore require no pointer adjustment or wrapper allocation.
+
 String references retain identical ABI shape regardless of whether their UTF-8
 bytes are borrowed literal storage or an owned concatenation buffer. Lengths
 cross the runtime boundary as `int32`; equality results cross as `uint8` and
@@ -102,12 +110,19 @@ receiver for a valid function call.
 
 Every public instance function receives a stable virtual slot. A derived ABI
 copies its base table, replaces override implementations in place, and appends
-new public instance functions in declaration order. Because an override must
-preserve its parameter and return types exactly, every implementation in one
-slot has one callable ABI. Generated virtual calls load the slot from the
+new public instance functions in declaration order. Override parameters remain
+exact, while managed-reference returns may narrow covariantly without changing
+their pointer ABI. Every implementation in one slot therefore has a compatible
+callable ABI. Generated virtual calls load the slot from the
 most-derived descriptor; private and static calls retain their direct mangled
 target. Calls on the object under construction are also direct until its field
 and constructor initialization completes.
+
+An interface call retains its static interface identity and contract slot in
+MIR. Generated code resolves the matching class-descriptor entry, loads the
+function pointer, and invokes it with the unchanged receiver. ABI verification
+checks identity ordering, contract table lengths, and implementation symbol
+kinds in addition to the existing class-layout invariants.
 
 Each constructor has a public allocation entry and a private initialization
 entry. The `_C1C` allocation entry accepts only declared parameters, returns the

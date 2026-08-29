@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -33,6 +34,7 @@ struct ExpressionState {
   std::optional<SymbolId> symbol{};
   std::vector<SymbolId> candidates{};
   std::optional<TypeId> checked_type{};
+  std::optional<FileId> interface_dispatch{};
 };
 
 using NonNullSet = std::vector<SymbolId>;
@@ -101,6 +103,17 @@ bool ascii_case_equal(std::string_view left, std::string_view right) noexcept {
   return true;
 }
 
+std::uint64_t interface_id(std::string_view qualified_name) noexcept {
+  constexpr std::uint64_t kOffset = 14695981039346656037ULL;
+  constexpr std::uint64_t kPrime = 1099511628211ULL;
+  std::uint64_t result = kOffset;
+  for (const char character : qualified_name) {
+    result ^= static_cast<unsigned char>(character);
+    result *= kPrime;
+  }
+  return result;
+}
+
 }  // namespace
 
 class SemanticAnalyzer {
@@ -112,9 +125,11 @@ class SemanticAnalyzer {
   SemanticAnalysisResult run() {
     register_file_classes();
     register_imports();
-    register_base_classes();
+    register_type_relationships();
     register_members();
+    validate_interface_contracts();
     validate_overrides();
+    validate_interface_conformance();
     analyze_definitions();
     return SemanticAnalysisResult{std::move(model_),
                                   !diagnostics_.has_errors()};
@@ -146,7 +161,8 @@ class SemanticAnalyzer {
 
       const std::optional<TypeId> existing_type = model_.find_type(syntax.name);
       if (existing_type &&
-          model_.type(*existing_type).kind != TypeKind::kFileClass) {
+          model_.type(*existing_type).kind != TypeKind::kFileClass &&
+          model_.type(*existing_type).kind != TypeKind::kInterface) {
         diagnostics_.error(
             point_range(syntax.range.begin),
             "file class name '" + syntax.name + "' conflicts with a core type");
@@ -155,18 +171,22 @@ class SemanticAnalyzer {
 
       TypeId type = model_.error_type();
       if (identity_valid) {
+        const TypeKind type_kind = syntax.kind == FileTypeKind::kInterface
+                                       ? TypeKind::kInterface
+                                       : TypeKind::kFileClass;
         type = model_.add_type(
-            SemanticType{TypeKind::kFileClass, syntax.qualified_name, file_id});
+            SemanticType{type_kind, syntax.qualified_name, file_id});
       }
-      const SymbolId class_symbol =
-          model_.add_symbol(SemanticSymbol{SymbolKind::kFileClass,
-                                           syntax.qualified_name,
-                                           type,
-                                           {},
-                                           syntax.visibility,
-                                           file_id,
-                                           syntax.range,
-                                           identity_valid});
+      const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
+          syntax.kind == FileTypeKind::kInterface ? SymbolKind::kInterface
+                                                  : SymbolKind::kFileClass,
+          syntax.qualified_name,
+          type,
+          {},
+          syntax.visibility,
+          file_id,
+          syntax.range,
+          identity_valid});
       const SymbolId self_symbol =
           model_.add_symbol(SemanticSymbol{SymbolKind::kSelf,
                                            "self",
@@ -192,6 +212,10 @@ class SemanticAnalyzer {
           syntax.is_valid && identity_valid};
       file.is_abstract = syntax.is_abstract;
       file.is_sealed = syntax.is_sealed;
+      file.kind = syntax.kind;
+      if (syntax.kind == FileTypeKind::kInterface) {
+        file.interface_id = interface_id(syntax.qualified_name);
+      }
       if (syntax.is_abstract && syntax.is_sealed) {
         diagnostics_.error(syntax.range,
                            "file class '" + syntax.qualified_name +
@@ -290,7 +314,8 @@ class SemanticAnalyzer {
                          FileId target, VisibleFileKind kind,
                          SourceRange range) {
     if (const std::optional<TypeId> core = model_.find_type(name);
-        core && model_.type(*core).kind != TypeKind::kFileClass) {
+        core && model_.type(*core).kind != TypeKind::kFileClass &&
+        model_.type(*core).kind != TypeKind::kInterface) {
       diagnostics_.error(range, "import name '" + std::string{name} +
                                     "' conflicts with a core type");
       model_.mutable_file(current_file).is_valid = false;
@@ -318,44 +343,92 @@ class SemanticAnalyzer {
     bindings.push_back(VisibleFile{std::string{name}, target, kind, range});
   }
 
-  void register_base_classes() {
+  void register_type_relationships() {
     for (std::size_t index = 0; index < files_.size(); ++index) {
       const FileId file_id{index};
       const FileClassDecl& syntax = *files_[index];
-      if (!syntax.base_class) {
-        continue;
+      if (syntax.base_class) {
+        const TypeId base_type = resolve_type(*syntax.base_class, file_id);
+        if (base_type != model_.error_type()) {
+          const SemanticType& base = model_.type(base_type);
+          if (syntax.kind != FileTypeKind::kClass) {
+            diagnostics_.error(syntax.base_class->range,
+                               "interfaces cannot inherit a class");
+            model_.mutable_file(file_id).is_valid = false;
+          } else if (base.kind != TypeKind::kFileClass || !base.file) {
+            diagnostics_.error(
+                syntax.base_class->range,
+                "base type '" + base.name + "' must be a file class");
+            model_.mutable_file(file_id).is_valid = false;
+          } else if (*base.file == file_id) {
+            diagnostics_.error(syntax.base_class->range,
+                               "file class '" + syntax.qualified_name +
+                                   "' cannot inherit from itself");
+            model_.mutable_file(file_id).is_valid = false;
+          } else if (model_.file(*base.file).is_sealed) {
+            diagnostics_.error(syntax.base_class->range,
+                               "file class '" + syntax.qualified_name +
+                                   "' cannot inherit from sealed file class '" +
+                                   base.name + "'");
+            diagnostics_.note(
+                point_range(files_[base.file->value]->range.begin),
+                "sealed file class is declared here");
+            model_.mutable_file(file_id).is_valid = false;
+          } else {
+            model_.mutable_file(file_id).base_file = *base.file;
+          }
+        }
       }
 
-      const TypeId base_type = resolve_type(*syntax.base_class, file_id);
-      if (base_type == model_.error_type()) {
+      for (const TypeSyntax& interface_syntax : syntax.interfaces) {
+        const TypeId type = resolve_type(interface_syntax, file_id);
+        if (type == model_.error_type()) {
+          continue;
+        }
+        const SemanticType& interface_type = model_.type(type);
+        if (interface_type.kind != TypeKind::kInterface ||
+            !interface_type.file) {
+          diagnostics_.error(
+              interface_syntax.range,
+              "type '" + interface_type.name + "' is not an interface");
+          model_.mutable_file(file_id).is_valid = false;
+          continue;
+        }
+        if (*interface_type.file == file_id) {
+          diagnostics_.error(interface_syntax.range,
+                             "interface '" + syntax.qualified_name +
+                                 "' cannot inherit from itself");
+          model_.mutable_file(file_id).is_valid = false;
+          continue;
+        }
+        std::vector<FileId>& direct =
+            model_.mutable_file(file_id).direct_interfaces;
+        if (std::ranges::find(direct, *interface_type.file) != direct.end()) {
+          diagnostics_.error(interface_syntax.range, "duplicate interface '" +
+                                                         interface_type.name +
+                                                         "' in declaration");
+          model_.mutable_file(file_id).is_valid = false;
+          continue;
+        }
+        direct.push_back(*interface_type.file);
+      }
+    }
+
+    for (std::size_t left = 0; left < files_.size(); ++left) {
+      const FileSemantics& left_file = model_.file(FileId{left});
+      if (!left_file.interface_id) {
         continue;
       }
-      const SemanticType& base = model_.type(base_type);
-      if (base.kind != TypeKind::kFileClass || !base.file) {
-        diagnostics_.error(
-            syntax.base_class->range,
-            "base type '" + base.name + "' must be a file class");
-        model_.mutable_file(file_id).is_valid = false;
-        continue;
+      for (std::size_t right = 0; right < left; ++right) {
+        const FileSemantics& right_file = model_.file(FileId{right});
+        if (right_file.interface_id == left_file.interface_id) {
+          diagnostics_.error(point_range(files_[left]->range.begin),
+                             "interface runtime identity collides with '" +
+                                 files_[right]->qualified_name + "'");
+          model_.mutable_file(FileId{left}).is_valid = false;
+          model_.mutable_file(FileId{right}).is_valid = false;
+        }
       }
-      if (*base.file == file_id) {
-        diagnostics_.error(syntax.base_class->range,
-                           "file class '" + syntax.qualified_name +
-                               "' cannot inherit from itself");
-        model_.mutable_file(file_id).is_valid = false;
-        continue;
-      }
-      if (model_.file(*base.file).is_sealed) {
-        diagnostics_.error(syntax.base_class->range,
-                           "file class '" + syntax.qualified_name +
-                               "' cannot inherit from sealed file class '" +
-                               base.name + "'");
-        diagnostics_.note(point_range(files_[base.file->value]->range.begin),
-                          "sealed file class is declared here");
-        model_.mutable_file(file_id).is_valid = false;
-        continue;
-      }
-      model_.mutable_file(file_id).base_file = *base.file;
     }
     validate_inheritance_cycles();
   }
@@ -493,7 +566,8 @@ class SemanticAnalyzer {
       model_.mutable_file(file_id).is_valid = false;
     }
     if (function.is_abstract) {
-      if (!files_[file_id.value]->is_abstract) {
+      if (files_[file_id.value]->kind == FileTypeKind::kClass &&
+          !files_[file_id.value]->is_abstract) {
         diagnostics_.error(function.range,
                            "abstract function '" + std::string{function.name} +
                                "' requires an abstract file class");
@@ -522,12 +596,127 @@ class SemanticAnalyzer {
         model_.mutable_file(file_id).is_valid = false;
       }
     }
-    if (function.name == "Main" && !function.is_static) {
+    if (files_[file_id.value]->kind == FileTypeKind::kClass &&
+        function.name == "Main" && !function.is_static) {
       diagnostics_.error(function.range,
                          "entry point 'Main' must be declared static");
       model_.mutable_symbol(symbol).is_valid = false;
     }
     model_.mutable_file(file_id).functions.at(index) = symbol;
+  }
+
+  void validate_interface_contracts() {
+    std::vector<bool> complete(files_.size(), false);
+    std::size_t remaining = 0;
+    for (std::size_t index = 0; index < files_.size(); ++index) {
+      if (model_.file(FileId{index}).kind == FileTypeKind::kInterface) {
+        ++remaining;
+      } else {
+        complete[index] = true;
+      }
+    }
+
+    auto append_interface = [](std::vector<FileId>& interfaces,
+                               FileId interface_file) {
+      if (std::ranges::find(interfaces, interface_file) == interfaces.end()) {
+        interfaces.push_back(interface_file);
+      }
+    };
+
+    auto merge_function = [this](FileId interface_file,
+                                 std::vector<SymbolId>& functions,
+                                 SymbolId candidate_id) {
+      const SemanticSymbol& candidate = model_.symbol(candidate_id);
+      if (!candidate.is_valid) {
+        return;
+      }
+      const auto existing = std::ranges::find_if(
+          functions, [this, &candidate](SymbolId symbol_id) {
+            const SemanticSymbol& symbol = model_.symbol(symbol_id);
+            return symbol.name == candidate.name &&
+                   symbol.parameter_types == candidate.parameter_types;
+          });
+      if (existing == functions.end()) {
+        functions.push_back(candidate_id);
+        return;
+      }
+
+      const SemanticSymbol& inherited = model_.symbol(*existing);
+      if (is_override_return_compatible(inherited.type, candidate.type)) {
+        *existing = candidate_id;
+        return;
+      }
+      if (is_override_return_compatible(candidate.type, inherited.type)) {
+        return;
+      }
+      diagnostics_.error(candidate.range,
+                         "interface function '" +
+                             callable_signature(candidate) +
+                             "' conflicts with inherited return type '" +
+                             type_name(inherited.type) + "'");
+      diagnostics_.note(inherited.range,
+                        "conflicting interface function is declared here");
+      model_.mutable_file(interface_file).is_valid = false;
+    };
+
+    while (remaining != 0) {
+      bool made_progress = false;
+      for (std::size_t index = 0; index < files_.size(); ++index) {
+        const FileId file_id{index};
+        FileSemantics& file = model_.mutable_file(file_id);
+        if (complete[index] || file.kind != FileTypeKind::kInterface) {
+          continue;
+        }
+        if (std::ranges::any_of(file.direct_interfaces,
+                                [&complete](FileId parent) {
+                                  return !complete[parent.value];
+                                })) {
+          continue;
+        }
+
+        std::vector<FileId> interfaces;
+        std::vector<SymbolId> functions;
+        for (const FileId parent : file.direct_interfaces) {
+          const FileSemantics& parent_file = model_.file(parent);
+          for (const FileId inherited : parent_file.interfaces) {
+            append_interface(interfaces, inherited);
+          }
+          for (const SymbolId function : parent_file.interface_functions) {
+            merge_function(file_id, functions, function);
+          }
+        }
+        append_interface(interfaces, file_id);
+        file.interfaces = interfaces;
+        for (const SymbolId function : file.functions) {
+          merge_function(file_id, functions, function);
+        }
+        file.interfaces = std::move(interfaces);
+        file.interface_functions = std::move(functions);
+        complete[index] = true;
+        --remaining;
+        made_progress = true;
+      }
+      if (made_progress) {
+        continue;
+      }
+
+      for (std::size_t index = 0; index < files_.size(); ++index) {
+        const FileId file_id{index};
+        FileSemantics& file = model_.mutable_file(file_id);
+        if (complete[index] || file.kind != FileTypeKind::kInterface) {
+          continue;
+        }
+        diagnostics_.error(point_range(files_[index]->range.begin),
+                           "interface inheritance cycle includes '" +
+                               files_[index]->qualified_name + "'");
+        file.is_valid = false;
+        file.direct_interfaces.clear();
+        file.interfaces = {file_id};
+        file.interface_functions = file.functions;
+        complete[index] = true;
+        --remaining;
+      }
+    }
   }
 
   void validate_overrides() {
@@ -540,11 +729,121 @@ class SemanticAnalyzer {
           continue;
         }
         const FileId file_id{index};
+        if (model_.file(file_id).kind == FileTypeKind::kInterface) {
+          complete[index] = true;
+          --remaining;
+          made_progress = true;
+          continue;
+        }
         const std::optional<FileId> base = model_.file(file_id).base_file;
         if (base && !complete[base->value]) {
           continue;
         }
         validate_file_overrides(file_id);
+        complete[index] = true;
+        --remaining;
+        made_progress = true;
+      }
+      if (!made_progress) {
+        break;
+      }
+    }
+  }
+
+  void validate_interface_conformance() {
+    std::vector<bool> complete(files_.size(), false);
+    std::size_t remaining = 0;
+    for (std::size_t index = 0; index < files_.size(); ++index) {
+      if (model_.file(FileId{index}).kind == FileTypeKind::kClass) {
+        ++remaining;
+      } else {
+        complete[index] = true;
+      }
+    }
+
+    auto append_interface = [](std::vector<FileId>& interfaces,
+                               FileId interface_file) {
+      if (std::ranges::find(interfaces, interface_file) == interfaces.end()) {
+        interfaces.push_back(interface_file);
+      }
+    };
+
+    while (remaining != 0) {
+      bool made_progress = false;
+      for (std::size_t index = 0; index < files_.size(); ++index) {
+        const FileId file_id{index};
+        FileSemantics& file = model_.mutable_file(file_id);
+        if (complete[index] || file.kind != FileTypeKind::kClass) {
+          continue;
+        }
+        if (file.base_file && !complete[file.base_file->value]) {
+          continue;
+        }
+
+        std::vector<FileId> interfaces;
+        if (file.base_file) {
+          interfaces = model_.file(*file.base_file).interfaces;
+        }
+        for (const FileId direct : file.direct_interfaces) {
+          for (const FileId inherited : model_.file(direct).interfaces) {
+            append_interface(interfaces, inherited);
+          }
+        }
+
+        std::vector<InterfaceImplementation> implementations;
+        for (const FileId interface_file : interfaces) {
+          const FileSemantics& contract = model_.file(interface_file);
+          std::vector<SymbolId> functions;
+          bool complete_contract = true;
+          for (const SymbolId requirement_id : contract.interface_functions) {
+            const SemanticSymbol& requirement = model_.symbol(requirement_id);
+            const auto implementation = std::ranges::find_if(
+                file.virtual_functions,
+                [this, &requirement](SymbolId function_id) {
+                  const SemanticSymbol& function = model_.symbol(function_id);
+                  return function.name == requirement.name &&
+                         function.parameter_types ==
+                             requirement.parameter_types;
+                });
+            if (implementation == file.virtual_functions.end()) {
+              complete_contract = false;
+              if (!file.is_abstract) {
+                diagnostics_.error(
+                    point_range(files_[index]->range.begin),
+                    "concrete file class '" + files_[index]->qualified_name +
+                        "' does not implement interface function '" +
+                        callable_signature(requirement) + "'");
+                diagnostics_.note(
+                    requirement.range,
+                    "interface function contract is declared here");
+                file.is_valid = false;
+              }
+              continue;
+            }
+            const SemanticSymbol& function = model_.symbol(*implementation);
+            if (!is_override_return_compatible(requirement.type,
+                                               function.type)) {
+              complete_contract = false;
+              diagnostics_.error(function.range,
+                                 "implementation of interface function '" +
+                                     requirement.name + "' returns '" +
+                                     type_name(function.type) +
+                                     "'; contract returns '" +
+                                     type_name(requirement.type) + "'");
+              diagnostics_.note(requirement.range,
+                                "interface function contract is declared here");
+              file.is_valid = false;
+              continue;
+            }
+            functions.push_back(*implementation);
+          }
+          if (complete_contract) {
+            implementations.push_back(
+                InterfaceImplementation{interface_file, std::move(functions)});
+          }
+        }
+        file.interfaces = std::move(interfaces);
+        file.interface_implementations = std::move(implementations);
         complete[index] = true;
         --remaining;
         made_progress = true;
@@ -683,7 +982,8 @@ class SemanticAnalyzer {
   TypeId resolve_type(const TypeSyntax& syntax, FileId current_file,
                       bool allow_void = false) {
     if (const std::optional<TypeId> core = model_.find_type(syntax.name);
-        core && model_.type(*core).kind != TypeKind::kFileClass) {
+        core && model_.type(*core).kind != TypeKind::kFileClass &&
+        model_.type(*core).kind != TypeKind::kInterface) {
       if (*core == model_.void_type()) {
         if (syntax.is_array) {
           diagnostics_.error(syntax.range,
@@ -1741,7 +2041,8 @@ class SemanticAnalyzer {
       return false;
     }
     if (target_kind != TypeKind::kObject && target_kind != TypeKind::kString &&
-        target_kind != TypeKind::kFileClass) {
+        target_kind != TypeKind::kFileClass &&
+        target_kind != TypeKind::kInterface) {
       diagnostics_.error(
           range, "type '" + type_name(target) + "' is not runtime-checkable");
       return false;
@@ -1756,9 +2057,29 @@ class SemanticAnalyzer {
          is_file_class_subtype(target, source_base))) {
       return true;
     }
+    if (source_kind == TypeKind::kInterface &&
+        target_kind == TypeKind::kInterface) {
+      return true;
+    }
+    if (source_kind == TypeKind::kFileClass &&
+        target_kind == TypeKind::kInterface) {
+      const SemanticType& source_info = model_.type(source_base);
+      if (implements_interface(source_base, target) ||
+          (source_info.file && !model_.file(*source_info.file).is_sealed)) {
+        return true;
+      }
+    }
+    if (source_kind == TypeKind::kInterface &&
+        target_kind == TypeKind::kFileClass) {
+      const SemanticType& target_info = model_.type(target);
+      if (implements_interface(target, source_base) ||
+          (target_info.file && !model_.file(*target_info.file).is_sealed)) {
+        return true;
+      }
+    }
     diagnostics_.error(range, "types '" + type_name(source) + "' and '" +
                                   type_name(target) +
-                                  "' cannot overlap without inheritance");
+                                  "' cannot overlap at runtime");
     return false;
   }
 
@@ -2106,7 +2427,9 @@ class SemanticAnalyzer {
       }
       return ExpressionState{model_.error_type()};
     }
-    if (object_type.kind != TypeKind::kFileClass || !object_type.file) {
+    if ((object_type.kind != TypeKind::kFileClass &&
+         object_type.kind != TypeKind::kInterface) ||
+        !object_type.file) {
       diagnostics_.error(
           range, "type '" + object_type.name + "' has no Cloth members");
       return ExpressionState{model_.error_type()};
@@ -2120,7 +2443,7 @@ class SemanticAnalyzer {
                                       "' is private in file class '" +
                                       object_type.name + "'");
       } else {
-        diagnostics_.error(range, "file class '" + object_type.name +
+        diagnostics_.error(range, "type '" + object_type.name +
                                       "' has no member '" +
                                       std::string{member.member} + "'");
       }
@@ -2149,8 +2472,12 @@ class SemanticAnalyzer {
       return ExpressionState{
           first.type, ValueCategory::kMutableLocation, members.front(), {}};
     }
-    return ExpressionState{
+    ExpressionState state{
         model_.error_type(), ValueCategory::kCallable, {}, std::move(members)};
+    if (object_type.kind == TypeKind::kInterface) {
+      state.interface_dispatch = target_file;
+    }
+    return state;
   }
 
   ExpressionState analyze_meta_access(const MetaAccessExpression& meta,
@@ -2246,7 +2573,9 @@ class SemanticAnalyzer {
       }
       return ExpressionState{model_.error_type()};
     }
-    if (object_type.kind != TypeKind::kFileClass || !object_type.file) {
+    if ((object_type.kind != TypeKind::kFileClass &&
+         object_type.kind != TypeKind::kInterface) ||
+        !object_type.file) {
       diagnostics_.error(
           range, "type '" + object_type.name + "' has no Cloth members");
       return ExpressionState{model_.error_type()};
@@ -2378,6 +2707,10 @@ class SemanticAnalyzer {
           return ExpressionState{model_.error_type()};
         }
         candidates = target.constructors;
+      } else if (type.kind == TypeKind::kInterface) {
+        diagnostics_.error(
+            range, "interface '" + type.name + "' cannot be constructed");
+        return ExpressionState{model_.error_type()};
       }
     } else if (callee.category != ValueCategory::kCallable) {
       if (callee.type != model_.error_type()) {
@@ -2457,7 +2790,9 @@ class SemanticAnalyzer {
     if (!validate_call_access(call.callee, symbol, range)) {
       return ExpressionState{model_.error_type()};
     }
-    return ExpressionState{symbol.type, ValueCategory::kValue, selected, {}};
+    ExpressionState result{symbol.type, ValueCategory::kValue, selected, {}};
+    result.interface_dispatch = callee.interface_dispatch;
+    return result;
   }
 
   bool validate_call_access(ExpressionId callee_id,
@@ -2561,8 +2896,13 @@ class SemanticAnalyzer {
 
   ExpressionState record_expression(ExpressionId id, ExpressionState state) {
     model_.mutable_file(current_file_).expressions.at(id.value) =
-        ExpressionSemantics{state.type, state.category, state.symbol, false,
-                            state.checked_type};
+        ExpressionSemantics{state.type,
+                            state.category,
+                            state.symbol,
+                            false,
+                            state.checked_type,
+                            false,
+                            state.interface_dispatch};
     return state;
   }
 
@@ -2570,6 +2910,14 @@ class SemanticAnalyzer {
                                          std::string_view name) const {
     const FileSemantics& file = model_.file(file_id);
     std::vector<SymbolId> matches;
+    if (file.kind == FileTypeKind::kInterface) {
+      for (const SymbolId symbol_id : file.interface_functions) {
+        if (model_.symbol(symbol_id).name == name) {
+          matches.push_back(symbol_id);
+        }
+      }
+      return matches;
+    }
     for (const SymbolId symbol_id : file.fields) {
       const SemanticSymbol& symbol = model_.symbol(symbol_id);
       if (symbol.name == name) {
@@ -2587,6 +2935,9 @@ class SemanticAnalyzer {
 
   std::vector<SymbolId> find_members(FileId file_id,
                                      std::string_view name) const {
+    if (model_.file(file_id).kind == FileTypeKind::kInterface) {
+      return declared_members(file_id, name);
+    }
     std::optional<FileId> owner = file_id;
     for (std::size_t depth = 0; owner && depth < files_.size(); ++depth) {
       std::vector<SymbolId> matches = declared_members(*owner, name);
@@ -2604,6 +2955,9 @@ class SemanticAnalyzer {
   }
 
   bool has_inaccessible_member(FileId file_id, std::string_view name) const {
+    if (model_.file(file_id).kind == FileTypeKind::kInterface) {
+      return false;
+    }
     std::optional<FileId> owner = file_id;
     for (std::size_t depth = 0; owner && depth < files_.size(); ++depth) {
       const std::vector<SymbolId> matches = declared_members(*owner, name);
@@ -2732,9 +3086,16 @@ class SemanticAnalyzer {
         is_file_class_subtype(actual, expected)) {
       return true;
     }
+    if (expected_type.kind == TypeKind::kInterface &&
+        (actual_type.kind == TypeKind::kFileClass ||
+         actual_type.kind == TypeKind::kInterface) &&
+        implements_interface(actual, expected)) {
+      return true;
+    }
     if (expected_type.kind == TypeKind::kObject) {
       return actual_type.kind == TypeKind::kString ||
              actual_type.kind == TypeKind::kFileClass ||
+             actual_type.kind == TypeKind::kInterface ||
              actual_type.kind == TypeKind::kArray;
     }
     if (expected_type.kind != TypeKind::kNullable ||
@@ -2780,11 +3141,26 @@ class SemanticAnalyzer {
     return false;
   }
 
+  bool implements_interface(TypeId type, TypeId interface_type) const {
+    const SemanticType& type_info = model_.type(type);
+    const SemanticType& interface_info = model_.type(interface_type);
+    if ((type_info.kind != TypeKind::kFileClass &&
+         type_info.kind != TypeKind::kInterface) ||
+        !type_info.file || interface_info.kind != TypeKind::kInterface ||
+        !interface_info.file) {
+      return false;
+    }
+    const std::vector<FileId>& interfaces =
+        model_.file(*type_info.file).interfaces;
+    return std::ranges::find(interfaces, *interface_info.file) !=
+           interfaces.end();
+  }
+
   bool is_reference(TypeId type) const {
     const TypeKind kind = model_.type(type).kind;
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
-           kind == TypeKind::kFileClass || kind == TypeKind::kArray ||
-           kind == TypeKind::kNullable;
+           kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
+           kind == TypeKind::kArray || kind == TypeKind::kNullable;
   }
 
   bool is_integer(TypeId type) const {

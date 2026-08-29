@@ -3,6 +3,7 @@
 #include "cloth/hir/hir.h"
 #include "cloth/sema/semantic_model.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <utility>
@@ -219,7 +220,8 @@ class BodyBuilder {
   bool is_non_null_reference(TypeId type) const {
     const TypeKind kind = semantics_.type(type).kind;
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
-           kind == TypeKind::kFileClass || kind == TypeKind::kArray;
+           kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
+           kind == TypeKind::kArray;
   }
 
   bool can_widen_reference(TypeId source, TypeId target) const {
@@ -231,6 +233,15 @@ class BodyBuilder {
     }
     const SemanticType& source_type = semantics_.type(source);
     const SemanticType& target_type = semantics_.type(target);
+    if ((source_type.kind == TypeKind::kFileClass ||
+         source_type.kind == TypeKind::kInterface) &&
+        source_type.file && target_type.kind == TypeKind::kInterface &&
+        target_type.file) {
+      const std::vector<FileId>& interfaces =
+          semantics_.file(*source_type.file).interfaces;
+      return std::ranges::find(interfaces, *target_type.file) !=
+             interfaces.end();
+    }
     if (source_type.kind != TypeKind::kFileClass || !source_type.file ||
         target_type.kind != TypeKind::kFileClass || !target_type.file) {
       return false;
@@ -956,14 +967,29 @@ class BodyBuilder {
     const SemanticSymbol& callable = semantics_.symbol(*call.callable);
     receiver_is_self = receiver_is_self || (kind == MirCallKind::kUnqualified &&
                                             !callable.is_static);
+    std::optional<std::size_t> interface_slot;
+    if (call.interface_dispatch) {
+      const std::vector<SymbolId>& functions =
+          semantics_.file(*call.interface_dispatch).interface_functions;
+      const auto slot = std::ranges::find(functions, *call.callable);
+      if (slot != functions.end()) {
+        interface_slot = static_cast<std::size_t>(slot - functions.begin());
+      }
+    }
     const MirDispatchKind dispatch =
-        callable.virtual_slot && !call.is_base_qualified &&
+        call.interface_dispatch ? MirDispatchKind::kInterface
+        : callable.virtual_slot && !call.is_base_qualified &&
                 !(suppress_self_virtual_dispatch_ && receiver_is_self)
             ? MirDispatchKind::kVirtual
             : MirDispatchKind::kDirect;
-    MirCallInstruction instruction{
-        kind,           dispatch, receiver_is_self,
-        *call.callable, receiver, std::move(arguments)};
+    MirCallInstruction instruction{kind,
+                                   dispatch,
+                                   receiver_is_self,
+                                   *call.callable,
+                                   receiver,
+                                   std::move(arguments),
+                                   call.interface_dispatch,
+                                   interface_slot};
     if (expression.type == semantics_.void_type()) {
       emit_void(expression.range, std::move(instruction));
       return std::nullopt;

@@ -114,6 +114,12 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/inheritance_behavior.txt
         EXACT
     )
+    cloth_add_native_output_test(interfaces
+        OUTPUT "cloth interfaces"
+        SOURCE ${CLOTH_INTEGRATION_PROJECTS}/interfaces/src/Derived.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/interfaces.txt
+        EXACT
+    )
     cloth_add_native_failure_test(null_assert_failure
         OUTPUT "cloth null assert failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NullAssertFailure.co

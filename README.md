@@ -79,13 +79,13 @@ semantic analysis, typed HIR, control-flow MIR, a verified target ABI, and an
 LLVM IR backend. The implemented language includes path-derived packages and
 imports, functions and constructors, structured control flow, arrays, strings,
 explicit nullability, managed objects, single inheritance, abstract and sealed
-types, overriding, virtual dispatch, covariant managed-reference returns, and
-`super` calls.
+types, interfaces, overriding, class and interface dispatch, covariant
+managed-reference returns, and `super` calls.
 
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++
-linker driver. Interfaces, a complete standard library, dependency management,
-and broader native target support remain future work.
+linker driver. A complete standard library, dependency management, and broader
+native target support remain future work.
 
 ## Build from source
 
@@ -298,6 +298,7 @@ formatting changes.
 Start with [Language design](docs/language_design.md) and the
 [implemented grammar](docs/grammar.md). The main compiler boundaries are
 documented in [semantic analysis](docs/semantic_analysis.md),
+[interfaces](docs/interfaces.md),
 [control flow and MIR](docs/control_flow_and_mir.md),
 [data layout and ABI](docs/data_layout_and_abi.md), the
 [LLVM backend](docs/llvm_backend.md), and the

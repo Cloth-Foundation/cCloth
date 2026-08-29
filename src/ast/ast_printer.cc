@@ -43,10 +43,21 @@ void print_validity(bool is_valid, std::ostream& output) {
 }  // namespace
 
 void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
-  output << "FileClass " << file_class.qualified_name;
+  output << (file_class.kind == FileTypeKind::kInterface ? "Interface "
+                                                         : "FileClass ")
+         << file_class.qualified_name;
   if (file_class.base_class) {
     output << " : ";
     print_type(*file_class.base_class, output);
+  }
+  if (!file_class.interfaces.empty()) {
+    output << (file_class.kind == FileTypeKind::kInterface ? " : " : " is ");
+    for (std::size_t index = 0; index < file_class.interfaces.size(); ++index) {
+      if (index != 0) {
+        output << ", ";
+      }
+      print_type(file_class.interfaces[index], output);
+    }
   }
   output << " [" << visibility_name(file_class.visibility);
   if (file_class.is_abstract) {

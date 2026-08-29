@@ -105,6 +105,7 @@ struct HirCallExpression {
   std::optional<SymbolId> callable;
   std::vector<HirExpressionId> arguments;
   bool is_base_qualified{false};
+  std::optional<FileId> interface_dispatch{};
 };
 
 struct HirArrayLiteralExpression {

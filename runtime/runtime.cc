@@ -68,6 +68,8 @@ constexpr ClothTypeDescriptor kStringTypeDescriptor{
     nullptr,
     0,
     nullptr,
+    0,
+    nullptr,
     0};
 constexpr ClothTypeDescriptor kArrayTypeDescriptor{ClothHeapObjectKind::kArray,
                                                    nullptr,
@@ -75,6 +77,8 @@ constexpr ClothTypeDescriptor kArrayTypeDescriptor{ClothHeapObjectKind::kArray,
                                                    sizeof(kArrayTypeName) - 1,
                                                    sizeof(ClothArray),
                                                    alignof(ClothArray),
+                                                   nullptr,
+                                                   0,
                                                    nullptr,
                                                    0,
                                                    nullptr,
@@ -296,6 +300,44 @@ void validate_type_descriptor(const ClothTypeDescriptor* type) noexcept {
   for (std::uint64_t index = 0; index < type->virtual_function_count; ++index) {
     if (type->virtual_functions[index] == nullptr) {
       runtime_failure("object virtual-function slot is null");
+    }
+  }
+  if ((type->interfaces == nullptr) != (type->interface_count == 0)) {
+    runtime_failure("object interface metadata is inconsistent");
+  }
+  std::uint64_t previous_interface_id = 0;
+  bool has_previous_interface = false;
+  for (std::uint64_t index = 0; index < type->interface_count; ++index) {
+    const ClothInterfaceDispatch& interface = type->interfaces[index];
+    if ((interface.functions == nullptr) != (interface.function_count == 0) ||
+        (has_previous_interface &&
+         interface.interface_id <= previous_interface_id)) {
+      runtime_failure("object interface dispatch metadata is invalid");
+    }
+    for (std::uint64_t slot = 0; slot < interface.function_count; ++slot) {
+      if (interface.functions[slot] == nullptr) {
+        runtime_failure("object interface function slot is null");
+      }
+    }
+    previous_interface_id = interface.interface_id;
+    has_previous_interface = true;
+  }
+  if (type->parent != nullptr) {
+    for (std::uint64_t parent_index = 0;
+         parent_index < type->parent->interface_count; ++parent_index) {
+      const ClothInterfaceDispatch& parent_interface =
+          type->parent->interfaces[parent_index];
+      bool found = false;
+      for (std::uint64_t index = 0; index < type->interface_count; ++index) {
+        const ClothInterfaceDispatch& interface = type->interfaces[index];
+        if (interface.interface_id == parent_interface.interface_id) {
+          found = interface.function_count == parent_interface.function_count;
+          break;
+        }
+      }
+      if (!found) {
+        runtime_failure("derived object lost inherited interface metadata");
+      }
     }
   }
 
@@ -788,6 +830,59 @@ extern "C" std::uint8_t cloth_rt_object_is_type(
     }
   }
   return 0;
+}
+
+namespace {
+
+const ClothInterfaceDispatch* find_interface_dispatch(
+    const ClothTypeDescriptor* type, std::uint64_t interface_id) noexcept {
+  std::uint64_t begin = 0;
+  std::uint64_t end = type->interface_count;
+  while (begin < end) {
+    const std::uint64_t middle = begin + (end - begin) / 2;
+    const ClothInterfaceDispatch& candidate = type->interfaces[middle];
+    if (candidate.interface_id < interface_id) {
+      begin = middle + 1;
+    } else {
+      end = middle;
+    }
+  }
+  if (begin == type->interface_count ||
+      type->interfaces[begin].interface_id != interface_id) {
+    return nullptr;
+  }
+  return &type->interfaces[begin];
+}
+
+}  // namespace
+
+extern "C" std::uint8_t cloth_rt_object_is_interface(
+    const void* value, std::uint64_t interface_id) noexcept {
+  if (value == nullptr) {
+    return 0;
+  }
+  const ClothTypeDescriptor* type = require_object(value).type;
+  if (type->kind != ClothHeapObjectKind::kFileClass) {
+    return 0;
+  }
+  validate_type_descriptor(type);
+  return find_interface_dispatch(type, interface_id) != nullptr ? 1 : 0;
+}
+
+extern "C" const void* cloth_rt_interface_function(
+    const void* value, std::uint64_t interface_id,
+    std::uint64_t function_slot) noexcept {
+  const ClothTypeDescriptor* type = require_object(value).type;
+  validate_type_descriptor(type);
+  const ClothInterfaceDispatch* interface =
+      find_interface_dispatch(type, interface_id);
+  if (interface == nullptr) {
+    runtime_failure("object does not implement the requested interface");
+  }
+  if (function_slot >= interface->function_count) {
+    runtime_failure("interface function slot is out of bounds");
+  }
+  return interface->functions[function_slot];
 }
 
 extern "C" void* cloth_rt_array_alloc(
