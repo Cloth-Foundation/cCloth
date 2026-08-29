@@ -1,5 +1,5 @@
 class : Base {
-  Derived(int32 value): Base(value) {}
+  Init(int32 value): Base(value) {}
 
   override func Name(): string {
     return "Derived";

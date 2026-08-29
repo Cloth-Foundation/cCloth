@@ -87,22 +87,25 @@ void single_identifier(TestContext& test) {
 
 void keywords_versus_identifiers(TestContext& test) {
   const LexedSource source{
-      "func function integer intValue functionName return final finalize "
+      "func function init Init initialize integer intValue functionName "
+      "return final finalize "
       "static statically override overridden abstract abstraction sealed "
       "sealing interface interfaces implements super superior module modular"};
   expect_kinds(test, source,
-               {cloth::TokenKind::kKwFunc,      cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kIdentifier,  cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kIdentifier,  cloth::TokenKind::kKwReturn,
-                cloth::TokenKind::kKwFinal,     cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kKwStatic,    cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kKwOverride,  cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kKwAbstract,  cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kKwSealed,    cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kKwInterface, cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kIdentifier,  cloth::TokenKind::kKwSuper,
-                cloth::TokenKind::kIdentifier,  cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kIdentifier,  cloth::TokenKind::kEof});
+               {cloth::TokenKind::kKwFunc,     cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kKwInit,     cloth::TokenKind::kKwInit,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kKwReturn,   cloth::TokenKind::kKwFinal,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kKwStatic,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kKwOverride,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kKwAbstract,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kKwSealed,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kKwInterface,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kKwSuper,    cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kEof});
 }
 
 void primitive_keywords(TestContext& test) {

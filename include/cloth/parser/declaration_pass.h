@@ -64,7 +64,7 @@ class DeclarationPass {
 
   void parse_field();
   void parse_function();
-  void parse_constructor();
+  void parse_constructor(bool uses_legacy_name = false);
   void parse_import();
   void parse_file_type_declaration();
   void parse_interface_list(std::vector<TypeSyntax>& interfaces,

@@ -124,13 +124,14 @@ function pointer, and invokes it with the unchanged receiver. ABI verification
 checks identity ordering, contract table lengths, and implementation symbol
 kinds in addition to the existing class-layout invariants.
 
-Each constructor has a public allocation entry and a private initialization
-entry. The `_C1C` allocation entry accepts only declared parameters, returns the
-new file-class reference, allocates the complete most-derived object, and runs
-its constructor MIR. The `_C1I` initialization entry accepts a leading `self`
-slot followed by the same parameters and returns `void`. A derived constructor
-calls the selected base `_C1I` entry on the same object before initializing its
-local fields. No base-chain step allocates another object, and the most-derived
+Each constructor has an allocation entry and an internal initialization entry.
+The `_C1C` allocation entry accepts only declared parameters, returns the new
+file-class reference, allocates the complete most-derived object, and runs its
+constructor MIR. Its linkage is external for `Init` and internal for `init`.
+The `_C1I` initialization entry accepts a leading `self` slot followed by the
+same parameters and returns `void`. A derived constructor calls the selected
+accessible base `_C1I` entry on the same object before initializing its local
+fields. No base-chain step allocates another object, and the most-derived
 descriptor remains installed throughout construction. Field initializer
 composition and failure behavior remain a backend-lowering responsibility.
 

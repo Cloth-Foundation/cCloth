@@ -54,7 +54,7 @@ For example, `User.co` defines the `User` type directly. `name` is private and
 // User.co
 string name;
 
-User(string name) {
+Init(string name) {
   self.name = name;
 }
 
@@ -80,7 +80,8 @@ LLVM IR backend. The implemented language includes path-derived packages and
 imports, functions and constructors, structured control flow, arrays, strings,
 explicit nullability, managed objects, single inheritance, abstract and sealed
 types, interfaces, overriding, class and interface dispatch, covariant
-managed-reference returns, and `super` calls.
+managed-reference returns, capitalization-based constructor visibility, and
+`super` calls.
 
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++

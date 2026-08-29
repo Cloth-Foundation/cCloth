@@ -13,7 +13,7 @@ uint64 Uint64Value;
 float32 Float32Value;
 float64 Float64Value = 1.5;
 
-PrintRepresentation() {}
+Init() {}
 
 static func Main() {
     PrintRepresentation values = PrintRepresentation();

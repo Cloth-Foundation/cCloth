@@ -85,11 +85,19 @@ constructor of its direct base:
 
 ```cloth
 class : Human {
-  User(string name, int32 age): Human(name, age) {
+  Init(string name, int32 age): Human(name, age) {
     // User constructor body.
   }
 }
 ```
+
+`Init` is a public constructor and `init` is a private constructor. The
+constructor declaration is independent of the implicit file-class name, while
+call sites continue to construct by type name, such as `User(name, age)`.
+Private constructors are callable only within their owning file class and
+cannot be selected by a derived class's base initializer. A public class may
+therefore restrict direct construction and expose static factories instead.
+Cloth does not require a public constructor.
 
 The name after `:` must resolve to the direct base class. Arguments use normal
 constructor overload selection and are evaluated left to right. A root-class
@@ -104,7 +112,7 @@ initialization. They may use constructor parameters, literals, and static
 functions, but may not observe `self`, instance fields, or unqualified instance
 functions.
 
-One call to the public, most-derived constructor allocates exactly one object
+One call to an accessible most-derived constructor allocates exactly one object
 using the most-derived descriptor. Initialization then occurs in this order:
 
 1. Evaluate the direct-base initializer arguments from left to right.
@@ -129,13 +137,15 @@ initialization marker before the constructor body. Its verifier requires
 exactly one marker per constructor, the semantic base call when present, and
 the base-before-fields ordering.
 
-The ABI gives each constructor two entries. The public `_C1C` entry accepts
+The ABI gives each constructor two entries. The allocating `_C1C` entry accepts
 declared parameters, allocates the complete object, initializes it, and returns
-the reference. A private `_C1I` initializer entry accepts `self` followed by
-the declared parameters and returns `void`. Base chaining calls `_C1I` on the
-same object, preventing a second allocation and preserving the most-derived
-descriptor throughout construction. Both entries root `self` for the complete
-initialization sequence.
+the reference. Its linkage follows constructor visibility: public constructors
+are externally linkable and private constructors remain internal. The internal
+`_C1I` initializer entry accepts `self` followed by the declared parameters and
+returns `void`. Base chaining calls `_C1I` on the same object, preventing a
+second allocation and preserving the most-derived descriptor throughout
+construction. Both entries root `self` for the complete initialization
+sequence.
 
 ## Inherited member lookup
 
@@ -265,14 +275,14 @@ abstract base subobject explicitly:
 
 ```cloth
 abstract class {
-  Shape(int32 scale) {}
+  Init(int32 scale) {}
   abstract func Area(): float;
 }
 ```
 
 ```cloth
 class : Shape {
-  Circle(): Shape(1) {}
+  Init(): Shape(1) {}
 
   override func Area(): float {
     return 1.0;

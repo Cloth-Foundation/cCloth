@@ -112,6 +112,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "caret_equal";
     case TokenKind::kKwFunc:
       return "func";
+    case TokenKind::kKwInit:
+      return "init";
     case TokenKind::kKwReturn:
       return "return";
     case TokenKind::kKwIf:

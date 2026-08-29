@@ -1296,8 +1296,17 @@ class SemanticAnalyzer {
                              std::to_string(matches.size()) + " overloads");
       return;
     }
-    model_.mutable_symbol(constructor_symbol).base_constructor =
-        matches.front();
+    const SymbolId selected = matches.front();
+    const SemanticSymbol& selected_symbol = model_.symbol(selected);
+    if (selected_symbol.visibility == Visibility::kPrivate &&
+        selected_symbol.file != current_file_) {
+      diagnostics_.error(initializer->range,
+                         "base constructor for '" + base_name + "' is private");
+      diagnostics_.note(selected_symbol.range,
+                        "private constructor is declared here");
+      return;
+    }
+    model_.mutable_symbol(constructor_symbol).base_constructor = selected;
   }
 
   void begin_root_scope(bool include_self = true) {
@@ -2797,6 +2806,19 @@ class SemanticAnalyzer {
 
   bool validate_call_access(ExpressionId callee_id,
                             const SemanticSymbol& callable, SourceRange range) {
+    if (callable.kind == SymbolKind::kConstructor) {
+      if (callable.visibility == Visibility::kPublic ||
+          callable.file == current_file_) {
+        return true;
+      }
+      const std::string owner_name =
+          callable.file ? model_.symbol(model_.file(*callable.file).symbol).name
+                        : std::string{"<unknown>"};
+      diagnostics_.error(range,
+                         "constructor for '" + owner_name + "' is private");
+      diagnostics_.note(callable.range, "private constructor is declared here");
+      return false;
+    }
     if (callable.kind != SymbolKind::kFunction ||
         callable.intrinsic != IntrinsicKind::kNone) {
       return true;

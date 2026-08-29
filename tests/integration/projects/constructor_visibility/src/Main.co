@@ -1,0 +1,4 @@
+static func Main() {
+  User user = User.Create("private");
+  println(user.Read());
+}

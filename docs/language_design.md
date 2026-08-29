@@ -31,13 +31,18 @@ Stage 18 adds `interface { ... }` as the first alternate file kind. The file
 stem remains its only type name. Interfaces carry public function contracts but
 no fields, constructors, or object layout.
 
-Constructors use the implicit class name:
+Constructor declarations do not repeat the implicit class name. Their fixed
+introducer carries visibility through capitalization:
 
 ```text
-User(string name, int32 id) {
+Init(string name, int32 id) {
     // ...
 }
 ```
+
+`Init` is public and `init` is private. Calls continue to use the type name,
+such as `User(name, id)`. A public class may expose only private constructors
+and provide public static factory functions instead.
 
 The parser must diagnose a file name that cannot form a valid Cloth type name.
 Package directory components follow the same identifier grammar.
@@ -60,7 +65,7 @@ the complete source graph and rejects self-inheritance and indirect cycles in a
 deterministic qualified-name order. Stage 16.2 gives the graph a stable
 base-prefix object layout and descriptor ancestry. Stage 16.3 requires every
 declared derived constructor to select its direct base explicitly with
-`Derived(...): Base(...)`; construction allocates once and completes base
+`Init(...): Base(...)`; construction allocates once and completes base
 initialization before derived fields and body. Stage 16.4 adds inherited public
 member lookup, transitive base-reference widening, and descriptor-ancestry
 checks for `is` and `as`. Stage 16.5 makes public instance functions virtual,
@@ -111,12 +116,13 @@ character of a declaration name:
 - An ASCII lowercase letter (`a` through `z`) or underscore (`_`) makes the
   declaration private.
 
-This rule applies to implicit file classes and their fields, functions, and
-nested types. It does not apply to local variables or parameters because those
-names are not exported across an access boundary. Public declarations may be
-referenced from other file classes through same-package lookup or imports.
-Private declarations are visible only within their defining file class and its
-nested scopes.
+This rule applies to implicit file classes and their fields, functions,
+constructors, and nested types. Constructors use the reserved `Init` and
+`init` spellings instead of arbitrary names. The rule does not apply to local
+variables or parameters because those names are not exported across an access
+boundary. Public declarations may be referenced from other file classes
+through same-package lookup or imports. Private declarations are visible only
+within their defining file class and its nested scopes.
 
 ```text
 // User.co defines the public class User.
@@ -127,9 +133,9 @@ func validate(): bool {}           // Private function.
 ```
 
 An implicit class receives its visibility from the source file stem, so
-`User.co` is public and `user.co` is private. A constructor uses the class name
-and inherits the class visibility. Until Cloth defines Unicode identifier
-rules, only ASCII letter case participates in visibility.
+`User.co` is public and `user.co` is private. Its constructors retain their own
+visibility independently of the file-class name. Until Cloth defines Unicode
+identifier rules, only ASCII letter case participates in visibility.
 
 Lowercase core type names such as `string`, `object`, `int32`, and `bool` are reserved
 language-provided names rather than declarations, so capitalization does not

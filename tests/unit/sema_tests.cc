@@ -167,7 +167,7 @@ void final_binding_contract(TestContext& test) {
   valid.add("FinalBindings.co",
             "final int32 Code;\n"
             "final string Label = \"cloth\";\n"
-            "FinalBindings(final bool alternate, int32 code) {\n"
+            "Init(final bool alternate, int32 code) {\n"
             "  if (alternate) { Code = code; } "
             "else { self.Code = code + 1; }\n"
             "}\n"
@@ -219,7 +219,7 @@ void final_binding_contract(TestContext& test) {
   invalid.add("InvalidFinal.co",
               "final int32 Initialized = 1;\n"
               "final int32 Missing;\n"
-              "InvalidFinal(bool assign, int32 value) {\n"
+              "Init(bool assign, int32 value) {\n"
               "  int32 early = Missing;\n"
               "  if (assign) { Missing = value; }\n"
               "  Initialized = value;\n"
@@ -255,7 +255,7 @@ void final_binding_contract(TestContext& test) {
   AnalyzedCompilation loop;
   loop.add("LoopFinal.co",
            "final int32 Value;\n"
-           "LoopFinal(bool repeat) {\n"
+           "Init(bool repeat) {\n"
            "  while (repeat) { Value = 1; }\n"
            "}\n");
   loop.analyze();
@@ -266,7 +266,7 @@ void final_binding_contract(TestContext& test) {
   AnalyzedCompilation early_return;
   early_return.add("EarlyReturn.co",
                    "final int32 Value;\n"
-                   "EarlyReturn(bool stop) {\n"
+                   "Init(bool stop) {\n"
                    "  if (stop) { return; }\n"
                    "  Value = 1;\n"
                    "}\n");
@@ -317,7 +317,7 @@ void non_null_field_initialization(TestContext& test) {
             "string? Nickname;\n"
             "int32[] Scores;\n"
             "int32 Count;\n"
-            "Profile(string name, int32[] scores, bool replace) {\n"
+            "Init(string name, int32[] scores, bool replace) {\n"
             "  if (replace) { Name = name; } else { self.Name = name; }\n"
             "  Scores = scores;\n"
             "  Name = name;\n"
@@ -325,7 +325,7 @@ void non_null_field_initialization(TestContext& test) {
             "  Touch();\n"
             "  self.Touch();\n"
             "}\n"
-            "Profile(string name, int32[] scores) {\n"
+            "Init(string name, int32[] scores) {\n"
             "  Name = name;\n"
             "  Scores = scores;\n"
             "}\n"
@@ -355,7 +355,7 @@ void non_null_field_initialization(TestContext& test) {
   partial.add("Partial.co",
               "string Name;\n"
               "int32[] Values;\n"
-              "Partial(bool assign, string name, int32[] values) {\n"
+              "Init(bool assign, string name, int32[] values) {\n"
               "  if (assign) { Name = name; }\n"
               "  Values = values;\n"
               "}\n");
@@ -368,7 +368,7 @@ void non_null_field_initialization(TestContext& test) {
   AnalyzedCompilation early_return;
   early_return.add("Early.co",
                    "string Name;\n"
-                   "Early(bool stop, string name) {\n"
+                   "Init(bool stop, string name) {\n"
                    "  if (stop) { return; }\n"
                    "  Name = name;\n"
                    "}\n");
@@ -389,7 +389,7 @@ void non_null_field_initialization(TestContext& test) {
   AnalyzedCompilation indirect;
   indirect.add("Indirect.co",
                "string Name;\n"
-               "Indirect(string name) { println(Name = name); }\n");
+               "Init(string name) { println(Name = name); }\n");
   indirect.analyze();
   test.expect(indirect.has_diagnostic(
                   "non-null field 'Name' initialization must be a direct "
@@ -403,7 +403,7 @@ void non_null_field_initialization(TestContext& test) {
   AnalyzedCompilation premature_self_use;
   premature_self_use.add("Escape.co",
                          "string Name;\n"
-                         "Escape(string name) {\n"
+                         "Init(string name) {\n"
                          "  Publish(self);\n"
                          "  Touch();\n"
                          "  self.Touch();\n"
@@ -427,7 +427,7 @@ void non_null_field_initialization(TestContext& test) {
   AnalyzedCompilation loop;
   loop.add("Loop.co",
            "string Name;\n"
-           "Loop(string name) { while (false) { Name = name; } }\n");
+           "Init(string name) { while (false) { Name = name; } }\n");
   loop.analyze();
   test.expect(
       loop.has_diagnostic("constructor exits before non-null field 'Name' is "
@@ -440,7 +440,7 @@ void non_null_field_initialization(TestContext& test) {
 void core_print_intrinsic(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("HelloWorld.co",
-            "HelloWorld() {}\n"
+            "Init() {}\n"
             "static func Main() {\n"
             "  HelloWorld value = HelloWorld();\n"
             "  print(\"hello\"); print(1); print(true); print('C');\n"
@@ -618,10 +618,10 @@ void inheritance_graph(TestContext& test) {
 
 void constructor_initialization(TestContext& test) {
   AnalyzedCompilation valid;
-  valid.add("Base.co", "Base(object value) {}\nBase(string value) {}\n");
+  valid.add("Base.co", "Init(object value) {}\nInit(string value) {}\n");
   valid.add("Derived.co",
             "class : Base {\n"
-            "  Derived(string value): Base(value) {}\n"
+            "  Init(string value): Base(value) {}\n"
             "}\n");
   valid.analyze();
 
@@ -644,25 +644,23 @@ void constructor_initialization(TestContext& test) {
       "HIR lost the base constructor binding");
 
   AnalyzedCompilation invalid;
-  invalid.add("Base.co", "Base(int32 value) {}\n");
-  invalid.add("Other.co", "Other() {}\n");
-  invalid.add("Missing.co", "class : Base {\nMissing(int32 value) {}\n}\n");
-  invalid.add("Wrong.co", "class : Base {\nWrong(): Other() {}\n}\n");
-  invalid.add("Mismatch.co",
-              "class : Base {\nMismatch(): Base(\"bad\") {}\n}\n");
+  invalid.add("Base.co", "Init(int32 value) {}\n");
+  invalid.add("Other.co", "Init() {}\n");
+  invalid.add("Missing.co", "class : Base {\nInit(int32 value) {}\n}\n");
+  invalid.add("Wrong.co", "class : Base {\nInit(): Other() {}\n}\n");
+  invalid.add("Mismatch.co", "class : Base {\nInit(): Base(\"bad\") {}\n}\n");
   invalid.add("Premature.co",
               "class : Base {\n"
               "  int32 Value;\n"
-              "  Premature(): Base(Value) {}\n"
+              "  Init(): Base(Value) {}\n"
               "}\n");
-  invalid.add("PrematureSelf.co",
-              "class : Base { PrematureSelf(): Base(self) {} }\n");
+  invalid.add("PrematureSelf.co", "class : Base { Init(): Base(self) {} }\n");
   invalid.add("PrematureCall.co",
               "class : Base {\n"
               "  func Value(): int32 { return 0; }\n"
-              "  PrematureCall(): Base(Value()) {}\n"
+              "  Init(): Base(Value()) {}\n"
               "}\n");
-  invalid.add("Root.co", "Root(): Root() {}\n");
+  invalid.add("Root.co", "Init(): Root() {}\n");
   invalid.analyze();
 
   test.expect(invalid.has_diagnostic("must initialize base 'Base'"),
@@ -690,14 +688,13 @@ void inherited_members_and_subtyping(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("Base.co",
             "string Name;\n"
-            "Base(string name) { Name = name; }\n"
+            "Init(string name) { Name = name; }\n"
             "func Read(): string { return Name; }\n"
             "static func Kind(): string { return \"base\"; }\n");
-  valid.add("Middle.co",
-            "class : Base { Middle(string name): Base(name) {} }\n");
+  valid.add("Middle.co", "class : Base { Init(string name): Base(name) {} }\n");
   valid.add("Derived.co",
             "class : Middle {\n"
-            "  Derived(string name): Middle(name) {}\n"
+            "  Init(string name): Middle(name) {}\n"
             "  func Rename(string name) { Name = name; }\n"
             "  func Own(): string { return Read(); }\n"
             "}\n");
@@ -739,15 +736,15 @@ void inherited_members_and_subtyping(TestContext& test) {
   AnalyzedCompilation invalid;
   invalid.add("Base.co",
               "int32 secret;\n"
-              "Base() {}\n"
+              "Init() {}\n"
               "func hidden(): int32 { return secret; }\n");
   invalid.add("Derived.co",
               "class : Base {\n"
-              "  Derived(): Base() {}\n"
+              "  Init(): Base() {}\n"
               "  func HiddenCall(): int32 { return hidden(); }\n"
               "  func HiddenField(): int32 { return secret; }\n"
               "}\n");
-  invalid.add("Other.co", "Other() {}\n");
+  invalid.add("Other.co", "Init() {}\n");
   invalid.add("Use.co",
               "func Reverse(Base parent, Other other) {\n"
               "  Derived child = parent;\n"
@@ -905,17 +902,17 @@ void base_qualified_call_contract(TestContext& test) {
   AnalyzedCompilation invalid;
   invalid.add("Base.co",
               "int32 Value;\n"
-              "Base(string value) {}\n"
+              "Init(string value) {}\n"
               "func Describe(): string { return \"base\"; }\n"
               "static func Kind(): string { return \"base\"; }\n");
   invalid.add("Middle.co",
               "class : Base {\n"
-              "  Middle(string value): Base(value) {}\n"
+              "  Init(string value): Base(value) {}\n"
               "  override func Describe(): string { return \"middle\"; }\n"
               "}\n");
   invalid.add("Derived.co",
               "class : Middle {\n"
-              "  Derived(string value): Middle(super.Describe()) {}\n"
+              "  Init(string value): Middle(super.Describe()) {}\n"
               "  static func StaticBad(): string {\n"
               "    return super.Describe();\n"
               "  }\n"
@@ -928,7 +925,7 @@ void base_qualified_call_contract(TestContext& test) {
   invalid.add("Uninitialized.co",
               "class : Middle {\n"
               "  string Name;\n"
-              "  Uninitialized(string value): Middle(value) {\n"
+              "  Init(string value): Middle(value) {\n"
               "    super.Describe();\n"
               "    Name = value;\n"
               "  }\n"
@@ -1036,18 +1033,18 @@ void abstract_completeness_contract(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("Shape.co",
             "abstract class {\n"
-            "  Shape(int32 scale) {}\n"
+            "  Init(int32 scale) {}\n"
             "  abstract func Area(float scale): float;\n"
             "  abstract func Reset();\n"
             "}\n");
   valid.add("Partial.co",
             "abstract class : Shape {\n"
-            "  Partial(): Shape(1) {}\n"
+            "  Init(): Shape(1) {}\n"
             "  override func Area(float scale): float { return scale; }\n"
             "}\n");
   valid.add("Circle.co",
             "class : Partial {\n"
-            "  Circle(): Partial() {}\n"
+            "  Init(): Partial() {}\n"
             "  override func Reset() {}\n"
             "}\n");
   valid.add("Use.co", "static func Build(): Shape { return Circle(); }\n");
@@ -1068,13 +1065,13 @@ void abstract_completeness_contract(TestContext& test) {
   AnalyzedCompilation invalid;
   invalid.add("Shape.co",
               "abstract class {\n"
-              "  Shape(int32 scale) {}\n"
+              "  Init(int32 scale) {}\n"
               "  abstract func Area(float scale): float;\n"
               "  abstract func Reset();\n"
               "}\n");
   invalid.add("Incomplete.co",
               "class : Shape {\n"
-              "  Incomplete(): Shape(1) {}\n"
+              "  Init(): Shape(1) {}\n"
               "  override func Area(float scale): float { return scale; }\n"
               "}\n");
   invalid.add("Use.co", "static func Build(): Shape { return Shape(1); }\n");
@@ -1435,6 +1432,32 @@ void private_member_access(TestContext& test) {
               "private cross-file member access was accepted");
 }
 
+void constructor_visibility(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("User.co",
+            "string Name;\n"
+            "init(string name) { Name = name; }\n"
+            "static func FromName(string name): User { return User(name); }\n");
+  valid.add("App.co",
+            "func Build(): User { return User.FromName(\"cloth\"); }\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "private constructor was unavailable to its owning class");
+
+  AnalyzedCompilation invalid;
+  invalid.add("User.co", "init() {}\n");
+  invalid.add("App.co", "func Build(): User { return User(); }\n");
+  invalid.add("Base.co", "class { init() {} }\n");
+  invalid.add("Derived.co", "class : Base { Init(): Base() {} }\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic("constructor for 'User' is private"),
+              "private constructor was exposed across files");
+  test.expect(invalid.has_diagnostic("base constructor for 'Base' is private"),
+              "private base constructor was accessible to a derived class");
+}
+
 void private_file_class_access(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("secret.co", "");
@@ -1529,7 +1552,7 @@ void constructor_binding(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("User.co",
                   "string Name;\n"
-                  "User(string name) { Name = name; }\n");
+                  "Init(string name) { Name = name; }\n");
   compilation.add("App.co", "func Make(): User { return User(\"Ada\"); }\n");
   compilation.analyze();
 
@@ -2331,7 +2354,7 @@ void string_value_semantics(TestContext& test) {
 void object_model_semantics(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("Objects.co",
-            "Objects() {}\n"
+            "Init() {}\n"
             "static func Main() {\n"
             "  Objects instance = Objects();\n"
             "  object value = instance;\n"
@@ -2423,6 +2446,7 @@ int main() {
       {"invalid inheritance graph", invalid_inheritance_graph},
       {"invalid package imports", invalid_package_imports},
       {"private member access", private_member_access},
+      {"constructor visibility", constructor_visibility},
       {"private file class access", private_file_class_access},
       {"unknown types and names", unknown_types_and_names},
       {"type checking", type_checking},

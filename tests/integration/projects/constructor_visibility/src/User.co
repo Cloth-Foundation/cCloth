@@ -1,0 +1,13 @@
+string Name;
+
+init(string name) {
+  Name = name;
+}
+
+static func Create(string name): User {
+  return User(name);
+}
+
+func Read(): string {
+  return Name;
+}

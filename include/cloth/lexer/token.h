@@ -66,6 +66,7 @@ enum class TokenKind {
   kCaretEqual,
 
   kKwFunc,
+  kKwInit,
   kKwReturn,
   kKwIf,
   kKwElse,

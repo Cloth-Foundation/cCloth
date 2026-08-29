@@ -110,8 +110,7 @@ DeclarationPassResult DeclarationPass::run() {
     } else if (is_nested_type_keyword(current().kind)) {
       saw_member = true;
       skip_deferred_nested_type();
-    } else if (current().kind == TokenKind::kIdentifier &&
-               peek(1).kind == TokenKind::kLeftParen) {
+    } else if (current().kind == TokenKind::kKwInit) {
       saw_member = true;
       if (file_type_kind_ == FileTypeKind::kInterface) {
         diagnostics_.error(current().range,
@@ -119,6 +118,10 @@ DeclarationPassResult DeclarationPass::run() {
         is_valid_ = false;
       }
       parse_constructor();
+    } else if (current().kind == TokenKind::kIdentifier &&
+               peek(1).kind == TokenKind::kLeftParen) {
+      saw_member = true;
+      parse_constructor(true);
     } else if (current().kind == TokenKind::kKwStatic ||
                current().kind == TokenKind::kKwFinal ||
                can_start_type(current().kind)) {
@@ -382,6 +385,7 @@ void DeclarationPass::parse_field() {
            current().kind == TokenKind::kKwFunc ||
            current().kind == TokenKind::kKwStatic ||
            current().kind == TokenKind::kKwOverride ||
+           current().kind == TokenKind::kKwInit ||
            is_nested_type_keyword(current().kind) ||
            (current().kind == TokenKind::kKwFinal &&
             can_start_type(peek(1).kind)) ||
@@ -520,7 +524,7 @@ void DeclarationPass::parse_function() {
                                     range, declaration_valid});
 }
 
-void DeclarationPass::parse_constructor() {
+void DeclarationPass::parse_constructor(bool uses_legacy_name) {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
   const std::size_t begin = current_;
   const Token& name = advance();
@@ -551,10 +555,13 @@ void DeclarationPass::parse_constructor() {
   const auto body = locate_body(name.lexeme);
 
   bool declaration_valid = body.has_value();
-  if (name.lexeme != source_.stem()) {
-    diagnostics_.error(name.range, "constructor '" + std::string{name.lexeme} +
-                                       "' must match implicit class '" +
-                                       std::string{source_.stem()} + "'");
+  if (uses_legacy_name) {
+    std::string message =
+        "constructor declarations must begin with 'Init' or 'init'";
+    if (name.lexeme == source_.stem()) {
+      message += "; do not repeat the implicit class name";
+    }
+    diagnostics_.error(name.range, std::move(message));
     is_valid_ = false;
     declaration_valid = false;
   }
@@ -563,9 +570,12 @@ void DeclarationPass::parse_constructor() {
 
   const std::size_t end = current_ == begin ? begin : current_ - 1;
   const SourceRange range = range_from(begin, end);
-  MemberSymbol symbol{name.lexeme,           DeclarationKind::kConstructor,
-                      symbols_.visibility(), range,
-                      std::move(parameters), std::nullopt,
+  MemberSymbol symbol{name.lexeme,
+                      DeclarationKind::kConstructor,
+                      infer_visibility(name.lexeme),
+                      range,
+                      std::move(parameters),
+                      std::nullopt,
                       declaration_valid};
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kConstructor, symbol_index,
@@ -815,7 +825,10 @@ std::size_t DeclarationPass::add_symbol(MemberSymbol symbol) {
 
 bool DeclarationPass::has_duplicate(const MemberSymbol& symbol) {
   for (const MemberSymbol& previous : symbols_.members()) {
-    if (previous.name != symbol.name) {
+    const bool constructor_pair =
+        previous.kind == DeclarationKind::kConstructor &&
+        symbol.kind == DeclarationKind::kConstructor;
+    if (!constructor_pair && previous.name != symbol.name) {
       continue;
     }
 
@@ -848,7 +861,7 @@ bool DeclarationPass::looks_like_member_start(
   if (kind == TokenKind::kKwFunc || kind == TokenKind::kKwFinal ||
       kind == TokenKind::kKwStatic || kind == TokenKind::kKwOverride ||
       kind == TokenKind::kKwAbstract || kind == TokenKind::kKwSealed ||
-      is_nested_type_keyword(kind)) {
+      kind == TokenKind::kKwInit || is_nested_type_keyword(kind)) {
     return true;
   }
   if (!can_start_type(kind)) {

@@ -1,7 +1,7 @@
 class : Base {
   int32 Extra;
 
-  Derived(int32 value): Base(value) {
+  Init(int32 value): Base(value) {
     Extra = 2;
     Value = Value + 1;
   }

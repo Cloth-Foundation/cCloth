@@ -1,6 +1,6 @@
 final int32 Value;
 
-FinalErrors(bool assign) {
+Init(bool assign) {
     if (assign) {
         Value = 1;
     }

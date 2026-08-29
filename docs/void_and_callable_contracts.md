@@ -16,9 +16,9 @@ Omitting a function return annotation defaults to `void`; Cloth never infers a
 return type from `return` statements. A void function may fall through or use
 `return;`. It may not use `return expression;`.
 
-Constructors retain their existing syntax without a return annotation. Their
-bodies follow void return rules, while a constructor call produces the new
-file-class object.
+Constructors use `Init(...)` or `init(...)` without a return annotation. Their
+bodies follow void return rules, while a type-name constructor call produces
+the new file-class object.
 
 ## Non-value rule
 

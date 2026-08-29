@@ -1,6 +1,6 @@
 int32 Calls = 0;
 
-ForContract() {}
+Init() {}
 
 func Values(): int32[] {
     Calls = Calls + 1;

@@ -11,7 +11,7 @@ being assigned again.
 ```cloth
 final int32 Code;
 
-Example(final int32 code) {
+Init(final int32 code) {
     Code = code;
 }
 

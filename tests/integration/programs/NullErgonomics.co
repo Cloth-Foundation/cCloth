@@ -1,7 +1,7 @@
 string Name;
 int32 Reads;
 
-NullErgonomics(string name) {
+Init(string name) {
   Name = name;
 }
 

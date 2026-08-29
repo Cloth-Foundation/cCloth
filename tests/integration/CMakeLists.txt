@@ -120,6 +120,12 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/interfaces.txt
         EXACT
     )
+    cloth_add_native_output_test(constructor_visibility
+        OUTPUT "cloth constructor visibility"
+        SOURCE ${CLOTH_INTEGRATION_PROJECTS}/constructor_visibility/src/Main.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/constructor_visibility.txt
+        EXACT
+    )
     cloth_add_native_failure_test(null_assert_failure
         OUTPUT "cloth null assert failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NullAssertFailure.co

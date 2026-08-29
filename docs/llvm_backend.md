@@ -59,20 +59,21 @@ zero.
 
 Instance functions receive the Stage 4 receiver slot followed by explicit
 parameters. Instance calls pass their receiver, and unqualified instance calls
-forward the current receiver. Static functions and public constructor calls
+forward the current receiver. Static functions and allocating constructor calls
 have no receiver argument; constructors return the allocated object reference.
-A private constructor initializer instead receives the existing object as its
-leading `self` argument and returns `void`.
+The internal constructor initializer instead receives the existing object as
+its leading `self` argument and returns `void`.
 
 Static scalar fields lower to constant LLVM globals using their verified ABI
 names. Loads address those globals directly; they never use an object offset.
 
 Each field initializer becomes an internal LLVM helper taking the new object as
-its receiver. A public constructor entry allocates the verified most-derived
-class size, installs that class's descriptor, executes the constructor MIR, and
-returns the object. Every constructor also has an internal initializer entry
-that executes the same MIR on an incoming `self` without allocating. A derived
-constructor invokes the selected base initializer first; the MIR field marker
+its receiver. An allocating constructor entry allocates the verified
+most-derived class size, installs that class's descriptor, executes the
+constructor MIR, and returns the object. Its LLVM linkage follows `Init` versus
+`init`. Every constructor also has an internal initializer entry that executes
+the same MIR on an incoming `self` without allocating. A derived constructor
+invokes the selected accessible base initializer first; the MIR field marker
 then invokes only the derived class's local field helpers in declaration order
 before its body continues.
 

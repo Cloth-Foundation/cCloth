@@ -1,7 +1,7 @@
 final string Label = "stage 12.1";
 final int32 Code;
 
-FinalBindings(int32 code) {
+Init(int32 code) {
     Code = code;
 }
 

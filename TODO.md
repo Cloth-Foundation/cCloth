@@ -25,8 +25,12 @@ than a general aspiration.
   complete padded base prefix, flattened GC reference maps, and a direct-parent
   descriptor link.
 - [x] Define explicit base-constructor chaining. Stage 16.3 freezes
-  `User(...): Human(...) { ... }`, allocates the most-derived object once, and
+  `Init(...): Human(...) { ... }`, allocates the most-derived object once, and
   runs each base's fields and constructor before derived initialization.
+- [x] Decouple constructor declarations from the implicit class name. The
+  post-Stage-18 constructor refinement uses public `Init` and private `init`,
+  retains `Type(...)` construction, and enforces access for ordinary and base
+  constructor calls.
 - [x] Add inherited lookup, base-reference conversions, and hierarchy-aware
   `is`/`as`. Stage 16.4 follows the base chain for visibility and runtime type
   identity.

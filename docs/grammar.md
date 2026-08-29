@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 18.
+This document defines the currently implemented syntax.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -92,10 +92,14 @@ return_type
     | "void" ;
 
 constructor_declaration
-    = identifier
+    = constructor_introducer
       "(" [ parameter_list ] ")"
       [ ":" type "(" [ argument_list ] ")" ]
       block ;
+
+constructor_introducer
+    = "Init"
+    | "init" ;
 
 parameter_list
     = parameter { "," parameter } ;
@@ -349,13 +353,18 @@ The declaration pass enforces these rules separately from the grammar:
   their ordinary meaning.
 - Derived references implicitly widen to direct or transitive base types,
   including compatible nullable forms. The reverse conversion requires `as`.
-- A constructor name must exactly match the implicit file-class name.
+- `Init` declares a public constructor; `init` declares a private constructor.
+  Constructor calls still use the implicit file-class name, such as
+  `User(name)`.
 - Every declared constructor in a derived file class must include a base
   initializer naming its direct base. Root constructors cannot include one.
 - Base-initializer arguments use ordinary constructor overload selection and
   cannot access `self`, instance fields, or unqualified instance functions.
 - Declaration visibility is inferred from the first ASCII character.
-- Constructors inherit file-class visibility.
+- Private constructors are callable only inside their owning file class. A
+  derived constructor cannot select a private base constructor.
+- Constructor overload identity ignores `Init` versus `init`; declarations
+  cannot differ only by visibility.
 - Conflicting fields and exact duplicate callable signatures are rejected.
 - Member declaration order does not affect declaration availability.
 - Import paths are identifier sequences rather than string literals.
