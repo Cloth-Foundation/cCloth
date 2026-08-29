@@ -55,6 +55,13 @@ class BodyBuilder {
     return std::move(body_);
   }
 
+  MirBody lower_abstract() {
+    terminate(MirUnreachableTerminator{}, body_.range);
+    finish_unterminated_blocks();
+    body_.value_count = value_types_.size();
+    return std::move(body_);
+  }
+
   MirBody lower_constructor(
       const std::optional<HirConstructorInitializer>& initializer,
       HirBlockId block) {
@@ -1080,7 +1087,8 @@ MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,
                       file,        range,
                       return_type, symbol.kind == SymbolKind::kConstructor};
   MirBody body =
-      symbol.kind == SymbolKind::kConstructor
+      symbol.is_abstract ? builder.lower_abstract()
+      : symbol.kind == SymbolKind::kConstructor
           ? builder.lower_constructor(callable.initializer, callable.body)
           : builder.lower_callable(callable.body);
   return MirCallable{callable.symbol, symbol.parameter_symbols,

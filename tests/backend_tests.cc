@@ -290,6 +290,36 @@ void base_qualified_call(TestContext& test) {
               "base-qualified call did not use the selected base ABI symbol");
 }
 
+void abstract_function_stub(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Shape.co", "abstract class { abstract func Area(): int32; }\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(),
+              "abstract declaration module failed LLVM emission");
+  test.expect(sources.result->is_valid,
+              "abstract declaration compilation was marked invalid");
+  if (!sources.llvm || sources.result->abi.files.empty() ||
+      sources.result->abi.files[0].functions.empty()) {
+    return;
+  }
+  const std::string& name =
+      sources.result->abi.files[0].functions[0].mangled_name;
+  const std::size_t name_position = sources.llvm->text.find("@" + name + "(");
+  const std::size_t body_end = sources.llvm->text.find("\n}", name_position);
+  test.expect(
+      name_position != std::string::npos && body_end != std::string::npos,
+      "abstract function ABI definition was not emitted");
+  if (name_position != std::string::npos && body_end != std::string::npos) {
+    const std::string_view body{sources.llvm->text.data() + name_position,
+                                body_end - name_position};
+    test.expect(body.find("unreachable") != std::string_view::npos,
+                "abstract function ABI body was not an unreachable stub");
+    test.expect(body.find("ret i32") == std::string_view::npos,
+                "abstract function synthesized a value implementation");
+  }
+}
+
 void arrays(TestContext& test) {
   CompiledSources sources;
   sources.add("Arrays.co",
@@ -693,6 +723,7 @@ int main() {
        inherited_member_access_and_subtyping},
       {"virtual dispatch", virtual_dispatch},
       {"base-qualified call", base_qualified_call},
+      {"abstract function stub", abstract_function_stub},
       {"arrays", arrays},
       {"strings", strings},
       {"object model", object_model},

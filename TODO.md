@@ -1,9 +1,9 @@
 # Cloth deferred-work ledger
 
 This file is the central inventory of work deliberately left out through Stage
-16.6. Feature documents remain authoritative for existing behavior; this ledger
-records accepted gaps and their prerequisites. An unchecked item has no implied
-schedule or stage number.
+17.2. Feature documents remain authoritative for existing behavior; this
+ledger records accepted gaps and their prerequisites. An unchecked item has no
+implied schedule or stage number.
 
 When completing an item, update its owning design document, implementation, and
 tests in the same change, then mark it complete here with the implementing stage
@@ -37,7 +37,16 @@ than a general aspiration.
 - [x] Add base-qualified calls. Stage 16.6 uses `super.Method(...)` for the
   current file class's direct-base view, retains ordinary overload lookup, and
   invokes the selected implementation directly on `self`.
-- [ ] Add abstract members and sealed/final class and override contracts.
+- [x] Add abstract declaration syntax and identity. Stage 17.1 reserves
+  `abstract` and `sealed`, accepts public bodyless `abstract func`
+  declarations in an `abstract class`, retains the identity through MIR, and
+  uses a verified unreachable ABI stub rather than inventing an implementation.
+- [x] Reject direct abstract-class construction and require every concrete
+  subclass to implement all inherited abstract slots. Stage 17.2 derives the
+  transitive obligation set from the resolved virtual table while allowing
+  abstract intermediates and explicit abstract-base constructor chaining.
+- [ ] Enforce sealed classes and final override contracts. `sealed` is reserved
+  and parsed in Stage 17.1 but remains a diagnosed unsupported contract.
 - [ ] Design interfaces and the provisional `class : Human is InterfaceA,
   InterfaceB { ... }` conformance syntax.
 - [ ] Add flow-sensitive smart casts after a successful `value is T` test.

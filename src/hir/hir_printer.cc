@@ -34,6 +34,12 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
       output << ", base "
              << semantics.symbol(semantics.file(*file.base_file).symbol).name;
     }
+    if (semantics.file(file.file).is_abstract) {
+      output << ", abstract";
+    }
+    if (semantics.file(file.file).is_sealed) {
+      output << ", sealed";
+    }
     output << "]\n";
     for (const MemberReference& reference : file.member_order) {
       switch (reference.kind) {
@@ -63,6 +69,9 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
           }
           if (symbol.is_override) {
             output << ", override";
+          }
+          if (symbol.is_abstract) {
+            output << ", abstract";
           }
           if (symbol.virtual_slot) {
             output << ", virtual slot " << *symbol.virtual_slot;

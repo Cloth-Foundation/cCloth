@@ -113,9 +113,11 @@ ControlFlowAnalysis analyze_control_flow(const HirModule& hir,
     for (const MemberReference& member : file.member_order) {
       if (member.kind == DeclarationKind::kFunction) {
         const HirCallable& function = file.functions.at(member.index);
-        CallableControlFlow flow =
-            CallableAnalyzer{hir, diagnostics}.analyze(function);
         const SemanticSymbol& symbol = semantics.symbol(function.symbol);
+        CallableControlFlow flow =
+            symbol.is_abstract
+                ? CallableControlFlow{function.symbol, false, 0, 0}
+                : CallableAnalyzer{hir, diagnostics}.analyze(function);
         if (symbol.is_valid && symbol.type != semantics.void_type() &&
             symbol.type != semantics.error_type() && flow.can_fall_through) {
           diagnostics.error(symbol.range, "function '" + symbol.name +

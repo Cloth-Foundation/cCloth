@@ -1,4 +1,4 @@
-# Cloth semantic analysis through Stage 16.6
+# Cloth semantic analysis through Stage 17.2
 
 Semantic analysis binds parsed syntax across a closed compilation graph, checks
 the implemented language rules, and lowers valid and recovered syntax to a
@@ -166,6 +166,22 @@ bodies are direct only when their receiver is the object under construction,
 so partially initialized derived state cannot be reached. Calls on other
 receivers and ordinary function-body calls dispatch virtually.
 
+An `abstract func` registers its complete signature and virtual slot without
+an executable source body. It is valid only as a public, non-static member of
+an explicit `abstract class`. Abstract parameters still receive semantic
+symbols, and return-path analysis does not treat the absent body as
+fallthrough. MIR verifies a single unreachable stub for the declaration.
+Direct `super` dispatch to an abstract symbol is rejected because it has no
+base implementation.
+
+Override validation computes each file class's unresolved abstract functions
+from its completed virtual table. Abstract subclasses retain the remaining
+symbols as transitive obligations. A concrete class is invalid unless that set
+is empty, with one canonical-signature diagnostic per missing implementation.
+Calling an abstract file-class type as a constructor is rejected, while an
+explicit derived-constructor initializer may select an abstract base's
+constructor because it initializes an already allocated derived object.
+
 `super.Method(arguments)` is a base-qualified call when overload resolution
 selects a public instance function through the current file class's direct-base
 view. Lookup includes inherited declarations when the direct base does not
@@ -192,6 +208,8 @@ The checker currently validates:
 - single-inheritance base binding, visibility, cycle validation, and explicit
   base-constructor selection, inherited member lookup, override contracts, and
   base-qualified calls
+- abstract class/function declaration placement, visibility, and static rules
+- abstract construction and transitive concrete-subclass completeness
 - exact overload and constructor selection
 - return value presence and type compatibility
 
@@ -209,9 +227,9 @@ with a runtime null guard.
 Overload matching prefers an exact canonical signature. If none exists, a
 unique candidate accepting the implemented implicit reference conversions is
 selected; multiple compatible candidates are ambiguous.
-User-defined conversions, numeric promotions, abstract members, traits,
-generics, primitive boxing, first-class function values, and
-implicit default constructors are deferred. Checked array casts are also
+User-defined conversions, numeric promotions, sealed/final inheritance
+contracts, traits, generics, primitive boxing, first-class function values,
+and implicit default constructors are deferred. Checked array casts are also
 deferred until arrays carry reified element-type metadata.
 Complete return-path and reachability checks are performed by the Stage 3.0
 control-flow analysis after HIR verification.

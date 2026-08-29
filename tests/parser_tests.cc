@@ -143,13 +143,10 @@ void imports(TestContext& test) {
 
   const ParsedSource invalid{"InvalidImports.co",
                              "func Main() {}\n"
-                             "import late::Type;\n"
-                             "module duplicated;\n"};
+                             "import late::Type;\n"};
   test.expect(
       has_diagnostic(invalid, "imports must appear before member declarations"),
       "late import was accepted");
-  test.expect(has_diagnostic(invalid, "module declarations are unnecessary"),
-              "module declaration did not explain path-derived packages");
 }
 
 void explicit_file_class_declaration(TestContext& test) {
@@ -187,6 +184,55 @@ void explicit_file_class_declaration(TestContext& test) {
                   !implicit.ast().has_explicit_class_declaration &&
                   !implicit.ast().base_class,
               "legacy implicit file class contract changed");
+}
+
+void abstract_declarations(TestContext& test) {
+  const ParsedSource source{"Shape.co",
+                            "abstract class {\n"
+                            "  abstract func Area(float scale): float;\n"
+                            "  func Name(): string { return \"shape\"; }\n"
+                            "}\n"};
+  test.expect(error_count(source) == 0,
+              "valid abstract declarations did not parse");
+  test.expect(source.ast().has_explicit_class_declaration &&
+                  source.ast().is_abstract && !source.ast().is_sealed,
+              "abstract file class modifiers were not retained");
+  test.expect(source.ast().functions.size() == 2,
+              "abstract class functions were not retained");
+  if (source.ast().functions.size() == 2) {
+    test.expect(source.ast().functions[0].is_abstract &&
+                    source.ast().functions[0].is_valid,
+                "bodyless abstract function was not retained as valid");
+    test.expect(!source.ast().functions[1].is_abstract,
+                "concrete function was marked abstract");
+  }
+  test.expect(source.symbols().members().size() == 2 &&
+                  source.symbols().members()[0].is_abstract,
+              "declaration pass lost the abstract function modifier");
+
+  std::ostringstream summary;
+  cloth::print_ast_summary(source.ast(), summary);
+  test.expect(summary.str().starts_with("FileClass Shape [public, abstract]\n"),
+              "AST summary omitted the abstract class modifier");
+  test.expect(summary.str().find("[public, abstract]") != std::string::npos,
+              "AST summary omitted the abstract function modifier");
+
+  const ParsedSource sealed{"Closed.co", "sealed class {}\n"};
+  test.expect(error_count(sealed) == 0 && sealed.ast().is_sealed &&
+                  !sealed.ast().is_abstract,
+              "sealed class syntax was not reserved and retained");
+
+  const ParsedSource body{
+      "Body.co",
+      "abstract class { abstract func Value(): int32 { return 1; } }\n"};
+  test.expect(has_diagnostic(body, "cannot have a body"),
+              "abstract function body was accepted");
+
+  const ParsedSource missing_semicolon{
+      "Missing.co", "abstract class { abstract func Value(): int32 }\n"};
+  test.expect(
+      has_diagnostic(missing_semicolon, "expected ';' after abstract function"),
+      "unterminated abstract declaration was accepted");
 }
 
 void malformed_file_class_declaration(TestContext& test) {
@@ -1038,6 +1084,7 @@ int main() {
       {"parser requires eof", parser_requires_eof},
       {"imports", imports},
       {"explicit file class declaration", explicit_file_class_declaration},
+      {"abstract declarations", abstract_declarations},
       {"malformed file class declaration", malformed_file_class_declaration},
       {"fields and visibility", fields_and_visibility},
       {"functions", functions},

@@ -22,6 +22,7 @@ DefinitionPass::DefinitionPass(const SourceFile& source,
                                std::span<const MemberOutline> outlines,
                                const std::optional<TypeSyntax>& base_class,
                                bool has_explicit_class_declaration,
+                               bool is_abstract, bool is_sealed,
                                DiagnosticEngine& diagnostics)
     : tokens_(tokens),
       symbols_(symbols),
@@ -43,6 +44,8 @@ DefinitionPass::DefinitionPass(const SourceFile& source,
                   true} {
   file_class_.base_class = base_class;
   file_class_.has_explicit_class_declaration = has_explicit_class_declaration;
+  file_class_.is_abstract = is_abstract;
+  file_class_.is_sealed = is_sealed;
 }
 
 FileClassDecl DefinitionPass::run() {
@@ -204,14 +207,15 @@ void DefinitionPass::build_function(const MemberOutline& outline,
     body = parse_block();
   }
 
-  const bool is_valid = symbol.is_valid &&
-                        file_class_.storage.block(body).is_valid &&
+  const bool body_is_valid =
+      symbol.is_abstract || file_class_.storage.block(body).is_valid;
+  const bool is_valid = symbol.is_valid && body_is_valid &&
                         diagnostics_.diagnostics().size() == diagnostic_count;
   const std::size_t index = file_class_.functions.size();
   file_class_.functions.push_back(
       FunctionDecl{symbol.name, symbol.visibility, copy_parameters(symbol),
                    symbol.declared_type, body, outline.range, is_valid,
-                   symbol.is_static, symbol.is_override});
+                   symbol.is_static, symbol.is_override, symbol.is_abstract});
   file_class_.member_order.push_back(
       MemberReference{DeclarationKind::kFunction, index});
   file_class_.is_valid = file_class_.is_valid && is_valid;

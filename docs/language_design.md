@@ -62,7 +62,11 @@ checks for `is` and `as`. Stage 16.5 makes public instance functions virtual,
 requires `override func` for inherited signatures, and suppresses virtual
 dispatch while fields and constructors initialize. Stage 16.6 adds
 `super.Method(...)` as a direct call through the current class's direct-base
-view. See
+view. Stage 17.1 adds `abstract class` envelopes and public bodyless
+`abstract func Name(...): Type;` declarations while retaining virtual-slot
+identity throughout lowering. Stage 17.2 rejects direct abstract construction
+and requires each concrete subclass to resolve every inherited abstract slot.
+See
 [inheritance.md](inheritance.md).
 
 ## Capitalization and visibility

@@ -22,8 +22,8 @@ class DefinitionPass {
                  std::span<const ImportDecl> imports,
                  std::span<const MemberOutline> outlines,
                  const std::optional<TypeSyntax>& base_class,
-                 bool has_explicit_class_declaration,
-                 DiagnosticEngine& diagnostics);
+                 bool has_explicit_class_declaration, bool is_abstract,
+                 bool is_sealed, DiagnosticEngine& diagnostics);
 
   [[nodiscard]] FileClassDecl run();
 

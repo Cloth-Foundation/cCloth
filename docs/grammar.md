@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 16.6.
+This document defines the syntax implemented through Stage 17.2.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -37,8 +37,12 @@ compilation_unit
       ( explicit_file_class | { member_declaration } ) ;
 
 explicit_file_class
-    = "class" [ ":" named_type ]
+    = { file_class_modifier } "class" [ ":" named_type ]
       "{" { member_declaration } "}" ;
+
+file_class_modifier
+    = "abstract"
+    | "sealed" ;
 
 import_declaration
     = "import" identifier [ "as" identifier ] ";"
@@ -62,11 +66,12 @@ function_declaration
     = { function_modifier } "func" identifier
       "(" [ parameter_list ] ")"
       [ ":" return_type ]
-      block ;
+      ( block | ";" ) ;
 
 function_modifier
     = "static"
-    | "override" ;
+    | "override"
+    | "abstract" ;
 
 return_type
     = type
@@ -116,10 +121,16 @@ declaration. An explicit class body consumes the remainder of the file. A
 `module` declaration is not part of Cloth: the source path relative to the
 project source root supplies the package identity.
 
-Function modifiers may appear in either order but may not be repeated.
+Function modifiers may appear in any order but may not be repeated.
 `override` is valid only on a public instance function that exactly matches an
 inherited name and canonical parameter signature. It cannot be combined with
 `static`; semantic analysis enforces the complete override contract.
+
+An abstract file class uses the explicit `abstract class { ... }` envelope. An
+`abstract func` is a public instance declaration in an abstract file class and
+ends with `;` instead of a body. Concrete functions still require a block.
+`sealed` is reserved and retained as a file-class modifier, but sealed-class
+contracts are not accepted until their inheritance rules are implemented.
 
 ## Statements
 
@@ -275,6 +286,11 @@ The declaration pass enforces these rules separately from the grammar:
 
 - The source file stem must be a valid Cloth identifier.
 - An explicit `class` declaration never repeats the implicit file-class name.
+- `abstract func` is permitted only in an `abstract class`, must be public and
+  non-static, and cannot have a body.
+- An abstract file class cannot be constructed directly. A concrete subclass
+  must override every inherited abstract virtual signature; abstract
+  subclasses may carry unresolved signatures forward.
 - A base clause names at most one visible file class. The inheritance graph
   cannot contain direct or indirect cycles.
 - Member lookup uses the nearest class in the base chain that declares a name.

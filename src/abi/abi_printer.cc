@@ -32,6 +32,9 @@ void print_callable(const AbiCallable& callable, const SemanticModel& semantics,
   if (symbol.is_override) {
     output << ", override";
   }
+  if (symbol.is_abstract) {
+    output << ", abstract";
+  }
   output << "]\n";
   output << "|  |- ABI " << callable.mangled_name << '(';
   for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
@@ -85,7 +88,8 @@ void print_abi_summary(const AbiModule& abi, const SemanticModel& semantics,
       }
     }
     output << ", virtuals " << file.type_descriptor.virtual_functions.size()
-           << "]\n";
+           << (semantics.file(file.file).is_abstract ? ", abstract" : "")
+           << (semantics.file(file.file).is_sealed ? ", sealed" : "") << "]\n";
     for (const MemberReference& member : file.member_order) {
       switch (member.kind) {
         case DeclarationKind::kField: {

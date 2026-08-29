@@ -102,6 +102,7 @@ class MirVerifier {
     const SourceRange range = symbol_range(callable.symbol);
     verify_symbol(callable.symbol, range);
     TypeId return_type = semantics_.error_type();
+    bool is_abstract = false;
     if (callable.symbol.value < semantics_.symbols().size()) {
       const SemanticSymbol& symbol = semantics_.symbol(callable.symbol);
       if (symbol.kind != expected_kind) {
@@ -116,6 +117,7 @@ class MirVerifier {
       return_type = expected_kind == SymbolKind::kConstructor
                         ? semantics_.void_type()
                         : symbol.type;
+      is_abstract = symbol.is_abstract;
       verify_constructor_initialization(callable, symbol, expected_kind, range);
     }
     for (const SymbolId parameter : callable.parameters) {
@@ -127,6 +129,12 @@ class MirVerifier {
     }
     verify_body(callable.body, return_type,
                 expected_kind == SymbolKind::kConstructor);
+    if (is_abstract && (callable.body.blocks.size() != 1 ||
+                        !callable.body.blocks[0].instructions.empty() ||
+                        !std::holds_alternative<MirUnreachableTerminator>(
+                            callable.body.blocks[0].terminator.data))) {
+      report(range, "abstract function body is not an unreachable stub");
+    }
   }
 
   void verify_constructor_initialization(const MirCallable& callable,

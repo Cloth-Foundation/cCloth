@@ -1,4 +1,4 @@
-# Cloth Stage 16.6 base-qualified calls
+# Cloth inheritance through Stage 17.2
 
 Stage 16.1 introduces the declaration and semantic identity of single class
 inheritance. Stage 16.2 carries that identity through HIR and MIR, defines the
@@ -8,7 +8,9 @@ Stage 16.4 adds inherited member lookup, representation-preserving base
 conversions, and hierarchy-aware checked type operations. Stage 16.5 adds an
 explicit override contract, stable virtual slots, and dynamic instance calls.
 Stage 16.6 adds explicit direct-base calls without changing object layout or
-the virtual table.
+the virtual table. Stage 17.1 adds declaration identity for abstract file
+classes and abstract instance functions. Stage 17.2 makes those declarations
+enforceable by construction and subclass-completeness rules.
 
 ## File-class declaration
 
@@ -231,6 +233,57 @@ ordinary dispatch rules. HIR retains the qualification, MIR uses a dedicated
 base-qualified call kind with direct dispatch, and the MIR verifier checks the
 direct-base lookup and implicit-self invariants.
 
+## Abstract declarations
+
+An abstract file class must use an explicit envelope:
+
+```cloth
+abstract class {
+  abstract func Describe(): string;
+}
+```
+
+An abstract function has no source body and ends with `;`. It must be a public
+instance function declared by an abstract file class. Capitalization therefore
+remains meaningful: a lowercase abstract function is private and invalid.
+Static abstract functions are also invalid. Concrete functions in the same
+abstract class continue to use ordinary blocks.
+
+Abstract functions participate in normal signature registration and receive
+stable virtual slots. AST, semantic symbols, HIR, MIR, and diagnostic summaries
+retain their abstract identity. MIR represents the absent implementation with
+a verified unreachable stub so no empty concrete implementation is invented.
+A direct `super.AbstractFunction()` call is invalid because there is no base
+implementation to invoke.
+
+An abstract file class cannot be constructed directly. Its constructors remain
+ordinary declarations because a derived constructor must still initialize the
+abstract base subobject explicitly:
+
+```cloth
+abstract class {
+  Shape(int32 scale) {}
+  abstract func Area(): float;
+}
+```
+
+```cloth
+class : Shape {
+  Circle(): Shape(1) {}
+
+  override func Area(): float {
+    return 1.0;
+  }
+}
+```
+
+After override resolution, each file class records the virtual slots whose
+selected declarations remain abstract. An abstract subclass may implement any
+subset and carry the rest forward. A concrete subclass must leave that set
+empty. Missing implementations are reported by canonical signature with a note
+at the nearest abstract declaration, so overloads remain unambiguous and source
+discovery order cannot affect diagnostics.
+
 ## Subtyping and checked operations
 
 A non-null derived reference implicitly widens to any direct or transitive base
@@ -250,8 +303,8 @@ Consequently, an object satisfies its exact class and every transitive base,
 while a base-typed reference can still be tested or safely cast back to its
 actual derived type. Null and unrelated runtime kinds fail without trapping.
 
-## Deliberate Stage 16.6 boundary
+## Deliberate Stage 17.2 boundary
 
-Stage 16.6 does not define abstract members, sealed or final methods/classes,
-covariant returns, or interface dispatch. Interface lists, structs, and enums
-remain separate language work.
+`sealed` is a reserved file-class modifier but remains a diagnosed unsupported
+contract until Stage 17.3, which also owns final overrides. Covariant returns
+and interface dispatch remain separate language work.

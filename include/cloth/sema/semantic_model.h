@@ -109,6 +109,7 @@ struct SemanticSymbol {
   bool is_final{false};
   bool is_static{false};
   bool is_override{false};
+  bool is_abstract{false};
   std::optional<std::size_t> virtual_slot{};
   std::optional<SymbolId> overridden_symbol{};
 };
@@ -143,6 +144,9 @@ struct FileSemantics {
   bool is_valid{true};
   std::optional<FileId> base_file{};
   std::vector<SymbolId> virtual_functions{};
+  std::vector<SymbolId> abstract_functions{};
+  bool is_abstract{false};
+  bool is_sealed{false};
 };
 
 class SemanticModel {

@@ -48,7 +48,14 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
     output << " : ";
     print_type(*file_class.base_class, output);
   }
-  output << " [" << visibility_name(file_class.visibility) << ']';
+  output << " [" << visibility_name(file_class.visibility);
+  if (file_class.is_abstract) {
+    output << ", abstract";
+  }
+  if (file_class.is_sealed) {
+    output << ", sealed";
+  }
+  output << ']';
   print_validity(file_class.is_valid, output);
   output << '\n';
 
@@ -104,6 +111,9 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
         }
         if (function.is_override) {
           output << ", override";
+        }
+        if (function.is_abstract) {
+          output << ", abstract";
         }
         output << ']';
         print_validity(function.is_valid, output);

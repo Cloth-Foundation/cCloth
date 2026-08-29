@@ -29,6 +29,31 @@ bool same_signature(const MemberSymbol& left,
   return true;
 }
 
+bool is_file_class_modifier(TokenKind kind) noexcept {
+  return kind == TokenKind::kKwAbstract || kind == TokenKind::kKwSealed;
+}
+
+bool is_function_modifier(TokenKind kind) noexcept {
+  return kind == TokenKind::kKwAbstract || kind == TokenKind::kKwOverride ||
+         kind == TokenKind::kKwStatic;
+}
+
+bool looks_like_file_class_declaration(std::span<const Token> tokens,
+                                       std::size_t index) noexcept {
+  while (index < tokens.size() && is_file_class_modifier(tokens[index].kind)) {
+    ++index;
+  }
+  return index < tokens.size() && tokens[index].kind == TokenKind::kKwClass;
+}
+
+bool looks_like_function_declaration(std::span<const Token> tokens,
+                                     std::size_t index) noexcept {
+  while (index < tokens.size() && is_function_modifier(tokens[index].kind)) {
+    ++index;
+  }
+  return index < tokens.size() && tokens[index].kind == TokenKind::kKwFunc;
+}
+
 }  // namespace
 
 DeclarationPass::DeclarationPass(const SourceFile& source,
@@ -74,14 +99,10 @@ DeclarationPassResult DeclarationPass::run() {
         is_valid_ = false;
       }
       parse_import();
-    } else if (current().kind == TokenKind::kKwClass && !saw_member &&
-               !has_explicit_class_declaration_) {
+    } else if (!saw_member && !has_explicit_class_declaration_ &&
+               looks_like_file_class_declaration(tokens_, current_)) {
       parse_file_class_declaration();
-    } else if (current().kind == TokenKind::kKwFunc ||
-               current().kind == TokenKind::kKwOverride ||
-               (current().kind == TokenKind::kKwStatic &&
-                (peek(1).kind == TokenKind::kKwFunc ||
-                 peek(1).kind == TokenKind::kKwOverride))) {
+    } else if (looks_like_function_declaration(tokens_, current_)) {
       saw_member = true;
       parse_function();
     } else if (is_nested_type_keyword(current().kind)) {
@@ -120,6 +141,8 @@ DeclarationPassResult DeclarationPass::run() {
                                std::move(outlines_),
                                base_class_,
                                has_explicit_class_declaration_,
+                               class_is_abstract_,
+                               class_is_sealed_,
                                is_valid_};
 }
 
@@ -392,18 +415,22 @@ void DeclarationPass::parse_function() {
   const std::size_t begin = current_;
   bool is_static = false;
   bool is_override = false;
-  while (current().kind == TokenKind::kKwStatic ||
-         current().kind == TokenKind::kKwOverride) {
+  bool is_abstract = false;
+  while (is_function_modifier(current().kind)) {
     const Token& modifier = advance();
-    bool& present =
-        modifier.kind == TokenKind::kKwStatic ? is_static : is_override;
-    if (present) {
+    bool* present = &is_abstract;
+    if (modifier.kind == TokenKind::kKwStatic) {
+      present = &is_static;
+    } else if (modifier.kind == TokenKind::kKwOverride) {
+      present = &is_override;
+    }
+    if (*present) {
       diagnostics_.error(
           modifier.range,
           "duplicate '" + std::string{modifier.lexeme} + "' function modifier");
       is_valid_ = false;
     }
-    present = true;
+    *present = true;
   }
   if (!match(TokenKind::kKwFunc)) {
     diagnostics_.error(current().range,
@@ -426,11 +453,31 @@ void DeclarationPass::parse_function() {
     return_type = parse_type();
   }
 
-  const auto body = locate_body(name.lexeme);
+  std::optional<TokenIndexRange> body;
+  bool has_abstract_terminator = false;
+  if (is_abstract) {
+    if (match(TokenKind::kSemicolon)) {
+      has_abstract_terminator = true;
+    } else if (current().kind == TokenKind::kLeftBrace) {
+      diagnostics_.error(current().range, "abstract function '" +
+                                              std::string{name.lexeme} +
+                                              "' cannot have a body");
+      is_valid_ = false;
+      body = locate_body(name.lexeme);
+    } else {
+      diagnostics_.error(current().range,
+                         "expected ';' after abstract function declaration");
+      is_valid_ = false;
+      synchronize_member();
+    }
+  } else {
+    body = locate_body(name.lexeme);
+  }
   const std::size_t end = current_ == begin ? begin : current_ - 1;
   const SourceRange range = range_from(begin, end);
   const bool declaration_valid =
-      body.has_value() && diagnostics_.diagnostics().size() == diagnostic_count;
+      (is_abstract ? has_abstract_terminator : body.has_value()) &&
+      diagnostics_.diagnostics().size() == diagnostic_count;
   MemberSymbol symbol{name.lexeme,
                       DeclarationKind::kFunction,
                       infer_visibility(name.lexeme),
@@ -440,6 +487,7 @@ void DeclarationPass::parse_function() {
                       declaration_valid};
   symbol.is_static = is_static;
   symbol.is_override = is_override;
+  symbol.is_abstract = is_abstract;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kFunction, symbol_index,
                                     begin, std::nullopt, std::nullopt, body,
@@ -611,7 +659,24 @@ void DeclarationPass::parse_import() {
 
 void DeclarationPass::parse_file_class_declaration() {
   has_explicit_class_declaration_ = true;
-  advance();
+  while (is_file_class_modifier(current().kind)) {
+    const Token& modifier = advance();
+    bool& present = modifier.kind == TokenKind::kKwAbstract ? class_is_abstract_
+                                                            : class_is_sealed_;
+    if (present) {
+      diagnostics_.error(
+          modifier.range,
+          "duplicate '" + std::string{modifier.lexeme} + "' class modifier");
+      is_valid_ = false;
+    }
+    present = true;
+  }
+  if (!match(TokenKind::kKwClass)) {
+    diagnostics_.error(current().range,
+                       "expected 'class' after file class modifiers");
+    is_valid_ = false;
+    return;
+  }
 
   if (current().kind == TokenKind::kIdentifier) {
     diagnostics_.error(current().range,
@@ -716,6 +781,7 @@ bool DeclarationPass::looks_like_member_start(
   const TokenKind kind = tokens_[index].kind;
   if (kind == TokenKind::kKwFunc || kind == TokenKind::kKwFinal ||
       kind == TokenKind::kKwStatic || kind == TokenKind::kKwOverride ||
+      kind == TokenKind::kKwAbstract || kind == TokenKind::kKwSealed ||
       is_nested_type_keyword(kind)) {
     return true;
   }

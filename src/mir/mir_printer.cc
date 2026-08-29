@@ -74,6 +74,9 @@ void print_callable(const MirCallable& callable, const SemanticModel& semantics,
   if (symbol.is_override) {
     output << " [override]";
   }
+  if (symbol.is_abstract) {
+    output << " [abstract]";
+  }
   output << '\n';
   print_body(callable.body, output);
 }
@@ -87,6 +90,12 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
     if (file.base_file) {
       output << " : "
              << semantics.symbol(semantics.file(*file.base_file).symbol).name;
+    }
+    if (semantics.file(file.file).is_abstract) {
+      output << " [abstract]";
+    }
+    if (semantics.file(file.file).is_sealed) {
+      output << " [sealed]";
     }
     output << '\n';
     for (const MemberReference& member : file.member_order) {

@@ -190,6 +190,14 @@ class SemanticAnalyzer {
           std::vector<std::optional<SymbolId>>(
               syntax.storage.statements().size()),
           syntax.is_valid && identity_valid};
+      file.is_abstract = syntax.is_abstract;
+      file.is_sealed = syntax.is_sealed;
+      if (syntax.is_sealed) {
+        diagnostics_.error(
+            syntax.range,
+            "sealed class contracts are reserved but not supported yet");
+        file.is_valid = false;
+      }
       static_cast<void>(model_.add_file(std::move(file)));
     }
     visible_files_.resize(files_.size());
@@ -465,6 +473,30 @@ class SemanticAnalyzer {
                        file_id, function.range, valid});
     model_.mutable_symbol(symbol).is_static = function.is_static;
     model_.mutable_symbol(symbol).is_override = function.is_override;
+    model_.mutable_symbol(symbol).is_abstract = function.is_abstract;
+    if (function.is_abstract) {
+      if (!files_[file_id.value]->is_abstract) {
+        diagnostics_.error(function.range,
+                           "abstract function '" + std::string{function.name} +
+                               "' requires an abstract file class");
+        model_.mutable_symbol(symbol).is_valid = false;
+        model_.mutable_file(file_id).is_valid = false;
+      }
+      if (function.is_static) {
+        diagnostics_.error(function.range, "abstract function '" +
+                                               std::string{function.name} +
+                                               "' cannot be static");
+        model_.mutable_symbol(symbol).is_valid = false;
+        model_.mutable_file(file_id).is_valid = false;
+      }
+      if (function.visibility == Visibility::kPrivate) {
+        diagnostics_.error(function.range, "abstract function '" +
+                                               std::string{function.name} +
+                                               "' must be public");
+        model_.mutable_symbol(symbol).is_valid = false;
+        model_.mutable_file(file_id).is_valid = false;
+      }
+    }
     if (function.name == "Main" && !function.is_static) {
       diagnostics_.error(function.range,
                          "entry point 'Main' must be declared static");
@@ -573,6 +605,26 @@ class SemanticAnalyzer {
       virtual_functions[*matching_slot] = symbol_id;
     }
     file.virtual_functions = std::move(virtual_functions);
+    file.abstract_functions.clear();
+    for (const SymbolId symbol_id : file.virtual_functions) {
+      const SemanticSymbol& symbol = model_.symbol(symbol_id);
+      if (symbol.is_abstract && symbol.is_valid) {
+        file.abstract_functions.push_back(symbol_id);
+      }
+    }
+    if (!file.is_abstract) {
+      for (const SymbolId symbol_id : file.abstract_functions) {
+        const SemanticSymbol& symbol = model_.symbol(symbol_id);
+        diagnostics_.error(point_range(files_[file_id.value]->range.begin),
+                           "concrete file class '" +
+                               files_[file_id.value]->qualified_name +
+                               "' does not implement abstract function '" +
+                               callable_signature(symbol) + "'");
+        diagnostics_.note(symbol.range,
+                          "abstract function declaration is here");
+        file.is_valid = false;
+      }
+    }
   }
 
   void register_constructor(FileId file_id, std::size_t index) {
@@ -751,6 +803,12 @@ class SemanticAnalyzer {
     const FunctionDecl& function =
         files_[current_file_.value]->functions.at(index);
     const SymbolId symbol = model_.file(current_file_).functions.at(index);
+    if (function.is_abstract) {
+      begin_root_scope(true);
+      register_parameters(symbol, function.parameters);
+      end_root_scope();
+      return;
+    }
     analyze_callable(symbol, function.parameters, function.body,
                      model_.symbol(symbol).type, nullptr);
   }
@@ -772,6 +830,22 @@ class SemanticAnalyzer {
         model_.symbol(callable_symbol).kind == SymbolKind::kConstructor;
     const bool is_static = model_.symbol(callable_symbol).is_static;
     begin_root_scope(is_constructor || !is_static);
+    register_parameters(callable_symbol, parameters);
+
+    if (is_constructor) {
+      analyze_constructor_initializer(callable_symbol, initializer);
+    }
+
+    expected_return_type_ = return_type;
+    current_callable_kind_ = model_.symbol(callable_symbol).kind;
+    static_cast<void>(analyze_block(body, false));
+    current_callable_kind_.reset();
+    expected_return_type_ = model_.void_type();
+    end_root_scope();
+  }
+
+  void register_parameters(SymbolId callable_symbol,
+                           std::span<const ParameterDecl> parameters) {
     const std::vector<TypeId> parameter_types =
         model_.symbol(callable_symbol).parameter_types;
     for (std::size_t index = 0; index < parameters.size(); ++index) {
@@ -793,17 +867,6 @@ class SemanticAnalyzer {
           .parameter_symbols.push_back(symbol);
       bind_name(parameter.name, symbol, parameter.range);
     }
-
-    if (is_constructor) {
-      analyze_constructor_initializer(callable_symbol, initializer);
-    }
-
-    expected_return_type_ = return_type;
-    current_callable_kind_ = model_.symbol(callable_symbol).kind;
-    static_cast<void>(analyze_block(body, false));
-    current_callable_kind_.reset();
-    expected_return_type_ = model_.void_type();
-    end_root_scope();
   }
 
   void analyze_constructor_initializer(
@@ -2274,7 +2337,13 @@ class SemanticAnalyzer {
     if (callee.category == ValueCategory::kType) {
       const SemanticType& type = model_.type(callee.type);
       if (type.kind == TypeKind::kFileClass && type.file) {
-        candidates = model_.file(*type.file).constructors;
+        const FileSemantics& target = model_.file(*type.file);
+        if (target.is_abstract) {
+          diagnostics_.error(range, "abstract file class '" + type.name +
+                                        "' cannot be constructed");
+          return ExpressionState{model_.error_type()};
+        }
+        candidates = target.constructors;
       }
     } else if (callee.category != ValueCategory::kCallable) {
       if (callee.type != model_.error_type()) {
@@ -2397,6 +2466,11 @@ class SemanticAnalyzer {
     const ExpressionSemantics& object =
         model_.file(current_file_).expressions.at(member->object.value);
     if (object.category == ValueCategory::kSuper) {
+      if (callable.is_abstract) {
+        diagnostics_.error(range, "'super' cannot call abstract function '" +
+                                      callable.name + "'");
+        return false;
+      }
       if (callable.is_static) {
         diagnostics_.error(range, "'super' cannot qualify static function '" +
                                       callable.name + "'");
@@ -2698,6 +2772,20 @@ class SemanticAnalyzer {
     diagnostics_.error(
         range, "operator '" + std::string{token_kind_name(operation)} +
                    "' cannot be applied to '" + type_name(operand) + "'");
+  }
+
+  std::string callable_signature(const SemanticSymbol& symbol) const {
+    std::string signature = symbol.name + '(';
+    for (std::size_t index = 0; index < symbol.parameter_types.size();
+         ++index) {
+      if (index != 0) {
+        signature += ", ";
+      }
+      signature += type_name(symbol.parameter_types[index]);
+    }
+    signature += "): ";
+    signature += type_name(symbol.type);
+    return signature;
   }
 
   std::string type_name(TypeId type) const { return model_.type(type).name; }

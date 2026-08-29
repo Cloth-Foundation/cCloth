@@ -35,6 +35,8 @@ struct DeclarationPassResult {
   std::vector<MemberOutline> outlines;
   std::optional<TypeSyntax> base_class;
   bool has_explicit_class_declaration{false};
+  bool is_abstract{false};
+  bool is_sealed{false};
   bool is_valid{true};
 };
 
@@ -81,6 +83,8 @@ class DeclarationPass {
   std::optional<TypeSyntax> base_class_;
   std::size_t current_{0};
   bool has_explicit_class_declaration_{false};
+  bool class_is_abstract_{false};
+  bool class_is_sealed_{false};
   bool class_body_started_{false};
   bool class_body_closed_{false};
   bool is_valid_{true};

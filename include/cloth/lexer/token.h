@@ -76,6 +76,8 @@ enum class TokenKind {
   kKwContinue,
   kKwStruct,
   kKwClass,
+  kKwAbstract,
+  kKwSealed,
   kKwEnum,
   kKwTrait,
   kKwImplements,

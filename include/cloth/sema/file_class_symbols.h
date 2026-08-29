@@ -30,6 +30,7 @@ struct MemberSymbol {
   bool is_final{false};
   bool is_static{false};
   bool is_override{false};
+  bool is_abstract{false};
 };
 
 class FileClassSymbols {

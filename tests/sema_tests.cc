@@ -976,6 +976,139 @@ void base_qualified_call_contract(TestContext& test) {
       "base-qualified call escaped a partially initialized self");
 }
 
+void abstract_declaration_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Shape.co",
+            "abstract class {\n"
+            "  abstract func Area(float scale): float;\n"
+            "  abstract func Reset();\n"
+            "  func Kind(): string { return \"shape\"; }\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid abstract declarations produced semantic errors");
+  test.expect(valid.result->is_valid,
+              "valid abstract declarations were marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::FileSemantics& file = semantics.file(cloth::FileId{0});
+  test.expect(file.is_abstract && !file.is_sealed,
+              "semantic file class lost its abstract modifier");
+  test.expect(file.functions.size() == 3,
+              "abstract functions were not registered");
+  if (file.functions.size() == 3) {
+    const cloth::SemanticSymbol& area = semantics.symbol(file.functions[0]);
+    const cloth::SemanticSymbol& reset = semantics.symbol(file.functions[1]);
+    test.expect(area.is_abstract && reset.is_abstract,
+                "semantic function symbols lost abstract modifiers");
+    test.expect(area.virtual_slot && reset.virtual_slot,
+                "abstract functions did not receive virtual slots");
+  }
+  test.expect(valid.result->mir.files[0].functions.size() == 3,
+              "MIR lost abstract function declarations");
+  test.expect(!valid.result->control_flow.callables.empty() &&
+                  !valid.result->control_flow.callables[0].can_fall_through,
+              "abstract function was reported as executable fallthrough");
+  if (valid.result->mir.files[0].functions.size() == 3) {
+    const cloth::MirBody& body = valid.result->mir.files[0].functions[0].body;
+    test.expect(body.blocks.size() == 1 &&
+                    std::holds_alternative<cloth::MirUnreachableTerminator>(
+                        body.blocks[0].terminator.data),
+                "abstract function did not lower to an unreachable stub");
+  }
+
+  AnalyzedCompilation invalid;
+  invalid.add("Concrete.co", "class { abstract func Missing(): int32; }\n");
+  invalid.add("Hidden.co",
+              "abstract class { abstract func hidden(): int32; }\n");
+  invalid.add("StaticAbstract.co",
+              "abstract class { static abstract func Public(): int32; }\n");
+  invalid.add("Closed.co", "sealed class {}\n");
+  invalid.add("BaseAbstract.co",
+              "abstract class { abstract func Value(): int32; }\n");
+  invalid.add("DerivedAbstract.co",
+              "abstract class : BaseAbstract {\n"
+              "  func Read(): int32 { return super.Value(); }\n"
+              "}\n");
+  invalid.analyze();
+
+  test.expect(
+      invalid.has_diagnostic(
+          "abstract function 'Missing' requires an abstract file class"),
+      "abstract function was accepted in a concrete class");
+  test.expect(
+      invalid.has_diagnostic("abstract function 'hidden' must be public"),
+      "private abstract function was accepted");
+  test.expect(
+      invalid.has_diagnostic("abstract function 'Public' cannot be static"),
+      "static abstract function was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "sealed class contracts are reserved but not supported yet"),
+              "reserved sealed class contract was silently accepted");
+  test.expect(
+      invalid.has_diagnostic("'super' cannot call abstract function 'Value'"),
+      "super call to an abstract implementation was accepted");
+}
+
+void abstract_completeness_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Shape.co",
+            "abstract class {\n"
+            "  Shape(int32 scale) {}\n"
+            "  abstract func Area(float scale): float;\n"
+            "  abstract func Reset();\n"
+            "}\n");
+  valid.add("Partial.co",
+            "abstract class : Shape {\n"
+            "  Partial(): Shape(1) {}\n"
+            "  override func Area(float scale): float { return scale; }\n"
+            "}\n");
+  valid.add("Circle.co",
+            "class : Partial {\n"
+            "  Circle(): Partial() {}\n"
+            "  override func Reset() {}\n"
+            "}\n");
+  valid.add("Use.co", "static func Build(): Shape { return Circle(); }\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "complete abstract hierarchy produced semantic errors");
+  test.expect(valid.result->is_valid,
+              "complete abstract hierarchy was marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  test.expect(semantics.file(cloth::FileId{0}).abstract_functions.size() == 2,
+              "abstract root obligations were not retained");
+  test.expect(semantics.file(cloth::FileId{1}).abstract_functions.size() == 1,
+              "abstract intermediate did not carry one unresolved slot");
+  test.expect(semantics.file(cloth::FileId{2}).abstract_functions.empty(),
+              "concrete subclass retained a resolved abstract slot");
+
+  AnalyzedCompilation invalid;
+  invalid.add("Shape.co",
+              "abstract class {\n"
+              "  Shape(int32 scale) {}\n"
+              "  abstract func Area(float scale): float;\n"
+              "  abstract func Reset();\n"
+              "}\n");
+  invalid.add("Incomplete.co",
+              "class : Shape {\n"
+              "  Incomplete(): Shape(1) {}\n"
+              "  override func Area(float scale): float { return scale; }\n"
+              "}\n");
+  invalid.add("Use.co", "static func Build(): Shape { return Shape(1); }\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic(
+                  "concrete file class 'Incomplete' does not implement "
+                  "abstract function 'Reset(): void'"),
+              "incomplete concrete subclass was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "abstract file class 'Shape' cannot be constructed"),
+              "direct abstract-class construction was accepted");
+  test.expect(!invalid.result->is_valid,
+              "invalid abstract hierarchy was marked valid");
+}
+
 void invalid_inheritance_graph(TestContext& test) {
   AnalyzedCompilation self_cycle;
   self_cycle.add("Self.co", "class : Self {}\n");
@@ -2038,6 +2171,8 @@ int main() {
       {"inherited members and subtyping", inherited_members_and_subtyping},
       {"virtual override contract", virtual_override_contract},
       {"base-qualified call contract", base_qualified_call_contract},
+      {"abstract declaration contract", abstract_declaration_contract},
+      {"abstract completeness contract", abstract_completeness_contract},
       {"invalid inheritance graph", invalid_inheritance_graph},
       {"invalid package imports", invalid_package_imports},
       {"private member access", private_member_access},

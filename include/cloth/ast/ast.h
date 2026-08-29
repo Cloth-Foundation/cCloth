@@ -259,6 +259,7 @@ struct FunctionDecl {
   bool is_valid{true};
   bool is_static{false};
   bool is_override{false};
+  bool is_abstract{false};
 };
 
 struct ConstructorInitializer {
@@ -323,6 +324,8 @@ struct FileClassDecl {
   bool is_valid{true};
   std::optional<TypeSyntax> base_class{};
   bool has_explicit_class_declaration{false};
+  bool is_abstract{false};
+  bool is_sealed{false};
 };
 
 [[nodiscard]] std::string_view declaration_kind_name(

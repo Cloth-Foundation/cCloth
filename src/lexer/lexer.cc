@@ -24,6 +24,8 @@ constexpr std::array kKeywords{
     Keyword{"continue", TokenKind::kKwContinue},
     Keyword{"struct", TokenKind::kKwStruct},
     Keyword{"class", TokenKind::kKwClass},
+    Keyword{"abstract", TokenKind::kKwAbstract},
+    Keyword{"sealed", TokenKind::kKwSealed},
     Keyword{"enum", TokenKind::kKwEnum},
     Keyword{"trait", TokenKind::kKwTrait},
     Keyword{"implements", TokenKind::kKwImplements},
