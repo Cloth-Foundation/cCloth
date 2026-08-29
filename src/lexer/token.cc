@@ -150,6 +150,8 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "static";
     case TokenKind::kKwOverride:
       return "override";
+    case TokenKind::kKwSuper:
+      return "super";
     case TokenKind::kKwTrue:
       return "true";
     case TokenKind::kKwFalse:

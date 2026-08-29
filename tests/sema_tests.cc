@@ -886,9 +886,9 @@ void base_qualified_call_contract(TestContext& test) {
   valid.add("Derived.co",
             "class : Middle {\n"
             "  override func Describe(): string {\n"
-            "    return Middle.Describe() + \"-derived\";\n"
+            "    return super.Describe() + \"-derived\";\n"
             "  }\n"
-            "  func ReadRoot(): int32 { return Middle.RootValue(); }\n"
+            "  func ReadRoot(): int32 { return super.RootValue(); }\n"
             "}\n");
   valid.analyze();
 
@@ -918,8 +918,10 @@ void base_qualified_call_contract(TestContext& test) {
 
   AnalyzedCompilation invalid;
   invalid.add("Base.co",
+              "int32 Value;\n"
               "Base(string value) {}\n"
-              "func Describe(): string { return \"base\"; }\n");
+              "func Describe(): string { return \"base\"; }\n"
+              "static func Kind(): string { return \"base\"; }\n");
   invalid.add("Middle.co",
               "class : Base {\n"
               "  Middle(string value): Base(value) {}\n"
@@ -927,30 +929,48 @@ void base_qualified_call_contract(TestContext& test) {
               "}\n");
   invalid.add("Derived.co",
               "class : Middle {\n"
-              "  Derived(string value): Middle(Middle.Describe()) {}\n"
+              "  Derived(string value): Middle(super.Describe()) {}\n"
               "  static func StaticBad(): string {\n"
-              "    return Middle.Describe();\n"
+              "    return super.Describe();\n"
               "  }\n"
+              "  func NamedBase(): string { return Middle.Describe(); }\n"
               "  func SkipBase(): string { return Base.Describe(); }\n"
+              "  func BareSuper(): Middle { return super; }\n"
+              "  func FieldBad(): int32 { return super.Value; }\n"
+              "  func StaticThroughSuper(): string { return super.Kind(); }\n"
               "}\n");
   invalid.add("Uninitialized.co",
               "class : Middle {\n"
               "  string Name;\n"
               "  Uninitialized(string value): Middle(value) {\n"
-              "    Middle.Describe();\n"
+              "    super.Describe();\n"
               "    Name = value;\n"
               "  }\n"
               "}\n");
+  invalid.add("RootOnly.co",
+              "func Invalid(): string { return super.Describe(); }\n");
   invalid.analyze();
 
-  test.expect(
-      invalid.has_diagnostic("cannot appear in a base constructor initializer"),
-      "base-qualified call was accepted in a base initializer");
-  test.expect(invalid.has_diagnostic("unavailable in a static context"),
-              "base-qualified call was accepted in a static function");
   test.expect(invalid.has_diagnostic(
-                  "base-qualified call must name direct base 'Middle'"),
-              "base-qualified call skipped the direct base");
+                  "cannot be used in a base constructor initializer"),
+              "base-qualified call was accepted in a base initializer");
+  test.expect(
+      invalid.has_diagnostic("'super' is unavailable in a static context"),
+      "base-qualified call was accepted in a static function");
+  test.expect(invalid.has_diagnostic(
+                  "base instance calls must use 'super.Method(...)'"),
+              "named base instance call was accepted");
+  test.expect(
+      invalid.has_diagnostic("'super' must qualify an instance function call"),
+      "bare super expression was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "'super' may qualify only an instance function call"),
+              "super-qualified field access was accepted");
+  test.expect(
+      invalid.has_diagnostic("'super' cannot qualify static function 'Kind'"),
+      "super-qualified static call was accepted");
+  test.expect(invalid.has_diagnostic("file class 'RootOnly' has no base"),
+              "super was accepted in a root class");
   test.expect(
       invalid.has_diagnostic("cannot be called before non-null field 'Name'"),
       "base-qualified call escaped a partially initialized self");

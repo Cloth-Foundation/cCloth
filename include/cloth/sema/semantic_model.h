@@ -119,6 +119,7 @@ enum class ValueCategory {
   kMutableLocation,
   kCallable,
   kType,
+  kSuper,
 };
 
 struct ExpressionSemantics {

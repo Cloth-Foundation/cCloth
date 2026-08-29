@@ -45,6 +45,12 @@ class HirVerifier {
       } else if (const auto* type =
                      std::get_if<HirTypeExpression>(&expression.data)) {
         verify_type(type->type, expression.range);
+      } else if (std::holds_alternative<HirSuperExpression>(expression.data)) {
+        if (expression.type == semantics_.error_type() ||
+            expression.type.value >= semantics_.types().size() ||
+            semantics_.type(expression.type).kind != TypeKind::kFileClass) {
+          report(expression.range, "super expression has no base-class type");
+        }
       } else if (const auto* unary =
                      std::get_if<HirUnaryExpression>(&expression.data)) {
         verify_expression(unary->operand, expression.range);

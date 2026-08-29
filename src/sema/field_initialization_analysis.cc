@@ -245,6 +245,7 @@ class FieldInitializationAnalyzer {
       return;
     }
     if (std::holds_alternative<InvalidExpression>(expression.data) ||
+        std::holds_alternative<SuperExpression>(expression.data) ||
         std::holds_alternative<LiteralExpression>(expression.data)) {
       return;
     }

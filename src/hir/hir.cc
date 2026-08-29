@@ -142,6 +142,8 @@ class Lowerer {
       } else if (semantic.symbol) {
         data = HirSymbolExpression{*semantic.symbol};
       }
+    } else if (std::holds_alternative<SuperExpression>(syntax.data)) {
+      data = HirSuperExpression{};
     } else if (const auto* unary = std::get_if<UnaryExpression>(&syntax.data)) {
       data = HirUnaryExpression{unary->operation, expression(unary->operand),
                                 semantics_.file(current_file_)

@@ -172,6 +172,9 @@ ExpressionId ExpressionParser::parse_primary_expression() {
     return storage_.add_expression(
         Expression{token.range, IdentifierExpression{token.lexeme}});
   }
+  if (match(TokenKind::kKwSuper)) {
+    return storage_.add_expression(Expression{token.range, SuperExpression{}});
+  }
 
   if (token.kind == TokenKind::kLeftBracket) {
     return parse_array_literal_expression();

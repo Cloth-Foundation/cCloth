@@ -1070,6 +1070,9 @@ class SemanticAnalyzer {
       } else if (value.category == ValueCategory::kType) {
         diagnostics_.error(statement.range,
                            "type reference cannot be used as a statement");
+      } else if (value.category == ValueCategory::kSuper) {
+        diagnostics_.error(statement.range,
+                           "'super' must qualify an instance function call");
       }
       return false;
     }
@@ -1203,6 +1206,8 @@ class SemanticAnalyzer {
     if (const auto* identifier =
             std::get_if<IdentifierExpression>(&expression.data)) {
       state = analyze_identifier(*identifier, expression.range);
+    } else if (std::holds_alternative<SuperExpression>(expression.data)) {
+      state = analyze_super(expression.range);
     } else if (const auto* literal =
                    std::get_if<LiteralExpression>(&expression.data)) {
       state = analyze_literal(*literal, expression.range);
@@ -1331,6 +1336,29 @@ class SemanticAnalyzer {
     diagnostics_.error(range,
                        "unknown name '" + std::string{identifier.name} + "'");
     return ExpressionState{model_.error_type()};
+  }
+
+  ExpressionState analyze_super(SourceRange range) {
+    const std::optional<FileId> direct_base =
+        model_.file(current_file_).base_file;
+    if (!direct_base) {
+      diagnostics_.error(
+          range, "'super' is unavailable because file class '" +
+                     model_.symbol(model_.file(current_file_).symbol).name +
+                     "' has no base");
+      return ExpressionState{model_.error_type()};
+    }
+    if (analyzing_base_initializer_) {
+      diagnostics_.error(
+          range, "'super' cannot be used in a base constructor initializer");
+      return ExpressionState{model_.error_type()};
+    }
+    if (!has_implicit_receiver_) {
+      diagnostics_.error(range, "'super' is unavailable in a static context");
+      return ExpressionState{model_.error_type()};
+    }
+    return ExpressionState{model_.file(*direct_base).type,
+                           ValueCategory::kSuper};
   }
 
   ExpressionState analyze_literal(const LiteralExpression& literal,
@@ -2004,6 +2032,11 @@ class SemanticAnalyzer {
 
     const SemanticSymbol& first = model_.symbol(members.front());
     if (first.kind == SymbolKind::kField) {
+      if (object.category == ValueCategory::kSuper) {
+        diagnostics_.error(
+            range, "'super' may qualify only an instance function call");
+        return ExpressionState{model_.error_type()};
+      }
       if (first.is_static && object.category != ValueCategory::kType) {
         diagnostics_.error(range,
                            "static field '" + first.name +
@@ -2363,6 +2396,17 @@ class SemanticAnalyzer {
 
     const ExpressionSemantics& object =
         model_.file(current_file_).expressions.at(member->object.value);
+    if (object.category == ValueCategory::kSuper) {
+      if (callable.is_static) {
+        diagnostics_.error(range, "'super' cannot qualify static function '" +
+                                      callable.name + "'");
+        return false;
+      }
+      model_.mutable_file(current_file_)
+          .expressions.at(callee_id.value)
+          .is_base_qualified = true;
+      return true;
+    }
     if (callable.is_static && object.category != ValueCategory::kType) {
       diagnostics_.error(range,
                          "static function '" + callable.name +
@@ -2371,33 +2415,10 @@ class SemanticAnalyzer {
     }
     if (!callable.is_static && object.category == ValueCategory::kType) {
       const SemanticType& qualifier = model_.type(object.type);
-      const std::optional<FileId> direct_base =
-          model_.file(current_file_).base_file;
-      if (direct_base && qualifier.file && *qualifier.file == *direct_base) {
-        if (analyzing_base_initializer_) {
-          diagnostics_.error(
-              range, "base-qualified call to '" + callable.name +
-                         "' cannot appear in a base constructor initializer");
-          return false;
-        }
-        if (!has_implicit_receiver_) {
-          diagnostics_.error(range, "base-qualified call to '" + callable.name +
-                                        "' is unavailable in a static context");
-          return false;
-        }
-        model_.mutable_file(current_file_)
-            .expressions.at(callee_id.value)
-            .is_base_qualified = true;
-        return true;
-      }
       if (qualifier.file && *qualifier.file != current_file_ &&
           is_file_class_subtype(model_.file(current_file_).type, object.type)) {
-        const std::string base_name =
-            direct_base ? model_.symbol(model_.file(*direct_base).symbol).name
-                        : std::string{"<none>"};
-        diagnostics_.error(
-            range,
-            "base-qualified call must name direct base '" + base_name + "'");
+        diagnostics_.error(range,
+                           "base instance calls must use 'super.Method(...)'");
         return false;
       }
       diagnostics_.error(
@@ -2562,6 +2583,11 @@ class SemanticAnalyzer {
     }
     if (state.category == ValueCategory::kType) {
       diagnostics_.error(range, "type reference cannot be used as a value");
+      return false;
+    }
+    if (state.category == ValueCategory::kSuper) {
+      diagnostics_.error(range,
+                         "'super' must qualify an instance function call");
       return false;
     }
     if (state.type == model_.void_type()) {

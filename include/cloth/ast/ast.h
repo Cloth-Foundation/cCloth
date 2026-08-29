@@ -57,6 +57,8 @@ struct IdentifierExpression {
   std::string_view name;
 };
 
+struct SuperExpression {};
+
 struct LiteralExpression {
   LiteralKind kind;
   std::string_view lexeme;
@@ -131,14 +133,13 @@ struct ParenthesizedExpression {
   ExpressionId expression;
 };
 
-using ExpressionData =
-    std::variant<InvalidExpression, IdentifierExpression, LiteralExpression,
-                 UnaryExpression, BinaryExpression, TypeTestExpression,
-                 CheckedCastExpression, AssignmentExpression,
-                 MemberAccessExpression, MetaAccessExpression,
-                 SafeMemberAccessExpression, NullCoalesceExpression,
-                 NullAssertExpression, CallExpression, ArrayLiteralExpression,
-                 IndexExpression, ParenthesizedExpression>;
+using ExpressionData = std::variant<
+    InvalidExpression, IdentifierExpression, LiteralExpression, SuperExpression,
+    UnaryExpression, BinaryExpression, TypeTestExpression,
+    CheckedCastExpression, AssignmentExpression, MemberAccessExpression,
+    MetaAccessExpression, SafeMemberAccessExpression, NullCoalesceExpression,
+    NullAssertExpression, CallExpression, ArrayLiteralExpression,
+    IndexExpression, ParenthesizedExpression>;
 
 struct Expression {
   SourceRange range;

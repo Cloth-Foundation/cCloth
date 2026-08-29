@@ -239,6 +239,7 @@ array_literal
 
 primary_expression
     = identifier
+    | "super"
     | integer_literal
     | float_literal
     | string_literal
@@ -278,11 +279,12 @@ The declaration pass enforces these rules separately from the grammar:
   cannot contain direct or indirect cycles.
 - Member lookup uses the nearest class in the base chain that declares a name.
   Private declarations remain visible only in their owning file class.
-- `Base.Method(arguments)` is a direct-base call only when `Base` resolves to
-  the current file class's direct base and `Method` selects a public instance
-  function. It requires an implicit receiver, cannot appear in a
-  base-constructor initializer, and bypasses virtual dispatch for that call.
-  A type-qualified static call retains its ordinary meaning.
+- `super.Method(arguments)` is a direct-base call when `Method` selects a
+  public instance function through the current file class's direct-base view.
+  It requires an implicit receiver, cannot appear in a base-constructor
+  initializer, and bypasses virtual dispatch for that call. Named
+  type-qualified instance calls are invalid; type-qualified static calls retain
+  their ordinary meaning.
 - Derived references implicitly widen to direct or transitive base types,
   including compatible nullable forms. The reverse conversion requires `as`.
 - A constructor name must exactly match the implicit file-class name.

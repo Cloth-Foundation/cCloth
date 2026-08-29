@@ -85,6 +85,7 @@ enum class TokenKind {
   kKwFinal,
   kKwStatic,
   kKwOverride,
+  kKwSuper,
   kKwTrue,
   kKwFalse,
   kKwNull,

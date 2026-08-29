@@ -662,7 +662,7 @@ void base_qualified_call_syntax(TestContext& test) {
   const ParsedSource source{
       "Derived.co",
       "class : Base {\n"
-      "  override func Render(): string { return Base.Render(); }\n"
+      "  override func Render(): string { return super.Render(); }\n"
       "}\n"};
   test.expect(error_count(source) == 0,
               "base-qualified call syntax should parse");
@@ -679,12 +679,12 @@ void base_qualified_call_syntax(TestContext& test) {
     if (member == nullptr || member->member != "Render") {
       continue;
     }
-    const auto* qualifier = std::get_if<cloth::IdentifierExpression>(
+    const auto* qualifier = std::get_if<cloth::SuperExpression>(
         &source.ast().storage.expression(member->object).data);
-    found = qualifier != nullptr && qualifier->name == "Base";
+    found = qualifier != nullptr;
   }
   test.expect(found,
-              "base-qualified call lost its type and member expressions");
+              "base-qualified call lost its super and member expressions");
 }
 
 void meta_queries(TestContext& test) {

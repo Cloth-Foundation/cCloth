@@ -34,9 +34,9 @@ than a general aspiration.
   `override func` for an exact inherited instance signature, preserves stable
   virtual slots, dispatches through the most-derived descriptor, and suppresses
   self dispatch during field initialization and constructor execution.
-- [x] Add base-qualified calls. Stage 16.6 uses `Base.Method(...)` only for the
-  current file class's direct base, retains ordinary overload lookup through
-  that base view, and invokes the selected implementation directly on `self`.
+- [x] Add base-qualified calls. Stage 16.6 uses `super.Method(...)` for the
+  current file class's direct-base view, retains ordinary overload lookup, and
+  invokes the selected implementation directly on `self`.
 - [ ] Add abstract members and sealed/final class and override contracts.
 - [ ] Design interfaces and the provisional `class : Human is InterfaceA,
   InterfaceB { ... }` conformance syntax.

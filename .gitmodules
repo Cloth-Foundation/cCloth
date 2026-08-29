@@ -1,0 +1,3 @@
+[submodule "Cloth-VSCode-Language-Support"]
+	path = Cloth-VSCode-Language-Support
+	url = https://github.com/Cloth-Foundation/Cloth-VSCode-Language-Support

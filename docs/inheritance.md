@@ -199,28 +199,30 @@ function bodies.
 
 ## Base-qualified calls
 
-An instance context may name its direct base class to invoke one base
-implementation explicitly:
+An instance context may use `super` to invoke one base implementation
+explicitly:
 
 ```cloth
 class : Human {
   override func Describe(): string {
-    return Human.Describe() + " -> User";
+    return super.Describe() + " -> User";
   }
 }
 ```
 
-The qualifier must resolve to the current file class's direct base. A
-transitive ancestor cannot be named to skip an intermediate base. Lookup starts
-from the direct-base view and retains the ordinary nearest-declaration-set and
-overload rules. Consequently, `Human.Method()` may select a public declaration
-in an ancestor when `Human` does not declare that name itself.
+`super` is a reserved expression representing the current file class's
+direct-base view. It cannot be rebound, and a named class cannot substitute for
+it. This prevents a transitive ancestor from being named to skip an
+intermediate base. Lookup retains the ordinary nearest-declaration-set and
+overload rules. Consequently, `super.Method()` may select a public declaration
+in an ancestor when the direct base does not declare that name itself.
 
 The selected function must be a public instance function. The form is invalid
 in a static function and in a base-constructor initializer, where no usable
 `self` exists. `Human.StaticFunction()` remains an ordinary class-qualified
-static call rather than a base-qualified call. Fields and constructors do not
-gain a corresponding direct-base access form.
+static call. `super.StaticFunction()`, `super.Field`, and `super(...)` are
+invalid; static functions, fields, and constructors do not gain a
+corresponding direct-base access form.
 
 A base-qualified call passes the current `self` pointer unchanged and invokes
 the selected ABI symbol directly. It bypasses the virtual table for that call

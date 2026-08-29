@@ -166,13 +166,14 @@ bodies are direct only when their receiver is the object under construction,
 so partially initialized derived state cannot be reached. Calls on other
 receivers and ordinary function-body calls dispatch virtually.
 
-`Base.Method(arguments)` is a base-qualified call when the type qualifier
-resolves to the current file class's direct base and overload resolution
-selects a public instance function. Lookup uses the direct base as its static
-view, including inherited declarations when that base does not declare the
-name. The current `self` is the receiver. Static contexts, base-constructor
-initializers, and qualification through a transitive ancestor are rejected.
-The selected symbol is retained, but the call is marked for direct dispatch.
+`super.Method(arguments)` is a base-qualified call when overload resolution
+selects a public instance function through the current file class's direct-base
+view. Lookup includes inherited declarations when the direct base does not
+declare the name. The current `self` is the receiver. Root classes, static
+contexts, base-constructor initializers, fields, static functions, and using
+`super` as a value are rejected. Named type-qualified instance calls remain
+invalid. The selected symbol is retained, but the call is marked for direct
+dispatch.
 
 The checker currently validates:
 

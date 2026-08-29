@@ -101,7 +101,7 @@ void single_identifier(TestContext& test) {
 void keywords_versus_identifiers(TestContext& test) {
   const LexedSource source{
       "func function integer intValue functionName return final finalize "
-      "static statically override overridden"};
+      "static statically override overridden super superior"};
   expect_kinds(test, source,
                {cloth::TokenKind::kKwFunc, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
@@ -109,6 +109,7 @@ void keywords_versus_identifiers(TestContext& test) {
                 cloth::TokenKind::kKwFinal, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kKwStatic, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kKwOverride, cloth::TokenKind::kIdentifier,
+                cloth::TokenKind::kKwSuper, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kEof});
 }
 

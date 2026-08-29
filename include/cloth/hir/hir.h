@@ -50,6 +50,8 @@ struct HirTypeExpression {
   TypeId type;
 };
 
+struct HirSuperExpression {};
+
 struct HirUnaryExpression {
   TokenKind operation;
   HirExpressionId operand;
@@ -140,12 +142,12 @@ struct HirGroupedExpression {
 
 using HirExpressionData = std::variant<
     HirInvalidExpression, HirLiteralExpression, HirSymbolExpression,
-    HirTypeExpression, HirUnaryExpression, HirBinaryExpression,
-    HirTypeTestExpression, HirCheckedCastExpression, HirAssignmentExpression,
-    HirMemberExpression, HirSafeMemberExpression, HirNullCoalesceExpression,
-    HirNullAssertExpression, HirCallExpression, HirArrayLiteralExpression,
-    HirIndexExpression, HirArrayLengthExpression, HirStringMetaExpression,
-    HirObjectMetaExpression, HirGroupedExpression>;
+    HirTypeExpression, HirSuperExpression, HirUnaryExpression,
+    HirBinaryExpression, HirTypeTestExpression, HirCheckedCastExpression,
+    HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
+    HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
+    HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
+    HirStringMetaExpression, HirObjectMetaExpression, HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;

@@ -279,7 +279,7 @@ void base_qualified_call(TestContext& test) {
   sources.add("Derived.co",
               "class : Base {\n"
               "  override func Value(): int32 {\n"
-              "    return Base.Value() + 1;\n"
+              "    return super.Value() + 1;\n"
               "  }\n"
               "}\n");
   sources.compile();

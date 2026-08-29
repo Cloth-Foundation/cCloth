@@ -477,7 +477,8 @@ class BodyBuilder {
             std::get_if<HirSymbolExpression>(&expression.data)) {
       return lower_symbol(*symbol, expression);
     }
-    if (std::holds_alternative<HirTypeExpression>(expression.data)) {
+    if (std::holds_alternative<HirTypeExpression>(expression.data) ||
+        std::holds_alternative<HirSuperExpression>(expression.data)) {
       return invalid_value(expression.range);
     }
     if (const auto* unary = std::get_if<HirUnaryExpression>(&expression.data)) {

@@ -1088,7 +1088,7 @@ void base_qualified_call_lowering(TestContext& test) {
   compilation.add("Derived.co",
                   "class : Base {\n"
                   "  override func Value(): int32 {\n"
-                  "    return Base.Value() + 1;\n"
+                  "    return super.Value() + 1;\n"
                   "  }\n"
                   "}\n");
   compilation.compile();
