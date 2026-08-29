@@ -42,7 +42,6 @@ constexpr std::array kKeywords{
     Keyword{"import", TokenKind::kKwImport},
     Keyword{"is", TokenKind::kKwIs},
     Keyword{"as", TokenKind::kKwAs},
-    Keyword{"module", TokenKind::kKwModule},
     Keyword{"match", TokenKind::kKwMatch},
     Keyword{"int", TokenKind::kKwInt},
     Keyword{"int8", TokenKind::kKwInt8},

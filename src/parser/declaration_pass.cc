@@ -77,13 +77,6 @@ DeclarationPassResult DeclarationPass::run() {
     } else if (current().kind == TokenKind::kKwClass && !saw_member &&
                !has_explicit_class_declaration_) {
       parse_file_class_declaration();
-    } else if (current().kind == TokenKind::kKwModule) {
-      diagnostics_.error(
-          current().range,
-          "module declarations are unnecessary; the source path defines the "
-          "package");
-      is_valid_ = false;
-      synchronize_member();
     } else if (current().kind == TokenKind::kKwFunc ||
                current().kind == TokenKind::kKwOverride ||
                (current().kind == TokenKind::kKwStatic &&

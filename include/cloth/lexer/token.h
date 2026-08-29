@@ -94,7 +94,6 @@ enum class TokenKind {
   kKwImport,
   kKwIs,
   kKwAs,
-  kKwModule,
   kKwMatch,
   kKwInt,
   kKwInt8,
