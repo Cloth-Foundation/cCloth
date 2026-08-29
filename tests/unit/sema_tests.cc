@@ -1622,6 +1622,101 @@ void structured_loop_semantics(TestContext& test) {
               "continue outside a loop was accepted");
 }
 
+void classical_for_and_update_semantics(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Updates.co",
+            "func Run() {\n"
+            "  int32 total = 0;\n"
+            "  for (int32 i = 0; i < 4; i++) { total += i; }\n"
+            "  for (total = 3; total > 0; --total) {}\n"
+            "  for (;;) { break; }\n"
+            "  float64 ratio = 1.0;\n"
+            "  ++ratio; ratio--;\n"
+            "  string text = \"a\"; text += \"b\";\n"
+            "  int32[] values = [1]; values[0]++;\n"
+            "}\n");
+  valid.analyze();
+  test.expect(valid.error_count() == 0,
+              "valid classical loops or updates produced semantic errors");
+
+  bool found_loop = false;
+  bool found_compound = false;
+  bool found_prefix = false;
+  bool found_postfix = false;
+  for (const cloth::HirStatement& statement :
+       valid.result->hir.storage.statements()) {
+    found_loop = found_loop ||
+                 std::holds_alternative<cloth::HirForStatement>(statement.data);
+  }
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    if (const auto* assignment =
+            std::get_if<cloth::HirAssignmentExpression>(&expression.data)) {
+      found_compound = found_compound ||
+                       assignment->operation == cloth::TokenKind::kPlusEqual;
+    }
+    if (const auto* update =
+            std::get_if<cloth::HirUpdateExpression>(&expression.data)) {
+      found_prefix = found_prefix || !update->is_postfix;
+      found_postfix = found_postfix || update->is_postfix;
+    }
+  }
+  test.expect(found_loop, "typed HIR has no classical for statement");
+  test.expect(found_compound,
+              "typed HIR lost the compound assignment operation");
+  test.expect(found_prefix && found_postfix,
+              "typed HIR lost prefix or postfix update identity");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadUpdates.co",
+              "func Bad() {\n"
+              "  final int32 fixed = 1; fixed++;\n"
+              "  string text = \"a\"; --text;\n"
+              "  int32 value = 0; ++(value + 1);\n"
+              "  bool flag = true; flag += true;\n"
+              "  value &= 1;\n"
+              "  for (int32 i = 0; i; i++) {}\n"
+              "  for (int32 scoped = 0; scoped < 1; scoped++) {}\n"
+              "  int32 escaped = scoped;\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic("cannot update final local 'fixed'"),
+              "a final binding accepted an update");
+  test.expect(invalid.has_diagnostic(
+                  "operator 'minus_minus' cannot be applied to 'string'"),
+              "a non-numeric binding accepted an update");
+  test.expect(invalid.has_diagnostic("update target is not mutable"),
+              "a computed value was accepted as an update target");
+  test.expect(invalid.has_diagnostic("operator 'plus_equal' cannot be applied"),
+              "an invalid arithmetic compound assignment was accepted");
+  test.expect(
+      invalid.has_diagnostic("operator 'ampersand_equal' cannot be applied"),
+      "an unsupported bitwise compound assignment was accepted");
+  test.expect(
+      invalid.has_diagnostic("for condition has type 'int32'; expected 'bool'"),
+      "a non-boolean classical for condition was accepted");
+  test.expect(invalid.has_diagnostic("unknown name 'scoped'"),
+              "a for initializer binding escaped its loop scope");
+
+  AnalyzedCompilation return_flow;
+  return_flow.add("Forever.co",
+                  "func Forever(): int32 { for (;;) { continue; } }\n"
+                  "func Maybe(int32 value): int32 {\n"
+                  "  for (; value > 0; value--) {}\n"
+                  "}\n");
+  return_flow.analyze();
+  std::size_t incomplete_returns = 0;
+  for (const cloth::Diagnostic& diagnostic :
+       return_flow.diagnostics.diagnostics()) {
+    if (diagnostic.message.find("does not return a value on every path") !=
+        std::string::npos) {
+      ++incomplete_returns;
+    }
+  }
+  test.expect(incomplete_returns == 1,
+              "classical for return-flow analysis is incorrect");
+}
+
 void complete_return_paths(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Returns.co",
@@ -2065,7 +2160,7 @@ void for_iteration_semantics(TestContext& test) {
   bool found_for = false;
   for (const cloth::HirStatement& statement :
        valid.result->hir.storage.statements()) {
-    const auto* loop = std::get_if<cloth::HirForStatement>(&statement.data);
+    const auto* loop = std::get_if<cloth::HirForEachStatement>(&statement.data);
     if (loop != nullptr && loop->variable) {
       found_for = true;
       test.expect(valid.result->semantics.symbol(*loop->variable).type ==
@@ -2124,7 +2219,7 @@ void for_binding_scope_and_types(TestContext& test) {
       *valid.result->semantics.find_type("string");
   for (const cloth::HirStatement& statement :
        valid.result->hir.storage.statements()) {
-    const auto* loop = std::get_if<cloth::HirForStatement>(&statement.data);
+    const auto* loop = std::get_if<cloth::HirForEachStatement>(&statement.data);
     if (loop != nullptr && loop->variable &&
         valid.result->semantics.symbol(*loop->variable).type == string_type) {
       ++string_bindings;
@@ -2459,6 +2554,8 @@ int main() {
       {"constructor binding", constructor_binding},
       {"lexical scopes", lexical_scopes},
       {"structured loop semantics", structured_loop_semantics},
+      {"classical for and update semantics",
+       classical_for_and_update_semantics},
       {"complete return paths", complete_return_paths},
       {"case collision", case_collision},
       {"null assignability", null_assignability},

@@ -81,7 +81,9 @@ imports, functions and constructors, structured control flow, arrays, strings,
 explicit nullability, managed objects, single inheritance, abstract and sealed
 types, interfaces, overriding, class and interface dispatch, covariant
 managed-reference returns, capitalization-based constructor visibility, and
-`super` calls.
+`super` calls. Structured control flow includes array iteration and classical
+`for` loops, with arithmetic compound assignment and prefix/postfix numeric
+updates.
 
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++

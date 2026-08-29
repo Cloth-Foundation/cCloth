@@ -1,7 +1,7 @@
 # Cloth deferred-work ledger
 
 This file is the central inventory of work deliberately left out through Stage
-18. Feature documents remain authoritative for existing behavior; this
+19. Feature documents remain authoritative for existing behavior; this
 ledger records accepted gaps and their prerequisites. An unchecked item has no
 implied schedule or stage number.
 
@@ -73,8 +73,14 @@ than a general aspiration.
 
 ## Expressions and control flow
 
-- [ ] Implement compound assignment, increment/decrement, bitwise binary
-  operators, and shifts. The lexer already recognizes the relevant tokens.
+- [x] Add arithmetic compound assignment, numeric prefix/postfix
+  increment/decrement, and classical `for` loops. Stage 19 preserves exact
+  operand types, evaluates update locations once, and routes `continue` through
+  the classical loop's update block.
+- [ ] Implement bitwise binary operators, shifts, and their compound assignment
+  forms. The lexer and assignment parser reserve the relevant tokens, but
+  semantic analysis rejects them until their type and overflow contracts are
+  defined.
 - [ ] Design recoverable exceptions, including source syntax, control-flow
   semantics, unwinding, runtime representation, and a stable exception ABI.
 

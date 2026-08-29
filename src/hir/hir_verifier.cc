@@ -55,6 +55,9 @@ class HirVerifier {
       } else if (const auto* unary =
                      std::get_if<HirUnaryExpression>(&expression.data)) {
         verify_expression(unary->operand, expression.range);
+      } else if (const auto* update =
+                     std::get_if<HirUpdateExpression>(&expression.data)) {
+        verify_expression(update->operand, expression.range);
       } else if (const auto* binary =
                      std::get_if<HirBinaryExpression>(&expression.data)) {
         verify_expression(binary->left, expression.range);
@@ -192,9 +195,32 @@ class HirVerifier {
         verify_expression(while_statement->condition, statement.range);
         verify_block(while_statement->body, statement.range);
       } else if (const auto* for_statement =
-                     std::get_if<HirForStatement>(&statement.data)) {
+                     std::get_if<HirForEachStatement>(&statement.data)) {
         verify_optional_symbol(for_statement->variable, statement.range);
         verify_expression(for_statement->iterable, statement.range);
+        verify_block(for_statement->body, statement.range);
+      } else if (const auto* for_statement =
+                     std::get_if<HirForStatement>(&statement.data)) {
+        if (for_statement->initializer &&
+            for_statement->initializer->value >=
+                hir_.storage.statements().size()) {
+          report(statement.range,
+                 "for initializer references an unknown statement");
+        } else if (for_statement->initializer) {
+          const HirStatementData& initializer =
+              hir_.storage.statement(*for_statement->initializer).data;
+          if (!std::holds_alternative<HirLocalStatement>(initializer) &&
+              !std::holds_alternative<HirExpressionStatement>(initializer)) {
+            report(statement.range,
+                   "for initializer is not a local or expression statement");
+          }
+        }
+        if (for_statement->condition) {
+          verify_expression(*for_statement->condition, statement.range);
+        }
+        for (const HirExpressionId update : for_statement->updates) {
+          verify_expression(update, statement.range);
+        }
         verify_block(for_statement->body, statement.range);
       } else if (const auto* nested =
                      std::get_if<HirNestedBlockStatement>(&statement.data)) {

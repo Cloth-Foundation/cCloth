@@ -351,6 +351,28 @@ local copy scoped to the body, so reassigning it does not write the array.
 `continue` advances the hidden index before rechecking the loop condition.
 Future iteration protocols must preserve this source contract.
 
+Classical `for` loops use initializer, condition, and update clauses:
+
+```cloth
+for (int32 index = 0; index < values::length; index++) { ... }
+for (; ready; attempts++, elapsed += step) { ... }
+for (;;) { ... }
+```
+
+The initializer is either one local declaration or one expression. Its scope
+contains the condition, updates, and body, but ends with the loop. The condition
+is optional and otherwise must be `bool`; omission means `true`. Update
+expressions run from left to right after body fallthrough or `continue`.
+Comma-separated updates are local to this header syntax and do not introduce a
+general comma operator. `break` skips the updates and exits the loop.
+
+`+=`, `-=`, `*=`, `/=`, and `%=` require a mutable target and preserve its
+exact type. Numeric operands must have the same type; `%=` is integer-only, and
+`string += string` appends strings. Prefix and postfix `++`/`--` accept mutable
+numeric locations. Prefix yields the stored result, while postfix yields the
+previous value. Member receivers and array/index operands are captured once for
+every compound assignment or update. A `final` binding cannot use either form.
+
 ## Arrays
 
 `T[]` is a homogeneous, fixed-length non-null reference collection with mutable

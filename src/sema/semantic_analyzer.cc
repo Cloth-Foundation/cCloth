@@ -1531,7 +1531,7 @@ class SemanticAnalyzer {
       return false;
     }
     if (const auto* for_statement =
-            std::get_if<ForStatement>(&statement.data)) {
+            std::get_if<ForEachStatement>(&statement.data)) {
       const ExpressionState iterable =
           analyze_expression(for_statement->iterable);
       check_value(iterable, expression_range(for_statement->iterable));
@@ -1583,6 +1583,37 @@ class SemanticAnalyzer {
       }
       return false;
     }
+    if (const auto* for_statement =
+            std::get_if<ForStatement>(&statement.data)) {
+      push_scope();
+      if (for_statement->initializer) {
+        static_cast<void>(analyze_statement(*for_statement->initializer));
+      }
+
+      ConditionFacts facts;
+      if (for_statement->condition) {
+        const ExpressionState condition =
+            analyze_expression(*for_statement->condition);
+        check_condition(condition, *for_statement->condition, "for condition");
+        facts = condition_facts(*for_statement->condition);
+      }
+      const NonNullSet loop_base = active_non_null_;
+      add_non_null_facts(facts.when_true);
+
+      ++loop_depth_;
+      const bool body_returns = analyze_block(for_statement->body, true);
+      --loop_depth_;
+      for (const ExpressionId update : for_statement->updates) {
+        static_cast<void>(analyze_expression(update));
+      }
+      pop_scope();
+      if (body_returns) {
+        active_non_null_ = loop_base;
+      } else {
+        active_non_null_ = intersect_symbols(loop_base, active_non_null_);
+      }
+      return false;
+    }
     if (std::holds_alternative<BreakStatement>(statement.data)) {
       if (loop_depth_ == 0) {
         diagnostics_.error(statement.range,
@@ -1620,6 +1651,9 @@ class SemanticAnalyzer {
     } else if (const auto* unary =
                    std::get_if<UnaryExpression>(&expression.data)) {
       state = analyze_unary(*unary, expression.range);
+    } else if (const auto* update =
+                   std::get_if<UpdateExpression>(&expression.data)) {
+      state = analyze_update(*update, expression.range);
     } else if (const auto* binary =
                    std::get_if<BinaryExpression>(&expression.data)) {
       state = analyze_binary(*binary, expression.range);
@@ -1904,6 +1938,44 @@ class SemanticAnalyzer {
     return ExpressionState{model_.error_type()};
   }
 
+  ExpressionState analyze_update(const UpdateExpression& update,
+                                 SourceRange range) {
+    ExpressionState operand = analyze_expression(update.operand);
+    if (operand.symbol && operand.category == ValueCategory::kMutableLocation) {
+      const SemanticSymbol& symbol = model_.symbol(*operand.symbol);
+      if (symbol.kind == SymbolKind::kLocal ||
+          symbol.kind == SymbolKind::kParameter) {
+        operand.type = symbol.type;
+        restore_assignment_target_type(update.operand, symbol.type);
+      }
+    }
+    if (operand.type != model_.error_type() &&
+        operand.category != ValueCategory::kMutableLocation) {
+      diagnostics_.error(expression_range(update.operand),
+                         "update target is not mutable");
+    }
+    if (operand.symbol && model_.symbol(*operand.symbol).is_final) {
+      const SemanticSymbol& symbol = model_.symbol(*operand.symbol);
+      diagnostics_.error(expression_range(update.operand),
+                         "cannot update final " +
+                             std::string{symbol_kind_name(symbol.kind)} + " '" +
+                             symbol.name + "'");
+    }
+    if (!check_value(operand, expression_range(update.operand)) ||
+        operand.type == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+    if (!is_numeric(operand.type)) {
+      report_operator_type(update.operation, range, operand.type);
+      return ExpressionState{model_.error_type()};
+    }
+    if (operand.symbol) {
+      invalidate_narrowing(*operand.symbol);
+    }
+    return ExpressionState{
+        operand.type, ValueCategory::kValue, operand.symbol, {}};
+  }
+
   ExpressionState analyze_binary(const BinaryExpression& binary,
                                  SourceRange range) {
     const ExpressionState left = analyze_expression(binary.left);
@@ -2110,21 +2182,57 @@ class SemanticAnalyzer {
                          "assignment target is not mutable");
     }
     if (target.symbol && model_.symbol(*target.symbol).is_final &&
-        !can_initialize_final_field(assignment.target, *target.symbol)) {
+        (assignment.operation != TokenKind::kEqual ||
+         !can_initialize_final_field(assignment.target, *target.symbol))) {
       const SemanticSymbol& symbol = model_.symbol(*target.symbol);
-      diagnostics_.error(expression_range(assignment.target),
-                         "cannot assign to final " +
-                             std::string{symbol_kind_name(symbol.kind)} + " '" +
-                             symbol.name + "'");
+      diagnostics_.error(
+          expression_range(assignment.target),
+          (assignment.operation == TokenKind::kEqual ? "cannot assign to final "
+                                                     : "cannot update final ") +
+              std::string{symbol_kind_name(symbol.kind)} + " '" + symbol.name +
+              "'");
+    }
+    if (assignment.operation != TokenKind::kEqual) {
+      check_value(target, expression_range(assignment.target));
     }
     check_value(value, expression_range(assignment.value));
-    check_assignment(target.type, value.type, range, "assignment");
     if (target.symbol) {
       invalidate_narrowing(*target.symbol);
     }
     if (target.type == model_.error_type() ||
         value.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
+    }
+
+    if (assignment.operation == TokenKind::kEqual) {
+      check_assignment(target.type, value.type, range, "assignment");
+    } else {
+      bool is_valid = false;
+      switch (assignment.operation) {
+        case TokenKind::kPlusEqual:
+          is_valid = (target.type == model_.string_type() &&
+                      value.type == model_.string_type()) ||
+                     (target.type == value.type && is_numeric(target.type));
+          break;
+        case TokenKind::kMinusEqual:
+        case TokenKind::kStarEqual:
+        case TokenKind::kSlashEqual:
+          is_valid = target.type == value.type && is_numeric(target.type);
+          break;
+        case TokenKind::kPercentEqual:
+          is_valid = target.type == value.type && is_integer(target.type);
+          break;
+        default:
+          break;
+      }
+      if (!is_valid) {
+        diagnostics_.error(
+            range, "operator '" +
+                       std::string{token_kind_name(assignment.operation)} +
+                       "' cannot be applied to '" + type_name(target.type) +
+                       "' and '" + type_name(value.type) + "'");
+        return ExpressionState{model_.error_type()};
+      }
     }
     return ExpressionState{
         target.type, ValueCategory::kValue, target.symbol, {}};
@@ -2282,6 +2390,10 @@ class SemanticAnalyzer {
         files_[current_file_.value]->storage.expression(id);
     if (const auto* unary = std::get_if<UnaryExpression>(&expression.data)) {
       return expression_assigns_symbol(unary->operand, symbol);
+    }
+    if (const auto* update = std::get_if<UpdateExpression>(&expression.data)) {
+      return narrowable_symbol(update->operand) == symbol ||
+             expression_assigns_symbol(update->operand, symbol);
     }
     if (const auto* binary = std::get_if<BinaryExpression>(&expression.data)) {
       return expression_assigns_symbol(binary->left, symbol) ||

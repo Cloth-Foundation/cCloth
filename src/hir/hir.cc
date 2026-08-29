@@ -149,6 +149,10 @@ class Lowerer {
                                 semantics_.file(current_file_)
                                     .expressions.at(unary->operand.value)
                                     .is_presence_test};
+    } else if (const auto* update =
+                   std::get_if<UpdateExpression>(&syntax.data)) {
+      data = HirUpdateExpression{update->operation, expression(update->operand),
+                                 update->is_postfix};
     } else if (const auto* binary =
                    std::get_if<BinaryExpression>(&syntax.data)) {
       const FileSemantics& file = semantics_.file(current_file_);
@@ -172,6 +176,7 @@ class Lowerer {
     } else if (const auto* assignment =
                    std::get_if<AssignmentExpression>(&syntax.data)) {
       data = HirAssignmentExpression{expression(assignment->target),
+                                     assignment->operation,
                                      expression(assignment->value)};
     } else if (const auto* member =
                    std::get_if<MemberAccessExpression>(&syntax.data)) {
@@ -282,10 +287,29 @@ class Lowerer {
               .expressions.at(while_statement->condition.value)
               .is_presence_test};
     } else if (const auto* for_statement =
-                   std::get_if<ForStatement>(&syntax.data)) {
-      data = HirForStatement{
+                   std::get_if<ForEachStatement>(&syntax.data)) {
+      data = HirForEachStatement{
           semantics_.file(current_file_).statement_symbols.at(id.value),
           expression(for_statement->iterable), block(for_statement->body)};
+    } else if (const auto* for_statement =
+                   std::get_if<ForStatement>(&syntax.data)) {
+      std::vector<HirExpressionId> updates;
+      updates.reserve(for_statement->updates.size());
+      for (const ExpressionId update : for_statement->updates) {
+        updates.push_back(expression(update));
+      }
+      data = HirForStatement{
+          for_statement->initializer ? std::optional<HirStatementId>{statement(
+                                           *for_statement->initializer)}
+                                     : std::nullopt,
+          for_statement->condition ? std::optional<HirExpressionId>{expression(
+                                         *for_statement->condition)}
+                                   : std::nullopt,
+          std::move(updates), block(for_statement->body),
+          for_statement->condition &&
+              semantics_.file(current_file_)
+                  .expressions.at(for_statement->condition->value)
+                  .is_presence_test};
     } else if (std::holds_alternative<BreakStatement>(syntax.data)) {
       data = HirBreakStatement{};
     } else if (std::holds_alternative<ContinueStatement>(syntax.data)) {

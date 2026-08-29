@@ -55,6 +55,13 @@ which increments an `int32` phi index before returning to the condition.
 `break` targets the exit directly. This shape prevents `continue` from skipping
 the hidden increment.
 
+A classical `for` loop lowers its initializer in the preheader, followed by
+condition, body, update, and exit blocks. An omitted condition jumps directly
+to the body. Body fallthrough and `continue` target the update block; `break`
+targets the exit. Updates execute from left to right before returning to the
+condition. A conditionless loop cannot fall through unless it has a reachable
+`break`.
+
 ## MIR structure
 
 Every callable and field initializer owns a `MirBody`. IDs for basic blocks and
@@ -89,7 +96,11 @@ nullable result type and its non-null runtime target.
 
 Evaluation is left-to-right. Array element operands are evaluated before the
 array instruction, and indexed assignment evaluates the array and index before
-the assigned value. Structured loops use the same explicit jump and branch
+the assigned value. Compound assignment and increment/decrement lower through
+one captured location: member receivers and array/index operands are evaluated
+once, followed by an explicit load, operation, and store. Postfix updates retain
+the loaded value as their result; prefix updates return the stored value.
+Structured loops use the same explicit jump and branch
 terminators as other control flow. Instance-qualified calls carry an explicit
 receiver; file-class-qualified calls do not. Nullable widening and proof-backed
 narrowing are explicit MIR conversions; both erase at the ABI boundary. `&&`

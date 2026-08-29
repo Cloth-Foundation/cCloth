@@ -172,6 +172,12 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/ForContract.co
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/for_contract.txt
     )
+    cloth_add_native_output_test(for_updates
+        OUTPUT "cloth for updates"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/ForUpdates.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/for_updates.txt
+        EXACT
+    )
 endif()
 
 cloth_add_cli_failure_test(lexical_error

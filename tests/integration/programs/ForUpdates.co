@@ -1,0 +1,58 @@
+int32 calls;
+int32 amount;
+
+ForUpdates() {
+  calls = 0;
+  amount = 10;
+}
+
+func target(): ForUpdates {
+  calls += 1;
+  return self;
+}
+
+static func Main() {
+  int32 total = 0;
+  for (int32 i = 0; i < 6; i++) {
+    if (i == 2) {
+      continue;
+    }
+    total += i;
+  }
+  println(total);
+
+  int32 value = 3;
+  println(++value);
+  println(value++);
+  println(value);
+
+  int32 index = 0;
+  int32[] values = [5, 9];
+  values[index++] += 2;
+  println(index);
+  println(values[0]);
+
+  int32 left = 0;
+  int32 right = 0;
+  for (; left < 3; left++, ++right) {}
+  println(left);
+  println(right);
+
+  int32 stop = 0;
+  for (;;) {
+    stop++;
+    if (stop == 2) {
+      break;
+    }
+  }
+  println(stop);
+
+  string text = "Cl";
+  text += "oth";
+  println(text);
+
+  ForUpdates tracker = ForUpdates();
+  tracker.target().amount += 2;
+  println(tracker.calls);
+  println(tracker.amount);
+}

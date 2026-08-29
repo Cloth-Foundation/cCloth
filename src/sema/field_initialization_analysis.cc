@@ -170,13 +170,15 @@ class FieldInitializationAnalyzer {
           file_.storage.expression(expression_statement->expression);
       if (const auto* assignment =
               std::get_if<AssignmentExpression>(&expression.data)) {
-        if (const std::optional<std::size_t> field =
-                tracked_field_index(assignment->target)) {
-          analyze_expression(assignment->target, flow.assignments, true);
-          analyze_expression(assignment->value, flow.assignments, false);
-          assign_field(*field, expression_range(assignment->target),
-                       flow.assignments, inside_loop);
-          return flow;
+        if (assignment->operation == TokenKind::kEqual) {
+          if (const std::optional<std::size_t> field =
+                  tracked_field_index(assignment->target)) {
+            analyze_expression(assignment->target, flow.assignments, true);
+            analyze_expression(assignment->value, flow.assignments, false);
+            assign_field(*field, expression_range(assignment->target),
+                         flow.assignments, inside_loop);
+            return flow;
+          }
         }
       }
       analyze_expression(expression_statement->expression, flow.assignments,
@@ -200,8 +202,32 @@ class FieldInitializationAnalyzer {
       return flow;
     }
     if (const auto* for_statement =
-            std::get_if<ForStatement>(&statement.data)) {
+            std::get_if<ForEachStatement>(&statement.data)) {
       analyze_expression(for_statement->iterable, flow.assignments, false);
+      static_cast<void>(analyze_block(for_statement->body, flow, true));
+      return flow;
+    }
+    if (const auto* for_statement =
+            std::get_if<ForStatement>(&statement.data)) {
+      if (for_statement->initializer) {
+        const Statement& initializer =
+            file_.storage.statement(*for_statement->initializer);
+        if (const auto* local =
+                std::get_if<LocalVariableStatement>(&initializer.data)) {
+          if (local->initializer) {
+            analyze_expression(*local->initializer, flow.assignments, false);
+          }
+        } else if (const auto* expression =
+                       std::get_if<ExpressionStatement>(&initializer.data)) {
+          analyze_expression(expression->expression, flow.assignments, false);
+        }
+      }
+      if (for_statement->condition) {
+        analyze_expression(*for_statement->condition, flow.assignments, false);
+      }
+      for (const ExpressionId update : for_statement->updates) {
+        analyze_expression(update, flow.assignments, false);
+      }
       static_cast<void>(analyze_block(for_statement->body, flow, true));
       return flow;
     }
@@ -253,6 +279,10 @@ class FieldInitializationAnalyzer {
       analyze_expression(unary->operand, assignments, false);
       return;
     }
+    if (const auto* update = std::get_if<UpdateExpression>(&expression.data)) {
+      analyze_expression(update->operand, assignments, false);
+      return;
+    }
     if (const auto* binary = std::get_if<BinaryExpression>(&expression.data)) {
       analyze_expression(binary->left, assignments, false);
       analyze_expression(binary->right, assignments, false);
@@ -269,7 +299,8 @@ class FieldInitializationAnalyzer {
     }
     if (const auto* assignment =
             std::get_if<AssignmentExpression>(&expression.data)) {
-      analyze_expression(assignment->target, assignments, true);
+      analyze_expression(assignment->target, assignments,
+                         assignment->operation == TokenKind::kEqual);
       analyze_expression(assignment->value, assignments, false);
       if (const std::optional<std::size_t> field =
               tracked_field_index(assignment->target)) {

@@ -49,7 +49,7 @@ ExpressionId ExpressionParser::parse_expression(int minimum_precedence) {
     const ExpressionId right = parse_expression(next_precedence);
     const SourceRange range =
         join_ranges(expression_range(left), expression_range(right));
-    if (operation == TokenKind::kEqual) {
+    if (is_assignment_operator(operation)) {
       left = storage_.add_expression(
           Expression{range, AssignmentExpression{left, operation, right}});
     } else if (operation == TokenKind::kQuestionQuestion) {
@@ -89,6 +89,13 @@ bool ExpressionParser::match(TokenKind kind) noexcept {
 
 ExpressionId ExpressionParser::parse_unary_expression() {
   const TokenKind kind = current().kind;
+  if (kind == TokenKind::kPlusPlus || kind == TokenKind::kMinusMinus) {
+    const Token& operation = advance();
+    const ExpressionId operand = parse_unary_expression();
+    return storage_.add_expression(Expression{
+        SourceRange{operation.range.begin, expression_range(operand).end},
+        UpdateExpression{operation.kind, operand, false}});
+  }
   if (kind == TokenKind::kBang || kind == TokenKind::kMinus ||
       kind == TokenKind::kPlus || kind == TokenKind::kTilde) {
     const Token& operation = advance();
@@ -155,6 +162,15 @@ ExpressionId ExpressionParser::parse_postfix_expression() {
       expression = storage_.add_expression(
           Expression{range, NullAssertExpression{expression}});
       continue;
+    }
+    if (current().kind == TokenKind::kPlusPlus ||
+        current().kind == TokenKind::kMinusMinus) {
+      const Token& operation = advance();
+      const SourceRange range{expression_range(expression).begin,
+                              operation.range.end};
+      expression = storage_.add_expression(Expression{
+          range, UpdateExpression{operation.kind, expression, true}});
+      break;
     }
     break;
   }
@@ -367,6 +383,16 @@ ExpressionId ExpressionParser::make_invalid_expression(SourceRange range) {
 int ExpressionParser::binary_precedence(TokenKind kind) noexcept {
   switch (kind) {
     case TokenKind::kEqual:
+    case TokenKind::kPlusEqual:
+    case TokenKind::kMinusEqual:
+    case TokenKind::kStarEqual:
+    case TokenKind::kSlashEqual:
+    case TokenKind::kPercentEqual:
+    case TokenKind::kShiftLeftEqual:
+    case TokenKind::kShiftRightEqual:
+    case TokenKind::kAmpersandEqual:
+    case TokenKind::kPipeEqual:
+    case TokenKind::kCaretEqual:
       return 1;
     case TokenKind::kQuestionQuestion:
       return 2;
@@ -396,8 +422,27 @@ int ExpressionParser::binary_precedence(TokenKind kind) noexcept {
   }
 }
 
+bool ExpressionParser::is_assignment_operator(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::kEqual:
+    case TokenKind::kPlusEqual:
+    case TokenKind::kMinusEqual:
+    case TokenKind::kStarEqual:
+    case TokenKind::kSlashEqual:
+    case TokenKind::kPercentEqual:
+    case TokenKind::kShiftLeftEqual:
+    case TokenKind::kShiftRightEqual:
+    case TokenKind::kAmpersandEqual:
+    case TokenKind::kPipeEqual:
+    case TokenKind::kCaretEqual:
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool ExpressionParser::is_right_associative(TokenKind kind) noexcept {
-  return kind == TokenKind::kEqual || kind == TokenKind::kQuestionQuestion;
+  return is_assignment_operator(kind) || kind == TokenKind::kQuestionQuestion;
 }
 
 SourceRange ExpressionParser::expression_range(ExpressionId id) const {

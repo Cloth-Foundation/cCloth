@@ -635,6 +635,73 @@ void for_terminating_body_reachability(TestContext& test) {
               "unconditional return left the latch reachable");
 }
 
+void classical_for_and_update_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Updates.co",
+                  "func Sum(): int32 {\n"
+                  "  int32 total = 0;\n"
+                  "  int32 index = 0;\n"
+                  "  int32[] values = [5, 9];\n"
+                  "  values[index++] += 2;\n"
+                  "  for (int32 i = 0; i < 4; i++) {\n"
+                  "    if (i == 1) { continue; }\n"
+                  "    total += i;\n"
+                  "  }\n"
+                  "  return total + values[0] + index;\n"
+                  "}\n");
+  compilation.compile();
+  test.expect(compilation.result->is_valid,
+              "classical for or update lowering failed verification");
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  const cloth::SemanticModel& semantics = compilation.result->semantics;
+
+  std::size_t index_stores = 0;
+  std::size_t array_loads = 0;
+  std::size_t array_stores = 0;
+  std::optional<cloth::MirBlockId> update_block;
+  for (std::size_t block_index = 0; block_index < body.blocks.size();
+       ++block_index) {
+    for (const cloth::MirInstruction& instruction :
+         body.blocks[block_index].instructions) {
+      if (const auto* store = std::get_if<cloth::MirStoreSymbolInstruction>(
+              &instruction.data)) {
+        const std::string& name = semantics.symbol(store->symbol).name;
+        index_stores += name == "index" ? 1U : 0U;
+        if (name == "i") {
+          update_block = cloth::MirBlockId{block_index};
+        }
+      }
+      array_loads += std::holds_alternative<cloth::MirArrayLoadInstruction>(
+                         instruction.data)
+                         ? 1U
+                         : 0U;
+      array_stores += std::holds_alternative<cloth::MirArrayStoreInstruction>(
+                          instruction.data)
+                          ? 1U
+                          : 0U;
+    }
+  }
+  test.expect(index_stores == 1,
+              "an indexed compound target was evaluated more than once");
+  test.expect(array_loads >= 2 && array_stores == 1,
+              "array compound assignment did not load and store its element");
+  test.expect(update_block.has_value(),
+              "classical for update block was not lowered");
+  if (!update_block) {
+    return;
+  }
+
+  std::size_t update_edges = 0;
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    const auto* jump =
+        std::get_if<cloth::MirJumpTerminator>(&block.terminator.data);
+    update_edges += jump != nullptr && jump->target == *update_block ? 1U : 0U;
+  }
+  test.expect(update_edges >= 2,
+              "continue or body fallthrough bypasses the for update clause");
+}
+
 void nullable_conversion(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co", "");
@@ -1254,9 +1321,9 @@ void verifiers_reject_corruption(TestContext& test) {
       compilation.result->semantics.void_type(), range,
       cloth::HirLiteralExpression{cloth::LiteralKind::kInteger, "1"}}));
   static_cast<void>(broken_hir.storage.add_statement(cloth::HirStatement{
-      range,
-      cloth::HirForStatement{cloth::SymbolId{999}, cloth::HirExpressionId{999},
-                             cloth::HirBlockId{999}}}));
+      range, cloth::HirForEachStatement{cloth::SymbolId{999},
+                                        cloth::HirExpressionId{999},
+                                        cloth::HirBlockId{999}}}));
   cloth::DiagnosticEngine hir_diagnostics;
   test.expect(!cloth::verify_hir(broken_hir, compilation.result->semantics,
                                  hir_diagnostics),
@@ -1289,6 +1356,7 @@ int main() {
       {"object model instructions", object_model_instructions},
       {"for iteration control flow", for_iteration_control_flow},
       {"for terminating body reachability", for_terminating_body_reachability},
+      {"classical for and update lowering", classical_for_and_update_lowering},
       {"nullable conversion", nullable_conversion},
       {"nullable narrowing conversion", nullable_narrowing_conversion},
       {"null ergonomics lowering", null_ergonomics_lowering},

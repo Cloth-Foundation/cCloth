@@ -69,6 +69,12 @@ struct UnaryExpression {
   ExpressionId operand;
 };
 
+struct UpdateExpression {
+  TokenKind operation;
+  ExpressionId operand;
+  bool is_postfix{false};
+};
+
 struct BinaryExpression {
   ExpressionId left;
   TokenKind operation;
@@ -135,7 +141,7 @@ struct ParenthesizedExpression {
 
 using ExpressionData = std::variant<
     InvalidExpression, IdentifierExpression, LiteralExpression, SuperExpression,
-    UnaryExpression, BinaryExpression, TypeTestExpression,
+    UnaryExpression, UpdateExpression, BinaryExpression, TypeTestExpression,
     CheckedCastExpression, AssignmentExpression, MemberAccessExpression,
     MetaAccessExpression, SafeMemberAccessExpression, NullCoalesceExpression,
     NullAssertExpression, CallExpression, ArrayLiteralExpression,
@@ -181,9 +187,16 @@ struct ForVariableDecl {
   bool is_final{false};
 };
 
-struct ForStatement {
+struct ForEachStatement {
   ForVariableDecl variable;
   ExpressionId iterable;
+  BlockId body;
+};
+
+struct ForStatement {
+  std::optional<StatementId> initializer;
+  std::optional<ExpressionId> condition;
+  std::vector<ExpressionId> updates;
   BlockId body;
 };
 
@@ -197,8 +210,9 @@ struct NestedBlockStatement {
 
 using StatementData =
     std::variant<InvalidStatement, LocalVariableStatement, ReturnStatement,
-                 ExpressionStatement, IfStatement, WhileStatement, ForStatement,
-                 BreakStatement, ContinueStatement, NestedBlockStatement>;
+                 ExpressionStatement, IfStatement, WhileStatement,
+                 ForEachStatement, ForStatement, BreakStatement,
+                 ContinueStatement, NestedBlockStatement>;
 
 struct Statement {
   SourceRange range;

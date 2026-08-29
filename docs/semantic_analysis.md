@@ -1,4 +1,4 @@
-# Cloth semantic analysis through Stage 18
+# Cloth semantic analysis through Stage 19
 
 Semantic analysis binds parsed syntax across a closed compilation graph, checks
 the implemented language rules, and lowers valid and recovered syntax to a
@@ -244,6 +244,8 @@ The checker currently validates:
 - boolean `if` and `while` conditions
 - `break` and `continue` placement inside loops
 - inferred or explicitly typed array iteration declarations
+- classical `for` initializer scope, boolean conditions, and update clauses
+- arithmetic compound assignments and mutable numeric prefix/postfix updates
 - final binding assignment and field definite initialization
 - static ownership, access form, and static `Main` validation
 - member access and visibility
@@ -288,6 +290,16 @@ explicit declaration uses ordinary assignment compatibility. The binding is a
 mutable local visible only in the loop body. Because an array may be empty, a
 return from every iteration body does not by itself complete a function's
 return paths.
+
+A classical `for` initializer enters a header scope shared by its condition,
+updates, and nested body scope. An omitted condition is an unconditional loop;
+otherwise the condition follows the ordinary boolean condition rules. Update
+expressions are checked in runtime order after the body for flow-sensitive
+invalidation. Arithmetic compound assignments require exact matching numeric
+types, except that `string += string` is also valid; `%=` remains integer-only.
+`++` and `--` require mutable numeric locations. Compound assignment and update
+are always rejected for `final` symbols because both operations read and write
+their targets.
 
 ## Typed HIR
 

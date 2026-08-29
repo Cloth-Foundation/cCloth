@@ -455,48 +455,85 @@ StatementId DefinitionPass::parse_for_statement() {
   const Token& keyword = advance();
   expect(TokenKind::kLeftParen, "expected '(' after 'for'");
 
-  const SourceLocation variable_begin = current().range.begin;
-  const bool is_final = match(TokenKind::kKwFinal);
-  std::optional<TypeSyntax> type;
-  if (match(TokenKind::kKwVar)) {
-    // The element type is inferred during semantic analysis.
-  } else if (can_start_type(current().kind)) {
-    type = parse_type();
-  } else {
-    diagnostics_.error(
-        current().range,
-        "expected 'var' or an explicit type in for loop declaration");
+  const auto parse_body = [this]() {
+    BlockId body = file_class_.storage.add_block(
+        Block{point_range(current().range.begin), {}, false});
+    if (current().kind == TokenKind::kLeftBrace) {
+      body = parse_block();
+    } else {
+      diagnostics_.error(current().range, "expected '{' to begin for body");
+    }
+    return body;
+  };
+
+  std::optional<StatementId> initializer;
+  if (is_local_variable_start()) {
+    const SourceLocation variable_begin = current().range.begin;
+    const bool is_final = match(TokenKind::kKwFinal);
+    std::optional<TypeSyntax> type;
+    if (!match(TokenKind::kKwVar)) {
+      type = parse_type();
+    }
+    const Token& name = advance();
+    const SourceRange variable_range{variable_begin, name.range.end};
+
+    if (match(TokenKind::kKwIn)) {
+      const ExpressionId iterable = parse_expression();
+      expect(TokenKind::kRightParen, "expected ')' after for iterable");
+      const BlockId body = parse_body();
+      return file_class_.storage.add_statement(Statement{
+          SourceRange{keyword.range.begin,
+                      file_class_.storage.block(body).range.end},
+          ForEachStatement{
+              ForVariableDecl{type, name.lexeme, variable_range, is_final},
+              iterable, body}});
+    }
+
+    std::optional<ExpressionId> value;
+    if (match(TokenKind::kEqual)) {
+      value = parse_expression();
+    }
+    SourceLocation end = value ? expression_range(*value).end : name.range.end;
+    if (match(TokenKind::kSemicolon)) {
+      end = tokens_[current_ - 1].range.end;
+    } else {
+      diagnostics_.error(current().range, "expected ';' after for initializer");
+    }
+    initializer = file_class_.storage.add_statement(
+        Statement{SourceRange{variable_begin, end},
+                  LocalVariableStatement{type, name.lexeme, value, is_final}});
+  } else if (!match(TokenKind::kSemicolon)) {
+    const ExpressionId value = parse_expression();
+    SourceLocation end = expression_range(value).end;
+    if (match(TokenKind::kSemicolon)) {
+      end = tokens_[current_ - 1].range.end;
+    } else {
+      diagnostics_.error(current().range, "expected ';' after for initializer");
+    }
+    initializer = file_class_.storage.add_statement(
+        Statement{SourceRange{expression_range(value).begin, end},
+                  ExpressionStatement{value}});
   }
 
-  std::string_view name = "<invalid>";
-  SourceLocation variable_end = current().range.begin;
-  if (current().kind == TokenKind::kIdentifier) {
-    const Token& name_token = advance();
-    name = name_token.lexeme;
-    variable_end = name_token.range.end;
-  } else {
-    diagnostics_.error(current().range, "expected iteration variable name");
+  std::optional<ExpressionId> condition;
+  if (current().kind != TokenKind::kSemicolon) {
+    condition = parse_expression();
   }
+  expect(TokenKind::kSemicolon, "expected ';' after for condition");
 
-  expect(TokenKind::kKwIn, "expected 'in' after iteration variable");
-  const ExpressionId iterable = parse_expression();
-  expect(TokenKind::kRightParen, "expected ')' after for iterable");
-
-  BlockId body = file_class_.storage.add_block(
-      Block{point_range(current().range.begin), {}, false});
-  if (current().kind == TokenKind::kLeftBrace) {
-    body = parse_block();
-  } else {
-    diagnostics_.error(current().range, "expected '{' to begin for body");
+  std::vector<ExpressionId> updates;
+  while (!at_limit() && current().kind != TokenKind::kRightParen) {
+    updates.push_back(parse_expression());
+    if (!match(TokenKind::kComma)) {
+      break;
+    }
   }
-
+  expect(TokenKind::kRightParen, "expected ')' after for clauses");
+  const BlockId body = parse_body();
   return file_class_.storage.add_statement(Statement{
       SourceRange{keyword.range.begin,
                   file_class_.storage.block(body).range.end},
-      ForStatement{
-          ForVariableDecl{type, name, SourceRange{variable_begin, variable_end},
-                          is_final},
-          iterable, body}});
+      ForStatement{initializer, condition, std::move(updates), body}});
 }
 
 StatementId DefinitionPass::parse_loop_control_statement() {

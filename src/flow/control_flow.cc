@@ -72,9 +72,23 @@ class CallableAnalyzer {
           !is_true(while_statement->condition) || body_flow.has_break, false};
     }
     if (const auto* for_statement =
-            std::get_if<HirForStatement>(&statement.data)) {
+            std::get_if<HirForEachStatement>(&statement.data)) {
       static_cast<void>(analyze_block(for_statement->body));
       return FlowResult{};
+    }
+    if (const auto* for_statement =
+            std::get_if<HirForStatement>(&statement.data)) {
+      if (for_statement->initializer) {
+        const FlowResult initializer = analyze_statement(
+            hir_.storage.statement(*for_statement->initializer));
+        if (!initializer.can_fall_through) {
+          return initializer;
+        }
+      }
+      const FlowResult body_flow = analyze_block(for_statement->body);
+      const bool condition_can_exit =
+          for_statement->condition && !is_true(*for_statement->condition);
+      return FlowResult{condition_can_exit || body_flow.has_break, false};
     }
     if (const auto* nested =
             std::get_if<HirNestedBlockStatement>(&statement.data)) {

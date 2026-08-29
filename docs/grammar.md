@@ -180,8 +180,11 @@ statement
     | block ;
 
 local_variable_statement
+    = local_variable_declaration ";" ;
+
+local_variable_declaration
     = [ "final" ] ( type | "var" ) identifier
-      [ "=" expression ] ";" ;
+      [ "=" expression ] ;
 
 return_statement
     = "return" [ expression ] ";" ;
@@ -193,7 +196,22 @@ while_statement
     = "while" "(" expression ")" block ;
 
 for_statement
+    = for_each_statement
+    | classical_for_statement ;
+
+for_each_statement
     = "for" "(" iteration_declaration "in" expression ")" block ;
+
+classical_for_statement
+    = "for" "(" [ for_initializer ] ";"
+      [ expression ] ";" [ update_list ] ")" block ;
+
+for_initializer
+    = local_variable_declaration
+    | expression ;
+
+update_list
+    = expression { "," expression } ;
 
 iteration_declaration
     = [ "final" ] ( "var" identifier | type identifier ) ;
@@ -219,7 +237,12 @@ expression
     = assignment_expression ;
 
 assignment_expression
-    = null_coalescing_expression [ "=" assignment_expression ] ;
+    = null_coalescing_expression
+      [ assignment_operator assignment_expression ] ;
+
+assignment_operator
+    = "=" | "+=" | "-=" | "*=" | "/=" | "%="
+    | "<<=" | ">>=" | "&=" | "|=" | "^=" ;
 
 null_coalescing_expression
     = logical_or_expression [ "??" null_coalescing_expression ] ;
@@ -249,13 +272,14 @@ multiplicative_expression
       { ( "*" | "/" | "%" ) unary_expression } ;
 
 unary_expression
-    = ( "!" | "+" | "-" | "~" ) unary_expression
+    = ( "!" | "+" | "-" | "~" | "++" | "--" ) unary_expression
     | postfix_expression ;
 
 postfix_expression
     = primary_expression
       { call_suffix | member_suffix | meta_suffix | safe_member_suffix | index_suffix
-      | "!" } ;
+      | "!" }
+      [ "++" | "--" ] ;
 
 call_suffix
     = "(" [ argument_list ] ")" ;
@@ -296,7 +320,7 @@ The precedence table, from lowest to highest, is:
 
 | Precedence | Operators                              | Associativity |
 |-----------:|----------------------------------------|---------------|
-| 1          | `=`                                    | right         |
+| 1          | assignment operators                   | right         |
 | 2          | `??`                                   | right         |
 | 3          | `||`                                   | left          |
 | 4          | `&&`                                   | left          |
@@ -304,11 +328,13 @@ The precedence table, from lowest to highest, is:
 | 6          | `<`, `<=`, `>`, `>=`, `is T`, `as T`  | left          |
 | 7          | `+`, `-`                               | left          |
 | 8          | `*`, `/`, `%`                          | left          |
-| 9          | prefix `!`, `+`, `-`, `~`              | right         |
-| 10         | calls, members, meta queries, indexing, postfix `!` | left |
+| 9          | prefix `!`, `+`, `-`, `~`, `++`, `--` | right         |
+| 10         | calls, members, meta queries, indexing, postfix `!`, `++`, `--` | left |
 
-Stage 1.0 deliberately defers compound assignment, increment/decrement,
-bitwise binary operators, and shifts even though the lexer recognizes them.
+Arithmetic compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`) and numeric
+increment/decrement are implemented. The grammar reserves bitwise and shift
+compound forms, but semantic analysis rejects them until their underlying
+binary operators are defined.
 
 ## Contextual constraints
 

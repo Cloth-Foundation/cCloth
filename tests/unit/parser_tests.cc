@@ -683,9 +683,9 @@ void for_iteration_declarations(TestContext& test) {
   if (body.statements.size() != 2) {
     return;
   }
-  const auto* inferred = std::get_if<cloth::ForStatement>(
+  const auto* inferred = std::get_if<cloth::ForEachStatement>(
       &source.ast().storage.statement(body.statements[0]).data);
-  const auto* explicit_loop = std::get_if<cloth::ForStatement>(
+  const auto* explicit_loop = std::get_if<cloth::ForEachStatement>(
       &source.ast().storage.statement(body.statements[1]).data);
   test.expect(inferred != nullptr && !inferred->variable.type &&
                   inferred->variable.name == "inferred" &&
@@ -704,9 +704,9 @@ void malformed_for_headers_recover(TestContext& test) {
   };
   const std::vector<MalformedForCase> cases{
       {"for var value in values) {}", "expected '(' after 'for'"},
-      {"for (in values) {}", "expected 'var' or an explicit type in for loop"},
-      {"for (var in values) {}", "expected iteration variable name"},
-      {"for (var value values) {}", "expected 'in' after iteration variable"},
+      {"for (in values) {}", "expected expression"},
+      {"for (var in values) {}", "expected expression"},
+      {"for (var value values) {}", "expected ';' after for initializer"},
       {"for (var value in) {}", "expected expression"},
       {"for (var value in values {}", "expected ')' after for iterable"},
       {"for (var value in values) ;", "expected '{' to begin for body"},
@@ -733,6 +733,69 @@ void malformed_for_headers_recover(TestContext& test) {
     }
     test.expect(recovered, "malformed for header prevented statement recovery");
   }
+}
+
+void classical_for_and_updates(TestContext& test) {
+  const ParsedSource source{
+      "Loops.co",
+      "func Run(int32 limit) {\n"
+      "  for (int32 i = 0; i < limit; i++, ++limit) { i += 2; }\n"
+      "  for (limit = 3; limit > 0; --limit) {}\n"
+      "  for (;;) { break; }\n"
+      "}\n"};
+  test.expect(error_count(source) == 0,
+              "classical for loops and updates did not parse");
+  const cloth::Block& body =
+      source.ast().storage.block(source.ast().functions[0].body);
+  test.expect(body.statements.size() == 3,
+              "classical for loops have the wrong statement count");
+  if (body.statements.size() != 3) {
+    return;
+  }
+
+  const auto* declared = std::get_if<cloth::ForStatement>(
+      &source.ast().storage.statement(body.statements[0]).data);
+  const auto* assigned = std::get_if<cloth::ForStatement>(
+      &source.ast().storage.statement(body.statements[1]).data);
+  const auto* infinite = std::get_if<cloth::ForStatement>(
+      &source.ast().storage.statement(body.statements[2]).data);
+  test.expect(declared != nullptr && declared->initializer &&
+                  declared->condition && declared->updates.size() == 2,
+              "declared for clauses were not retained");
+  test.expect(assigned != nullptr && assigned->initializer &&
+                  assigned->condition && assigned->updates.size() == 1,
+              "expression for initializer was not retained");
+  test.expect(infinite != nullptr && !infinite->initializer &&
+                  !infinite->condition && infinite->updates.empty(),
+              "empty for clauses were not retained");
+  if (declared == nullptr || declared->updates.size() != 2) {
+    return;
+  }
+
+  const auto* postfix = std::get_if<cloth::UpdateExpression>(
+      &source.ast().storage.expression(declared->updates[0]).data);
+  const auto* prefix = std::get_if<cloth::UpdateExpression>(
+      &source.ast().storage.expression(declared->updates[1]).data);
+  test.expect(postfix != nullptr && postfix->is_postfix &&
+                  postfix->operation == cloth::TokenKind::kPlusPlus,
+              "postfix update identity was not retained");
+  test.expect(prefix != nullptr && !prefix->is_postfix &&
+                  prefix->operation == cloth::TokenKind::kPlusPlus,
+              "prefix update identity was not retained");
+
+  const cloth::Block& loop_body = source.ast().storage.block(declared->body);
+  const auto* expression_statement = std::get_if<cloth::ExpressionStatement>(
+      &source.ast().storage.statement(loop_body.statements[0]).data);
+  const auto* compound =
+      expression_statement == nullptr
+          ? nullptr
+          : std::get_if<cloth::AssignmentExpression>(
+                &source.ast()
+                     .storage.expression(expression_statement->expression)
+                     .data);
+  test.expect(compound != nullptr &&
+                  compound->operation == cloth::TokenKind::kPlusEqual,
+              "compound assignment identity was not retained");
 }
 
 void calls_members_and_assignment(TestContext& test) {
@@ -1154,6 +1217,7 @@ int main() {
       {"while, break, and continue", while_break_and_continue},
       {"for iteration declarations", for_iteration_declarations},
       {"malformed for headers recover", malformed_for_headers_recover},
+      {"classical for and updates", classical_for_and_updates},
       {"calls, members, and assignment", calls_members_and_assignment},
       {"base-qualified call syntax", base_qualified_call_syntax},
       {"meta queries", meta_queries},

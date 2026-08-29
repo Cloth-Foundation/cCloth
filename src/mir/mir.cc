@@ -297,6 +297,11 @@ class BodyBuilder {
       return;
     }
     if (const auto* for_statement =
+            std::get_if<HirForEachStatement>(&statement.data)) {
+      lower_for_each(*for_statement, statement.range);
+      return;
+    }
+    if (const auto* for_statement =
             std::get_if<HirForStatement>(&statement.data)) {
       lower_for(*for_statement, statement.range);
       return;
@@ -416,7 +421,8 @@ class BodyBuilder {
     current_block_ = exit_block;
   }
 
-  void lower_for(const HirForStatement& for_statement, SourceRange range) {
+  void lower_for_each(const HirForEachStatement& for_statement,
+                      SourceRange range) {
     const HirExpression& iterable =
         hir_.storage.expression(for_statement.iterable);
     const MirValueId array =
@@ -481,6 +487,45 @@ class BodyBuilder {
     current_block_ = exit_block;
   }
 
+  void lower_for(const HirForStatement& for_statement, SourceRange range) {
+    if (for_statement.initializer) {
+      lower_statement(hir_.storage.statement(*for_statement.initializer));
+    }
+
+    const bool reachable = current_is_reachable();
+    const MirBlockId condition_block = add_block(reachable);
+    const MirBlockId body_block = add_block(reachable);
+    const MirBlockId update_block = add_block(reachable);
+    const MirBlockId exit_block = add_block(reachable);
+    jump_to(condition_block, range);
+
+    current_block_ = condition_block;
+    if (for_statement.condition) {
+      const MirValueId condition = lower_condition(
+          *for_statement.condition, for_statement.condition_is_presence_test);
+      terminate(MirBranchTerminator{condition, body_block, exit_block}, range);
+    } else {
+      jump_to(body_block, range);
+    }
+
+    current_block_ = body_block;
+    loop_targets_.push_back(LoopTargets{update_block, exit_block});
+    lower_block(for_statement.body);
+    if (current_block_) {
+      jump_to(update_block, range);
+    }
+    loop_targets_.pop_back();
+
+    current_block_ = update_block;
+    for (const HirExpressionId update : for_statement.updates) {
+      static_cast<void>(lower_expression(update));
+    }
+    if (current_block_) {
+      jump_to(condition_block, range);
+    }
+    current_block_ = exit_block;
+  }
+
   std::optional<MirValueId> lower_expression(HirExpressionId id) {
     const HirExpression& expression = hir_.storage.expression(id);
     if (std::holds_alternative<HirInvalidExpression>(expression.data)) {
@@ -509,6 +554,10 @@ class BodyBuilder {
                               operand_syntax.type, operand_syntax.range);
       return emit_value(expression.type, expression.range,
                         MirUnaryInstruction{unary->operation, operand});
+    }
+    if (const auto* update =
+            std::get_if<HirUpdateExpression>(&expression.data)) {
+      return lower_update(*update, expression);
     }
     if (const auto* binary =
             std::get_if<HirBinaryExpression>(&expression.data)) {
@@ -815,26 +864,98 @@ class BodyBuilder {
         hir_.storage.expression(assignment.value);
     MirValueId value = require_value(lower_expression(assignment.value),
                                      value_syntax.type, value_syntax.range);
-    value = coerce(value, location.type, value_syntax.range);
+    if (assignment.operation == TokenKind::kEqual) {
+      value = coerce(value, location.type, value_syntax.range);
+    } else {
+      const std::optional<TokenKind> operation =
+          compound_binary_operation(assignment.operation);
+      if (!operation) {
+        emit_void(expression.range, MirInvalidInstruction{});
+        return invalid_value(expression.range);
+      }
+      const MirValueId current = load_location(location, expression.range);
+      value = emit_value(location.type, expression.range,
+                         MirBinaryInstruction{current, *operation, value});
+    }
+    store_location(location, value, expression.range);
+    return value;
+  }
+
+  std::optional<MirValueId> lower_update(const HirUpdateExpression& update,
+                                         const HirExpression& expression) {
+    const LoweredLocation location = lower_location(update.operand);
+    const MirValueId previous = load_location(location, expression.range);
+    const TypeKind kind = semantics_.type(location.type).kind;
+    const bool is_float =
+        kind == TypeKind::kFloat32 || kind == TypeKind::kFloat64;
+    const MirValueId one =
+        emit_value(location.type, expression.range,
+                   MirLiteralInstruction{
+                       is_float ? LiteralKind::kFloat : LiteralKind::kInteger,
+                       is_float ? "1.0" : "1"});
+    const TokenKind operation = update.operation == TokenKind::kPlusPlus
+                                    ? TokenKind::kPlus
+                                    : TokenKind::kMinus;
+    const MirValueId updated =
+        emit_value(location.type, expression.range,
+                   MirBinaryInstruction{previous, operation, one});
+    store_location(location, updated, expression.range);
+    return update.is_postfix ? previous : updated;
+  }
+
+  MirValueId load_location(const LoweredLocation& location, SourceRange range) {
     if (location.is_array_element && location.object && location.index) {
-      emit_void(
-          expression.range,
-          MirArrayStoreInstruction{*location.object, *location.index, value});
-      return value;
+      return emit_value(
+          location.type, range,
+          MirArrayLoadInstruction{*location.object, *location.index});
     }
     if (!location.symbol) {
-      emit_void(expression.range, MirInvalidInstruction{});
-      return invalid_value(expression.range);
+      return invalid_value(range);
     }
     if (location.is_member && location.object) {
-      emit_void(
-          expression.range,
-          MirStoreMemberInstruction{*location.object, *location.symbol, value});
-    } else {
-      emit_void(expression.range,
-                MirStoreSymbolInstruction{*location.symbol, value});
+      return emit_value(
+          location.type, range,
+          MirLoadMemberInstruction{*location.object, *location.symbol});
     }
-    return value;
+    return emit_value(location.type, range,
+                      MirLoadSymbolInstruction{*location.symbol});
+  }
+
+  void store_location(const LoweredLocation& location, MirValueId value,
+                      SourceRange range) {
+    if (location.is_array_element && location.object && location.index) {
+      emit_void(range, MirArrayStoreInstruction{*location.object,
+                                                *location.index, value});
+      return;
+    }
+    if (!location.symbol) {
+      emit_void(range, MirInvalidInstruction{});
+      return;
+    }
+    if (location.is_member && location.object) {
+      emit_void(range, MirStoreMemberInstruction{*location.object,
+                                                 *location.symbol, value});
+      return;
+    }
+    emit_void(range, MirStoreSymbolInstruction{*location.symbol, value});
+  }
+
+  static std::optional<TokenKind> compound_binary_operation(
+      TokenKind operation) {
+    switch (operation) {
+      case TokenKind::kPlusEqual:
+        return TokenKind::kPlus;
+      case TokenKind::kMinusEqual:
+        return TokenKind::kMinus;
+      case TokenKind::kStarEqual:
+        return TokenKind::kStar;
+      case TokenKind::kSlashEqual:
+        return TokenKind::kSlash;
+      case TokenKind::kPercentEqual:
+        return TokenKind::kPercent;
+      default:
+        return std::nullopt;
+    }
   }
 
   LoweredLocation lower_location(HirExpressionId id) {

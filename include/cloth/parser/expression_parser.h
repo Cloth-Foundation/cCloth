@@ -34,6 +34,7 @@ class ExpressionParser {
   [[nodiscard]] ExpressionId make_invalid_expression(SourceRange range);
 
   [[nodiscard]] static int binary_precedence(TokenKind kind) noexcept;
+  [[nodiscard]] static bool is_assignment_operator(TokenKind kind) noexcept;
   [[nodiscard]] static bool is_right_associative(TokenKind kind) noexcept;
   [[nodiscard]] SourceRange expression_range(ExpressionId id) const;
 

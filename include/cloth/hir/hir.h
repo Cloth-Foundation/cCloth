@@ -58,6 +58,12 @@ struct HirUnaryExpression {
   bool operand_is_presence_test{false};
 };
 
+struct HirUpdateExpression {
+  TokenKind operation;
+  HirExpressionId operand;
+  bool is_postfix{false};
+};
+
 struct HirBinaryExpression {
   HirExpressionId left;
   TokenKind operation;
@@ -78,6 +84,7 @@ struct HirCheckedCastExpression {
 
 struct HirAssignmentExpression {
   HirExpressionId target;
+  TokenKind operation;
   HirExpressionId value;
 };
 
@@ -144,11 +151,12 @@ struct HirGroupedExpression {
 using HirExpressionData = std::variant<
     HirInvalidExpression, HirLiteralExpression, HirSymbolExpression,
     HirTypeExpression, HirSuperExpression, HirUnaryExpression,
-    HirBinaryExpression, HirTypeTestExpression, HirCheckedCastExpression,
-    HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
-    HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
-    HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
-    HirStringMetaExpression, HirObjectMetaExpression, HirGroupedExpression>;
+    HirUpdateExpression, HirBinaryExpression, HirTypeTestExpression,
+    HirCheckedCastExpression, HirAssignmentExpression, HirMemberExpression,
+    HirSafeMemberExpression, HirNullCoalesceExpression, HirNullAssertExpression,
+    HirCallExpression, HirArrayLiteralExpression, HirIndexExpression,
+    HirArrayLengthExpression, HirStringMetaExpression, HirObjectMetaExpression,
+    HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;
@@ -184,10 +192,18 @@ struct HirWhileStatement {
   bool condition_is_presence_test{false};
 };
 
-struct HirForStatement {
+struct HirForEachStatement {
   std::optional<SymbolId> variable;
   HirExpressionId iterable;
   HirBlockId body;
+};
+
+struct HirForStatement {
+  std::optional<HirStatementId> initializer;
+  std::optional<HirExpressionId> condition;
+  std::vector<HirExpressionId> updates;
+  HirBlockId body;
+  bool condition_is_presence_test{false};
 };
 
 struct HirBreakStatement {};
@@ -201,8 +217,8 @@ struct HirNestedBlockStatement {
 using HirStatementData =
     std::variant<HirInvalidStatement, HirLocalStatement, HirReturnStatement,
                  HirExpressionStatement, HirIfStatement, HirWhileStatement,
-                 HirForStatement, HirBreakStatement, HirContinueStatement,
-                 HirNestedBlockStatement>;
+                 HirForEachStatement, HirForStatement, HirBreakStatement,
+                 HirContinueStatement, HirNestedBlockStatement>;
 
 struct HirStatement {
   SourceRange range;
