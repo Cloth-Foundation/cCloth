@@ -1,6 +1,6 @@
-[submodule "vscode"]
-	path = editors/vscode
-	url = https://github.com/Cloth-Foundation/Cloth-VSCode-Language-Support
 [submodule "std"]
 	path = std
 	url = https://github.com/Cloth-Foundation/Standard-Library
+[submodule "editors/vscode"]
+	path = editors/vscode
+	url = https://github.com/Cloth-Foundation/Cloth-VSCode-Language-Support
