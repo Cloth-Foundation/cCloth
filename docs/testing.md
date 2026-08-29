@@ -15,6 +15,20 @@ test script default to 10 seconds, preventing a broken loop backedge from
 hanging a development or CI run. Configure `CLOTH_TEST_TIMEOUT_SECONDS` to
 change the outer limit.
 
+Test ownership follows the behavior being exercised:
+
+- `tests/unit/` contains C++ unit and verifier executables.
+- `tests/integration/programs/` contains standalone Cloth programs.
+- `tests/integration/projects/` contains complete multi-file projects.
+- `tests/integration/errors/` contains compiler-failure inputs.
+- `tests/integration/expected/` contains native-output golden files.
+- `tests/fuzz/` contains opt-in fuzz targets and curated source seeds.
+
+The folder-local `CMakeLists.txt` files own their targets. Native output and
+runtime-failure cases share `tests/integration/RunProgram.cmake`; test-specific
+launch scripts should not be added. CTest labels allow focused runs with
+`ctest --preset dev -L unit` or `ctest --preset dev -L integration`.
+
 ## Sanitizers
 
 AddressSanitizer and, where supported, UndefinedBehaviorSanitizer are opt-in
@@ -59,10 +73,12 @@ cmake --build --preset fuzz
 ctest --preset fuzz
 ```
 
-For a longer local campaign, invoke `cloth_lexer_parser_fuzzer` directly with
-`tests/fuzz_corpus/lexer_parser` and an explicit time or run limit. The target
-feeds arbitrary bytes through both lexer and two-pass parser; diagnostics and
-invalid input must never crash or violate sanitizer checks.
+For a longer local campaign, invoke `cloth_lexer_parser_fuzzer` with the copied
+build corpus at `build/fuzz/tests/fuzz/corpus/lexer_parser` and an explicit time
+or run limit. The source tree retains only curated `.co` seeds; hash-named
+generated corpus entries stay in the ignored build directory. The target feeds
+arbitrary bytes through both lexer and two-pass parser; diagnostics and invalid
+input must never crash or violate sanitizer checks.
 
 The presets select build behavior but do not hard-code a compiler. Pass a
 compiler on the first configure, as shown for Clang above, or select one through

@@ -10,6 +10,7 @@ if(CLOTH_CLANG_FORMAT_EXECUTABLE)
         ${PROJECT_SOURCE_DIR}/runtime/*.cc
         ${PROJECT_SOURCE_DIR}/src/*.cc
         ${PROJECT_SOURCE_DIR}/tests/*.cc
+        ${PROJECT_SOURCE_DIR}/tests/*.h
     )
     add_custom_target(format
         COMMAND "${CLOTH_CLANG_FORMAT_EXECUTABLE}" -i --style=file

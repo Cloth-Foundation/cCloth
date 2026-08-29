@@ -1,10 +1,25 @@
 # Cloth
 
-Cloth is a statically typed, compiled language designed around a
-write-once, use-anywhere model. Its compiler is written in C++23 and lowers
-verified, target-independent intermediate representations to textual LLVM IR.
-The native runtime provides managed objects, arrays, immutable UTF-8 strings,
-and precise garbage collection.
+Cloth is a statically typed, LLVM-backed programming language for building
+portable software with native compilation and managed memory. It brings
+together the parts we value in C++, Java, C#, and Go while deliberately
+reducing boilerplate, ceremony, and accidental complexity.
+
+- From **C++**: ahead-of-time compilation, strong static types, and a
+  performance-oriented toolchain—without requiring application code to manage
+  object lifetimes manually.
+- From **Java**: managed objects, familiar class-oriented organization, and a
+  portable application model—without repeating the same structure and
+  modifiers throughout a source file.
+- From **C#**: an expressive object model and explicit nullability—within a
+  smaller language surface designed around portable native output.
+- From **Go**: simple visibility rules based on capitalization instead of
+  repeated `public` and `private` declarations.
+
+The goal is straightforward: write clear code once, compile it across targets,
+and let the language and runtime handle memory safety and repetitive structure.
+Cloth is its own language rather than a dialect or compatibility layer for any
+of its influences.
 
 ```cloth
 // HelloWorld.co
@@ -13,28 +28,64 @@ static func Main() {
 }
 ```
 
-Every `.co` file is an implicit class named after the file. `User.co`
-therefore defines `User`; fields, functions, constructors, and nested types
-belong to that class without an enclosing `class User` declaration.
-Capitalization carries visibility: names beginning with an uppercase ASCII
-letter are public, while lowercase and underscore-prefixed names are private.
+## Design philosophy
+
+Cloth favors rules that remove repetition without hiding program behavior:
+
+- Every `.co` file is an implicit class named after the file. `User.co`
+  defines `User`; fields, functions, constructors, and nested types belong to
+  it without an enclosing `class User { ... }` declaration.
+- Names beginning with an uppercase ASCII letter are public. Lowercase and
+  underscore-prefixed names are private.
+- Objects and arrays use managed references backed by precise garbage
+  collection. Ordinary Cloth code does not call `delete`, maintain reference
+  counts, or annotate ownership.
+- References are non-null by default. Nullable types use `T?`, with `?.`,
+  `??`, and `!` making null behavior visible at the point of use.
+- Packages follow the source tree, and imports use identifier paths rather
+  than file-name strings.
+- Compiler stages use explicit, verified representations before LLVM lowering,
+  keeping language semantics independent of a particular machine target.
+
+For example, `User.co` defines the `User` type directly. `name` is private and
+`Greeting` is public because capitalization is part of the language contract:
+
+```cloth
+// User.co
+string name;
+
+User(string name) {
+  self.name = name;
+}
+
+func Greeting(): string {
+  return "Hello, " + name;
+}
+```
+
+Cloth does not currently impose checked-exception declarations or routine
+`try`/`catch` ceremony. A recoverable exception model remains deliberately
+deferred until it has a small, coherent contract across the language, runtime,
+and foreign-function boundary.
+
+## Current status
 
 Cloth is under active development. The language, compiler interfaces, runtime
-ABI, and tooling are not yet stable, and there is currently no standard
-library or external package registry.
+ABI, and tooling are not stable, and there is not yet a standard library or
+external package registry.
 
-## What works today
+The compiler currently provides a deterministic lexer, two-pass parser,
+semantic analysis, typed HIR, control-flow MIR, a verified target ABI, and an
+LLVM IR backend. The implemented language includes path-derived packages and
+imports, functions and constructors, structured control flow, arrays, strings,
+explicit nullability, managed objects, single inheritance, abstract and sealed
+types, overriding, virtual dispatch, covariant managed-reference returns, and
+`super` calls.
 
-The compiler has a deterministic lexer and two-pass parser, semantic analysis,
-typed HIR, control-flow MIR, a verified target ABI, and an LLVM IR backend. It
-supports path-derived packages and imports, functions and constructors,
-structured control flow, arrays, null-safe managed references, strings,
-objects, single inheritance, overriding, virtual dispatch, and direct-base
-calls.
-
-The backend can emit LLVM IR for x86-64 and wasm32 layouts. Native executable
-generation currently targets x86-64 and uses LLVM `llc` plus the configured
-C++ linker driver.
+The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
+generation currently targets x86-64 and uses LLVM `llc` plus the configured C++
+linker driver. Interfaces, a complete standard library, dependency management,
+and broader native target support remain future work.
 
 ## Build from source
 
@@ -96,8 +147,8 @@ Native `--build` output currently requires `--target=x86_64`.
 
 ## Projects and imports
 
-A multi-file project has an empty or metadata-only `cloth.toml` and a
-`src/` source root:
+A multi-file project has an empty or metadata-only `cloth.toml` and a `src/`
+source root:
 
 ```text
 my_app/
@@ -126,7 +177,13 @@ import legacy::User as LegacyUser;
 See [Packages and imports](docs/packages_and_imports.md) for path identity,
 visibility, discovery, and collision rules.
 
-## Propose a change with an RFC
+## Contributing
+
+Cloth is production-minded even while its design is evolving. Changes should
+keep contracts concise, diagnostics actionable, compiler boundaries explicit,
+and tests proportional to the behavior being introduced.
+
+### Propose a change with an RFC
 
 Open an RFC before implementing a change to source syntax, language semantics,
 the public compiler interface, object layout, the runtime ABI, or observable
@@ -141,29 +198,29 @@ internal refactors do not normally need one.
 5. Compare reasonable alternatives and list unresolved questions.
 6. Define how the behavior will be tested and documented.
 
-Keep the RFC scoped to one coherent decision. Implementation should begin
-after the intended behavior is clear enough for review. The merged language
-and architecture documents are the source of truth; the issue preserves the
-discussion and alternatives.
+Keep an RFC scoped to one coherent decision. Implementation should begin once
+the intended behavior is clear enough for review. Merged language and
+architecture documents are the source of truth; the issue preserves discussion
+and alternatives.
 
-## Implement a feature
+### Implement a feature
 
 Carry a feature through every compiler boundary it affects:
 
-1. Update the language contract and grammar. Use the RFC process when the
-   behavior is externally visible.
+1. Update the language contract and grammar. Use the RFC process when behavior
+   is externally visible.
 2. Add lexical, parser, and AST support where syntax changes.
 3. Bind and type-check the behavior, then represent it explicitly in HIR.
-4. Lower and verify any control-flow or data behavior in MIR.
-5. Update target ABI, LLVM lowering, and runtime behavior when representation
-   or execution changes.
+4. Lower and verify control-flow or data behavior in MIR.
+5. Update the target ABI, LLVM lowering, and runtime when representation or
+   execution changes.
 6. Add focused unit tests, invalid-program diagnostics, and an end-to-end
    native test when the feature is executable.
 7. Update the relevant design document and remove or amend any entry in
    [TODO.md](TODO.md).
 
-Not every change touches every layer, but a pull request should make deliberate
-boundaries explicit rather than stopping once new syntax parses.
+Not every change touches every layer, but a pull request should identify its
+deliberate boundaries instead of stopping once new syntax parses.
 
 Before requesting review:
 
@@ -177,11 +234,11 @@ cmake --build --preset sanitize
 ctest --preset sanitize
 ```
 
-The `check_format` target is available when `clang-format` is installed.
-C++ changes must follow [CODE_STYLE.md](CODE_STYLE.md), the repository's
-Google C++ style variant for C++23.
+The `check_format` target is available when `clang-format` is installed. C++
+changes must follow [CODE_STYLE.md](CODE_STYLE.md), the repository's Google C++
+style variant for C++23.
 
-## Pull, branch, and push
+### Pull, branch, and push
 
 Fork the repository on GitHub, then clone your fork and register the canonical
 repository as `upstream`:
@@ -229,8 +286,11 @@ formatting changes.
 | `include/cloth/` | Public compiler interfaces |
 | `src/` | Compiler implementation and the `clothc` driver |
 | `runtime/` | Native runtime and managed-heap support |
-| `tests/` | Unit, diagnostic, project, backend, and native tests |
+| `tests/unit/` | Compiler and runtime unit suites |
+| `tests/integration/` | CLI, native, diagnostic, and multi-file test data |
+| `tests/fuzz/` | Fuzz targets and curated seed corpora |
 | `examples/` | Small Cloth programs |
+| `editors/` | Editor integrations, including the VS Code extension |
 | `docs/` | Language and compiler contracts |
 | `cmake/` | Shared build, tooling, and test configuration |
 | `TODO.md` | Deferred work and design guardrails |

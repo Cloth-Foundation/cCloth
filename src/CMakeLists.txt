@@ -71,12 +71,3 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         CLOTH_DEFAULT_LLC="${CLOTH_LLVM_LLC_PATH}"
     )
 endif()
-
-add_custom_target(run_compiler
-    COMMAND $<TARGET_FILE:clothc>
-            ${PROJECT_SOURCE_DIR}/examples/User.co
-            ${PROJECT_SOURCE_DIR}/examples/Repository.co
-    DEPENDS clothc
-    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
-    USES_TERMINAL
-)

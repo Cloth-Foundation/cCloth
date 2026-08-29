@@ -5,3 +5,8 @@ compile_commands.json
 
 .idea/
 cmake-build-debug/
+*.exe
+
+# Fuzz campaigns write hash-named corpus entries beside the seed corpus.
+/tests/fuzz/corpus/lexer_parser/*
+!/tests/fuzz/corpus/lexer_parser/*.co

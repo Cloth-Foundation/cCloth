@@ -1,3 +1,0 @@
-func LoadUser(UserId id): User {
-    return Repository.Find(id);
-}

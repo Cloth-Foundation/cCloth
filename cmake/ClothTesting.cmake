@@ -5,6 +5,9 @@ include(CMakeParseArguments)
 function(cloth_add_unit_test target)
     add_executable(${target} ${ARGN})
     target_link_libraries(${target} PRIVATE cloth_compiler)
+    target_include_directories(${target} PRIVATE
+        ${PROJECT_SOURCE_DIR}/tests/support
+    )
     cloth_enable_warnings(${target})
     add_test(NAME ${target} COMMAND ${target})
 endfunction()
@@ -39,7 +42,7 @@ function(cloth_add_native_output_test name)
         list(APPEND check_command -DCLOTH_EXACT_OUTPUT=ON)
     endif()
     list(APPEND check_command
-        -P ${PROJECT_SOURCE_DIR}/tests/check_program_output.cmake)
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
     add_test(NAME cloth_${name} COMMAND ${check_command})
     set_tests_properties(cloth_${name} PROPERTIES
         DEPENDS cloth_cli_build_${name}
@@ -64,7 +67,7 @@ function(cloth_add_native_failure_test name)
         COMMAND ${CMAKE_COMMAND}
                 "-DCLOTH_PROGRAM=${executable}"
                 "-DCLOTH_EXPECTED_ERROR=${ARG_ERROR}"
-                -P ${PROJECT_SOURCE_DIR}/tests/check_program_failure.cmake
+                -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake
     )
     set_tests_properties(cloth_${name} PROPERTIES
         DEPENDS cloth_cli_build_${name}
@@ -77,10 +80,14 @@ function(cloth_add_cli_failure_test name source)
 endfunction()
 
 function(cloth_finalize_tests)
+    cmake_parse_arguments(ARG "" "LABEL" "" ${ARGN})
     get_property(registered_tests DIRECTORY PROPERTY TESTS)
     set_tests_properties(${registered_tests} PROPERTIES
         TIMEOUT ${CLOTH_TEST_TIMEOUT_SECONDS}
     )
+    if(ARG_LABEL)
+        set_tests_properties(${registered_tests} PROPERTIES LABELS ${ARG_LABEL})
+    endif()
     if(CLOTH_ENABLE_SANITIZERS AND WIN32 AND
        CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         set_tests_properties(${registered_tests} PROPERTIES

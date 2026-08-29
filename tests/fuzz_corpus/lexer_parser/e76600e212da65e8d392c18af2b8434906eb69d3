@@ -1,4 +1,0 @@
-func Visit(String[r value in values) {
-        print(value);
-    }
-}
