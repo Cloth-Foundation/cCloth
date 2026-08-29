@@ -77,6 +77,9 @@ void print_callable(const MirCallable& callable, const SemanticModel& semantics,
   if (symbol.is_abstract) {
     output << " [abstract]";
   }
+  if (symbol.is_final) {
+    output << " [final]";
+  }
   output << '\n';
   print_body(callable.body, output);
 }

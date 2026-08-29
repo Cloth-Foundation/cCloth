@@ -212,10 +212,10 @@ void DefinitionPass::build_function(const MemberOutline& outline,
   const bool is_valid = symbol.is_valid && body_is_valid &&
                         diagnostics_.diagnostics().size() == diagnostic_count;
   const std::size_t index = file_class_.functions.size();
-  file_class_.functions.push_back(
-      FunctionDecl{symbol.name, symbol.visibility, copy_parameters(symbol),
-                   symbol.declared_type, body, outline.range, is_valid,
-                   symbol.is_static, symbol.is_override, symbol.is_abstract});
+  file_class_.functions.push_back(FunctionDecl{
+      symbol.name, symbol.visibility, copy_parameters(symbol),
+      symbol.declared_type, body, outline.range, is_valid, symbol.is_static,
+      symbol.is_override, symbol.is_abstract, symbol.is_final});
   file_class_.member_order.push_back(
       MemberReference{DeclarationKind::kFunction, index});
   file_class_.is_valid = file_class_.is_valid && is_valid;

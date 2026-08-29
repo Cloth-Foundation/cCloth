@@ -8,6 +8,7 @@ Base->Derived
 true
 true
 true
+true
 Base
 true
 true

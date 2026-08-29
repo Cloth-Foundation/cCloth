@@ -14,6 +14,10 @@ class : Base {
     return super.Label() + "->Derived";
   }
 
+  override func Copy(): Derived {
+    return self;
+  }
+
   static func Main() {
     Derived value = Derived(40);
     println(value.Name);
@@ -25,6 +29,7 @@ class : Base {
     println(parent.Read());
     println(value.Label());
     println(parent.Label());
+    println(parent.Copy() is Derived);
     println(parent is Base);
     println(parent is Derived);
 

@@ -1023,7 +1023,6 @@ void abstract_declaration_contract(TestContext& test) {
               "abstract class { abstract func hidden(): int32; }\n");
   invalid.add("StaticAbstract.co",
               "abstract class { static abstract func Public(): int32; }\n");
-  invalid.add("Closed.co", "sealed class {}\n");
   invalid.add("BaseAbstract.co",
               "abstract class { abstract func Value(): int32; }\n");
   invalid.add("DerivedAbstract.co",
@@ -1042,9 +1041,6 @@ void abstract_declaration_contract(TestContext& test) {
   test.expect(
       invalid.has_diagnostic("abstract function 'Public' cannot be static"),
       "static abstract function was accepted");
-  test.expect(invalid.has_diagnostic(
-                  "sealed class contracts are reserved but not supported yet"),
-              "reserved sealed class contract was silently accepted");
   test.expect(
       invalid.has_diagnostic("'super' cannot call abstract function 'Value'"),
       "super call to an abstract implementation was accepted");
@@ -1107,6 +1103,185 @@ void abstract_completeness_contract(TestContext& test) {
               "direct abstract-class construction was accepted");
   test.expect(!invalid.result->is_valid,
               "invalid abstract hierarchy was marked valid");
+}
+
+void sealed_and_final_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Root.co",
+            "func Describe(): string { return \"root\"; }\n"
+            "func Value(): int32 { return 1; }\n");
+  valid.add("Middle.co",
+            "class : Root {\n"
+            "  final override func Describe(): string { return \"middle\"; }\n"
+            "  override func Value(): int32 { return 2; }\n"
+            "}\n");
+  valid.add("Leaf.co",
+            "class : Middle {\n"
+            "  func Read(): string { return super.Describe(); }\n"
+            "}\n");
+  valid.add("Closed.co",
+            "sealed class : Root {\n"
+            "  override func Describe(): string { return \"closed\"; }\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid sealed/final hierarchy produced semantic errors");
+  test.expect(valid.result->is_valid,
+              "valid sealed/final hierarchy was marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::SemanticSymbol& root_describe =
+      semantics.symbol(semantics.file(cloth::FileId{0}).functions[0]);
+  const cloth::SemanticSymbol& middle_describe =
+      semantics.symbol(semantics.file(cloth::FileId{1}).functions[0]);
+  test.expect(middle_describe.is_final && middle_describe.is_override,
+              "final override identity was not retained");
+  test.expect(root_describe.virtual_slot == middle_describe.virtual_slot,
+              "final override changed the inherited virtual slot");
+  test.expect(semantics.file(cloth::FileId{3}).is_sealed,
+              "sealed file-class identity was not retained");
+
+  AnalyzedCompilation invalid;
+  invalid.add("SealedBase.co", "sealed class {}\n");
+  invalid.add("SealedChild.co", "class : SealedBase {}\n");
+  invalid.add("FinalBase.co", "func Value(): int32 { return 1; }\n");
+  invalid.add("FinalMiddle.co",
+              "class : FinalBase {\n"
+              "  final override func Value(): int32 { return 2; }\n"
+              "}\n");
+  invalid.add("FinalLeaf.co",
+              "class : FinalMiddle {\n"
+              "  override func Value(): int32 { return 3; }\n"
+              "}\n");
+  invalid.add("NewFinal.co",
+              "class { final func NewValue(): int32 { return 1; } }\n");
+  invalid.add("AbstractFinal.co",
+              "abstract class : FinalBase {\n"
+              "  abstract final override func Value(): int32;\n"
+              "}\n");
+  invalid.add("Impossible.co", "abstract sealed class {}\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic(
+                  "cannot inherit from sealed file class 'SealedBase'"),
+              "sealed file class was inherited");
+  test.expect(invalid.has_diagnostic(
+                  "function 'Value' cannot override inherited final function"),
+              "final override was overridden");
+  test.expect(invalid.has_diagnostic(
+                  "final function 'NewValue' must also be declared override"),
+              "new final virtual function was accepted");
+  test.expect(
+      invalid.has_diagnostic("abstract function 'Value' cannot be final"),
+      "abstract final function was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "file class 'Impossible' cannot be both abstract and sealed"),
+              "abstract sealed file class was accepted");
+}
+
+void covariant_override_return_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Root.co",
+            "func Copy(): Root { return self; }\n"
+            "func Maybe(): Root? { return self; }\n"
+            "func AsObject(): object { return self; }\n"
+            "func NullableObject(): object? { return self; }\n"
+            "func Values(): object { return [1, 2]; }\n");
+  valid.add("Derived.co",
+            "class : Root {\n"
+            "  override func Copy(): Derived { return self; }\n"
+            "  override func Maybe(): Derived? { return self; }\n"
+            "  override func AsObject(): string { return \"derived\"; }\n"
+            "  override func NullableObject(): string { return \"value\"; }\n"
+            "  override func Values(): int32[] { return [3, 4]; }\n"
+            "}\n");
+  valid.add("Leaf.co",
+            "class : Derived {\n"
+            "  override func Copy(): Leaf { return self; }\n"
+            "  override func Maybe(): Leaf { return self; }\n"
+            "}\n");
+  valid.add("Factory.co",
+            "abstract class {\n"
+            "  abstract func Select(Derived value): Root;\n"
+            "}\n");
+  valid.add("FactoryImpl.co",
+            "class : Factory {\n"
+            "  override func Select(Derived value): Derived { return value; }\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid covariant override returns produced semantic errors");
+  test.expect(valid.result->is_valid,
+              "valid covariant override returns were marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::SemanticSymbol& root_copy =
+      semantics.symbol(semantics.file(cloth::FileId{0}).functions[0]);
+  const cloth::SemanticSymbol& derived_copy =
+      semantics.symbol(semantics.file(cloth::FileId{1}).functions[0]);
+  const cloth::SemanticSymbol& leaf_copy =
+      semantics.symbol(semantics.file(cloth::FileId{2}).functions[0]);
+  test.expect(root_copy.virtual_slot == derived_copy.virtual_slot &&
+                  derived_copy.virtual_slot == leaf_copy.virtual_slot,
+              "covariant override changed the inherited virtual slot");
+  test.expect(derived_copy.overridden_symbol ==
+                      semantics.file(cloth::FileId{0}).functions[0] &&
+                  leaf_copy.overridden_symbol ==
+                      semantics.file(cloth::FileId{1}).functions[0],
+              "covariant overrides lost their immediate base symbols");
+  test.expect(semantics.file(cloth::FileId{4}).abstract_functions.empty(),
+              "covariant implementation did not resolve its abstract slot");
+
+  AnalyzedCompilation invalid;
+  invalid.add("Other.co", "class { Other() {} }\n");
+  invalid.add("Base.co",
+              "func Unrelated(): Base { return self; }\n"
+              "func Nullable(): Base { return self; }\n"
+              "func Wider(): Base? { return self; }\n"
+              "func ObjectValue(): string { return \"base\"; }\n"
+              "func ArrayValue(): int32[] { return [1]; }\n"
+              "func Scalar(int64 value): int32 { return 1; }\n"
+              "func Nothing() {}\n");
+  invalid.add("Bad.co",
+              "class : Base {\n"
+              "  override func Unrelated(): Other { return Other(); }\n"
+              "  override func Nullable(): Base? { return self; }\n"
+              "  override func Wider(): object? { return self; }\n"
+              "  override func ObjectValue(): object { return self; }\n"
+              "  override func ArrayValue(): string[] { return [\"bad\"]; }\n"
+              "  override func Scalar(int64 value): int64 { return value; }\n"
+              "  override func Nothing(): int32 { return 1; }\n"
+              "}\n");
+  invalid.analyze();
+
+  test.expect(invalid.has_diagnostic(
+                  "override of 'Unrelated' returns 'Other'; inherited function "
+                  "returns 'Base'"),
+              "unrelated reference override return was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "override of 'Nullable' returns 'Base?'; inherited function "
+                  "returns 'Base'"),
+              "nullable widening override return was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "override of 'Wider' returns 'object?'; inherited function "
+                  "returns 'Base?'"),
+              "reference widening override return was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "override of 'ObjectValue' returns 'object'; inherited "
+                  "function returns 'string'"),
+              "object widening override return was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "override of 'ArrayValue' returns 'string[]'; inherited "
+                  "function returns 'int32[]'"),
+              "invariant array override return was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "override of 'Scalar' returns 'int64'; inherited function "
+                  "returns 'int32'"),
+              "primitive override return mismatch was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "override of 'Nothing' returns 'int32'; inherited function "
+                  "returns 'void'"),
+              "void override return mismatch was accepted");
 }
 
 void invalid_inheritance_graph(TestContext& test) {
@@ -2173,6 +2348,9 @@ int main() {
       {"base-qualified call contract", base_qualified_call_contract},
       {"abstract declaration contract", abstract_declaration_contract},
       {"abstract completeness contract", abstract_completeness_contract},
+      {"sealed and final contract", sealed_and_final_contract},
+      {"covariant override return contract",
+       covariant_override_return_contract},
       {"invalid inheritance graph", invalid_inheritance_graph},
       {"invalid package imports", invalid_package_imports},
       {"private member access", private_member_access},

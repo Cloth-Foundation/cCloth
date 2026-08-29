@@ -1,4 +1,4 @@
-# Cloth inheritance through Stage 17.2
+# Cloth inheritance through Stage 17.4
 
 Stage 16.1 introduces the declaration and semantic identity of single class
 inheritance. Stage 16.2 carries that identity through HIR and MIR, defines the
@@ -10,7 +10,9 @@ explicit override contract, stable virtual slots, and dynamic instance calls.
 Stage 16.6 adds explicit direct-base calls without changing object layout or
 the virtual table. Stage 17.1 adds declaration identity for abstract file
 classes and abstract instance functions. Stage 17.2 makes those declarations
-enforceable by construction and subclass-completeness rules.
+enforceable by construction and subclass-completeness rules. Stage 17.3 closes
+inheritance hierarchies with sealed file classes and final overrides. Stage
+17.4 permits sound covariant reference returns.
 
 ## File-class declaration
 
@@ -173,12 +175,12 @@ class : Human {
 }
 ```
 
-The return type must also match exactly. Cloth does not currently support
-covariant returns. Omitting `override` on a matching signature is an error,
-and using it when no inherited target exists is an error. A different parameter
-signature is an overload and receives a new virtual slot. Capitalization still
-governs visibility, so private lowercase functions cannot override or be
-overridden.
+The return type must either match exactly or be a covariant managed-reference
+type assignable to the inherited return type. Omitting `override` on a matching
+signature is an error, and using it when no inherited target exists is an
+error. A different parameter signature is an overload and receives a new
+virtual slot. Capitalization still governs visibility, so private lowercase
+functions cannot override or be overridden.
 
 Each root class assigns slots to its public instance functions in declaration
 order. A derived class begins with its base table, replaces a matched override
@@ -284,6 +286,80 @@ empty. Missing implementations are reported by canonical signature with a note
 at the nearest abstract declaration, so overloads remain unambiguous and source
 discovery order cannot affect diagnostics.
 
+## Sealed classes and final overrides
+
+A sealed file class is an ordinary concrete class that may extend a non-sealed
+base but cannot itself be named as another file class's base:
+
+```cloth
+sealed class : Human {
+  override func Describe(): string {
+    return "User";
+  }
+}
+```
+
+`abstract sealed class` is rejected because an abstract class requires a
+subclass to complete its contract while a sealed class forbids that subclass.
+
+`final` closes one inherited virtual slot and therefore must be paired with
+`override`:
+
+```cloth
+class : Human {
+  final override func Describe(): string {
+    return "User";
+  }
+}
+```
+
+The modifiers may appear in either order. The implementation retains the
+inherited slot and participates in ordinary virtual dispatch, but no descendant
+may replace it. A descendant may still call the implementation through
+`super.Describe()`. A new `final func` and an `abstract final override func`
+are invalid. These rules add no object-header, descriptor, or virtual-table
+layout fields.
+
+## Covariant override returns
+
+An override may return a more specific managed-reference type:
+
+```cloth
+// Base.co
+func Copy(): Base {
+  return self;
+}
+```
+
+```cloth
+// Derived.co
+class : Base {
+  override func Copy(): Derived {
+    return self;
+  }
+}
+```
+
+Compatibility follows ordinary reference assignment in the return direction:
+the overriding return must be assignable to the inherited return. This permits
+a derived class in place of its base, non-null returns in place of nullable
+returns, and `string`, array, or file-class returns in place of `object`. These
+rules compose, so `Derived` may replace `Base?`. The reverse directions are
+invalid: an override cannot widen a derived return to its base, introduce
+nullability, or replace a specific reference with `object`.
+
+Array types remain invariant, so one array type cannot replace another array
+type; returning an array where the inherited declaration returns `object`
+remains valid. Primitive and `void` return types require an exact match.
+
+Return covariance does not participate in overload identity. The inherited
+name and canonical parameter types still select one existing virtual slot. A
+call expression has the return type of the declaration selected from its static
+receiver type, while runtime dispatch may invoke an implementation returning a
+narrower reference. All managed references use the same ABI pointer
+representation, so covariance requires neither a thunk nor a virtual-table
+layout change.
+
 ## Subtyping and checked operations
 
 A non-null derived reference implicitly widens to any direct or transitive base
@@ -303,8 +379,9 @@ Consequently, an object satisfies its exact class and every transitive base,
 while a base-typed reference can still be tested or safely cast back to its
 actual derived type. Null and unrelated runtime kinds fail without trapping.
 
-## Deliberate Stage 17.2 boundary
+## Deliberate Stage 17.4 boundary
 
-`sealed` is a reserved file-class modifier but remains a diagnosed unsupported
-contract until Stage 17.3, which also owns final overrides. Covariant returns
-and interface dispatch remain separate language work.
+Abstract classes, sealed classes, abstract functions, and final overrides now
+have complete declaration and inheritance contracts. Reference-return
+covariance is supported; parameter variance and interface dispatch remain
+separate language work.

@@ -73,6 +73,9 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
           if (symbol.is_abstract) {
             output << ", abstract";
           }
+          if (symbol.is_final) {
+            output << ", final";
+          }
           if (symbol.virtual_slot) {
             output << ", virtual slot " << *symbol.virtual_slot;
           }

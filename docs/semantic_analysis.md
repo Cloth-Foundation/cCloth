@@ -1,4 +1,4 @@
-# Cloth semantic analysis through Stage 17.2
+# Cloth semantic analysis through Stage 17.4
 
 Semantic analysis binds parsed syntax across a closed compilation graph, checks
 the implemented language rules, and lowers valid and recovered syntax to a
@@ -22,7 +22,11 @@ derived-constructor initializer to one constructor of the direct base. Stage
 checked type operations. Stage 16.5 processes file classes base-first after all
 signatures are registered, validates explicit overrides, and assigns stable
 virtual slots. Stage 16.6 recognizes direct-base-qualified instance calls and
-records their non-virtual dispatch intent in typed HIR.
+records their non-virtual dispatch intent in typed HIR. Stages 17.1 and 17.2
+introduce abstract declarations and enforce construction and subclass
+completeness. Stage 17.3 rejects inheritance from sealed file classes and
+replacement of final virtual slots. Stage 17.4 admits reference-return
+covariance when the overriding return is assignable to the inherited return.
 
 `Compilation` owns its source files, immutable token streams, and parse results.
 This keeps token lexemes, syntax names, and source-range file names valid
@@ -158,13 +162,15 @@ inherited. The selected public instance signature supplies a virtual slot, so a
 base-typed receiver invokes the most-derived compatible implementation.
 
 Every public instance function receives a virtual slot. A derived declaration
-with the same name and canonical parameter types must use `override`, retain
-the exact return type, and replace the inherited implementation in that slot.
-New overloads append slots in declaration order. Private and static functions
-remain direct and reject `override`. Calls in field initializers and constructor
-bodies are direct only when their receiver is the object under construction,
-so partially initialized derived state cannot be reached. Calls on other
-receivers and ordinary function-body calls dispatch virtually.
+with the same name and canonical parameter types must use `override` and
+replace the inherited implementation in that slot. Its return type may match
+exactly or be a managed-reference type assignable to the inherited return;
+primitive and `void` returns remain exact. New overloads append slots in
+declaration order. Private and static functions remain direct and reject
+`override`. Calls in field initializers and constructor bodies are direct only
+when their receiver is the object under construction, so partially initialized
+derived state cannot be reached. Calls on other receivers and ordinary
+function-body calls dispatch virtually.
 
 An `abstract func` registers its complete signature and virtual slot without
 an executable source body. It is valid only as a public, non-static member of
@@ -181,6 +187,12 @@ is empty, with one canonical-signature diagnostic per missing implementation.
 Calling an abstract file-class type as a constructor is rejected, while an
 explicit derived-constructor initializer may select an abstract base's
 constructor because it initializes an already allocated derived object.
+
+A sealed file class may inherit but cannot be inherited, and cannot also be
+abstract. A final function must be a concrete override. It retains the
+inherited virtual slot and remains callable, including by a descendant's
+direct `super` call, but override validation rejects any attempt to replace it.
+An abstract function cannot be final.
 
 `super.Method(arguments)` is a base-qualified call when overload resolution
 selects a public instance function through the current file class's direct-base
@@ -210,6 +222,9 @@ The checker currently validates:
   base-qualified calls
 - abstract class/function declaration placement, visibility, and static rules
 - abstract construction and transitive concrete-subclass completeness
+- sealed base-class and final override contracts
+- covariant managed-reference override returns with exact primitive and `void`
+  returns
 - exact overload and constructor selection
 - return value presence and type compatibility
 
@@ -227,10 +242,10 @@ with a runtime null guard.
 Overload matching prefers an exact canonical signature. If none exists, a
 unique candidate accepting the implemented implicit reference conversions is
 selected; multiple compatible candidates are ambiguous.
-User-defined conversions, numeric promotions, sealed/final inheritance
-contracts, traits, generics, primitive boxing, first-class function values,
-and implicit default constructors are deferred. Checked array casts are also
-deferred until arrays carry reified element-type metadata.
+User-defined conversions, numeric promotions, traits, generics, primitive
+boxing, first-class function values, and implicit default constructors are
+deferred. Checked array casts are also deferred until arrays carry reified
+element-type metadata.
 Complete return-path and reachability checks are performed by the Stage 3.0
 control-flow analysis after HIR verification.
 

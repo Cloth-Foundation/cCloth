@@ -66,7 +66,11 @@ view. Stage 17.1 adds `abstract class` envelopes and public bodyless
 `abstract func Name(...): Type;` declarations while retaining virtual-slot
 identity throughout lowering. Stage 17.2 rejects direct abstract construction
 and requires each concrete subclass to resolve every inherited abstract slot.
-See
+Stage 17.3 prevents inheritance from `sealed class` and prevents replacement of
+an inherited slot after `final override func`, without changing object or
+virtual-table layout. Stage 17.4 permits a managed-reference override return
+that is assignable to the inherited return. Static call-site typing and the
+shared reference representation keep the existing slot and ABI unchanged. See
 [inheritance.md](inheritance.md).
 
 ## Capitalization and visibility

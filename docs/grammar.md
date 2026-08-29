@@ -1,6 +1,6 @@
 # Implemented Cloth grammar
 
-This document defines the syntax implemented through Stage 17.2.
+This document defines the syntax implemented through Stage 17.4.
 Contextual rules are listed separately and are not encoded into EBNF.
 
 ## Lexical forms
@@ -71,7 +71,8 @@ function_declaration
 function_modifier
     = "static"
     | "override"
-    | "abstract" ;
+    | "abstract"
+    | "final" ;
 
 return_type
     = type
@@ -125,12 +126,21 @@ Function modifiers may appear in any order but may not be repeated.
 `override` is valid only on a public instance function that exactly matches an
 inherited name and canonical parameter signature. It cannot be combined with
 `static`; semantic analysis enforces the complete override contract.
+An override may keep the inherited return type or use a covariant managed-
+reference return type that is assignable to it. Primitive and `void` returns
+must match exactly.
+
+On a function, `final` must be paired with `override`. The declaration keeps
+the inherited virtual slot but prevents a descendant from replacing it.
+Function `final` is contextual and does not change the existing field,
+parameter, local, or iteration-binding forms.
 
 An abstract file class uses the explicit `abstract class { ... }` envelope. An
 `abstract func` is a public instance declaration in an abstract file class and
 ends with `;` instead of a body. Concrete functions still require a block.
-`sealed` is reserved and retained as a file-class modifier, but sealed-class
-contracts are not accepted until their inheritance rules are implemented.
+A `sealed class` is concrete and cannot be named as another file class's base.
+`abstract sealed class` and `abstract final override func` are contradictory
+and rejected.
 
 ## Statements
 
@@ -291,6 +301,14 @@ The declaration pass enforces these rules separately from the grammar:
 - An abstract file class cannot be constructed directly. A concrete subclass
   must override every inherited abstract virtual signature; abstract
   subclasses may carry unresolved signatures forward.
+- A sealed file class cannot be inherited. An abstract file class cannot also
+  be sealed.
+- `final` on a function requires `override`; a final override remains callable
+  but cannot itself be overridden. An abstract function cannot be final.
+- An override return may narrow an inherited managed-reference return while
+  preserving assignment compatibility. It cannot widen nullability or class
+  identity; array types remain invariant. Primitive and `void` returns are
+  exact.
 - A base clause names at most one visible file class. The inheritance graph
   cannot contain direct or indirect cycles.
 - Member lookup uses the nearest class in the base chain that declares a name.

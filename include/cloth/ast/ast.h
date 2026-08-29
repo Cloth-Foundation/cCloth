@@ -260,6 +260,7 @@ struct FunctionDecl {
   bool is_static{false};
   bool is_override{false};
   bool is_abstract{false};
+  bool is_final{false};
 };
 
 struct ConstructorInitializer {

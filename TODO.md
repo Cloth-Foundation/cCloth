@@ -1,7 +1,7 @@
 # Cloth deferred-work ledger
 
 This file is the central inventory of work deliberately left out through Stage
-17.2. Feature documents remain authoritative for existing behavior; this
+17.4. Feature documents remain authoritative for existing behavior; this
 ledger records accepted gaps and their prerequisites. An unchecked item has no
 implied schedule or stage number.
 
@@ -45,8 +45,12 @@ than a general aspiration.
   subclass to implement all inherited abstract slots. Stage 17.2 derives the
   transitive obligation set from the resolved virtual table while allowing
   abstract intermediates and explicit abstract-base constructor chaining.
-- [ ] Enforce sealed classes and final override contracts. `sealed` is reserved
-  and parsed in Stage 17.1 but remains a diagnosed unsupported contract.
+- [x] Enforce sealed classes and final override contracts. Stage 17.3 rejects
+  inheritance from a sealed file class and requires function `final` to close
+  an inherited virtual slot through `final override func`.
+- [x] Add covariant managed-reference override returns. Stage 17.4 accepts a
+  narrower return assignable to the inherited return while keeping primitives,
+  `void`, and invariant array-to-array returns exact.
 - [ ] Design interfaces and the provisional `class : Human is InterfaceA,
   InterfaceB { ... }` conformance syntax.
 - [ ] Add flow-sensitive smart casts after a successful `value is T` test.

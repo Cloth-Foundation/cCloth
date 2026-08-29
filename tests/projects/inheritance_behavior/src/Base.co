@@ -14,6 +14,10 @@ func Label(): string {
   return "Base";
 }
 
+func Copy(): Base {
+  return self;
+}
+
 static func Kind(): string {
   return "kind";
 }

@@ -35,7 +35,7 @@ bool is_file_class_modifier(TokenKind kind) noexcept {
 
 bool is_function_modifier(TokenKind kind) noexcept {
   return kind == TokenKind::kKwAbstract || kind == TokenKind::kKwOverride ||
-         kind == TokenKind::kKwStatic;
+         kind == TokenKind::kKwStatic || kind == TokenKind::kKwFinal;
 }
 
 bool looks_like_file_class_declaration(std::span<const Token> tokens,
@@ -416,6 +416,7 @@ void DeclarationPass::parse_function() {
   bool is_static = false;
   bool is_override = false;
   bool is_abstract = false;
+  bool is_final = false;
   while (is_function_modifier(current().kind)) {
     const Token& modifier = advance();
     bool* present = &is_abstract;
@@ -423,6 +424,8 @@ void DeclarationPass::parse_function() {
       present = &is_static;
     } else if (modifier.kind == TokenKind::kKwOverride) {
       present = &is_override;
+    } else if (modifier.kind == TokenKind::kKwFinal) {
+      present = &is_final;
     }
     if (*present) {
       diagnostics_.error(
@@ -488,6 +491,7 @@ void DeclarationPass::parse_function() {
   symbol.is_static = is_static;
   symbol.is_override = is_override;
   symbol.is_abstract = is_abstract;
+  symbol.is_final = is_final;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kFunction, symbol_index,
                                     begin, std::nullopt, std::nullopt, body,

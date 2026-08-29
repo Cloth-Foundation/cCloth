@@ -192,10 +192,10 @@ class SemanticAnalyzer {
           syntax.is_valid && identity_valid};
       file.is_abstract = syntax.is_abstract;
       file.is_sealed = syntax.is_sealed;
-      if (syntax.is_sealed) {
-        diagnostics_.error(
-            syntax.range,
-            "sealed class contracts are reserved but not supported yet");
+      if (syntax.is_abstract && syntax.is_sealed) {
+        diagnostics_.error(syntax.range,
+                           "file class '" + syntax.qualified_name +
+                               "' cannot be both abstract and sealed");
         file.is_valid = false;
       }
       static_cast<void>(model_.add_file(std::move(file)));
@@ -345,6 +345,16 @@ class SemanticAnalyzer {
         model_.mutable_file(file_id).is_valid = false;
         continue;
       }
+      if (model_.file(*base.file).is_sealed) {
+        diagnostics_.error(syntax.base_class->range,
+                           "file class '" + syntax.qualified_name +
+                               "' cannot inherit from sealed file class '" +
+                               base.name + "'");
+        diagnostics_.note(point_range(files_[base.file->value]->range.begin),
+                          "sealed file class is declared here");
+        model_.mutable_file(file_id).is_valid = false;
+        continue;
+      }
       model_.mutable_file(file_id).base_file = *base.file;
     }
     validate_inheritance_cycles();
@@ -474,6 +484,14 @@ class SemanticAnalyzer {
     model_.mutable_symbol(symbol).is_static = function.is_static;
     model_.mutable_symbol(symbol).is_override = function.is_override;
     model_.mutable_symbol(symbol).is_abstract = function.is_abstract;
+    model_.mutable_symbol(symbol).is_final = function.is_final;
+    if (function.is_final && !function.is_override) {
+      diagnostics_.error(function.range,
+                         "final function '" + std::string{function.name} +
+                             "' must also be declared override");
+      model_.mutable_symbol(symbol).is_valid = false;
+      model_.mutable_file(file_id).is_valid = false;
+    }
     if (function.is_abstract) {
       if (!files_[file_id.value]->is_abstract) {
         diagnostics_.error(function.range,
@@ -493,6 +511,13 @@ class SemanticAnalyzer {
         diagnostics_.error(function.range, "abstract function '" +
                                                std::string{function.name} +
                                                "' must be public");
+        model_.mutable_symbol(symbol).is_valid = false;
+        model_.mutable_file(file_id).is_valid = false;
+      }
+      if (function.is_final) {
+        diagnostics_.error(function.range, "abstract function '" +
+                                               std::string{function.name} +
+                                               "' cannot be final");
         model_.mutable_symbol(symbol).is_valid = false;
         model_.mutable_file(file_id).is_valid = false;
       }
@@ -579,7 +604,16 @@ class SemanticAnalyzer {
 
       const SemanticSymbol& inherited =
           model_.symbol(virtual_functions[*matching_slot]);
-      if (symbol.type != inherited.type) {
+      if (inherited.is_final) {
+        diagnostics_.error(symbol.range,
+                           "function '" + symbol.name +
+                               "' cannot override inherited final function");
+        diagnostics_.note(inherited.range, "final function is declared here");
+        symbol.is_valid = false;
+        file.is_valid = false;
+        continue;
+      }
+      if (!is_override_return_compatible(inherited.type, symbol.type)) {
         diagnostics_.error(symbol.range, "override of '" + symbol.name +
                                              "' returns '" +
                                              type_name(symbol.type) +
@@ -2715,6 +2749,15 @@ class SemanticAnalyzer {
            actual_type.element_type &&
            is_assignable(*expected_type.element_type,
                          *actual_type.element_type);
+  }
+
+  bool is_override_return_compatible(TypeId inherited,
+                                     TypeId overriding) const {
+    if (inherited == overriding) {
+      return true;
+    }
+    return is_reference(inherited) && is_reference(overriding) &&
+           is_assignable(inherited, overriding);
   }
 
   bool is_file_class_subtype(TypeId subtype, TypeId supertype) const {

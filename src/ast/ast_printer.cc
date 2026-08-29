@@ -115,6 +115,9 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
         if (function.is_abstract) {
           output << ", abstract";
         }
+        if (function.is_final) {
+          output << ", final";
+        }
         output << ']';
         print_validity(function.is_valid, output);
         break;

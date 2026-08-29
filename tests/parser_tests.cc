@@ -217,10 +217,21 @@ void abstract_declarations(TestContext& test) {
   test.expect(summary.str().find("[public, abstract]") != std::string::npos,
               "AST summary omitted the abstract function modifier");
 
-  const ParsedSource sealed{"Closed.co", "sealed class {}\n"};
+  const ParsedSource sealed{
+      "Closed.co",
+      "sealed class : Shape { final override func Render() {} }\n"};
   test.expect(error_count(sealed) == 0 && sealed.ast().is_sealed &&
                   !sealed.ast().is_abstract,
-              "sealed class syntax was not reserved and retained");
+              "sealed class syntax was not retained");
+  test.expect(sealed.ast().functions.size() == 1 &&
+                  sealed.ast().functions[0].is_final &&
+                  sealed.ast().functions[0].is_override,
+              "final override modifiers were not retained");
+
+  const ParsedSource duplicate_final{
+      "Duplicate.co", "class { final final override func Render() {} }\n"};
+  test.expect(has_diagnostic(duplicate_final, "duplicate 'final'"),
+              "duplicate final function modifier was accepted");
 
   const ParsedSource body{
       "Body.co",
