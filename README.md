@@ -54,7 +54,7 @@ For example, `User.co` defines the `User` type directly. `name` is private and
 // User.co
 string name;
 
-Init(string name) {
+User(string name) {
   self.name = name;
 }
 

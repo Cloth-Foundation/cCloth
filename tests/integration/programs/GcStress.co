@@ -1,7 +1,7 @@
 GcStress? Next;
 int32 Value;
 
-Init(int32 value, GcStress? next) {
+GcStress(int32 value, GcStress? next) {
   Value = value;
   Next = next;
 }

@@ -1,7 +1,7 @@
 class : Base {
   int32 MiddleMarker = Report(4);
 
-  Init(int32 value): Base(BaseArgument(value)) {
+  Middle(int32 value): Base(BaseArgument(value)) {
     println(5);
   }
 

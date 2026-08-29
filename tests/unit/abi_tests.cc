@@ -200,8 +200,8 @@ void wasm32_layout(TestContext& test) {
 
 void callable_abi(TestContext& test) {
   const CompiledSource source{
-      "Init(int32 value) {}\n"
-      "init(string value) {}\n"
+      "Layout(int32 value) {}\n"
+      "layout(string value) {}\n"
       "func Build(int32 value): Layout { return Layout(value); }\n"
       "func hidden(): bool { return true; }\n"};
   const cloth::AbiFileClass& file = source.result->abi.files[0];
@@ -226,11 +226,11 @@ void callable_abi(TestContext& test) {
               cloth::AbiParameterKind::kExplicit &&
           constructor.return_type ==
               source.result->semantics.file(cloth::FileId{0}).type &&
-          constructor.initializer_mangled_name == "_C1I6_Layout4_InitP1_i32",
+          constructor.initializer_mangled_name == "_C1I6_Layout6_LayoutP1_i32",
       "constructor allocation or initialization ABI is wrong");
   test.expect(private_constructor.linkage == cloth::AbiLinkage::kInternal &&
                   private_constructor.initializer_mangled_name ==
-                      "_C1I6_Layout4_initP1_s",
+                      "_C1I6_Layout6_layoutP1_s",
               "private constructor leaked external ABI linkage");
 }
 

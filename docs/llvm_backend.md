@@ -70,9 +70,10 @@ names. Loads address those globals directly; they never use an object offset.
 Each field initializer becomes an internal LLVM helper taking the new object as
 its receiver. An allocating constructor entry allocates the verified
 most-derived class size, installs that class's descriptor, executes the
-constructor MIR, and returns the object. Its LLVM linkage follows `Init` versus
-`init`. Every constructor also has an internal initializer entry that executes
-the same MIR on an incoming `self` without allocating. A derived constructor
+constructor MIR, and returns the object. Its LLVM linkage follows the
+constructor declaration's capitalization. Every constructor also has an
+internal initializer entry that executes the same MIR on an incoming `self`
+without allocating. A derived constructor
 invokes the selected accessible base initializer first; the MIR field marker
 then invokes only the derived class's local field helpers in declaration order
 before its body continues.

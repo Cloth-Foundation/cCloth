@@ -1,6 +1,6 @@
 int32 Value;
 
-Init(int32 value) {
+GcCollections(int32 value) {
   Value = value;
 }
 

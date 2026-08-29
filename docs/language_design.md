@@ -31,18 +31,23 @@ Stage 18 adds `interface { ... }` as the first alternate file kind. The file
 stem remains its only type name. Interfaces carry public function contracts but
 no fields, constructors, or object layout.
 
-Constructor declarations do not repeat the implicit class name. Their fixed
-introducer carries visibility through capitalization:
+Constructor declarations use a class-derived name whose capitalization carries
+visibility:
 
 ```text
-Init(string name, int32 id) {
+User(string name, int32 id) {     // Public.
+    // ...
+}
+
+user(int32 id) {                  // Private.
     // ...
 }
 ```
 
-`Init` is public and `init` is private. Calls continue to use the type name,
-such as `User(name, id)`. A public class may expose only private constructors
-and provide public static factory functions instead.
+For `User.co`, `User(...)` is public, while `user(...)` and `_User(...)` are
+private. Calls always use the type name, such as `User(name, id)`. A public
+class may expose only private constructors and provide public static factory
+functions instead.
 
 The parser must diagnose a file name that cannot form a valid Cloth type name.
 Package directory components follow the same identifier grammar.
@@ -65,7 +70,7 @@ the complete source graph and rejects self-inheritance and indirect cycles in a
 deterministic qualified-name order. Stage 16.2 gives the graph a stable
 base-prefix object layout and descriptor ancestry. Stage 16.3 requires every
 declared derived constructor to select its direct base explicitly with
-`Init(...): Base(...)`; construction allocates once and completes base
+`Derived(...): Base(...)`; construction allocates once and completes base
 initialization before derived fields and body. Stage 16.4 adds inherited public
 member lookup, transitive base-reference widening, and descriptor-ancestry
 checks for `is` and `as`. Stage 16.5 makes public instance functions virtual,
@@ -117,12 +122,13 @@ character of a declaration name:
   declaration private.
 
 This rule applies to implicit file classes and their fields, functions,
-constructors, and nested types. Constructors use the reserved `Init` and
-`init` spellings instead of arbitrary names. The rule does not apply to local
-variables or parameters because those names are not exported across an access
-boundary. Public declarations may be referenced from other file classes
-through same-package lookup or imports. Private declarations are visible only
-within their defining file class and its nested scopes.
+constructors, and nested types. Constructor names are constrained to the
+implicit class name or its lowercase-first and underscore-prefixed private
+forms. The rule does not apply to local variables or parameters because those
+names are not exported across an access boundary. Public declarations may be
+referenced from other file classes through same-package lookup or imports.
+Private declarations are visible only within their defining file class and its
+nested scopes.
 
 ```text
 // User.co defines the public class User.

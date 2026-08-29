@@ -1,7 +1,7 @@
 class : Middle {
   int32 DerivedMarker = Report(6);
 
-  Init(): Middle(Argument()) {
+  Derived(): Middle(Argument()) {
     println(7);
   }
 

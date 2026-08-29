@@ -1,4 +1,4 @@
-Init() {}
+ObjectModel() {}
 
 static func Main() {
   ObjectModel instance = ObjectModel();

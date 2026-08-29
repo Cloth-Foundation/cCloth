@@ -1,6 +1,6 @@
 string Name;
 
-init(string name) {
+user(string name) {
   Name = name;
 }
 

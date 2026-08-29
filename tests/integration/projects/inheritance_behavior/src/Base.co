@@ -1,7 +1,7 @@
 string Name;
 int32 Value;
 
-Init(int32 value) {
+Base(int32 value) {
   Name = "Base";
   Value = value;
 }

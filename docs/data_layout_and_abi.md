@@ -127,7 +127,8 @@ kinds in addition to the existing class-layout invariants.
 Each constructor has an allocation entry and an internal initialization entry.
 The `_C1C` allocation entry accepts only declared parameters, returns the new
 file-class reference, allocates the complete most-derived object, and runs its
-constructor MIR. Its linkage is external for `Init` and internal for `init`.
+constructor MIR. Its linkage is external for the uppercase class-name spelling
+and internal for lowercase or underscore-prefixed private spellings.
 The `_C1I` initialization entry accepts a leading `self` slot followed by the
 same parameters and returns `void`. A derived constructor calls the selected
 accessible base `_C1I` entry on the same object before initializing its local

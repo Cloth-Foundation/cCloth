@@ -85,19 +85,18 @@ constructor of its direct base:
 
 ```cloth
 class : Human {
-  Init(string name, int32 age): Human(name, age) {
+  User(string name, int32 age): Human(name, age) {
     // User constructor body.
   }
 }
 ```
 
-`Init` is a public constructor and `init` is a private constructor. The
-constructor declaration is independent of the implicit file-class name, while
-call sites continue to construct by type name, such as `User(name, age)`.
-Private constructors are callable only within their owning file class and
-cannot be selected by a derived class's base initializer. A public class may
-therefore restrict direct construction and expose static factories instead.
-Cloth does not require a public constructor.
+For `User.co`, `User(...)` is a public constructor, while `user(...)` and
+`_User(...)` are private constructors. Call sites always construct by type
+name, such as `User(name, age)`. Private constructors are callable only within
+their owning file class and cannot be selected by a derived class's base
+initializer. A public class may therefore restrict direct construction and
+expose static factories instead. Cloth does not require a public constructor.
 
 The name after `:` must resolve to the direct base class. Arguments use normal
 constructor overload selection and are evaluated left to right. A root-class
@@ -275,14 +274,14 @@ abstract base subobject explicitly:
 
 ```cloth
 abstract class {
-  Init(int32 scale) {}
+  Shape(int32 scale) {}
   abstract func Area(): float;
 }
 ```
 
 ```cloth
 class : Shape {
-  Init(): Shape(1) {}
+  Circle(): Shape(1) {}
 
   override func Area(): float {
     return 1.0;

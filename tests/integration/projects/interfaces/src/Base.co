@@ -1,7 +1,7 @@
 class is Scored {
   int32 value;
 
-  Init(int32 value) {
+  Base(int32 value) {
     self.value = value;
   }
 

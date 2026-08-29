@@ -14,8 +14,6 @@ using Keyword = std::pair<std::string_view, TokenKind>;
 
 constexpr std::array kKeywords{
     Keyword{"func", TokenKind::kKwFunc},
-    Keyword{"init", TokenKind::kKwInit},
-    Keyword{"Init", TokenKind::kKwInit},
     Keyword{"return", TokenKind::kKwReturn},
     Keyword{"if", TokenKind::kKwIf},
     Keyword{"else", TokenKind::kKwElse},

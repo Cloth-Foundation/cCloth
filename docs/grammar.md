@@ -92,14 +92,10 @@ return_type
     | "void" ;
 
 constructor_declaration
-    = constructor_introducer
+    = identifier
       "(" [ parameter_list ] ")"
       [ ":" type "(" [ argument_list ] ")" ]
       block ;
-
-constructor_introducer
-    = "Init"
-    | "init" ;
 
 parameter_list
     = parameter { "," parameter } ;
@@ -353,8 +349,10 @@ The declaration pass enforces these rules separately from the grammar:
   their ordinary meaning.
 - Derived references implicitly widen to direct or transitive base types,
   including compatible nullable forms. The reverse conversion requires `as`.
-- `Init` declares a public constructor; `init` declares a private constructor.
-  Constructor calls still use the implicit file-class name, such as
+- A constructor name is derived from its implicit file-class name. In
+  `User.co`, `User` declares a public constructor, while `user` and `_User`
+  declare private constructors. Other constructor names are invalid.
+  Constructor calls always use the implicit file-class name, such as
   `User(name)`.
 - Every declared constructor in a derived file class must include a base
   initializer naming its direct base. Root constructors cannot include one.
@@ -363,8 +361,8 @@ The declaration pass enforces these rules separately from the grammar:
 - Declaration visibility is inferred from the first ASCII character.
 - Private constructors are callable only inside their owning file class. A
   derived constructor cannot select a private base constructor.
-- Constructor overload identity ignores `Init` versus `init`; declarations
-  cannot differ only by visibility.
+- Constructor overload identity ignores the public or private constructor
+  spelling; declarations cannot differ only by visibility.
 - Conflicting fields and exact duplicate callable signatures are rejected.
 - Member declaration order does not affect declaration availability.
 - Import paths are identifier sequences rather than string literals.

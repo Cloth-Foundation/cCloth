@@ -130,8 +130,9 @@ rejects reads before initialization. Every constructor must initialize each
 otherwise-uninitialized final field exactly once.
 
 Every declared constructor in a derived file class must explicitly initialize
-its direct base with `Init(...): Base(...)` or `init(...): Base(...)`. A root
-constructor cannot have
+its direct base with `Derived(...): Base(...)`. Private class-derived spellings
+such as `derived(...)` and `_Derived(...)` use the same initializer form. A
+root constructor cannot have
 that clause, the named type must be the direct base, and the arguments must
 select one base constructor using normal overload rules. The initializer
 is checked after parameter binding and before the constructor body. Because the
@@ -139,12 +140,13 @@ base subobject is not initialized yet, its expressions cannot use `self`, read
 instance fields, or call unqualified instance functions. Cloth does not
 synthesize constructors or silently choose a zero-argument base constructor.
 
-Constructor capitalization is independent of file-class capitalization:
-`Init` is public and `init` is private. Construction syntax remains
-`Type(arguments)`. A private constructor is accessible only while analyzing
-its owning file class, including from its static factory functions. Derived
-classes cannot select private base constructors. Constructor overload identity
-uses canonical parameter types and cannot differ only by `Init` versus `init`.
+Constructor visibility is independent of file-class visibility. For `User.co`,
+`User(...)` is public, while `user(...)` and `_User(...)` are private.
+Construction syntax remains `Type(arguments)`. A private constructor is
+accessible only while analyzing its owning file class, including from its
+static factory functions. Derived classes cannot select private base
+constructors. Constructor overload identity uses canonical parameter types and
+cannot differ only by its public or private spelling.
 
 The same flow analysis requires every non-null reference field to be
 initialized by its declaration or on every constructor exit. Mutable non-null

@@ -358,7 +358,7 @@ void member_store(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co",
                   "string Name;\n"
-                  "Init(string name) { self.Name = name; }\n");
+                  "User(string name) { self.Name = name; }\n");
   compilation.compile();
 
   const cloth::MirBody& body =
@@ -449,7 +449,7 @@ void string_instructions(TestContext& test) {
 void object_model_instructions(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Objects.co",
-                  "Init() {}\n"
+                  "Objects() {}\n"
                   "static func Main() {\n"
                   "  Objects instance = Objects();\n"
                   "  object value = instance;\n"
@@ -757,7 +757,7 @@ void call_receivers(TestContext& test) {
   CompiledSources compilation;
   compilation.add(
       "User.co",
-      "Init() {}\n"
+      "User() {}\n"
       "static func Echo(int value): int { return value; }\n"
       "func InstanceEcho(int value): int { return value; }\n"
       "func Forward(int value): int { return InstanceEcho(value); }\n");
@@ -812,11 +812,11 @@ void call_receivers(TestContext& test) {
 
 void constructor_initialization_order(TestContext& test) {
   CompiledSources compilation;
-  compilation.add("Base.co", "int32 BaseValue = 1;\nInit(int32 value) {}\n");
+  compilation.add("Base.co", "int32 BaseValue = 1;\nBase(int32 value) {}\n");
   compilation.add("Derived.co",
                   "class : Base {\n"
                   "  int32 DerivedValue = 2;\n"
-                  "  Init(int32 value): Base(value) {}\n"
+                  "  Derived(int32 value): Base(value) {}\n"
                   "}\n");
   compilation.compile();
 
@@ -852,11 +852,11 @@ void inherited_reference_widening(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Base.co",
                   "string Name;\n"
-                  "Init(string name) { Name = name; }\n"
+                  "Base(string name) { Name = name; }\n"
                   "func Read(): string { return Name; }\n");
   compilation.add("Derived.co",
                   "class : Base {\n"
-                  "  Init(string name): Base(name) {}\n"
+                  "  Derived(string name): Base(name) {}\n"
                   "  func Own(): string { return Read(); }\n"
                   "}\n");
   compilation.add("Other.co", "int32 Wrong;\n");
@@ -985,12 +985,12 @@ void virtual_dispatch_lowering(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Base.co",
                   "int32 Marker = Hook();\n"
-                  "Init() { self.Hook(); }\n"
-                  "Init(Base other) { other.Hook(); }\n"
+                  "Base() { self.Hook(); }\n"
+                  "Base(Base other) { other.Hook(); }\n"
                   "func Hook(): int32 { return 1; }\n");
   compilation.add("Derived.co",
                   "class : Base {\n"
-                  "  Init(): Base() {}\n"
+                  "  Derived(): Base() {}\n"
                   "  override func Hook(): int32 { return 2; }\n"
                   "}\n");
   compilation.add("Use.co",
@@ -1189,8 +1189,8 @@ void verifiers_reject_corruption(TestContext& test) {
               "invalid nullable conversion did not report its type");
 
   CompiledSources inheritance;
-  inheritance.add("Base.co", "Init() {}\n");
-  inheritance.add("Derived.co", "class : Base { Init(): Base() {} }\n");
+  inheritance.add("Base.co", "Base() {}\n");
+  inheritance.add("Derived.co", "class : Base { Derived(): Base() {} }\n");
   inheritance.compile();
   cloth::HirModule broken_base_hir = inheritance.result->hir;
   broken_base_hir.files[1].base_file.reset();

@@ -401,19 +401,24 @@ void legacy_function_keyword_rejected(TestContext& test) {
 }
 
 void constructors(TestContext& test) {
-  const ParsedSource source{
-      "User.co", "Init() {}\ninit(string name) { self.Name = name; }\n"};
+  const ParsedSource source{"User.co",
+                            "User() {}\n"
+                            "user(string name) { self.Name = name; }\n"
+                            "_User(int32 id) { self.Id = id; }\n"};
   test.expect(error_count(source) == 0, "valid constructors should parse");
-  test.expect(source.ast().constructors.size() == 2,
+  test.expect(source.ast().constructors.size() == 3,
               "multiple constructors were not retained");
-  if (source.ast().constructors.size() == 2) {
+  if (source.ast().constructors.size() == 3) {
     test.expect(
         source.ast().constructors[0].visibility == cloth::Visibility::kPublic &&
             source.ast().constructors[1].visibility ==
+                cloth::Visibility::kPrivate &&
+            source.ast().constructors[2].visibility ==
                 cloth::Visibility::kPrivate,
         "constructor capitalization should determine visibility");
-    test.expect(source.ast().constructors[0].name == "Init" &&
-                    source.ast().constructors[1].name == "init",
+    test.expect(source.ast().constructors[0].name == "User" &&
+                    source.ast().constructors[1].name == "user" &&
+                    source.ast().constructors[2].name == "_User",
                 "constructor spelling was not retained");
   }
 }
@@ -422,7 +427,7 @@ void constructor_initializers(TestContext& test) {
   const ParsedSource source{
       "Derived.co",
       "class : Base {\n"
-      "  Init(int32 value, string name): Base(value + 1, name) {}\n"
+      "  Derived(int32 value, string name): Base(value + 1, name) {}\n"
       "}\n"};
 
   test.expect(error_count(source) == 0,
@@ -443,13 +448,13 @@ void constructor_initializers(TestContext& test) {
   }
 
   const ParsedSource missing_base{"Derived.co",
-                                  "class : Base { Init(): () {} }\n"};
+                                  "class : Base { Derived(): () {} }\n"};
   test.expect(
       has_diagnostic(missing_base, "expected base class name in constructor"),
       "missing base initializer name was not diagnosed");
 
   const ParsedSource trailing_tokens{
-      "Derived.co", "class : Base { Init(): Base() extra {} }\n"};
+      "Derived.co", "class : Base { Derived(): Base() extra {} }\n"};
   test.expect(
       has_diagnostic(trailing_tokens,
                      "expected constructor body after base initializer"),
@@ -457,11 +462,9 @@ void constructor_initializers(TestContext& test) {
 }
 
 void wrong_constructor(TestContext& test) {
-  const ParsedSource source{"User.co", "User(string name) {}\n"};
-  test.expect(has_diagnostic(source,
-                             "constructor declarations must begin with 'Init' "
-                             "or 'init'"),
-              "legacy constructor syntax was not diagnosed");
+  const ParsedSource source{"User.co", "Person(string name) {}\n"};
+  test.expect(has_diagnostic(source, "must use a class-derived name"),
+              "unrelated constructor name was not diagnosed");
   test.expect(source.ast().constructors.size() == 1,
               "recovered constructor should remain in the AST");
   if (!source.ast().constructors.empty()) {
@@ -481,8 +484,8 @@ void duplicate_declarations(TestContext& test) {
   const ParsedSource source{"Duplicates.co",
                             "int32 id;\nint32 id;\n"
                             "func Find(int x) {}\nfunc Find(int y) {}\n"
-                            "Init(string value) {}\n"
-                            "init(string other) {}\n"};
+                            "Duplicates(string value) {}\n"
+                            "duplicates(string other) {}\n"};
   test.expect(has_diagnostic(source, "conflicts with previous field"),
               "duplicate field was not diagnosed");
   test.expect(has_diagnostic(source, "duplicate function signature"),
@@ -734,7 +737,8 @@ void malformed_for_headers_recover(TestContext& test) {
 
 void calls_members_and_assignment(TestContext& test) {
   const ParsedSource source{
-      "Calls.co", "Init(string name) { self.Name = Repository.Find(name); }\n"};
+      "Calls.co",
+      "Calls(string name) { self.Name = Repository.Find(name); }\n"};
   test.expect(error_count(source) == 0,
               "member calls and assignments should parse");
   const cloth::Block& body =
@@ -1103,7 +1107,7 @@ void deterministic_diagnostics(TestContext& test) {
 
 void deterministic_ast_summary(TestContext& test) {
   const ParsedSource source{"User.co",
-                            "string Name;\nint32 id;\nInit() {}\n"
+                            "string Name;\nint32 id;\nUser() {}\n"
                             "func Find(int32 id): User { return id; }\n"
                             "func validate(): bool { return true; }\n"};
   std::ostringstream output;
@@ -1112,7 +1116,7 @@ void deterministic_ast_summary(TestContext& test) {
       "FileClass User [public]\n"
       "|- Field Name: string [public]\n"
       "|- Field id: int32 [private]\n"
-      "|- Constructor Init() [public]\n"
+      "|- Constructor User() [public]\n"
       "|- Function Find(int32 id): User [public]\n"
       "|- Function validate(): bool [private]\n";
   test.expect(output.str() == expected,

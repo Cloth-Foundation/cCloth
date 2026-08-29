@@ -1,6 +1,6 @@
 int32 BaseMarker = Report(2);
 
-Init(int32 value) {
+Base(int32 value) {
   println(value);
 }
 

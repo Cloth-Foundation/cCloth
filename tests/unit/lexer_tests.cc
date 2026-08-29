@@ -93,7 +93,7 @@ void keywords_versus_identifiers(TestContext& test) {
       "sealing interface interfaces implements super superior module modular"};
   expect_kinds(test, source,
                {cloth::TokenKind::kKwFunc,     cloth::TokenKind::kIdentifier,
-                cloth::TokenKind::kKwInit,     cloth::TokenKind::kKwInit,
+                cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kIdentifier, cloth::TokenKind::kIdentifier,
                 cloth::TokenKind::kKwReturn,   cloth::TokenKind::kKwFinal,

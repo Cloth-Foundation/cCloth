@@ -113,7 +113,7 @@ void object_construction(TestContext& test) {
   sources.add("Model.co",
               "string Name = \"default\";\n"
               "int32 Count = 1;\n"
-              "Init(string name) { Name = name; }\n"
+              "Model(string name) { Name = name; }\n"
               "func Get(): string { return Name; }\n");
   sources.compile();
 
@@ -169,10 +169,10 @@ void inherited_type_descriptors(TestContext& test) {
 
 void constructor_chaining(TestContext& test) {
   CompiledSources sources;
-  sources.add("Base.co", "Init(int32 value) { println(value); }\n");
+  sources.add("Base.co", "Base(int32 value) { println(value); }\n");
   sources.add("Derived.co",
               "class : Base {\n"
-              "  Init(int32 value): Base(value) { println(value + 1); }\n"
+              "  Derived(int32 value): Base(value) { println(value + 1); }\n"
               "}\n");
   sources.compile();
 
@@ -180,14 +180,14 @@ void constructor_chaining(TestContext& test) {
               "constructor chain failed LLVM lowering");
   test.expect(
       sources.contains(
-          "define internal void @_C1I4_Base4_InitP1_i32(ptr %self, i32 ") &&
+          "define internal void @_C1I4_Base4_BaseP1_i32(ptr %self, i32 ") &&
           sources.contains(
-              "define internal void @_C1I7_Derived4_InitP1_i32(ptr %self, "
+              "define internal void @_C1I7_Derived7_DerivedP1_i32(ptr %self, "
               "i32 "),
       "constructor initializer entry points were not emitted");
   test.expect(
       count_occurrences(sources.llvm->text,
-                        "call void @_C1I4_Base4_InitP1_i32(ptr %self, i32 ") ==
+                        "call void @_C1I4_Base4_BaseP1_i32(ptr %self, i32 ") ==
           2,
       "derived allocation and initializer entries did not chain to the base");
   test.expect(
@@ -200,11 +200,11 @@ void inherited_member_access_and_subtyping(TestContext& test) {
   CompiledSources sources;
   sources.add("Base.co",
               "int32 Value;\n"
-              "Init(int32 value) { Value = value; }\n"
+              "Base(int32 value) { Value = value; }\n"
               "func Read(): int32 { return Value; }\n"
               "static func Kind(): int32 { return 1; }\n");
   sources.add("Derived.co",
-              "class : Base { Init(int32 value): Base(value) {} }\n");
+              "class : Base { Derived(int32 value): Base(value) {} }\n");
   sources.add("Use.co",
               "func Upcast(Derived value): Base { return value; }\n"
               "func Read(Derived value): int32 {\n"
@@ -413,7 +413,7 @@ void strings(TestContext& test) {
 void object_model(TestContext& test) {
   CompiledSources sources;
   sources.add("Objects.co",
-              "Init() {}\n"
+              "Objects() {}\n"
               "static func Main() {\n"
               "  object value = Objects();\n"
               "  bool exact = value is Objects;\n"
@@ -437,7 +437,7 @@ void object_model(TestContext& test) {
 void call_receivers(TestContext& test) {
   CompiledSources sources;
   sources.add("User.co",
-              "Init() {}\n"
+              "User() {}\n"
               "static func Echo(int value): int { return value; }\n"
               "func InstanceEcho(int value): int { return value; }\n"
               "func Forward(int value): int { return InstanceEcho(value); }\n");
@@ -455,7 +455,7 @@ void call_receivers(TestContext& test) {
       "unqualified call did not forward its receiver");
   test.expect(sources.contains("call void @cloth_rt_require_receiver(ptr %v0)"),
               "instance-qualified call did not pass its object");
-  test.expect(sources.contains("call ptr @_C1C4_User4_InitP0()"),
+  test.expect(sources.contains("call ptr @_C1C4_User4_UserP0()"),
               "constructor call gained an ABI receiver");
 }
 
@@ -510,7 +510,7 @@ void gc_root_frames(TestContext& test) {
   CompiledSources sources;
   sources.add("Rooted.co",
               "string Name;\n"
-              "Init(string name) { Name = name; }\n"
+              "Rooted(string name) { Name = name; }\n"
               "func Choose(Rooted? value, bool keep): Rooted? {\n"
               "  Rooted? local = value;\n"
               "  if (keep) { return local; }\n"
@@ -598,7 +598,7 @@ void wasm32_module(TestContext& test) {
   CompiledSources sources{cloth::TargetDataLayout::llvm_wasm32()};
   sources.add("Small.co",
               "int32 Value;\n"
-              "Init() {}\n"
+              "Small() {}\n"
               "func Count(string[] values): int32 {\n"
               "  int32 count = 0;\n"
               "  for (var value in values) { count = count + 1; }\n"
@@ -635,7 +635,7 @@ void wasm32_module(TestContext& test) {
 void print_and_native_entry_point(TestContext& test) {
   CompiledSources sources;
   sources.add("HelloWorld.co",
-              "Init() {}\n"
+              "HelloWorld() {}\n"
               "static func Main(): void {\n"
               "  print(\"Hello, World!\\n\");\n"
               "  print(7);\n"
