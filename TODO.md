@@ -16,11 +16,9 @@ Rules:
 
 ## Active stage
 
-No feature stage is active. Stage 21 is complete. The next scheduled action is
-the Stage 22.1 Shuttle manifest and build-protocol contract; implementation must
-not begin until that contract and its explicit implementation start are
-approved. The ownership boundary is recorded in
-`docs/shuttle_and_compiler.md`.
+Stage 22 is active. Stage 22.1 is complete; Stage 22.2 implementation must not
+begin until it receives an explicit go-ahead. The ownership boundary is
+recorded in `docs/shuttle_and_compiler.md`.
 
 ## Scheduled work
 
@@ -45,17 +43,19 @@ approved. The ownership boundary is recorded in
 
 ### Stage 22: Shuttle project contract and compiler build protocol
 
-- [ ] **22.1 — Manifest and build-protocol contract.** Freeze `Shuttle.toml`,
-  package/workspace terminology, dependency namespace mapping, the versioned
-  Shuttle-to-compiler request, migration from `cloth.toml`, and diagnostics
-  ownership.
-- [ ] **22.2 — Shuttle bootstrap and dependency graph.** Parse and validate the
-  approved manifest in Shuttle, resolve local dependencies deterministically,
-  and diagnose cycles, duplicate identities, missing paths, and invalid source
-  roots before invoking the compiler.
-- [ ] **22.3 — Compiler build interface.** Add explicit source-root and
-  dependency inputs to `clothc`, remove manifest discovery from the compiler,
-  and preserve standalone compilation and identifier-based imports.
+- [x] **22.1 — Manifest and build-protocol contract.** Freeze Shuttle's Rust
+  2024 implementation policy, `Shuttle.toml`, package/workspace terminology,
+  dependency namespace mapping, the versioned Shuttle-to-compiler request,
+  migration from `cloth.toml`, and diagnostics ownership. The approved contracts
+  live under `shuttle/docs/` and `docs/shuttle_and_compiler.md`.
+- [ ] **22.2 — Shuttle bootstrap.** Establish the Rust application, production
+  CLI and diagnostics boundaries, manifest model and parser, deterministic
+  validation, formatting, linting, and unit-test harness.
+- [ ] **22.3 — Local graph and compiler integration.** Resolve local
+  dependencies deterministically in Shuttle; add the approved package graph,
+  source-root, dependency, entry, target, and output inputs to `clothc`; remove
+  compiler manifest discovery; and preserve standalone compilation and
+  identifier-based imports.
 - [ ] **22.4 — Cross-tool verification.** Add configuration unit tests,
   multi-project fixtures spanning both repositories, direct and Shuttle build
   documentation, and the Stage 22 development/sanitizer exit audit.

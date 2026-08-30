@@ -60,7 +60,8 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 20 | Contextual literals, lossless numeric widening, overload-directed literals, and checked explicit numeric conversions |
 | 21 | Fixed-width integer operators and host-independent byte-order operations |
 
-Stage 21 is the current completed baseline. No feature stage is active.
+Stage 21 is the current completed language baseline. Coordinated toolchain Stage
+22 is active; Stage 22.1 is complete and implementation has not started.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -103,7 +104,7 @@ Exit criteria:
 
 ## Stage 22: Shuttle project contract and compiler build protocol
 
-Status: **planned**
+Status: **active**
 
 Objective: establish Shuttle as Cloth's project and build system, replace the
 compiler-owned metadata-only `cloth.toml` marker, and connect both tools through
@@ -113,8 +114,9 @@ Prerequisite: Stage 21.
 
 Deliverables:
 
-1. Freeze the tool ownership, terminology, versioned `Shuttle.toml` schema, and
-   initial Shuttle-to-compiler build request.
+1. Freeze Shuttle's implementation-language policy, the tool ownership and
+   terminology, versioned `Shuttle.toml` schema, and initial Shuttle-to-compiler
+   build request.
 2. Bootstrap Shuttle's manifest handling and deterministic local dependency
    graph with cycle, duplicate, visibility, and missing-path diagnostics.
 3. Give `clothc` explicit source-root and dependency inputs, remove manifest

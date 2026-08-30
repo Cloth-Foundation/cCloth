@@ -8,6 +8,12 @@ translation of explicit inputs into verified outputs.
 Shuttle is a separate tool and repository. It is not a compiler subsystem, and
 the compiler does not link against Shuttle.
 
+Shuttle is implemented in stable Rust 2024 with Rust 1.85 as its initial
+minimum supported version. This choice does not enter the public build protocol
+and does not require Rust on machines using released Shuttle binaries. The
+owning rationale and toolchain policy are recorded in
+[`shuttle/docs/implementation_language.md`](../shuttle/docs/implementation_language.md).
+
 ## Toolchain terms
 
 - A **Cloth source package** is a namespace derived from a directory beneath a
@@ -56,8 +62,13 @@ supplied roots or artifacts, and emits deterministic outputs. The process
 boundary is authoritative; Shuttle must not depend on private compiler C++
 headers or internal representation layouts.
 
-Stage 22 will freeze the initial command or request-file shape. Stage 23 will
-freeze the independently compiled artifact boundary and linking behavior.
+The initial protocol is a direct child-process invocation. Shuttle passes
+arguments as an argument vector without a command shell. Protocol version 1
+defines its argument shape, path encoding, version query, exit statuses, and
+diagnostic transport in
+[`shuttle/docs/compiler_protocol.md`](../shuttle/docs/compiler_protocol.md).
+Stage 23 will freeze the independently compiled artifact boundary and linking
+behavior.
 
 ## Source imports
 
@@ -66,8 +77,11 @@ Cloth imports remain identifier based. Shuttle maps dependency identities into
 the compiler build request, and the compiler applies the language's ordinary
 name-resolution and visibility rules.
 
-The exact namespace rule for names imported from another Shuttle package is a
-Stage 22.1 language-tooling contract and must be approved before implementation.
+A direct dependency's lowercase alias becomes the leading package component in
+source imports. For example, alias `models` exposes `models::User` and
+`models.data::Record`. Package names stay out of source syntax, and transitive
+dependencies are not implicitly visible. The complete rule is defined in
+[`shuttle/docs/manifest.md`](../shuttle/docs/manifest.md).
 
 ## Direct compiler use
 
