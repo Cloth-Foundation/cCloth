@@ -17,8 +17,10 @@ Rules:
 ## Active stage
 
 No feature stage is active. Stage 21 is complete. The next scheduled action is
-the Stage 22.1 manifest contract; implementation must not begin until that
-contract and its explicit implementation start are approved.
+the Stage 22.1 Shuttle manifest and build-protocol contract; implementation must
+not begin until that contract and its explicit implementation start are
+approved. The ownership boundary is recorded in
+`docs/shuttle_and_compiler.md`.
 
 ## Scheduled work
 
@@ -41,27 +43,32 @@ contract and its explicit implementation start are approved.
 - [x] Complete the Stage 21 exit audit in `ROADMAP.md`, including development
   and sanitizer suites and recording every deliberate deferral below.
 
-### Stage 22: Project manifest and local dependencies
+### Stage 22: Shuttle project contract and compiler build protocol
 
-- [ ] **22.1 — Manifest contract.** Define a versioned `cloth.toml` schema for
-  package identity, source roots, entry files, and local path dependencies.
-- [ ] **22.2 — Dependency graph.** Resolve local dependencies deterministically
+- [ ] **22.1 — Manifest and build-protocol contract.** Freeze `Shuttle.toml`,
+  package/workspace terminology, dependency namespace mapping, the versioned
+  Shuttle-to-compiler request, migration from `cloth.toml`, and diagnostics
+  ownership.
+- [ ] **22.2 — Shuttle bootstrap and dependency graph.** Parse and validate the
+  approved manifest in Shuttle, resolve local dependencies deterministically,
   and diagnose cycles, duplicate identities, missing paths, and invalid source
-  roots before source parsing.
-- [ ] **22.3 — CLI integration.** Make project discovery and compilation consume
-  the manifest while preserving identifier-based imports.
-- [ ] **22.4 — Project verification.** Add parser/configuration unit tests,
-  multi-project integration fixtures, build documentation, and the Stage 22
-  development/sanitizer exit audit.
+  roots before invoking the compiler.
+- [ ] **22.3 — Compiler build interface.** Add explicit source-root and
+  dependency inputs to `clothc`, remove manifest discovery from the compiler,
+  and preserve standalone compilation and identifier-based imports.
+- [ ] **22.4 — Cross-tool verification.** Add configuration unit tests,
+  multi-project fixtures spanning both repositories, direct and Shuttle build
+  documentation, and the Stage 22 development/sanitizer exit audit.
 
-### Stage 23: Separate compilation and deterministic linking
+### Stage 23: Shuttle-orchestrated separate compilation and linking
 
 - [ ] **23.1 — Artifact contract.** Define the versioned package artifact and
   the semantic, MIR/ABI, and dependency metadata it owns.
 - [ ] **23.2 — Canonical identity.** Preserve type descriptors, interface
   identities, mangled callables, and runtime registration across artifacts.
-- [ ] **23.3 — Link pipeline.** Link local package artifacts deterministically
-  and diagnose duplicate, missing, or incompatible definitions.
+- [ ] **23.3 — Link pipeline.** Make Shuttle order and invoke deterministic
+  compilation and linking while the compiler diagnoses duplicate, missing, or
+  incompatible artifact definitions.
 - [ ] **23.4 — Equivalence verification.** Compare separate and whole-project
   compilation in ABI, linker, invalid-input, and native execution tests, then
   complete the Stage 23 development/sanitizer exit audit.
@@ -152,8 +159,9 @@ active stage without first updating `ROADMAP.md`.
 
 ### Packages, dependencies, and distribution
 
-- Add package registries, semantic-version selection, lockfiles, and remote
-  dependency retrieval after the local-only Stage 22 contract.
+- Add Shuttle package registries, semantic-version selection, lockfile
+  generation, and remote dependency retrieval after the local-only Stage 22
+  contract.
 - Define and distribute the standard library.
 
 ### Backend, runtime, and tooling

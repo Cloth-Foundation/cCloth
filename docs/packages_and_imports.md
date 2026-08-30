@@ -6,9 +6,9 @@ and does not embed filesystem paths as string literals.
 
 ## Project layout
 
-The compiler searches from the entry source toward the filesystem root for
-`cloth.toml`. When found, the manifest's directory is the project root and its
-`src/` directory is the source root:
+The current compiler searches from the entry source toward the filesystem root
+for the metadata-only Stage 8 marker `cloth.toml`. When found, the marker's
+directory is the project root and its `src/` directory is the source root:
 
 ```text
 project/
@@ -88,3 +88,9 @@ Stage 8.0 establishes the local project graph. Manifest dependency tables,
 package registries, version selection, remote retrieval, and a standard-library
 distribution mechanism remain later build-system work; none require a change
 to the source import grammar.
+
+`cloth.toml` is transitional compiler discovery behavior, not the future build
+manifest. Shuttle is Cloth's separate project, build, and package manager and
+will own `Shuttle.toml`. Stage 22 will make source roots and dependency mappings
+explicit compiler inputs so `clothc` no longer discovers or parses manifests.
+See [Shuttle and the Cloth compiler](shuttle_and_compiler.md).

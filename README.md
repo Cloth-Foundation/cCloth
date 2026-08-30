@@ -90,8 +90,22 @@ operators plus explicit little-endian and big-endian `byte[]` meta operations.
 
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++
-linker driver. A complete standard library, dependency management, and broader
-native target support remain future work.
+linker driver. [Shuttle](shuttle/README.md) is the separate official project,
+build, and package manager; it is currently being defined and is not yet the
+supported build path. A complete standard library, dependency management, and
+broader native target support remain future work.
+
+## Toolchain boundary
+
+`clothc` owns the Cloth language: parsing, semantic analysis, verified compiler
+representations, ABI rules, code generation, and language diagnostics. Shuttle
+owns `Shuttle.toml`, workspaces, dependencies, build planning, compiler
+invocation, caches, and user-facing build workflows.
+
+The compiler does not parse Shuttle manifests, and Shuttle does not reproduce
+language or ABI rules. They communicate through an explicit, versioned build
+request. See [Shuttle and the Cloth compiler](docs/shuttle_and_compiler.md) for
+the ownership and migration contract.
 
 ## Build from source
 
@@ -151,10 +165,10 @@ clothc [--target=x86_64|wasm32]
 
 Native `--build` output currently requires `--target=x86_64`.
 
-## Projects and imports
+## Current compiler-only projects and imports
 
-A multi-file project has an empty or metadata-only `cloth.toml` and a `src/`
-source root:
+The implemented Stage 8 compiler behavior uses an empty or metadata-only
+`cloth.toml` marker and a `src/` source root:
 
 ```text
 my_app/
@@ -182,6 +196,11 @@ import legacy::User as LegacyUser;
 
 See [Packages and imports](docs/packages_and_imports.md) for path identity,
 visibility, discovery, and collision rules.
+
+This marker is transitional and is not Shuttle's manifest. Stage 22 will move
+project configuration to `Shuttle.toml`, owned and parsed by Shuttle, while
+`clothc` receives source roots and dependency inputs explicitly. Direct
+single-entry compiler use will remain available without Shuttle.
 
 ## Contributing
 

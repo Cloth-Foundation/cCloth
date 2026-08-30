@@ -5,6 +5,11 @@ work items inside that order, while files under `docs/` define behavior that is
 already implemented. A backlog item is not scheduled merely because it is
 documented.
 
+Stages that cross the Shuttle boundary record their shared objective and exit
+criteria here. Shuttle owns its implementation order and work ledger in the
+`shuttle` repository; a coordinated stage closes only after both repositories
+and their shared protocol tests pass.
+
 ## Stage discipline
 
 Only one stage may be active. Every stage moves through `planned`, `active`,
@@ -96,56 +101,66 @@ Exit criteria:
 - MIR and applicable backend verification reject malformed representations;
 - development and sanitizer suites pass.
 
-## Stage 22: Project manifest and local dependencies
+## Stage 22: Shuttle project contract and compiler build protocol
 
 Status: **planned**
 
-Objective: replace the metadata-only `cloth.toml` marker with a deterministic
-local project contract suitable for repeatable builds.
+Objective: establish Shuttle as Cloth's project and build system, replace the
+compiler-owned metadata-only `cloth.toml` marker, and connect both tools through
+a deterministic, versioned build protocol.
 
 Prerequisite: Stage 21.
 
 Deliverables:
 
-1. Define a versioned manifest schema for package identity, source roots,
-   entry files, and local path dependencies.
-2. Resolve local dependency graphs deterministically with cycle, duplicate,
-   visibility, and missing-path diagnostics.
-3. Make CLI project discovery consume the manifest without changing the
-   identifier-based Cloth import syntax.
-4. Add unit and multi-project integration coverage and document the project
-   layout and build commands.
+1. Freeze the tool ownership, terminology, versioned `Shuttle.toml` schema, and
+   initial Shuttle-to-compiler build request.
+2. Bootstrap Shuttle's manifest handling and deterministic local dependency
+   graph with cycle, duplicate, visibility, and missing-path diagnostics.
+3. Give `clothc` explicit source-root and dependency inputs, remove manifest
+   parsing and discovery from the compiler, and preserve identifier-based Cloth
+   imports.
+4. Add unit and cross-repository multi-project integration coverage and
+   document both direct-compiler and Shuttle workflows.
 
 Non-goals:
 
-- remote retrieval, registries, semantic-version solving, lockfiles, build
-  scripts, or arbitrary command execution;
+- remote retrieval, registries, semantic-version solving, lockfile generation,
+  build scripts, or arbitrary command execution;
 - a standard-library distribution mechanism;
-- separate native compilation units.
+- separate native compilation units, incremental compilation, or remote caches;
+- embedding compiler internals as a Shuttle library.
 
 Exit criteria:
 
-- all Stage 22 items in `TODO.md` are complete;
+- all Stage 22 items in both repositories are complete;
 - equal project inputs produce an equal ordered compilation graph;
-- malformed manifests and dependency graphs fail before parsing source; and
-- development and sanitizer suites pass.
+- malformed manifests and dependency graphs fail in Shuttle before source
+  parsing;
+- `clothc` can compile explicit inputs without a manifest and never reads
+  `Shuttle.toml`; and
+- development, sanitizer, and cross-tool integration suites pass.
 
-## Stage 23: Separate compilation and deterministic linking
+The architectural ownership and migration rules are defined in
+[`docs/shuttle_and_compiler.md`](docs/shuttle_and_compiler.md).
+
+## Stage 23: Shuttle-orchestrated separate compilation and linking
 
 Status: **planned**
 
-Objective: compile manifest-defined local packages independently while
-preserving canonical Cloth type, descriptor, and callable identity.
+Objective: let Shuttle compile manifest-defined local packages independently
+while the compiler preserves canonical Cloth type, descriptor, callable, and
+artifact identity.
 
 Prerequisite: Stage 22.
 
 Deliverables:
 
-1. Freeze the package artifact boundary and its versioning rules.
+1. Freeze the compiler-owned package artifact boundary and its versioning rules.
 2. Preserve canonical mangling, type descriptors, interface identities, and
    runtime registration across compilation units.
-3. Link local dependency artifacts into one native program with deterministic
-   duplicate and mismatch diagnostics.
+3. Have Shuttle order and invoke compilation and linking of local dependency
+   artifacts with deterministic duplicate and mismatch diagnostics.
 4. Prove behavior with multi-package ABI, linker, and native integration tests.
 
 Non-goals:
