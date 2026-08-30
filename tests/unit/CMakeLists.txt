@@ -7,6 +7,7 @@ target_compile_definitions(cloth_project_tests PRIVATE
     CLOTH_TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/tests/integration"
 )
 cloth_add_unit_test(cloth_sema_tests sema_tests.cc)
+cloth_add_unit_test(cloth_shuttle_protocol_tests shuttle_protocol_tests.cc)
 cloth_add_unit_test(cloth_mir_tests mir_tests.cc)
 
 add_executable(cloth_runtime_tests runtime_tests.cc)

@@ -903,6 +903,12 @@ class ModuleEmitter {
     SourceRange entry_range = fallback_range();
     bool saw_main = false;
     for (const AbiFileClass& file : abi_.files) {
+      const SemanticSymbol& file_symbol =
+          semantics_.symbol(semantics_.file(file.file).symbol);
+      if (options_.entry_file && file_symbol.name != *options_.entry_file) {
+        continue;
+      }
+      entry_range = file_symbol.range;
       for (const AbiCallable& callable : file.functions) {
         const SemanticSymbol& symbol = semantics_.symbol(callable.symbol);
         if (symbol.name != "Main") {

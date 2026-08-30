@@ -91,9 +91,9 @@ operators plus explicit little-endian and big-endian `byte[]` meta operations.
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++
 linker driver. [Shuttle](shuttle/README.md) is the separate official project,
-build, and package manager; it is currently being defined and is not yet the
-supported build path. A complete standard library, dependency management, and
-broader native target support remain future work.
+build, and package manager. It supports validated local dependency graphs and
+the versioned compiler process protocol. A complete standard library, remote
+package registry, and broader native target support remain future work.
 
 ## Toolchain boundary
 
@@ -116,6 +116,7 @@ Requirements:
 - A C++23 compiler such as recent Clang, GCC, or MSVC
 - LLVM `llc` and a C++ linker driver to build native Cloth executables
 - Optional LLVM `opt` for backend verification tests
+- Rust 1.85 or newer to build Shuttle itself
 
 No third-party C++ libraries are required. From the repository root:
 
@@ -123,13 +124,30 @@ No third-party C++ libraries are required. From the repository root:
 cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
+cargo build --manifest-path shuttle/Cargo.toml --locked
 ```
 
 The development preset creates `build/dev`, enables tests, and treats compiler
 warnings as errors. See [Testing](docs/testing.md) for sanitizer, coverage, and
 fuzzing presets.
 
-## Compile a Cloth program
+## Build and run a Cloth project
+
+The checked-in Hello World project demonstrates the supported Shuttle path.
+From the repository root:
+
+```sh
+cargo run --manifest-path shuttle/Cargo.toml --locked -- run \
+  --manifest-path examples/Shuttle.toml \
+  --compiler build/dev/clothc
+```
+
+On Windows, use `build/dev/clothc.exe`. `shuttle check` validates and
+type-checks the complete local package graph without emitting a program, while
+`shuttle build` writes the native executable beneath the package's
+`target/x86_64/` directory.
+
+## Use the compiler directly
 
 On Linux or macOS:
 
@@ -159,31 +177,37 @@ summaries. Diagnostics go to standard error. The complete command shape is:
 
 ```text
 clothc [--target=x86_64|wasm32]
+       [--source-root=<path>]
        [--emit-llvm[=<path>] | --build=<path>]
        <source.co>...
 ```
 
 Native `--build` output currently requires `--target=x86_64`.
 
-## Current compiler-only projects and imports
+## Projects and imports
 
-The implemented Stage 8 compiler behavior uses an empty or metadata-only
-`cloth.toml` marker and a `src/` source root:
+Shuttle projects use the versioned `Shuttle.toml` manifest:
 
 ```text
 my_app/
-  cloth.toml
+  Shuttle.toml
   src/
     Main.co
     models/
       User.co
 ```
 
-Compile an entry file; Cloth discovers imported files and same-package sources
-from the project root:
+Use Shuttle for dependency resolution and ordinary project builds:
 
 ```sh
-./build/dev/clothc --build=build/dev/my_app my_app/src/Main.co
+shuttle run --manifest-path my_app/Shuttle.toml --compiler ./clothc
+```
+
+For compiler development, direct mode accepts an explicit source root and
+never opens a manifest:
+
+```sh
+./clothc --source-root=my_app/src --build=build/my_app my_app/src/Main.co
 ```
 
 Imports use identifier paths rather than file-name strings:
@@ -197,10 +221,8 @@ import legacy::User as LegacyUser;
 See [Packages and imports](docs/packages_and_imports.md) for path identity,
 visibility, discovery, and collision rules.
 
-This marker is transitional and is not Shuttle's manifest. Stage 22 will move
-project configuration to `Shuttle.toml`, owned and parsed by Shuttle, while
-`clothc` receives source roots and dependency inputs explicitly. Direct
-single-entry compiler use will remain available without Shuttle.
+Dependency aliases remain lowercase source-visible namespace prefixes. Package
+names and manifest paths do not enter Cloth source syntax.
 
 ## Contributing
 

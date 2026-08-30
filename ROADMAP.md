@@ -61,7 +61,8 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 21 | Fixed-width integer operators and host-independent byte-order operations |
 
 Stage 21 is the current completed language baseline. Coordinated toolchain Stage
-22 is active; Stages 22.1 and 22.2 are complete, and Stage 22.3 has not started.
+22 is active; Stages 22.1 through 22.3 are complete, and Stage 22.4 has not
+started.
 
 ## Stage 21: Integer binary representation and byte order
 

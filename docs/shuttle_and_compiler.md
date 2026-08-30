@@ -90,9 +90,10 @@ and standalone source compilation. Direct mode has no manifest or dependency
 manager: its roots and inputs are supplied explicitly or use the documented
 single-entry fallback.
 
-The current compiler search for a metadata-only `cloth.toml` is transitional
-Stage 8 behavior. Stage 22 will replace it with an explicit compiler source-root
-input. `clothc` will not search for or open `Shuttle.toml`.
+`--source-root=PATH` supplies a direct-mode source root and enables deterministic
+same-package and import discovery beneath that root. Without it, the first
+entry file's parent is the standalone root. `clothc` never searches for or
+opens `cloth.toml` or `Shuttle.toml`.
 
 ## Versioning and failures
 

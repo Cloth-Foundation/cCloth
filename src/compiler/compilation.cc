@@ -33,6 +33,13 @@ std::string qualified_name(std::string_view package_name,
   return std::string{package_name} + '.' + std::string{class_name};
 }
 
+std::string qualified_name(std::string_view owning_package,
+                           std::string_view source_package,
+                           std::string_view class_name) {
+  const std::string local = qualified_name(source_package, class_name);
+  return qualified_name(owning_package, local);
+}
+
 std::string path_key(const std::filesystem::path& path) {
   std::string key = path.lexically_normal().generic_string();
 #if defined(_WIN32)
@@ -155,9 +162,25 @@ void Compilation::set_source_root(std::filesystem::path source_root,
   discover_package_sources_ = discover_package_sources;
 }
 
+void Compilation::set_package_dependencies(
+    std::vector<CompilationDependency> dependencies) {
+  package_dependencies_ = std::move(dependencies);
+}
+
 void Compilation::add_source(SourceFile source, std::string package_name) {
-  units_.push_back(
-      Unit{std::move(source), std::move(package_name), {}, {}, std::nullopt});
+  units_.push_back(Unit{
+      std::move(source), std::move(package_name), {}, {}, {}, std::nullopt});
+}
+
+void Compilation::add_package_source(SourceFile source,
+                                     std::string owning_package,
+                                     std::string source_package) {
+  units_.push_back(Unit{std::move(source),
+                        std::move(source_package),
+                        std::move(owning_package),
+                        {},
+                        {},
+                        std::nullopt});
 }
 
 void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
@@ -179,7 +202,12 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
   std::set<std::string> loaded_packages;
 
   auto prepare_unit = [&](Unit& unit) {
-    if (normalized_source_root) {
+    if (!unit.owning_package.empty()) {
+      if (!valid_package_name(unit.package_name)) {
+        diagnostics.error(source_origin(unit.source),
+                          "source has an invalid package name");
+      }
+    } else if (normalized_source_root) {
       const auto path = absolute_path(unit.source.path());
       if (!path || !is_within(*normalized_source_root, *path)) {
         diagnostics.error(source_origin(unit.source),
@@ -199,12 +227,36 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
                         "source has an invalid package name");
     }
 
-    unit.qualified_name = qualified_name(unit.package_name, unit.source.stem());
+    unit.qualified_name = qualified_name(unit.owning_package, unit.package_name,
+                                         unit.source.stem());
     unit.tokens = Lexer{unit.source, diagnostics}.lex();
     unit.parse_result.emplace(
         Parser{unit.source, unit.tokens, diagnostics}.parse());
     unit.parse_result->file_class.package_name = unit.package_name;
     unit.parse_result->file_class.qualified_name = unit.qualified_name;
+    unit.parse_result->file_class.owning_package = unit.owning_package;
+    for (ImportDecl& import : unit.parse_result->file_class.imports) {
+      import.target_package = unit.owning_package;
+      if (unit.owning_package.empty() || import.package_name.empty()) {
+        continue;
+      }
+      const std::size_t separator = import.package_name.find('.');
+      const std::string_view first =
+          std::string_view{import.package_name}.substr(
+              0, separator == std::string::npos ? import.package_name.size()
+                                                : separator);
+      const auto dependency = std::ranges::find_if(
+          package_dependencies_, [&](const CompilationDependency& edge) {
+            return edge.owner == unit.owning_package && edge.alias == first;
+          });
+      if (dependency == package_dependencies_.end()) {
+        continue;
+      }
+      import.target_package = dependency->target;
+      import.package_name = separator == std::string::npos
+                                ? std::string{}
+                                : import.package_name.substr(separator + 1);
+    }
   };
 
   auto load_source = [&](const std::filesystem::path& path, SourceRange range,
@@ -231,7 +283,7 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
       return;
     }
     loaded_paths.insert(key);
-    units_.push_back(Unit{std::move(*source), {}, {}, {}, std::nullopt});
+    units_.push_back(Unit{std::move(*source), {}, {}, {}, {}, std::nullopt});
   };
 
   auto load_package = [&](std::string_view package_name, SourceRange range) {

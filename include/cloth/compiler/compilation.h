@@ -22,6 +22,12 @@
 
 namespace cloth {
 
+struct CompilationDependency {
+  std::string owner;
+  std::string alias;
+  std::string target;
+};
+
 struct CompilationResult {
   SemanticModel semantics;
   HirModule hir;
@@ -38,7 +44,11 @@ class Compilation {
 
   void set_source_root(std::filesystem::path source_root,
                        bool discover_package_sources = false);
+  void set_package_dependencies(
+      std::vector<CompilationDependency> dependencies);
   void add_source(SourceFile source, std::string package_name = {});
+  void add_package_source(SourceFile source, std::string owning_package,
+                          std::string source_package);
   // Source ranges in the result refer to source storage owned here.
   [[nodiscard]] CompilationResult analyze(DiagnosticEngine& diagnostics);
 
@@ -52,6 +62,7 @@ class Compilation {
   struct Unit {
     SourceFile source;
     std::string package_name;
+    std::string owning_package;
     std::string qualified_name;
     std::vector<Token> tokens;
     std::optional<ParseResult> parse_result;
@@ -62,6 +73,7 @@ class Compilation {
   std::vector<Unit> units_;
   std::optional<std::filesystem::path> source_root_;
   bool discover_package_sources_{false};
+  std::vector<CompilationDependency> package_dependencies_;
   TargetDataLayout target_;
 };
 

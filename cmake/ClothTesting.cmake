@@ -20,7 +20,7 @@ function(cloth_native_executable_path output_variable output_name)
 endfunction()
 
 function(cloth_add_native_output_test name)
-    cmake_parse_arguments(ARG "EXACT" "OUTPUT;SOURCE;EXPECTED" "" ${ARGN})
+    cmake_parse_arguments(ARG "EXACT" "OUTPUT;SOURCE;SOURCE_ROOT;EXPECTED" "" ${ARGN})
     if(NOT ARG_OUTPUT OR NOT ARG_SOURCE OR NOT ARG_EXPECTED)
         message(FATAL_ERROR
             "cloth_add_native_output_test requires OUTPUT, SOURCE, and EXPECTED"
@@ -28,9 +28,14 @@ function(cloth_add_native_output_test name)
     endif()
 
     cloth_native_executable_path(executable "${ARG_OUTPUT}")
+    set(compile_command clothc "--build=${executable}")
+    if(ARG_SOURCE_ROOT)
+        list(APPEND compile_command "--source-root=${ARG_SOURCE_ROOT}")
+    endif()
+    list(APPEND compile_command "${ARG_SOURCE}")
     add_test(
         NAME cloth_cli_build_${name}
-        COMMAND clothc "--build=${executable}" "${ARG_SOURCE}"
+        COMMAND ${compile_command}
     )
 
     set(check_command

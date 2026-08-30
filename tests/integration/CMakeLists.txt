@@ -16,6 +16,24 @@ add_test(
             ${PROJECT_SOURCE_DIR}/examples/Repository.co
 )
 
+add_test(NAME cloth_cli_shuttle_protocol_version
+    COMMAND clothc --shuttle-protocol-version)
+set_tests_properties(cloth_cli_shuttle_protocol_version PROPERTIES
+    PASS_REGULAR_EXPRESSION "^1"
+)
+
+add_test(
+    NAME cloth_cli_shuttle_check
+    COMMAND clothc
+            --shuttle-protocol 1
+            --target wasm32
+            --output-kind check
+            --root-package imports
+            --entry Main.co
+            --package imports 0.1.0
+            ${CLOTH_INTEGRATION_PROJECTS}/imports/src
+)
+
 if(CLOTH_LLVM_OPT_EXECUTABLE)
     set(CLOTH_TEST_LLVM_IR ${PROJECT_BINARY_DIR}/cloth-example.ll)
     add_test(
@@ -105,24 +123,29 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         OUTPUT "cloth inheritance construction"
         SOURCE
             ${CLOTH_INTEGRATION_PROJECTS}/inheritance_construction/src/Derived.co
+        SOURCE_ROOT
+            ${CLOTH_INTEGRATION_PROJECTS}/inheritance_construction/src
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/inheritance_construction.txt
         EXACT
     )
     cloth_add_native_output_test(inheritance_behavior
         OUTPUT "cloth inheritance behavior"
         SOURCE ${CLOTH_INTEGRATION_PROJECTS}/inheritance_behavior/src/Derived.co
+        SOURCE_ROOT ${CLOTH_INTEGRATION_PROJECTS}/inheritance_behavior/src
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/inheritance_behavior.txt
         EXACT
     )
     cloth_add_native_output_test(interfaces
         OUTPUT "cloth interfaces"
         SOURCE ${CLOTH_INTEGRATION_PROJECTS}/interfaces/src/Derived.co
+        SOURCE_ROOT ${CLOTH_INTEGRATION_PROJECTS}/interfaces/src
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/interfaces.txt
         EXACT
     )
     cloth_add_native_output_test(constructor_visibility
         OUTPUT "cloth constructor visibility"
         SOURCE ${CLOTH_INTEGRATION_PROJECTS}/constructor_visibility/src/Main.co
+        SOURCE_ROOT ${CLOTH_INTEGRATION_PROJECTS}/constructor_visibility/src
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/constructor_visibility.txt
         EXACT
     )
@@ -150,6 +173,7 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
     cloth_add_native_output_test(import_project
         OUTPUT "cloth import project"
         SOURCE ${CLOTH_INTEGRATION_PROJECTS}/imports/src/Main.co
+        SOURCE_ROOT ${CLOTH_INTEGRATION_PROJECTS}/imports/src
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/import_project.txt
     )
     cloth_add_native_output_test(array_sum

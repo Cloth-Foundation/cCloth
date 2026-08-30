@@ -3,15 +3,17 @@
 #include "cloth/backend/llvm_ir.h"
 #include "cloth/backend/native_toolchain.h"
 #include "cloth/compiler/compilation.h"
+#include "cloth/compiler/shuttle_protocol.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/hir/hir_printer.h"
 #include "cloth/lexer/token.h"
 #include "cloth/mir/mir_printer.h"
-#include "cloth/project/project_layout.h"
 #include "cloth/source/source_file.h"
 #include "cloth/target/data_layout.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -21,9 +23,39 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
+
+struct OutputOptions {
+  bool protocol_mode{false};
+  bool emit_llvm{false};
+  std::optional<std::filesystem::path> llvm_output;
+  std::optional<std::filesystem::path> native_output;
+  std::optional<std::string> entry_file;
+};
+
+std::optional<std::string> ascii_argument(
+    const std::filesystem::path& argument) {
+  const auto& native = argument.native();
+  std::string result;
+  result.reserve(native.size());
+  for (const auto character : native) {
+    const auto value = static_cast<std::uint32_t>(character);
+    if (value > 0x7f) {
+      return std::nullopt;
+    }
+    result.push_back(static_cast<char>(value));
+  }
+  return result;
+}
+
+std::filesystem::path argument_suffix(const std::filesystem::path& argument,
+                                      std::size_t prefix_size) {
+  return std::filesystem::path{argument.native().substr(prefix_size)};
+}
 
 std::string escaped_lexeme(std::string_view lexeme) {
   std::ostringstream output;
@@ -66,9 +98,9 @@ std::string escaped_lexeme(std::string_view lexeme) {
 }
 
 void print_diagnostics(const cloth::DiagnosticEngine& engine) {
-  for (const auto& diagnostic : engine.diagnostics()) {
-    const auto& location = diagnostic.range.begin;
-    const auto file =
+  for (const cloth::Diagnostic& diagnostic : engine.diagnostics()) {
+    const cloth::SourceLocation& location = diagnostic.range.begin;
+    const std::string_view file =
         location.file.empty() ? std::string_view{"<unknown>"} : location.file;
     std::cerr << file << ':' << location.line << ':' << location.column << ": "
               << cloth::diagnostic_severity_name(diagnostic.severity) << ": "
@@ -78,9 +110,8 @@ void print_diagnostics(const cloth::DiagnosticEngine& engine) {
 
 void print_tokens(std::span<const cloth::Token> tokens) {
   std::cout << "\nTokens:\n";
-
-  for (const auto& token : tokens) {
-    const auto& location = token.range.begin;
+  for (const cloth::Token& token : tokens) {
+    const cloth::SourceLocation& location = token.range.begin;
     std::ostringstream position;
     position << location.line << ':' << location.column;
     std::cout << std::left << std::setw(8) << position.str() << std::setw(24)
@@ -89,175 +120,131 @@ void print_tokens(std::span<const cloth::Token> tokens) {
   }
 }
 
-}  // namespace
-
-int main(int argc, char* argv[]) {
-  if (argc < 2) {
-    std::cerr << "usage: clothc [--target=x86_64|wasm32] "
-                 "[--emit-llvm[=<path>] | --build=<path>] "
-                 "<source.co>...\n";
-    return 2;
-  }
-
-  cloth::TargetDataLayout target = cloth::TargetDataLayout::llvm_x86_64();
-  bool target_was_set = false;
-  bool emit_llvm = false;
-  std::optional<std::filesystem::path> llvm_output;
-  std::optional<std::filesystem::path> native_output;
-  std::vector<std::filesystem::path> source_paths;
-  for (int index = 1; index < argc; ++index) {
-    const std::string_view argument{argv[index]};
-    if (argument.starts_with("--target=")) {
-      if (target_was_set) {
-        std::cerr << "clothc: error: target was specified more than once\n";
-        return 2;
-      }
-      target_was_set = true;
-      const std::string_view name = argument.substr(9);
-      if (name == "x86_64") {
-        target = cloth::TargetDataLayout::llvm_x86_64();
-      } else if (name == "wasm32") {
-        target = cloth::TargetDataLayout::llvm_wasm32();
-      } else {
-        std::cerr << "clothc: error: unsupported target '" << name << "'\n";
-        return 2;
-      }
-      continue;
-    }
-    if (argument.starts_with("--build=")) {
-      if (native_output) {
-        std::cerr << "clothc: error: native output was specified more than "
-                     "once\n";
-        return 2;
-      }
-      const std::string_view path = argument.substr(8);
-      if (path.empty()) {
-        std::cerr << "clothc: error: native output path is empty\n";
-        return 2;
-      }
-      native_output.emplace(path);
-      continue;
-    }
-    if (argument == "--emit-llvm" || argument.starts_with("--emit-llvm=")) {
-      if (emit_llvm) {
-        std::cerr
-            << "clothc: error: LLVM output was specified more than once\n";
-        return 2;
-      }
-      emit_llvm = true;
-      if (argument.starts_with("--emit-llvm=")) {
-        const std::string_view path = argument.substr(12);
-        if (path.empty()) {
-          std::cerr << "clothc: error: LLVM output path is empty\n";
-          return 2;
-        }
-        llvm_output.emplace(path);
-      }
-      continue;
-    }
-    if (argument.starts_with('-')) {
-      std::cerr << "clothc: error: unknown option '" << argument << "'\n";
-      return 2;
-    }
-    source_paths.emplace_back(argument);
-  }
-  if (source_paths.empty()) {
-    std::cerr << "clothc: error: no source files were provided\n";
-    return 2;
-  }
-  if (emit_llvm && native_output) {
-    std::cerr << "clothc: error: --emit-llvm and --build are mutually "
-                 "exclusive\n";
-    return 2;
-  }
-  if (native_output && target.target_name != "x86_64-unknown-unknown") {
-    std::cerr << "clothc: error: native executable output currently supports "
-                 "only --target=x86_64\n";
-    return 2;
-  }
-
-  const auto project_layout =
-      cloth::discover_project_layout(source_paths.front());
-  if (!project_layout) {
-    std::cerr << "clothc: error: " << project_layout.error() << '\n';
-    return 2;
-  }
-
-  cloth::Compilation compilation{std::move(target)};
-  compilation.set_source_root(project_layout->source_root,
-                              project_layout->manifest_path.has_value());
-  for (const std::filesystem::path& source_path : source_paths) {
-    auto source_result = cloth::SourceFile::load(source_path);
-    if (!source_result) {
-      const auto& error = source_result.error();
-      std::cerr << error.path.generic_string() << ": error: " << error.message
-                << '\n';
-      return 2;
-    }
-    compilation.add_source(std::move(*source_result));
-  }
-
-  cloth::DiagnosticEngine diagnostics;
-  const cloth::CompilationResult compilation_result =
-      compilation.analyze(diagnostics);
-
-  std::optional<cloth::LlvmIrModule> llvm_module;
-  if ((emit_llvm || native_output) && compilation_result.is_valid) {
-    llvm_module =
-        cloth::emit_llvm_ir(compilation_result.mir, compilation_result.abi,
-                            compilation_result.semantics, diagnostics,
-                            cloth::LlvmIrOptions{native_output.has_value()});
-  }
-
-  print_diagnostics(diagnostics);
-  if ((emit_llvm || native_output) && diagnostics.has_errors()) {
-    return 1;
-  }
-  if (native_output) {
-    if (!llvm_module) {
-      return 1;
-    }
-    cloth::NativeToolchain toolchain;
+cloth::NativeToolchain native_toolchain() {
+  cloth::NativeToolchain toolchain;
 #if defined(CLOTH_DEFAULT_LLC)
-    toolchain.llc = CLOTH_DEFAULT_LLC;
+  toolchain.llc = CLOTH_DEFAULT_LLC;
 #endif
-    toolchain.linker = CLOTH_DEFAULT_NATIVE_LINKER;
-    toolchain.runtime_library = CLOTH_DEFAULT_RUNTIME_LIBRARY;
-    toolchain.target_triple = CLOTH_DEFAULT_NATIVE_TARGET;
+  toolchain.linker = CLOTH_DEFAULT_NATIVE_LINKER;
+  toolchain.runtime_library = CLOTH_DEFAULT_RUNTIME_LIBRARY;
+  toolchain.target_triple = CLOTH_DEFAULT_NATIVE_TARGET;
 #if defined(CLOTH_NATIVE_LINKER_MSVC)
-    toolchain.linker_flavor = cloth::NativeLinkerFlavor::kMsvc;
+  toolchain.linker_flavor = cloth::NativeLinkerFlavor::kMsvc;
 #endif
 #if defined(CLOTH_NATIVE_STATIC_RUNTIME)
-    toolchain.link_static_runtime = true;
+  toolchain.link_static_runtime = true;
 #endif
-    const auto build_result =
-        cloth::build_native_executable(*llvm_module, *native_output, toolchain);
-    if (!build_result) {
-      std::cerr << "clothc: error: " << build_result.error().message << '\n';
-      return 2;
-    }
-    return 0;
+  return toolchain;
+}
+
+std::filesystem::path temporary_output_path(
+    const std::filesystem::path& output) {
+  std::filesystem::path temporary = output;
+  temporary += ".tmp";
+  return temporary;
+}
+
+bool prepare_temporary_output(const std::filesystem::path& temporary) {
+  std::error_code error;
+  std::filesystem::remove(temporary, error);
+  if (error) {
+    std::cerr << temporary.generic_string()
+              << ": error: could not remove stale temporary output\n";
+    return false;
   }
-  if (emit_llvm) {
+  return true;
+}
+
+bool promote_output(const std::filesystem::path& temporary,
+                    const std::filesystem::path& output) {
+  std::error_code error;
+  std::filesystem::remove(output, error);
+  if (error) {
+    std::cerr << output.generic_string()
+              << ": error: could not replace previous output\n";
+    std::filesystem::remove(temporary, error);
+    return false;
+  }
+  std::filesystem::rename(temporary, output, error);
+  if (error) {
+    std::cerr << output.generic_string()
+              << ": error: could not install completed output\n";
+    std::filesystem::remove(temporary, error);
+    return false;
+  }
+  return true;
+}
+
+bool write_llvm_module(const cloth::LlvmIrModule& module,
+                       const std::filesystem::path& output) {
+  const std::filesystem::path temporary = temporary_output_path(output);
+  if (!prepare_temporary_output(temporary)) {
+    return false;
+  }
+  std::ofstream stream{temporary, std::ios::binary};
+  if (!stream) {
+    std::cerr << output.generic_string()
+              << ": error: could not open LLVM output\n";
+    return false;
+  }
+  stream << module.text;
+  stream.close();
+  if (!stream) {
+    std::cerr << output.generic_string()
+              << ": error: could not write LLVM output\n";
+    std::error_code error;
+    std::filesystem::remove(temporary, error);
+    return false;
+  }
+  return promote_output(temporary, output);
+}
+
+int compile(cloth::Compilation& compilation, const OutputOptions& options) {
+  cloth::DiagnosticEngine diagnostics;
+  const cloth::CompilationResult result = compilation.analyze(diagnostics);
+
+  std::optional<cloth::LlvmIrModule> llvm_module;
+  if ((options.emit_llvm || options.native_output) && result.is_valid) {
+    llvm_module = cloth::emit_llvm_ir(
+        result.mir, result.abi, result.semantics, diagnostics,
+        cloth::LlvmIrOptions{options.native_output.has_value(),
+                             options.entry_file});
+  }
+  print_diagnostics(diagnostics);
+  if (diagnostics.has_errors() || !result.is_valid) {
+    return 1;
+  }
+
+  if (options.native_output) {
     if (!llvm_module) {
       return 1;
     }
-    if (llvm_output) {
-      std::ofstream output{*llvm_output, std::ios::binary};
-      if (!output) {
-        std::cerr << llvm_output->generic_string()
-                  << ": error: could not open LLVM output\n";
-        return 2;
-      }
-      output << llvm_module->text;
-      if (!output) {
-        std::cerr << llvm_output->generic_string()
-                  << ": error: could not write LLVM output\n";
-        return 2;
-      }
-    } else {
-      std::cout << llvm_module->text;
+    const std::filesystem::path temporary =
+        temporary_output_path(*options.native_output);
+    if (!prepare_temporary_output(temporary)) {
+      return 2;
     }
+    const auto build = cloth::build_native_executable(*llvm_module, temporary,
+                                                      native_toolchain());
+    if (!build) {
+      std::cerr << "clothc: error: " << build.error().message << '\n';
+      std::error_code error;
+      std::filesystem::remove(temporary, error);
+      return 2;
+    }
+    return promote_output(temporary, *options.native_output) ? 0 : 2;
+  }
+  if (options.emit_llvm) {
+    if (!llvm_module) {
+      return 1;
+    }
+    if (options.llvm_output) {
+      return write_llvm_module(*llvm_module, *options.llvm_output) ? 0 : 2;
+    }
+    std::cout << llvm_module->text;
+    return 0;
+  }
+  if (options.protocol_mode) {
     return 0;
   }
 
@@ -271,13 +258,202 @@ int main(int argc, char* argv[]) {
     cloth::print_ast_summary(compilation.syntax(index), std::cout);
   }
   std::cout << "\nTyped HIR:\n";
-  cloth::print_hir_summary(compilation_result.hir, compilation_result.semantics,
-                           std::cout);
+  cloth::print_hir_summary(result.hir, result.semantics, std::cout);
   std::cout << "\nControl-flow MIR:\n";
-  cloth::print_mir_summary(compilation_result.mir, compilation_result.semantics,
-                           std::cout);
+  cloth::print_mir_summary(result.mir, result.semantics, std::cout);
   std::cout << "\nPortable ABI:\n";
-  cloth::print_abi_summary(compilation_result.abi, compilation_result.semantics,
-                           std::cout);
-  return diagnostics.has_errors() ? 1 : 0;
+  cloth::print_abi_summary(result.abi, result.semantics, std::cout);
+  return result.is_valid ? 0 : 1;
+}
+
+int run_protocol(std::span<const std::filesystem::path> arguments) {
+  auto plan = cloth::prepare_shuttle_build(arguments);
+  if (!plan) {
+    std::cerr << "clothc: error: " << plan.error() << '\n';
+    return 2;
+  }
+
+  cloth::Compilation compilation{plan->request.target};
+  std::vector<cloth::CompilationDependency> dependencies;
+  dependencies.reserve(plan->request.dependencies.size());
+  for (const cloth::ShuttleDependencyInput& dependency :
+       plan->request.dependencies) {
+    dependencies.push_back(cloth::CompilationDependency{
+        dependency.owner, dependency.alias, dependency.target});
+  }
+  compilation.set_package_dependencies(std::move(dependencies));
+  for (cloth::ShuttleSourceInput& source : plan->sources) {
+    compilation.add_package_source(std::move(source.source),
+                                   std::move(source.package),
+                                   std::move(source.source_package));
+  }
+
+  OutputOptions options;
+  options.protocol_mode = true;
+  options.entry_file = std::move(plan->entry_file);
+  switch (plan->request.output_kind) {
+    case cloth::ShuttleOutputKind::kCheck:
+      break;
+    case cloth::ShuttleOutputKind::kLlvmIr:
+      options.emit_llvm = true;
+      options.llvm_output = std::move(plan->request.output);
+      break;
+    case cloth::ShuttleOutputKind::kExecutable:
+      options.native_output = std::move(plan->request.output);
+      break;
+  }
+  return compile(compilation, options);
+}
+
+int run_direct(std::span<const std::filesystem::path> arguments) {
+  cloth::TargetDataLayout target = cloth::TargetDataLayout::llvm_x86_64();
+  bool target_was_set = false;
+  OutputOptions options;
+  std::optional<std::filesystem::path> source_root;
+  std::vector<std::filesystem::path> source_paths;
+
+  for (const std::filesystem::path& argument : arguments) {
+    const std::optional<std::string> text = ascii_argument(argument);
+    if (text && text->starts_with("--target=")) {
+      if (target_was_set) {
+        std::cerr << "clothc: error: target was specified more than once\n";
+        return 2;
+      }
+      target_was_set = true;
+      const std::string_view name = std::string_view{*text}.substr(9);
+      if (name == "x86_64") {
+        target = cloth::TargetDataLayout::llvm_x86_64();
+      } else if (name == "wasm32") {
+        target = cloth::TargetDataLayout::llvm_wasm32();
+      } else {
+        std::cerr << "clothc: error: unsupported target '" << name << "'\n";
+        return 2;
+      }
+      continue;
+    }
+    if (text && text->starts_with("--build=")) {
+      if (options.native_output) {
+        std::cerr << "clothc: error: native output was specified more than "
+                     "once\n";
+        return 2;
+      }
+      const std::filesystem::path path = argument_suffix(argument, 8);
+      if (path.empty()) {
+        std::cerr << "clothc: error: native output path is empty\n";
+        return 2;
+      }
+      options.native_output = path;
+      continue;
+    }
+    if (text && (*text == "--emit-llvm" || text->starts_with("--emit-llvm="))) {
+      if (options.emit_llvm) {
+        std::cerr
+            << "clothc: error: LLVM output was specified more than once\n";
+        return 2;
+      }
+      options.emit_llvm = true;
+      if (text->starts_with("--emit-llvm=")) {
+        const std::filesystem::path path = argument_suffix(argument, 12);
+        if (path.empty()) {
+          std::cerr << "clothc: error: LLVM output path is empty\n";
+          return 2;
+        }
+        options.llvm_output = path;
+      }
+      continue;
+    }
+    if (text && text->starts_with("--source-root=")) {
+      if (source_root) {
+        std::cerr
+            << "clothc: error: source root was specified more than once\n";
+        return 2;
+      }
+      const std::filesystem::path path = argument_suffix(argument, 14);
+      if (path.empty()) {
+        std::cerr << "clothc: error: source root path is empty\n";
+        return 2;
+      }
+      source_root = path;
+      continue;
+    }
+    if (text && text->starts_with('-')) {
+      std::cerr << "clothc: error: unknown option '" << *text << "'\n";
+      return 2;
+    }
+    source_paths.push_back(argument);
+  }
+
+  if (source_paths.empty()) {
+    std::cerr << "clothc: error: no source files were provided\n";
+    return 2;
+  }
+  if (options.emit_llvm && options.native_output) {
+    std::cerr << "clothc: error: --emit-llvm and --build are mutually "
+                 "exclusive\n";
+    return 2;
+  }
+  if (options.native_output && target.target_name != "x86_64-unknown-unknown") {
+    std::cerr << "clothc: error: native executable output currently supports "
+                 "only --target=x86_64\n";
+    return 2;
+  }
+
+  std::error_code error;
+  std::filesystem::path root =
+      source_root ? std::filesystem::absolute(*source_root, error)
+                  : std::filesystem::absolute(source_paths.front(), error)
+                        .parent_path();
+  root = root.lexically_normal();
+  if (error || !std::filesystem::is_directory(root, error) || error) {
+    std::cerr << "clothc: error: could not resolve the source root\n";
+    return 2;
+  }
+
+  cloth::Compilation compilation{std::move(target)};
+  compilation.set_source_root(root, source_root.has_value());
+  for (const std::filesystem::path& source_path : source_paths) {
+    auto source = cloth::SourceFile::load(source_path);
+    if (!source) {
+      const cloth::SourceLoadError& load_error = source.error();
+      std::cerr << load_error.path.generic_string()
+                << ": error: " << load_error.message << '\n';
+      return 2;
+    }
+    compilation.add_source(std::move(*source));
+  }
+  return compile(compilation, options);
+}
+
+int cloth_main(std::span<const std::filesystem::path> arguments) {
+  if (arguments.empty()) {
+    std::cerr << "usage: clothc [--source-root=<path>] "
+                 "[--target=x86_64|wasm32] "
+                 "[--emit-llvm[=<path>] | --build=<path>] <source.co>...\n";
+    return 2;
+  }
+  if (arguments.size() == 1 &&
+      ascii_argument(arguments.front()) == "--shuttle-protocol-version") {
+    std::cout << cloth::kShuttleProtocolVersion << '\n';
+    return 0;
+  }
+  const bool protocol_mode =
+      std::ranges::any_of(arguments, [](const std::filesystem::path& argument) {
+        return ascii_argument(argument) == "--shuttle-protocol";
+      });
+  return protocol_mode ? run_protocol(arguments) : run_direct(arguments);
+}
+
+}  // namespace
+
+#if defined(_WIN32)
+int wmain(int argc, wchar_t* argv[]) {
+#else
+int main(int argc, char* argv[]) {
+#endif
+  std::vector<std::filesystem::path> arguments;
+  arguments.reserve(static_cast<std::size_t>(argc > 0 ? argc - 1 : 0));
+  for (int index = 1; index < argc; ++index) {
+    arguments.emplace_back(argv[index]);
+  }
+  return cloth_main(arguments);
 }

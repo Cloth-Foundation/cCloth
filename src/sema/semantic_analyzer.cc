@@ -114,6 +114,22 @@ bool ascii_case_equal(std::string_view left, std::string_view right) noexcept {
   return true;
 }
 
+std::string qualified_file_name(std::string_view owning_package,
+                                std::string_view source_package,
+                                std::string_view type_name) {
+  std::string result;
+  if (!owning_package.empty()) {
+    result += owning_package;
+    result += '.';
+  }
+  if (!source_package.empty()) {
+    result += source_package;
+    result += '.';
+  }
+  result += type_name;
+  return result;
+}
+
 std::uint64_t interface_id(std::string_view qualified_name) noexcept {
   constexpr std::uint64_t kOffset = 14695981039346656037ULL;
   constexpr std::uint64_t kPrime = 1099511628211ULL;
@@ -246,7 +262,8 @@ class SemanticAnalyzer {
       for (std::size_t target_index = 0; target_index < files_.size();
            ++target_index) {
         const FileClassDecl& target = *files_[target_index];
-        if (target.package_name != current.package_name) {
+        if (target.owning_package != current.owning_package ||
+            target.package_name != current.package_name) {
           continue;
         }
         const FileId target_file{target_index};
@@ -275,10 +292,8 @@ class SemanticAnalyzer {
   }
 
   void register_explicit_import(FileId current_file, const ImportDecl& import) {
-    const std::string target_name =
-        import.package_name.empty()
-            ? import.type_name
-            : import.package_name + '.' + import.type_name;
+    const std::string target_name = qualified_file_name(
+        import.target_package, import.package_name, import.type_name);
     const std::optional<FileId> target = find_qualified_file(target_name);
     if (!target) {
       diagnostics_.error(import.range,
@@ -301,7 +316,8 @@ class SemanticAnalyzer {
     bool found_package = false;
     for (std::size_t index = 0; index < files_.size(); ++index) {
       const FileClassDecl& target = *files_[index];
-      if (target.package_name != import.package_name) {
+      if (target.owning_package != import.target_package ||
+          target.package_name != import.package_name) {
         continue;
       }
       found_package = true;
@@ -3421,9 +3437,12 @@ class SemanticAnalyzer {
   std::optional<FileId> find_inaccessible_file(FileId current_file,
                                                std::string_view name) const {
     const std::string& package_name = files_[current_file.value]->package_name;
+    const std::string& owning_package =
+        files_[current_file.value]->owning_package;
     for (std::size_t index = 0; index < files_.size(); ++index) {
       if (index == current_file.value || files_[index]->name != name ||
-          files_[index]->package_name != package_name) {
+          files_[index]->package_name != package_name ||
+          files_[index]->owning_package != owning_package) {
         continue;
       }
       const FileId file{index};

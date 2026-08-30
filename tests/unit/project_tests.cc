@@ -1,6 +1,5 @@
 #include "cloth/compiler/compilation.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
-#include "cloth/project/project_layout.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_file.h"
 
@@ -18,20 +17,10 @@ namespace {
 using cloth::test::TestCase;
 using cloth::test::TestContext;
 
-void project_discovery(TestContext& test) {
+void explicit_source_root(TestContext& test) {
   const std::filesystem::path project =
       std::filesystem::path{CLOTH_TEST_DATA_DIR} / "projects" / "imports";
   const std::filesystem::path entry = project / "src" / "Main.co";
-  const auto layout = cloth::discover_project_layout(entry);
-  test.expect(layout.has_value(), "project manifest was not discovered");
-  if (!layout) {
-    return;
-  }
-  test.expect(layout->project_root == project,
-              "project root does not contain the manifest");
-  test.expect(layout->source_root == project / "src",
-              "project source root is wrong");
-
   auto source = cloth::SourceFile::load(entry);
   test.expect(source.has_value(), "project entry source did not load");
   if (!source) {
@@ -39,15 +28,15 @@ void project_discovery(TestContext& test) {
   }
 
   cloth::Compilation compilation;
-  compilation.set_source_root(layout->source_root, true);
+  compilation.set_source_root(project / "src", true);
   compilation.add_source(std::move(*source));
   cloth::DiagnosticEngine diagnostics;
   std::optional<cloth::CompilationResult> result;
   result.emplace(compilation.analyze(diagnostics));
 
   test.expect(!diagnostics.has_errors(),
-              "valid project discovery produced diagnostics");
-  test.expect(result->is_valid, "discovered project was marked invalid");
+              "valid explicit source root produced diagnostics");
+  test.expect(result->is_valid, "explicit source-root project was invalid");
   test.expect(compilation.source_count() == 6,
               "project source graph has the wrong size");
 
@@ -70,19 +59,13 @@ void project_errors(TestContext& test) {
       std::filesystem::path{CLOTH_TEST_DATA_DIR} / "projects" /
       "missing_import";
   const std::filesystem::path entry = project / "src" / "Main.co";
-  const auto layout = cloth::discover_project_layout(entry);
-  test.expect(layout.has_value(), "error fixture layout was not discovered");
-  if (!layout) {
-    return;
-  }
-
   auto source = cloth::SourceFile::load(entry);
   test.expect(source.has_value(), "error fixture entry did not load");
   if (!source) {
     return;
   }
   cloth::Compilation compilation;
-  compilation.set_source_root(layout->source_root, true);
+  compilation.set_source_root(project / "src", true);
   compilation.add_source(std::move(*source));
   cloth::DiagnosticEngine diagnostics;
   const cloth::CompilationResult result = compilation.analyze(diagnostics);
@@ -99,17 +82,22 @@ void project_errors(TestContext& test) {
   test.expect(matching_errors == 1,
               "missing import did not produce one precise diagnostic");
 
-  const auto outside = cloth::discover_project_layout(project / "Outside.co");
-  test.expect(!outside && outside.error().find("outside the project's 'src'") !=
-                              std::string::npos,
-              "entry outside src was accepted");
+  cloth::Compilation outside;
+  outside.set_source_root(project / "src", false);
+  outside.add_source(cloth::SourceFile::from_memory(project / "Outside.co",
+                                                    "static func Main() {}"));
+  cloth::DiagnosticEngine outside_diagnostics;
+  const cloth::CompilationResult outside_result =
+      outside.analyze(outside_diagnostics);
+  test.expect(!outside_result.is_valid && outside_diagnostics.has_errors(),
+              "source outside the explicit root was accepted");
 }
 
 }  // namespace
 
 int main() {
   const std::vector<TestCase> tests{
-      {"project discovery", project_discovery},
+      {"explicit source root", explicit_source_root},
       {"project errors", project_errors},
   };
 

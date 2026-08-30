@@ -7,6 +7,7 @@ add_library(cloth_compiler
     backend/llvm_ir.cc
     backend/native_toolchain.cc
     compiler/compilation.cc
+    compiler/shuttle_protocol.cc
     diagnostics/diagnostic_engine.cc
     flow/control_flow.cc
     hir/hir.cc
@@ -22,7 +23,6 @@ add_library(cloth_compiler
     parser/definition_pass.cc
     parser/expression_parser.cc
     parser/parser.cc
-    project/project_layout.cc
     sema/file_class_symbols.cc
     sema/field_initialization_analysis.cc
     sema/numeric_types.cc
@@ -43,6 +43,9 @@ add_executable(clothc main.cc)
 target_link_libraries(clothc PRIVATE cloth_compiler)
 cloth_enable_warnings(clothc)
 add_dependencies(clothc cloth_runtime)
+if(WIN32 AND NOT MSVC AND NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+    target_link_options(clothc PRIVATE -municode)
+endif()
 
 file(TO_CMAKE_PATH "${CMAKE_CXX_COMPILER}" CLOTH_NATIVE_LINKER_PATH)
 if(WIN32)

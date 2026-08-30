@@ -326,6 +326,7 @@ struct ImportDecl {
   std::string local_name;
   SourceRange range;
   bool is_valid{true};
+  std::string target_package{};
 };
 
 enum class FileTypeKind {
@@ -353,6 +354,7 @@ struct FileClassDecl {
   bool is_sealed{false};
   FileTypeKind kind{FileTypeKind::kClass};
   std::vector<TypeSyntax> interfaces{};
+  std::string owning_package{};
 };
 
 [[nodiscard]] std::string_view declaration_kind_name(

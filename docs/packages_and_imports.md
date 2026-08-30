@@ -1,18 +1,17 @@
-# Cloth Stage 8.0 packages and imports
+# Cloth packages and imports
 
 Stage 8.0 gives every file type a stable, portable identity derived from its
 source path. Source code does not repeat that identity in a module declaration
 and does not embed filesystem paths as string literals.
 
-## Project layout
+## Source roots
 
-The current compiler searches from the entry source toward the filesystem root
-for the metadata-only Stage 8 marker `cloth.toml`. When found, the marker's
-directory is the project root and its `src/` directory is the source root:
+Shuttle reads `Shuttle.toml`, resolves the local package graph, and supplies
+each source root explicitly to `clothc` through protocol version 1:
 
 ```text
 project/
-  cloth.toml
+  Shuttle.toml
   src/
     Main.co
     models/
@@ -23,9 +22,10 @@ project/
 `models.User`. Package directory components and file stems must be valid Cloth
 identifiers. Source files must use the `.co` extension.
 
-If no manifest is found, the entry file's directory is the source root and the
-command retains standalone behavior. Standalone mode loads command-line files
-and their imports but does not automatically compile unrelated sibling files.
+The compiler never reads the manifest. Direct compiler use supplies
+`--source-root=PATH`; without that option, the first entry file's directory is
+the standalone root. Standalone mode loads command-line files and their imports
+but does not automatically compile unrelated sibling files.
 
 ## Import forms
 
@@ -48,11 +48,12 @@ fields or functions. Members remain qualified by their file class, such as
 
 ## Discovery and ordering
 
-The compiler starts with the entry sources, discovers their packages and
-imports, and repeats until the graph is closed. Explicit imports map directly
-to one `.co` file. Wildcard packages are enumerated in logical-name order.
-Project packages include all direct sibling `.co` files so same-package public
-classes require no import.
+In Shuttle protocol mode, the compiler recursively enumerates every exact `.co`
+file beneath the supplied roots without following directory symbolic links.
+Direct mode starts with the entry sources and closes their import graph.
+Explicit imports map to one `.co` file; wildcard packages are enumerated in
+logical-name order. Direct projects with an explicit source root include direct
+same-package siblings so public classes require no import.
 
 The completed graph is sorted by qualified file-type identity before semantic
 handles and ABI names are allocated. Canonical paths are deduplicated. Sources
@@ -82,15 +83,15 @@ An explicit import takes precedence over a wildcard. Two wildcard imports that
 provide the same local class name are ambiguous unless an explicit import or
 alias resolves that name. Imports are file-scoped and never re-exported.
 
-## Deferred boundary
+## Shuttle dependency boundary
 
-Stage 8.0 establishes the local project graph. Manifest dependency tables,
-package registries, version selection, remote retrieval, and a standard-library
-distribution mechanism remain later build-system work; none require a change
-to the source import grammar.
+A Shuttle dependency alias becomes the first component of an import. Given a
+direct dependency alias `models`, `models::User` selects `User.co` at that
+dependency root and `models.data::Record` selects `data/Record.co`. Only direct
+dependencies are visible, and aliases cannot collide with a local top-level
+source package.
 
-`cloth.toml` is transitional compiler discovery behavior, not the future build
-manifest. Shuttle is Cloth's separate project, build, and package manager and
-will own `Shuttle.toml`. Stage 22 will make source roots and dependency mappings
-explicit compiler inputs so `clothc` no longer discovers or parses manifests.
-See [Shuttle and the Cloth compiler](shuttle_and_compiler.md).
+Package names, versions, graph cycles, and path dependencies are Shuttle build
+concerns. Remote retrieval, version solving, registries, and standard-library
+distribution remain deferred and do not require a change to the identifier
+import grammar. See [Shuttle and the Cloth compiler](shuttle_and_compiler.md).

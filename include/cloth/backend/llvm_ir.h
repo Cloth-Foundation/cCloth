@@ -17,6 +17,7 @@ struct LlvmIrModule {
 
 struct LlvmIrOptions {
   bool emit_native_entry_point{false};
+  std::optional<std::string> entry_file{};
 };
 
 // Emits opaque-pointer LLVM IR from verified MIR and ABI. The emitter has no

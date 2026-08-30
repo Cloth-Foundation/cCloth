@@ -16,7 +16,7 @@ Rules:
 
 ## Active stage
 
-Stage 22 is active. Stages 22.1 and 22.2 are complete; Stage 22.3 has not
+Stage 22 is active. Stages 22.1 through 22.3 are complete; Stage 22.4 has not
 started. The ownership boundary is recorded in
 `docs/shuttle_and_compiler.md`.
 
@@ -51,7 +51,7 @@ started. The ownership boundary is recorded in
 - [x] **22.2 — Shuttle bootstrap.** Establish the Rust application, production
   CLI and diagnostics boundaries, manifest model and parser, deterministic
   validation, formatting, linting, and unit-test harness.
-- [ ] **22.3 — Local graph and compiler integration.** Resolve local
+- [x] **22.3 — Local graph and compiler integration.** Resolve local
   dependencies deterministically in Shuttle; add the approved package graph,
   source-root, dependency, entry, target, and output inputs to `clothc`; remove
   compiler manifest discovery; and preserve standalone compilation and
