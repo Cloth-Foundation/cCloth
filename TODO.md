@@ -16,9 +16,9 @@ Rules:
 
 ## Active stage
 
-Stage 22 is active. Stage 22.1 is complete; Stage 22.2 implementation must not
-begin until it receives an explicit go-ahead. The ownership boundary is
-recorded in `docs/shuttle_and_compiler.md`.
+Stage 22 is active. Stages 22.1 and 22.2 are complete; Stage 22.3 has not
+started. The ownership boundary is recorded in
+`docs/shuttle_and_compiler.md`.
 
 ## Scheduled work
 
@@ -48,7 +48,7 @@ recorded in `docs/shuttle_and_compiler.md`.
   dependency namespace mapping, the versioned Shuttle-to-compiler request,
   migration from `cloth.toml`, and diagnostics ownership. The approved contracts
   live under `shuttle/docs/` and `docs/shuttle_and_compiler.md`.
-- [ ] **22.2 — Shuttle bootstrap.** Establish the Rust application, production
+- [x] **22.2 — Shuttle bootstrap.** Establish the Rust application, production
   CLI and diagnostics boundaries, manifest model and parser, deterministic
   validation, formatting, linting, and unit-test harness.
 - [ ] **22.3 — Local graph and compiler integration.** Resolve local
