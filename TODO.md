@@ -16,29 +16,29 @@ Rules:
 
 ## Active stage
 
-No feature stage is active. Stage 20 is complete. The next scheduled action is
-the Stage 21.1 design contract; implementation must not begin until that
+No feature stage is active. Stage 21 is complete. The next scheduled action is
+the Stage 22.1 manifest contract; implementation must not begin until that
 contract and its explicit implementation start are approved.
 
 ## Scheduled work
 
 ### Stage 21: Integer binary representation and byte order
 
-- [ ] **21.1 — Integer operator contract.** Freeze valid operand types, result
+- [x] **21.1 — Integer operator contract.** Freeze valid operand types, result
   types, precedence, signed complement, signed right shift, shift-count bounds,
   compound assignment, constant behavior, and diagnostics for `&`, `|`, `^`,
   `~`, `<<`, and `>>`.
-- [ ] **21.2 — Integer operator implementation.** Carry the approved contract
+- [x] **21.2 — Integer operator implementation.** Carry the approved contract
   through parser/AST, semantic analysis, HIR, MIR verification, LLVM lowering,
   invalid-program coverage, and native execution tests.
-- [ ] **21.3 — Byte-order contract.** Approve the source surface and semantics
+- [x] **21.3 — Byte-order contract.** Approve the source surface and semantics
   for explicit little-endian and big-endian encoding and decoding of fixed-width
   integers. Specify byte-array size, offset, bounds, signedness, evaluation
   order, and failure behavior without exposing host-native memory.
-- [ ] **21.4 — Byte-order implementation.** Implement the approved surface,
+- [x] **21.4 — Byte-order implementation.** Implement the approved surface,
   retain the operation explicitly through verified compiler representations,
   and test identical byte sequences independent of target layout metadata.
-- [ ] Complete the Stage 21 exit audit in `ROADMAP.md`, including development
+- [x] Complete the Stage 21 exit audit in `ROADMAP.md`, including development
   and sanitizer suites and recording every deliberate deferral below.
 
 ### Stage 22: Project manifest and local dependencies

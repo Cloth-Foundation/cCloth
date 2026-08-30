@@ -561,6 +561,35 @@ const ClothObjectHeader& require_object(const void* value) noexcept {
   return object;
 }
 
+const ClothArray& require_byte_array(const void* value) noexcept {
+  if (value == nullptr) {
+    runtime_failure("null byte array");
+  }
+  const auto& array = *static_cast<const ClothArray*>(value);
+  if (array.header.type != &kArrayTypeDescriptor || array.element_size != 1 ||
+      array.contains_references) {
+    runtime_failure("invalid byte array");
+  }
+  return array;
+}
+
+std::size_t integer_byte_offset(const ClothArray& array, std::int32_t offset,
+                                std::uint8_t byte_width) noexcept {
+  if (byte_width != 1 && byte_width != 2 && byte_width != 4 &&
+      byte_width != 8) {
+    runtime_failure("invalid integer byte width");
+  }
+  if (offset < 0) {
+    runtime_failure("integer byte range is out of bounds");
+  }
+  const std::size_t native_offset = static_cast<std::size_t>(offset);
+  if (native_offset > array.length ||
+      byte_width > array.length - native_offset) {
+    runtime_failure("integer byte range is out of bounds");
+  }
+  return native_offset;
+}
+
 ClothString* allocate_borrowed_string(const char* data, std::size_t byte_size,
                                       std::size_t scalar_count) noexcept {
   collect_before_allocation(sizeof(ClothString));
@@ -956,6 +985,45 @@ extern "C" void* cloth_rt_array_element(void* value,
                                 array.element_size);
 }
 
+extern "C" void cloth_rt_integer_write(void* destination, std::int32_t offset,
+                                       std::uint64_t bits,
+                                       std::uint8_t byte_width,
+                                       std::uint8_t byte_order) noexcept {
+  const ClothArray& array = require_byte_array(destination);
+  const std::size_t native_offset =
+      integer_byte_offset(array, offset, byte_width);
+  if (byte_order > 1) {
+    runtime_failure("invalid integer byte order");
+  }
+  auto* bytes = static_cast<std::uint8_t*>(array.data);
+  for (std::size_t index = 0; index < byte_width; ++index) {
+    const std::size_t destination_index =
+        byte_order == 0 ? index : byte_width - index - 1;
+    bytes[native_offset + destination_index] =
+        static_cast<std::uint8_t>(bits >> (index * 8));
+  }
+}
+
+extern "C" std::uint64_t cloth_rt_integer_read(
+    const void* source, std::int32_t offset, std::uint8_t byte_width,
+    std::uint8_t byte_order) noexcept {
+  const ClothArray& array = require_byte_array(source);
+  const std::size_t native_offset =
+      integer_byte_offset(array, offset, byte_width);
+  if (byte_order > 1) {
+    runtime_failure("invalid integer byte order");
+  }
+  const auto* bytes = static_cast<const std::uint8_t*>(array.data);
+  std::uint64_t bits = 0;
+  for (std::size_t index = 0; index < byte_width; ++index) {
+    const std::size_t source_index =
+        byte_order == 0 ? index : byte_width - index - 1;
+    bits |= static_cast<std::uint64_t>(bytes[native_offset + source_index])
+            << (index * 8);
+  }
+  return bits;
+}
+
 extern "C" void cloth_rt_require_receiver(const void* receiver) noexcept {
   if (receiver == nullptr) {
     runtime_failure("null receiver");
@@ -972,6 +1040,12 @@ extern "C" void cloth_rt_require_numeric_conversion(
     std::uint8_t valid) noexcept {
   if (valid == 0) {
     runtime_failure("numeric conversion is out of range");
+  }
+}
+
+extern "C" void cloth_rt_require_shift_count(std::uint8_t valid) noexcept {
+  if (valid == 0) {
+    runtime_failure("shift count is out of range");
   }
 }
 

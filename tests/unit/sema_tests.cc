@@ -1842,7 +1842,7 @@ void classical_for_and_update_semantics(TestContext& test) {
               "  string text = \"a\"; --text;\n"
               "  int32 value = 0; ++(value + 1);\n"
               "  bool flag = true; flag += true;\n"
-              "  value &= 1;\n"
+              "  float64 bits = 1.0; bits &= 1;\n"
               "  for (int32 i = 0; i; i++) {}\n"
               "  for (int32 scoped = 0; scoped < 1; scoped++) {}\n"
               "  int32 escaped = scoped;\n"
@@ -1859,7 +1859,7 @@ void classical_for_and_update_semantics(TestContext& test) {
               "an invalid arithmetic compound assignment was accepted");
   test.expect(
       invalid.has_diagnostic("operator 'ampersand_equal' cannot be applied"),
-      "an unsupported bitwise compound assignment was accepted");
+      "a non-integer bitwise compound assignment was accepted");
   test.expect(
       invalid.has_diagnostic("for condition has type 'int32'; expected 'bool'"),
       "a non-boolean classical for condition was accepted");
@@ -1883,6 +1883,77 @@ void classical_for_and_update_semantics(TestContext& test) {
   }
   test.expect(incomplete_returns == 1,
               "classical for return-flow analysis is incorrect");
+}
+
+void integer_binary_contract(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Binary.co",
+            "func Bits(int16 small, int32 wide, uint64 count): int32 {\n"
+            "  int32 value = small & wide;\n"
+            "  value |= 1; value ^= 2; value <<= count; value >>= 1;\n"
+            "  return ~value;\n"
+            "}\n"
+            "func Bytes(byte[] bytes, int32 offset, int32 value): int64 {\n"
+            "  value::writeLittleEndian(bytes, offset);\n"
+            "  value::writeBigEndian(bytes, offset);\n"
+            "  byte raw = bytes::readByteLittleEndian(offset);\n"
+            "  int8 i8 = bytes::readInt8BigEndian(offset);\n"
+            "  int16 i16 = bytes::readInt16LittleEndian(offset);\n"
+            "  int32 copy = bytes::readInt32LittleEndian(offset);\n"
+            "  uint8 u8 = bytes::readUint8LittleEndian(offset);\n"
+            "  uint16 u16 = bytes::readUint16BigEndian(offset);\n"
+            "  uint32 u32 = bytes::readUint32LittleEndian(offset);\n"
+            "  uint64 u64 = bytes::readUint64BigEndian(offset);\n"
+            "  return bytes::readInt64BigEndian(offset) ^ copy;\n"
+            "}\n");
+  valid.analyze();
+  test.expect(valid.error_count() == 0 && valid.result->is_valid,
+              "valid integer operators or endian operations failed");
+  std::size_t meta_calls = 0;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    if (std::holds_alternative<cloth::HirIntegerMetaCallExpression>(
+            expression.data)) {
+      ++meta_calls;
+    }
+  }
+  test.expect(meta_calls == 11,
+              "integer endian calls were not retained explicitly in HIR");
+
+  AnalyzedCompilation invalid;
+  invalid.add(
+      "BadBinary.co",
+      "func Bad(float64 decimal, bool flag, int32 value, byte[] bytes) {\n"
+      "  decimal & 1.0; ~flag; value << -1; int8 small = 1; small << 8;\n"
+      "  value::writeLittleEndian([0], 0);\n"
+      "  value::writeBigEndian(bytes, decimal);\n"
+      "  bytes::readInt32LittleEndian();\n"
+      "  bytes::readInt32BigEndian(0, 1);\n"
+      "  bytes::readInt(0);\n"
+      "  value::writeLittleEndian;\n"
+      "}\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic("operator 'ampersand' cannot be applied"),
+              "floating-point bitwise operands were accepted");
+  test.expect(invalid.has_diagnostic("operator 'tilde' cannot be applied"),
+              "boolean complement was accepted");
+  test.expect(
+      invalid.has_diagnostic("shift count is out of range for 'int32'") &&
+          invalid.has_diagnostic("shift count is out of range for 'int8'"),
+      "literal shift-count bounds were not diagnosed");
+  test.expect(
+      invalid.has_diagnostic("integer endian destination must be 'byte[]'"),
+      "non-byte endian destination was accepted");
+  test.expect(
+      invalid.has_diagnostic("integer endian offset must be assignable"),
+      "invalid endian offset was accepted");
+  test.expect(
+      invalid.has_diagnostic("integer endian read requires exactly one offset"),
+      "invalid endian read arity was accepted");
+  test.expect(invalid.has_diagnostic("has no meta query 'readInt'"),
+              "an endian alias outside the contract was accepted");
+  test.expect(invalid.has_diagnostic("function reference must be called"),
+              "integer meta operation was accepted without a call");
 }
 
 void contextual_numeric_literals_and_widening(TestContext& test) {
@@ -2814,6 +2885,7 @@ int main() {
        classical_for_and_update_semantics},
       {"contextual numeric literals and widening",
        contextual_numeric_literals_and_widening},
+      {"integer binary contract", integer_binary_contract},
       {"complete return paths", complete_return_paths},
       {"case collision", case_collision},
       {"null assignability", null_assignability},

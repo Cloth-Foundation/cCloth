@@ -382,6 +382,13 @@ numeric locations. Prefix yields the stored result, while postfix yields the
 previous value. Member receivers and array/index operands are captured once for
 every compound assignment or update. A `final` binding cannot use either form.
 
+Fixed-width integers support `~`, `&`, `|`, `^`, `<<`, and `>>` together with
+their compound-assignment forms. Bitwise operands use lossless common integer
+typing. Shifts preserve the left operand type, validate the count against that
+type's width, and use arithmetic right shift for signed values. Explicit
+little-endian and big-endian reads and writes operate on `byte[]`; the complete
+portable contract is defined in `integer_binary_data.md`.
+
 ## Arrays
 
 `T[]` is a homogeneous, fixed-length non-null reference collection with mutable

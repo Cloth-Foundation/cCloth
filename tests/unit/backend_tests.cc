@@ -108,6 +108,29 @@ void arithmetic_and_control_flow(TestContext& test) {
               "integer negation was not lowered");
 }
 
+void integer_binary_lowering(TestContext& test) {
+  CompiledSources sources;
+  sources.add(
+      "Binary.co",
+      "func Transform(int32 value, uint64 count, byte[] bytes): int32 {\n"
+      "  int32 result = (value & 255) | (value ^ 7);\n"
+      "  result = result >> count;\n"
+      "  result::writeLittleEndian(bytes, 0);\n"
+      "  return bytes::readInt32LittleEndian(0);\n"
+      "}\n");
+  sources.compile();
+  test.expect(sources.result->is_valid && sources.llvm,
+              "integer binary module failed LLVM lowering");
+  test.expect(
+      sources.contains(" = and i32 ") && sources.contains(" = or i32 ") &&
+          sources.contains(" = xor i32 ") && sources.contains(" = ashr i32 "),
+      "integer operators use the wrong LLVM instructions");
+  test.expect(sources.contains("call void @cloth_rt_require_shift_count") &&
+                  sources.contains("call void @cloth_rt_integer_write") &&
+                  sources.contains("call i64 @cloth_rt_integer_read"),
+              "checked shift or endian runtime boundaries are missing");
+}
+
 void numeric_literal_and_widening_lowering(TestContext& test) {
   CompiledSources sources;
   sources.add("Numbers.co",
@@ -810,6 +833,7 @@ int main() {
   const std::vector<TestCase> tests{
       {"target header", target_header},
       {"arithmetic and control flow", arithmetic_and_control_flow},
+      {"integer binary lowering", integer_binary_lowering},
       {"numeric literal and widening lowering",
        numeric_literal_and_widening_lowering},
       {"checked numeric conversion lowering",

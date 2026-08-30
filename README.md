@@ -85,7 +85,8 @@ managed-reference returns, capitalization-based constructor visibility, and
 `for` loops, with arithmetic compound assignment and prefix/postfix numeric
 updates. Numeric values use contextual literals, lossless implicit widening,
 overload-directed literal typing, and checked explicit `NumericType(value)`
-conversion.
+conversion. Fixed-width integers also provide bitwise and checked shift
+operators plus explicit little-endian and big-endian `byte[]` meta operations.
 
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++
@@ -320,6 +321,7 @@ Start with the [compiler roadmap](ROADMAP.md),
 [implemented grammar](docs/grammar.md). The main compiler boundaries are
 documented in [semantic analysis](docs/semantic_analysis.md),
 [numeric literals and widening](docs/numeric_conversions.md),
+[integer binary data](docs/integer_binary_data.md),
 [interfaces](docs/interfaces.md),
 [control flow and MIR](docs/control_flow_and_mir.md),
 [data layout and ABI](docs/data_layout_and_abi.md), the

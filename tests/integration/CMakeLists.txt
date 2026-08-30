@@ -190,6 +190,22 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/numeric_conversions.txt
         EXACT
     )
+    cloth_add_native_output_test(integer_binary_data
+        OUTPUT "cloth integer binary data"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerBinaryData.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/integer_binary_data.txt
+        EXACT
+    )
+    cloth_add_native_failure_test(shift_count_failure
+        OUTPUT "cloth shift count failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/ShiftCountFailure.co
+        ERROR "shift count is out of range"
+    )
+    cloth_add_native_failure_test(integer_byte_range_failure
+        OUTPUT "cloth integer byte range failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerByteRangeFailure.co
+        ERROR "integer byte range is out of bounds"
+    )
     cloth_add_native_failure_test(numeric_conversion_failure
         OUTPUT "cloth numeric conversion failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NumericConversionFailure.co

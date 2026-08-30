@@ -159,6 +159,19 @@ class HirVerifier {
       } else if (const auto* meta =
                      std::get_if<HirObjectMetaExpression>(&expression.data)) {
         verify_expression(meta->object, expression.range);
+      } else if (const auto* meta =
+                     std::get_if<HirIntegerMetaExpression>(&expression.data)) {
+        verify_expression(meta->object, expression.range);
+        verify_type(meta->operation.integer_type, expression.range);
+        verify_integer_meta_object(*meta, expression.range);
+      } else if (const auto* call = std::get_if<HirIntegerMetaCallExpression>(
+                     &expression.data)) {
+        verify_expression(call->object, expression.range);
+        verify_type(call->operation.integer_type, expression.range);
+        for (const HirExpressionId argument : call->arguments) {
+          verify_expression(argument, expression.range);
+        }
+        verify_integer_meta_call(expression, *call);
       } else if (const auto* grouped =
                      std::get_if<HirGroupedExpression>(&expression.data)) {
         verify_expression(grouped->expression, expression.range);
@@ -167,6 +180,10 @@ class HirVerifier {
   }
 
   bool is_valid_void_expression(const HirExpression& expression) const {
+    if (const auto* call =
+            std::get_if<HirIntegerMetaCallExpression>(&expression.data)) {
+      return call->operation.kind == IntegerMetaOperationKind::kWrite;
+    }
     if (const auto* call = std::get_if<HirCallExpression>(&expression.data)) {
       return call->callable &&
              call->callable->value < semantics_.symbols().size() &&
@@ -339,6 +356,89 @@ class HirVerifier {
       report(range, "constructor lost its semantic base initializer");
     }
     verify_block(callable.body, range);
+  }
+
+  void verify_integer_meta_object(const HirIntegerMetaExpression& meta,
+                                  SourceRange range) {
+    const std::optional<TypeId> object = expression_type(meta.object);
+    if (!object || object->value >= semantics_.types().size() ||
+        meta.operation.integer_type.value >= semantics_.types().size()) {
+      return;
+    }
+    if (meta.operation.kind == IntegerMetaOperationKind::kWrite) {
+      if (*object != meta.operation.integer_type ||
+          !is_integer_type(semantics_.type(*object).kind)) {
+        report(range, "integer write meta operation has the wrong receiver");
+      }
+    } else if (!is_byte_array(*object)) {
+      report(range, "integer read meta operation has the wrong receiver");
+    }
+  }
+
+  void verify_integer_meta_call(const HirExpression& expression,
+                                const HirIntegerMetaCallExpression& call) {
+    const std::optional<TypeId> object = expression_type(call.object);
+    if (!object || object->value >= semantics_.types().size() ||
+        call.operation.integer_type.value >= semantics_.types().size()) {
+      return;
+    }
+    if (call.operation.kind == IntegerMetaOperationKind::kWrite) {
+      if (expression.type != semantics_.void_type() ||
+          *object != call.operation.integer_type ||
+          !is_integer_type(semantics_.type(*object).kind) ||
+          call.arguments.size() != 2) {
+        report(expression.range,
+               "integer endian write has incompatible HIR metadata");
+        return;
+      }
+      const std::optional<TypeId> destination =
+          expression_type(call.arguments[0]);
+      const std::optional<TypeId> offset = expression_type(call.arguments[1]);
+      if (!destination || !is_byte_array(*destination) || !offset ||
+          !is_int32_compatible(*offset)) {
+        report(expression.range,
+               "integer endian write has incompatible arguments");
+      }
+      return;
+    }
+    if (expression.type.value >= semantics_.types().size() ||
+        expression.type != call.operation.integer_type ||
+        !is_integer_type(semantics_.type(expression.type).kind) ||
+        !is_byte_array(*object) || call.arguments.size() != 1) {
+      report(expression.range,
+             "integer endian read has incompatible HIR metadata");
+      return;
+    }
+    const std::optional<TypeId> offset = expression_type(call.arguments[0]);
+    if (!offset || !is_int32_compatible(*offset)) {
+      report(expression.range, "integer endian read has incompatible offset");
+    }
+  }
+
+  std::optional<TypeId> expression_type(HirExpressionId expression) const {
+    if (expression.value >= hir_.storage.expressions().size()) {
+      return std::nullopt;
+    }
+    return hir_.storage.expression(expression).type;
+  }
+
+  bool is_byte_array(TypeId type) const {
+    if (type.value >= semantics_.types().size()) {
+      return false;
+    }
+    const SemanticType& array = semantics_.type(type);
+    return array.kind == TypeKind::kArray &&
+           array.element_type == semantics_.find_type("byte");
+  }
+
+  bool is_int32_compatible(TypeId type) const {
+    if (type.value >= semantics_.types().size()) {
+      return false;
+    }
+    const TypeId int32_type = *semantics_.find_type("int32");
+    return type == int32_type ||
+           can_widen_numeric(semantics_.type(type).kind,
+                             semantics_.type(int32_type).kind);
   }
 
   void verify_type(TypeId type, SourceRange range) {

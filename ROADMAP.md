@@ -53,13 +53,13 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 18 | Interfaces, transitive conformance, and interface dispatch |
 | 19 | Classical `for`, compound assignment, and prefix/postfix numeric updates |
 | 20 | Contextual literals, lossless numeric widening, overload-directed literals, and checked explicit numeric conversions |
+| 21 | Fixed-width integer operators and host-independent byte-order operations |
 
-Stage 20 is the current completed baseline. No feature stage is active during
-this roadmap audit.
+Stage 21 is the current completed baseline. No feature stage is active.
 
 ## Stage 21: Integer binary representation and byte order
 
-Status: **planned**
+Status: **complete**
 
 Objective: complete the fixed-width integer representation contract needed for
 portable binary data without exposing native memory or host-dependent behavior.

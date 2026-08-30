@@ -35,6 +35,22 @@ struct SymbolId {
   friend bool operator==(const SymbolId&, const SymbolId&) = default;
 };
 
+enum class IntegerByteOrder {
+  kLittleEndian,
+  kBigEndian,
+};
+
+enum class IntegerMetaOperationKind {
+  kRead,
+  kWrite,
+};
+
+struct IntegerMetaOperation {
+  IntegerMetaOperationKind kind;
+  IntegerByteOrder byte_order;
+  TypeId integer_type;
+};
+
 enum class TypeKind {
   kError,
   kVoid,
@@ -134,6 +150,7 @@ struct ExpressionSemantics {
   std::optional<TypeId> checked_type{};
   bool is_base_qualified{false};
   std::optional<FileId> interface_dispatch{};
+  std::optional<IntegerMetaOperation> integer_meta_operation{};
 };
 
 struct InterfaceImplementation {

@@ -7,3 +7,6 @@
 [submodule "editors/jetbrains"]
 	path = editors/jetbrains
 	url = https://github.com/Cloth-Foundation/Cloth-IntelliJ-Language-Support
+[submodule "shuttle"]
+	path = shuttle
+	url = https://github.com/Cloth-Foundation/Shuttle

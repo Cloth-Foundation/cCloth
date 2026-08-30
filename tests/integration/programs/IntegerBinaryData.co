@@ -1,0 +1,47 @@
+static func Main() {
+  byte[] bytes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  int32 signedValue = -1985229329;
+  signedValue::writeLittleEndian(bytes, 0);
+  println(bytes[0]);
+  println(bytes[1]);
+  println(bytes[2]);
+  println(bytes[3]);
+  println(bytes::readInt32LittleEndian(0));
+
+  uint64 wide = 81985529216486895;
+  wide::writeBigEndian(bytes, 4);
+  println(bytes[4]);
+  println(bytes[5]);
+  println(bytes[6]);
+  println(bytes[7]);
+  println(bytes[8]);
+  println(bytes[9]);
+  println(bytes[10]);
+  println(bytes[11]);
+  println(bytes::readUint64BigEndian(4));
+
+  int8 signedShift = -64;
+  uint8 unsignedShift = 128;
+  println(signedShift >> 1);
+  println(unsignedShift >> 1);
+  println(12 & 10);
+  println(12 | 10);
+  println(12 ^ 10);
+  println(~0);
+  println(1 << 5);
+
+  int16 compound = 3;
+  compound <<= 2;
+  compound |= 1;
+  println(compound);
+
+  int16 shortValue = -2;
+  shortValue::writeBigEndian(bytes, 0);
+  println(bytes[0]);
+  println(bytes[1]);
+  println(bytes::readInt16BigEndian(0));
+  int8 tiny = -1;
+  tiny::writeLittleEndian(bytes, 2);
+  println(bytes[2]);
+  println(bytes::readInt8LittleEndian(2));
+}

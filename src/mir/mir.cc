@@ -595,10 +595,13 @@ class BodyBuilder {
       MirValueId right = require_value(
           lower_expression(binary->right),
           hir_.storage.expression(binary->right).type, expression.range);
-      if (const std::optional<TypeId> common =
-              common_numeric_type(value_type(left), value_type(right))) {
-        left = coerce(left, *common, expression.range);
-        right = coerce(right, *common, expression.range);
+      if (binary->operation != TokenKind::kShiftLeft &&
+          binary->operation != TokenKind::kShiftRight) {
+        if (const std::optional<TypeId> common =
+                common_numeric_type(value_type(left), value_type(right))) {
+          left = coerce(left, *common, expression.range);
+          right = coerce(right, *common, expression.range);
+        }
       }
       return emit_value(expression.type, expression.range,
                         MirBinaryInstruction{left, binary->operation, right});
@@ -652,6 +655,47 @@ class BodyBuilder {
     if (const auto* assertion =
             std::get_if<HirNullAssertExpression>(&expression.data)) {
       return lower_null_assert(*assertion, expression);
+    }
+    if (std::holds_alternative<HirIntegerMetaExpression>(expression.data)) {
+      return invalid_value(expression.range);
+    }
+    if (const auto* call =
+            std::get_if<HirIntegerMetaCallExpression>(&expression.data)) {
+      const HirExpression& object = hir_.storage.expression(call->object);
+      const MirValueId lowered_object = require_value(
+          lower_expression(call->object), object.type, object.range);
+      const TypeId int32_type = *semantics_.find_type("int32");
+      if (call->operation.kind == IntegerMetaOperationKind::kWrite) {
+        if (call->arguments.size() != 2) {
+          return invalid_value(expression.range);
+        }
+        const HirExpression& destination =
+            hir_.storage.expression(call->arguments[0]);
+        const HirExpression& offset =
+            hir_.storage.expression(call->arguments[1]);
+        const MirValueId lowered_destination =
+            require_value(lower_expression(call->arguments[0]),
+                          destination.type, destination.range);
+        MirValueId lowered_offset = require_value(
+            lower_expression(call->arguments[1]), offset.type, offset.range);
+        lowered_offset = coerce(lowered_offset, int32_type, offset.range);
+        emit_void(expression.range,
+                  MirIntegerWriteInstruction{
+                      lowered_object, lowered_destination, lowered_offset,
+                      call->operation.byte_order});
+        return std::nullopt;
+      }
+      if (call->arguments.size() != 1) {
+        return invalid_value(expression.range);
+      }
+      const HirExpression& offset = hir_.storage.expression(call->arguments[0]);
+      MirValueId lowered_offset = require_value(
+          lower_expression(call->arguments[0]), offset.type, offset.range);
+      lowered_offset = coerce(lowered_offset, int32_type, offset.range);
+      return emit_value(
+          expression.type, expression.range,
+          MirIntegerReadInstruction{lowered_object, lowered_offset,
+                                    call->operation.byte_order});
     }
     if (const auto* call = std::get_if<HirCallExpression>(&expression.data)) {
       return lower_call(*call, expression);
@@ -919,7 +963,10 @@ class BodyBuilder {
         return invalid_value(expression.range);
       }
       const MirValueId current = load_location(location, expression.range);
-      value = coerce(value, location.type, value_syntax.range);
+      if (*operation != TokenKind::kShiftLeft &&
+          *operation != TokenKind::kShiftRight) {
+        value = coerce(value, location.type, value_syntax.range);
+      }
       value = emit_value(location.type, expression.range,
                          MirBinaryInstruction{current, *operation, value});
     }
@@ -999,6 +1046,16 @@ class BodyBuilder {
         return TokenKind::kSlash;
       case TokenKind::kPercentEqual:
         return TokenKind::kPercent;
+      case TokenKind::kShiftLeftEqual:
+        return TokenKind::kShiftLeft;
+      case TokenKind::kShiftRightEqual:
+        return TokenKind::kShiftRight;
+      case TokenKind::kAmpersandEqual:
+        return TokenKind::kAmpersand;
+      case TokenKind::kPipeEqual:
+        return TokenKind::kPipe;
+      case TokenKind::kCaretEqual:
+        return TokenKind::kCaret;
       default:
         return std::nullopt;
     }

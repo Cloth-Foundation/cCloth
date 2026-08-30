@@ -125,6 +125,63 @@ void straight_line_body(TestContext& test) {
       "local declaration was not lowered");
 }
 
+void integer_binary_instructions(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add(
+      "Binary.co",
+      "func Transform(int32 value, uint64 count, byte[] bytes): int32 {\n"
+      "  value = (value & 255) << count;\n"
+      "  value::writeBigEndian(bytes, 1);\n"
+      "  return bytes::readInt32BigEndian(1);\n"
+      "}\n");
+  compilation.compile();
+  test.expect(compilation.result->is_valid,
+              "integer binary program failed MIR lowering");
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  test.expect(body_has_instruction<cloth::MirBinaryInstruction>(body),
+              "bitwise or shift operation was not explicit in MIR");
+  test.expect(body_has_instruction<cloth::MirIntegerWriteInstruction>(body) &&
+                  body_has_instruction<cloth::MirIntegerReadInstruction>(body),
+              "integer endian operations were not explicit in MIR");
+
+  cloth::HirModule broken_hir = compilation.result->hir;
+  for (const cloth::HirExpression& stored_expression :
+       broken_hir.storage.expressions()) {
+    auto& expression = const_cast<cloth::HirExpression&>(stored_expression);
+    auto* call =
+        std::get_if<cloth::HirIntegerMetaCallExpression>(&expression.data);
+    if (call != nullptr &&
+        call->operation.kind == cloth::IntegerMetaOperationKind::kRead) {
+      call->operation.integer_type =
+          *compilation.result->semantics.find_type("float64");
+      break;
+    }
+  }
+  cloth::DiagnosticEngine hir_diagnostics;
+  test.expect(!cloth::verify_hir(broken_hir, compilation.result->semantics,
+                                 hir_diagnostics) &&
+                  has_diagnostic(hir_diagnostics,
+                                 "endian read has incompatible HIR metadata"),
+              "HIR verifier accepted malformed endian metadata");
+
+  cloth::MirModule broken = compilation.result->mir;
+  for (cloth::MirBasicBlock& block : broken.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (std::holds_alternative<cloth::MirIntegerReadInstruction>(
+              instruction.data)) {
+        instruction.type = *compilation.result->semantics.find_type("float64");
+      }
+    }
+  }
+  cloth::DiagnosticEngine diagnostics;
+  test.expect(
+      !cloth::verify_mir(broken, compilation.result->semantics, diagnostics) &&
+          has_diagnostic(diagnostics,
+                         "endian read does not produce an integer"),
+      "MIR verifier accepted a malformed endian result");
+}
+
 void branching_returns(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Branches.co",
@@ -1489,6 +1546,7 @@ void verifiers_reject_corruption(TestContext& test) {
 int main() {
   const std::vector<TestCase> tests{
       {"straight-line body", straight_line_body},
+      {"integer binary instructions", integer_binary_instructions},
       {"branching returns", branching_returns},
       {"branch continuation", branch_continuation},
       {"short-circuit control flow", short_circuit_control_flow},

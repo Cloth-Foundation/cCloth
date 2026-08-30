@@ -444,23 +444,32 @@ int ExpressionParser::binary_precedence(TokenKind kind) noexcept {
       return 3;
     case TokenKind::kAmpersandAmpersand:
       return 4;
+    case TokenKind::kPipe:
+      return 5;
+    case TokenKind::kCaret:
+      return 6;
+    case TokenKind::kAmpersand:
+      return 7;
     case TokenKind::kEqualEqual:
     case TokenKind::kBangEqual:
-      return 5;
+      return 8;
     case TokenKind::kLess:
     case TokenKind::kLessEqual:
     case TokenKind::kGreater:
     case TokenKind::kGreaterEqual:
     case TokenKind::kKwIs:
     case TokenKind::kKwAs:
-      return 6;
+      return 9;
+    case TokenKind::kShiftLeft:
+    case TokenKind::kShiftRight:
+      return 10;
     case TokenKind::kPlus:
     case TokenKind::kMinus:
-      return 7;
+      return 11;
     case TokenKind::kStar:
     case TokenKind::kSlash:
     case TokenKind::kPercent:
-      return 8;
+      return 12;
     default:
       return 0;
   }

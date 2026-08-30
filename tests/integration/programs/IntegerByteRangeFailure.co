@@ -1,0 +1,5 @@
+static func Main() {
+  byte[] bytes = [0, 0, 0, 0];
+  int64 value = 1;
+  value::writeLittleEndian(bytes, 0);
+}

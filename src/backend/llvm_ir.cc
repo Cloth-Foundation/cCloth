@@ -205,6 +205,15 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* meta =
                  std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
     uses.push_back(meta->object);
+  } else if (const auto* write =
+                 std::get_if<MirIntegerWriteInstruction>(&instruction.data)) {
+    uses.push_back(write->value);
+    uses.push_back(write->destination);
+    uses.push_back(write->offset);
+  } else if (const auto* read =
+                 std::get_if<MirIntegerReadInstruction>(&instruction.data)) {
+    uses.push_back(read->source);
+    uses.push_back(read->offset);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     uses.push_back(unary->operand);
@@ -338,6 +347,12 @@ class BodyEmitter {
   void emit_object_meta(const MirInstruction& instruction,
                         const MirObjectMetaInstruction& meta,
                         std::ostringstream& output);
+  void emit_integer_write(const MirInstruction& instruction,
+                          const MirIntegerWriteInstruction& write,
+                          std::ostringstream& output);
+  void emit_integer_read(const MirInstruction& instruction,
+                         const MirIntegerReadInstruction& read,
+                         std::ostringstream& output);
   void emit_unary(const MirInstruction& instruction,
                   const MirUnaryInstruction& unary, std::ostringstream& output);
   void emit_binary(const MirInstruction& instruction,
@@ -466,9 +481,12 @@ class ModuleEmitter {
            << "declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)\n"
            << "declare i32 @cloth_rt_array_length(ptr)\n"
            << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
+           << "declare void @cloth_rt_integer_write(ptr, i32, i64, i8, i8)\n"
+           << "declare i64 @cloth_rt_integer_read(ptr, i32, i8, i8)\n"
            << "declare void @cloth_rt_require_receiver(ptr)\n"
            << "declare void @cloth_rt_require_non_null(ptr)\n"
            << "declare void @cloth_rt_require_numeric_conversion(i8)\n"
+           << "declare void @cloth_rt_require_shift_count(i8)\n"
            << "declare float @llvm.trunc.f32(float)\n"
            << "declare double @llvm.trunc.f64(double)\n"
            << "declare void @cloth_rt_print(ptr)\n"
@@ -1536,6 +1554,12 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* meta =
                  std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
     emit_object_meta(instruction, *meta, output);
+  } else if (const auto* write =
+                 std::get_if<MirIntegerWriteInstruction>(&instruction.data)) {
+    emit_integer_write(instruction, *write, output);
+  } else if (const auto* read =
+                 std::get_if<MirIntegerReadInstruction>(&instruction.data)) {
+    emit_integer_read(instruction, *read, output);
   } else if (const auto* unary =
                  std::get_if<MirUnaryInstruction>(&instruction.data)) {
     emit_unary(instruction, *unary, output);
@@ -1747,6 +1771,59 @@ void BodyEmitter::emit_object_meta(const MirInstruction& instruction,
          << ")\n";
 }
 
+void BodyEmitter::emit_integer_write(const MirInstruction& instruction,
+                                     const MirIntegerWriteInstruction& write,
+                                     std::ostringstream& output) {
+  const TypeId integer_type = value_type(write.value);
+  const std::optional<NumericTypeProperties> properties =
+      numeric_type_properties(module_.semantics().type(integer_type).kind);
+  if (!properties || properties->category == NumericCategory::kFloatingPoint) {
+    module_.report(instruction.range,
+                   "non-integer endian write reached LLVM lowering");
+    return;
+  }
+  std::string bits = value(write.value);
+  if (properties->bit_width < 64) {
+    const std::string widened = next_address();
+    output << "  " << widened << " = zext " << module_.llvm_type(integer_type)
+           << ' ' << bits << " to i64\n";
+    bits = widened;
+  }
+  output << "  call void @cloth_rt_integer_write(ptr "
+         << value(write.destination) << ", i32 " << value(write.offset)
+         << ", i64 " << bits << ", i8 " << properties->bit_width / 8 << ", i8 "
+         << (write.byte_order == IntegerByteOrder::kLittleEndian ? 0 : 1)
+         << ")\n";
+}
+
+void BodyEmitter::emit_integer_read(const MirInstruction& instruction,
+                                    const MirIntegerReadInstruction& read,
+                                    std::ostringstream& output) {
+  const std::optional<NumericTypeProperties> properties =
+      numeric_type_properties(module_.semantics().type(instruction.type).kind);
+  if (!properties || properties->category == NumericCategory::kFloatingPoint) {
+    module_.report(instruction.range,
+                   "non-integer endian read reached LLVM lowering");
+    return;
+  }
+  if (properties->bit_width == 64) {
+    output << "  " << result_name(instruction)
+           << " = call i64 @cloth_rt_integer_read(ptr " << value(read.source)
+           << ", i32 " << value(read.offset) << ", i8 8, i8 "
+           << (read.byte_order == IntegerByteOrder::kLittleEndian ? 0 : 1)
+           << ")\n";
+    return;
+  }
+  const std::string bits = next_address();
+  output << "  " << bits << " = call i64 @cloth_rt_integer_read(ptr "
+         << value(read.source) << ", i32 " << value(read.offset) << ", i8 "
+         << properties->bit_width / 8 << ", i8 "
+         << (read.byte_order == IntegerByteOrder::kLittleEndian ? 0 : 1)
+         << ")\n"
+         << "  " << result_name(instruction) << " = trunc i64 " << bits
+         << " to " << module_.llvm_type(instruction.type) << '\n';
+}
+
 void BodyEmitter::emit_unary(const MirInstruction& instruction,
                              const MirUnaryInstruction& unary,
                              std::ostringstream& output) {
@@ -1819,6 +1896,55 @@ void BodyEmitter::emit_binary(const MirInstruction& instruction,
     case TokenKind::kPercent:
       operation = is_float ? "frem" : (is_unsigned ? "urem" : "srem");
       break;
+    case TokenKind::kAmpersand:
+      operation = "and";
+      break;
+    case TokenKind::kPipe:
+      operation = "or";
+      break;
+    case TokenKind::kCaret:
+      operation = "xor";
+      break;
+    case TokenKind::kShiftLeft:
+    case TokenKind::kShiftRight: {
+      const TypeId count_type = value_type(binary.right);
+      const std::optional<NumericTypeProperties> value_properties =
+          numeric_type_properties(kind);
+      const std::optional<NumericTypeProperties> count_properties =
+          numeric_type_properties(module_.semantics().type(count_type).kind);
+      if (!value_properties || !count_properties ||
+          value_properties->category == NumericCategory::kFloatingPoint ||
+          count_properties->category == NumericCategory::kFloatingPoint) {
+        module_.report(instruction.range,
+                       "invalid shift reached LLVM lowering");
+        return;
+      }
+      const std::string count_valid = next_address();
+      const std::string valid_byte = next_address();
+      output << "  " << count_valid << " = icmp ult "
+             << module_.llvm_type(count_type) << ' ' << value(binary.right)
+             << ", " << value_properties->bit_width << '\n'
+             << "  " << valid_byte << " = zext i1 " << count_valid << " to i8\n"
+             << "  call void @cloth_rt_require_shift_count(i8 " << valid_byte
+             << ")\n";
+      std::string count = value(binary.right);
+      if (count_properties->bit_width != value_properties->bit_width) {
+        const std::string converted = next_address();
+        output << "  " << converted << " = "
+               << (count_properties->bit_width < value_properties->bit_width
+                       ? "zext"
+                       : "trunc")
+               << ' ' << module_.llvm_type(count_type) << ' ' << count << " to "
+               << type << '\n';
+        count = converted;
+      }
+      operation = binary.operation == TokenKind::kShiftLeft
+                      ? "shl"
+                      : (is_unsigned ? "lshr" : "ashr");
+      output << "  " << result_name(instruction) << " = " << operation << ' '
+             << type << ' ' << value(binary.left) << ", " << count << '\n';
+      return;
+    }
     case TokenKind::kEqualEqual:
       operation = is_float ? "fcmp oeq" : "icmp eq";
       break;

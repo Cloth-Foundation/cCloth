@@ -251,15 +251,15 @@ logical_or_expression
     = logical_and_expression { "||" logical_and_expression } ;
 
 logical_and_expression
-    = equality_expression { "&&" equality_expression } ;
+    = bitwise_or_expression { "&&" bitwise_or_expression } ;
 
 equality_expression
     = comparison_expression
       { ( "==" | "!=" ) comparison_expression } ;
 
 comparison_expression
-    = additive_expression
-      { ( "<" | "<=" | ">" | ">=" ) additive_expression
+    = shift_expression
+      { ( "<" | "<=" | ">" | ">=" ) shift_expression
       | "is" type
       | "as" type } ;
 
@@ -270,6 +270,18 @@ additive_expression
 multiplicative_expression
     = unary_expression
       { ( "*" | "/" | "%" ) unary_expression } ;
+
+shift_expression
+    = additive_expression { ( "<<" | ">>" ) additive_expression } ;
+
+bitwise_and_expression
+    = equality_expression { "&" equality_expression } ;
+
+bitwise_xor_expression
+    = bitwise_and_expression { "^" bitwise_and_expression } ;
+
+bitwise_or_expression
+    = bitwise_xor_expression { "|" bitwise_xor_expression } ;
 
 unary_expression
     = ( "!" | "+" | "-" | "~" | "++" | "--" ) unary_expression
@@ -334,17 +346,20 @@ The precedence table, from lowest to highest, is:
 | 2          | `??`                                   | right         |
 | 3          | `||`                                   | left          |
 | 4          | `&&`                                   | left          |
-| 5          | `==`, `!=`                             | left          |
-| 6          | `<`, `<=`, `>`, `>=`, `is T`, `as T`  | left          |
-| 7          | `+`, `-`                               | left          |
-| 8          | `*`, `/`, `%`                          | left          |
-| 9          | prefix `!`, `+`, `-`, `~`, `++`, `--` | right         |
-| 10         | calls, members, meta queries, indexing, postfix `!`, `++`, `--` | left |
+| 5          | `|`                                    | left          |
+| 6          | `^`                                    | left          |
+| 7          | `&`                                    | left          |
+| 8          | `==`, `!=`                             | left          |
+| 9          | `<`, `<=`, `>`, `>=`, `is T`, `as T`  | left          |
+| 10         | `<<`, `>>`                             | left          |
+| 11         | `+`, `-`                               | left          |
+| 12         | `*`, `/`, `%`                          | left          |
+| 13         | prefix `!`, `+`, `-`, `~`, `++`, `--` | right         |
+| 14         | calls, members, meta queries, indexing, postfix `!`, `++`, `--` | left |
 
-Arithmetic compound assignment (`+=`, `-=`, `*=`, `/=`, `%=`) and numeric
-increment/decrement are implemented. The grammar reserves bitwise and shift
-compound forms, but semantic analysis rejects them until their underlying
-binary operators are defined.
+Arithmetic, bitwise, and shift compound assignments are implemented. Numeric
+increment and decrement are also implemented. Integer operator and endian meta
+operation constraints are defined in `integer_binary_data.md`.
 
 ## Contextual constraints
 

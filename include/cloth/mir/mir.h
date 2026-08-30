@@ -88,6 +88,19 @@ struct MirObjectMetaInstruction {
   MirValueId object;
 };
 
+struct MirIntegerWriteInstruction {
+  MirValueId value;
+  MirValueId destination;
+  MirValueId offset;
+  IntegerByteOrder byte_order;
+};
+
+struct MirIntegerReadInstruction {
+  MirValueId source;
+  MirValueId offset;
+  IntegerByteOrder byte_order;
+};
+
 struct MirUnaryInstruction {
   TokenKind operation;
   MirValueId operand;
@@ -173,7 +186,8 @@ using MirInstructionData = std::variant<
     MirLoadMemberInstruction, MirStoreMemberInstruction,
     MirArrayLiteralInstruction, MirArrayLoadInstruction,
     MirArrayStoreInstruction, MirArrayLengthInstruction,
-    MirStringMetaInstruction, MirObjectMetaInstruction, MirUnaryInstruction,
+    MirStringMetaInstruction, MirObjectMetaInstruction,
+    MirIntegerWriteInstruction, MirIntegerReadInstruction, MirUnaryInstruction,
     MirBinaryInstruction, MirConvertInstruction, MirIsNonNullInstruction,
     MirNullAssertInstruction, MirTypeTestInstruction, MirCheckedCastInstruction,
     MirCallInstruction, MirInitializeFieldsInstruction, MirPhiInstruction>;

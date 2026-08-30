@@ -191,8 +191,11 @@ class Lowerer {
       const TypeId object_type = semantics_.file(current_file_)
                                      .expressions.at(meta->object.value)
                                      .type;
-      if (meta->meta == "typeName" &&
-          semantic.type == semantics_.string_type()) {
+      if (semantic.integer_meta_operation) {
+        data = HirIntegerMetaExpression{expression(meta->object),
+                                        *semantic.integer_meta_operation};
+      } else if (meta->meta == "typeName" &&
+                 semantic.type == semantics_.string_type()) {
         data = HirObjectMetaExpression{expression(meta->object)};
       } else if (semantics_.type(object_type).kind == TypeKind::kArray &&
                  meta->meta == "length" &&
@@ -225,12 +228,23 @@ class Lowerer {
       for (const ExpressionId argument : call->arguments) {
         arguments.push_back(expression(argument));
       }
-      const bool is_base_qualified = semantics_.file(current_file_)
-                                         .expressions.at(call->callee.value)
-                                         .is_base_qualified;
-      data = HirCallExpression{expression(call->callee), semantic.symbol,
-                               std::move(arguments), is_base_qualified,
-                               semantic.interface_dispatch};
+      if (semantic.integer_meta_operation) {
+        const Expression& callee =
+            files_[current_file_.value]->storage.expression(call->callee);
+        if (const auto* meta =
+                std::get_if<MetaAccessExpression>(&callee.data)) {
+          data = HirIntegerMetaCallExpression{expression(meta->object),
+                                              std::move(arguments),
+                                              *semantic.integer_meta_operation};
+        }
+      } else {
+        const bool is_base_qualified = semantics_.file(current_file_)
+                                           .expressions.at(call->callee.value)
+                                           .is_base_qualified;
+        data = HirCallExpression{expression(call->callee), semantic.symbol,
+                                 std::move(arguments), is_base_qualified,
+                                 semantic.interface_dispatch};
+      }
     } else if (const auto* array =
                    std::get_if<ArrayLiteralExpression>(&syntax.data)) {
       std::vector<HirExpressionId> elements;

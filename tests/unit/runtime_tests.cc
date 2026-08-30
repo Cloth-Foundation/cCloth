@@ -57,6 +57,15 @@ int main() {
                   outer.root_count == 0,
               "outer GC root frame was not cleared");
 
+  void* integer_bytes = cloth_rt_array_alloc(13, 1, 1, 0);
+  cloth_rt_integer_write(integer_bytes, 1, UINT64_C(0x89ABCDEF), 4, 0);
+  cloth_rt_integer_write(integer_bytes, 5, UINT64_C(0x0123456789ABCDEF), 8, 1);
+  test.expect(
+      cloth_rt_integer_read(integer_bytes, 1, 4, 0) == UINT64_C(0x89ABCDEF) &&
+          cloth_rt_integer_read(integer_bytes, 5, 8, 1) ==
+              UINT64_C(0x0123456789ABCDEF),
+      "integer byte-order round trips changed their bit patterns");
+
   constexpr std::uint64_t kReferenceOffsets[]{offsetof(TestNode, first),
                                               offsetof(TestNode, second)};
   constexpr std::uint64_t kBaseReferenceOffsets[]{offsetof(TestNode, first)};

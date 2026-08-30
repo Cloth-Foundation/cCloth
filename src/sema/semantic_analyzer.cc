@@ -40,6 +40,12 @@ struct ExpressionState {
   std::vector<SymbolId> candidates{};
   std::optional<TypeId> checked_type{};
   std::optional<FileId> interface_dispatch{};
+  std::optional<IntegerMetaOperation> integer_meta_operation{};
+};
+
+struct ShiftLiteral {
+  bool is_negative;
+  std::uint64_t magnitude;
 };
 
 using NonNullSet = std::vector<SymbolId>;
@@ -2041,6 +2047,8 @@ class SemanticAnalyzer {
   ExpressionState analyze_binary(const BinaryExpression& binary,
                                  SourceRange range,
                                  std::optional<TypeId> expected) {
+    const bool is_shift = binary.operation == TokenKind::kShiftLeft ||
+                          binary.operation == TokenKind::kShiftRight;
     const std::optional<TypeId> numeric_context =
         expected && is_numeric(*expected) ? expected : std::nullopt;
     ExpressionState left = analyze_expression(binary.left, numeric_context);
@@ -2058,7 +2066,8 @@ class SemanticAnalyzer {
                              : facts.when_false);
     }
     const std::optional<TypeId> right_context =
-        numeric_context
+        is_shift ? std::nullopt
+        : numeric_context
             ? numeric_context
             : (is_numeric(left.type) ? std::optional<TypeId>{left.type}
                                      : std::nullopt);
@@ -2096,6 +2105,24 @@ class SemanticAnalyzer {
                 common_binary_numeric_type(binary, left, right);
             common && is_integer(*common)) {
           return ExpressionState{*common, ValueCategory::kValue};
+        }
+        break;
+      case TokenKind::kAmpersand:
+      case TokenKind::kPipe:
+      case TokenKind::kCaret:
+        if (const std::optional<TypeId> common =
+                common_binary_numeric_type(binary, left, right);
+            common && is_integer(*common)) {
+          return ExpressionState{*common, ValueCategory::kValue};
+        }
+        break;
+      case TokenKind::kShiftLeft:
+      case TokenKind::kShiftRight:
+        if (is_integer(left.type) && is_integer(right.type)) {
+          if (!check_shift_literal(binary.right, left.type)) {
+            return ExpressionState{model_.error_type()};
+          }
+          return ExpressionState{left.type, ValueCategory::kValue};
         }
         break;
       case TokenKind::kLess:
@@ -2292,8 +2319,12 @@ class SemanticAnalyzer {
         restore_assignment_target_type(assignment.target, symbol.type);
       }
     }
-    const ExpressionState value =
-        analyze_expression(assignment.value, target.type);
+    const bool is_shift_assignment =
+        assignment.operation == TokenKind::kShiftLeftEqual ||
+        assignment.operation == TokenKind::kShiftRightEqual;
+    const ExpressionState value = analyze_expression(
+        assignment.value,
+        is_shift_assignment ? std::nullopt : std::optional{target.type});
     if (target.type != model_.error_type() &&
         target.category != ValueCategory::kMutableLocation) {
       diagnostics_.error(expression_range(assignment.target),
@@ -2342,6 +2373,17 @@ class SemanticAnalyzer {
         case TokenKind::kPercentEqual:
           is_valid = is_integer(target.type) && is_integer(value.type) &&
                      is_assignable(target.type, value.type);
+          break;
+        case TokenKind::kAmpersandEqual:
+        case TokenKind::kPipeEqual:
+        case TokenKind::kCaretEqual:
+          is_valid = is_integer(target.type) && is_integer(value.type) &&
+                     is_assignable(target.type, value.type);
+          break;
+        case TokenKind::kShiftLeftEqual:
+        case TokenKind::kShiftRightEqual:
+          is_valid = is_integer(target.type) && is_integer(value.type) &&
+                     check_shift_literal(assignment.value, target.type);
           break;
         default:
           break;
@@ -2743,7 +2785,25 @@ class SemanticAnalyzer {
     if (meta.meta == "typeName" && is_reference(object.type)) {
       return ExpressionState{model_.string_type(), ValueCategory::kValue};
     }
+    if (is_integer(object.type) &&
+        (meta.meta == "writeLittleEndian" || meta.meta == "writeBigEndian")) {
+      ExpressionState state{model_.error_type(), ValueCategory::kCallable};
+      state.integer_meta_operation = IntegerMetaOperation{
+          IntegerMetaOperationKind::kWrite,
+          meta.meta == "writeLittleEndian" ? IntegerByteOrder::kLittleEndian
+                                           : IntegerByteOrder::kBigEndian,
+          object.type};
+      return state;
+    }
     if (object_type.kind == TypeKind::kArray) {
+      if (object_type.element_type == model_.find_type("byte")) {
+        if (const std::optional<IntegerMetaOperation> operation =
+                integer_read_operation(meta.meta)) {
+          ExpressionState state{model_.error_type(), ValueCategory::kCallable};
+          state.integer_meta_operation = operation;
+          return state;
+        }
+      }
       if (meta.meta == "length") {
         return ExpressionState{*model_.find_type("int32"),
                                ValueCategory::kValue};
@@ -2942,6 +3002,11 @@ class SemanticAnalyzer {
       arguments.push_back(std::move(value));
     }
 
+    if (callee.integer_meta_operation) {
+      return analyze_integer_meta_call(*callee.integer_meta_operation, call,
+                                       arguments, range);
+    }
+
     std::vector<SymbolId> candidates = callee.candidates;
     if (callee.category == ValueCategory::kType) {
       const SemanticType& type = model_.type(callee.type);
@@ -3042,6 +3107,98 @@ class SemanticAnalyzer {
     ExpressionState result{symbol.type, ValueCategory::kValue, selected, {}};
     result.interface_dispatch = callee.interface_dispatch;
     return result;
+  }
+
+  ExpressionState analyze_integer_meta_call(
+      IntegerMetaOperation operation, const CallExpression& call,
+      const std::vector<ExpressionState>& arguments, SourceRange range) {
+    if (std::ranges::any_of(arguments, [this](const ExpressionState& argument) {
+          return argument.type == model_.error_type();
+        })) {
+      return ExpressionState{model_.error_type()};
+    }
+    const TypeId int32_type = *model_.find_type("int32");
+    if (operation.kind == IntegerMetaOperationKind::kWrite) {
+      if (arguments.size() != 2) {
+        diagnostics_.error(
+            range, "integer endian write requires a byte[] and an offset");
+        return ExpressionState{model_.error_type()};
+      }
+      const SemanticType& destination = model_.type(arguments[0].type);
+      const bool is_byte_array =
+          destination.kind == TypeKind::kArray &&
+          destination.element_type == model_.find_type("byte");
+      if (!is_byte_array) {
+        diagnostics_.error(expression_range(call.arguments[0]),
+                           "integer endian destination must be 'byte[]'");
+      }
+      if (!is_assignable(int32_type, arguments[1].type)) {
+        diagnostics_.error(expression_range(call.arguments[1]),
+                           "integer endian offset must be assignable to "
+                           "'int32'");
+      }
+      if (!is_byte_array || !is_assignable(int32_type, arguments[1].type)) {
+        return ExpressionState{model_.error_type()};
+      }
+      ExpressionState state{model_.void_type(), ValueCategory::kValue};
+      state.integer_meta_operation = operation;
+      return state;
+    }
+
+    if (arguments.size() != 1) {
+      diagnostics_.error(range,
+                         "integer endian read requires exactly one offset");
+      return ExpressionState{model_.error_type()};
+    }
+    if (!is_assignable(int32_type, arguments[0].type)) {
+      diagnostics_.error(expression_range(call.arguments[0]),
+                         "integer endian offset must be assignable to "
+                         "'int32'");
+      return ExpressionState{model_.error_type()};
+    }
+    ExpressionState state{operation.integer_type, ValueCategory::kValue};
+    state.integer_meta_operation = operation;
+    return state;
+  }
+
+  std::optional<IntegerMetaOperation> integer_read_operation(
+      std::string_view name) const {
+    IntegerByteOrder byte_order = IntegerByteOrder::kLittleEndian;
+    constexpr std::string_view kLittleEndian = "LittleEndian";
+    constexpr std::string_view kBigEndian = "BigEndian";
+    if (name.ends_with(kLittleEndian)) {
+      name.remove_suffix(kLittleEndian.size());
+    } else if (name.ends_with(kBigEndian)) {
+      name.remove_suffix(kBigEndian.size());
+      byte_order = IntegerByteOrder::kBigEndian;
+    } else {
+      return std::nullopt;
+    }
+
+    std::string_view type_name;
+    if (name == "readByte") {
+      type_name = "byte";
+    } else if (name == "readInt8") {
+      type_name = "int8";
+    } else if (name == "readInt16") {
+      type_name = "int16";
+    } else if (name == "readInt32") {
+      type_name = "int32";
+    } else if (name == "readInt64") {
+      type_name = "int64";
+    } else if (name == "readUint8") {
+      type_name = "uint8";
+    } else if (name == "readUint16") {
+      type_name = "uint16";
+    } else if (name == "readUint32") {
+      type_name = "uint32";
+    } else if (name == "readUint64") {
+      type_name = "uint64";
+    } else {
+      return std::nullopt;
+    }
+    return IntegerMetaOperation{IntegerMetaOperationKind::kRead, byte_order,
+                                *model_.find_type(type_name)};
   }
 
   bool validate_call_access(ExpressionId callee_id,
@@ -3168,7 +3325,8 @@ class SemanticAnalyzer {
                             false,
                             state.checked_type,
                             false,
-                            state.interface_dispatch};
+                            state.interface_dispatch,
+                            state.integer_meta_operation};
     return state;
   }
 
@@ -3463,6 +3621,58 @@ class SemanticAnalyzer {
       maximum = (std::uint64_t{1} << properties->bit_width) - 1;
     }
     return value <= maximum;
+  }
+
+  std::optional<ShiftLiteral> shift_literal(ExpressionId id) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* literal =
+            std::get_if<LiteralExpression>(&expression.data)) {
+      if (literal->kind != LiteralKind::kInteger) {
+        return std::nullopt;
+      }
+      std::uint64_t value = 0;
+      const char* const begin = literal->lexeme.data();
+      const char* const end = begin + literal->lexeme.size();
+      const auto parsed = std::from_chars(begin, end, value);
+      if (parsed.ec != std::errc{} || parsed.ptr != end) {
+        return std::nullopt;
+      }
+      return ShiftLiteral{false, value};
+    }
+    if (const auto* unary = std::get_if<UnaryExpression>(&expression.data)) {
+      if (unary->operation != TokenKind::kPlus &&
+          unary->operation != TokenKind::kMinus) {
+        return std::nullopt;
+      }
+      std::optional<ShiftLiteral> value = shift_literal(unary->operand);
+      if (value && unary->operation == TokenKind::kMinus &&
+          value->magnitude != 0) {
+        value->is_negative = !value->is_negative;
+      }
+      return value;
+    }
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return shift_literal(grouped->expression);
+    }
+    return std::nullopt;
+  }
+
+  bool check_shift_literal(ExpressionId count, TypeId value_type) {
+    const std::optional<ShiftLiteral> literal = shift_literal(count);
+    const std::optional<NumericTypeProperties> properties =
+        numeric_type_properties(model_.type(value_type).kind);
+    if (!literal || !properties) {
+      return true;
+    }
+    if (!literal->is_negative && literal->magnitude < properties->bit_width) {
+      return true;
+    }
+    diagnostics_.error(
+        expression_range(count),
+        "shift count is out of range for '" + type_name(value_type) + "'");
+    return false;
   }
 
   bool floating_literal_fits(std::string_view lexeme, TypeId type) const {

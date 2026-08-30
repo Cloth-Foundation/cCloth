@@ -639,6 +639,51 @@ void expressions_and_if_statement(TestContext& test) {
               "if/else structure was not preserved");
 }
 
+void integer_operator_precedence(TestContext& test) {
+  const ParsedSource source{
+      "Bits.co",
+      "func Combine(int32 a, int32 b, int32 c, int32 d, int32 e, "
+      "int32 f, int32 g, int32 h): bool {\n"
+      "  return a | b ^ c & d == e << f + g * h;\n"
+      "}\n"};
+  test.expect(error_count(source) == 0,
+              "integer operator expression did not parse");
+  const cloth::Block& body =
+      source.ast().storage.block(source.ast().functions[0].body);
+  const auto& returned = std::get<cloth::ReturnStatement>(
+      source.ast().storage.statement(body.statements[0]).data);
+  const auto binary = [&source](cloth::ExpressionId id) {
+    return std::get_if<cloth::BinaryExpression>(
+        &source.ast().storage.expression(id).data);
+  };
+  const cloth::BinaryExpression* pipe = binary(*returned.value);
+  const cloth::BinaryExpression* caret =
+      pipe == nullptr ? nullptr : binary(pipe->right);
+  const cloth::BinaryExpression* ampersand =
+      caret == nullptr ? nullptr : binary(caret->right);
+  const cloth::BinaryExpression* equality =
+      ampersand == nullptr ? nullptr : binary(ampersand->right);
+  const cloth::BinaryExpression* shift =
+      equality == nullptr ? nullptr : binary(equality->right);
+  const cloth::BinaryExpression* addition =
+      shift == nullptr ? nullptr : binary(shift->right);
+  const cloth::BinaryExpression* product =
+      addition == nullptr ? nullptr : binary(addition->right);
+  test.expect(
+      pipe != nullptr && pipe->operation == cloth::TokenKind::kPipe &&
+          caret != nullptr && caret->operation == cloth::TokenKind::kCaret &&
+          ampersand != nullptr &&
+          ampersand->operation == cloth::TokenKind::kAmpersand &&
+          equality != nullptr &&
+          equality->operation == cloth::TokenKind::kEqualEqual &&
+          shift != nullptr &&
+          shift->operation == cloth::TokenKind::kShiftLeft &&
+          addition != nullptr &&
+          addition->operation == cloth::TokenKind::kPlus &&
+          product != nullptr && product->operation == cloth::TokenKind::kStar,
+      "integer operators have the wrong relative precedence");
+}
+
 void while_break_and_continue(TestContext& test) {
   const ParsedSource source{
       "Loops.co", "func Run() { while (true) { continue; break; } }\n"};
@@ -1250,6 +1295,7 @@ int main() {
       {"unexpected top-level token", unexpected_top_level_token},
       {"deferred nested type recover", deferred_nested_type_recover},
       {"expressions and if statement", expressions_and_if_statement},
+      {"integer operator precedence", integer_operator_precedence},
       {"while, break, and continue", while_break_and_continue},
       {"for iteration declarations", for_iteration_declarations},
       {"malformed for headers recover", malformed_for_headers_recover},

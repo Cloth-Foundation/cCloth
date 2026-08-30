@@ -148,6 +148,17 @@ struct HirObjectMetaExpression {
   HirExpressionId object;
 };
 
+struct HirIntegerMetaExpression {
+  HirExpressionId object;
+  IntegerMetaOperation operation;
+};
+
+struct HirIntegerMetaCallExpression {
+  HirExpressionId object;
+  std::vector<HirExpressionId> arguments;
+  IntegerMetaOperation operation;
+};
+
 struct HirGroupedExpression {
   HirExpressionId expression;
 };
@@ -160,7 +171,8 @@ using HirExpressionData = std::variant<
     HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
     HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
     HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
-    HirStringMetaExpression, HirObjectMetaExpression, HirGroupedExpression>;
+    HirStringMetaExpression, HirObjectMetaExpression, HirIntegerMetaExpression,
+    HirIntegerMetaCallExpression, HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;

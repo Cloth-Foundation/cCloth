@@ -1,0 +1,4 @@
+static func Main() {
+  int32 count = 32;
+  println(1 << count);
+}

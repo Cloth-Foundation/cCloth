@@ -421,15 +421,89 @@ class MirVerifier {
         report(instruction.range,
                "object meta query result does not have type string");
       }
+    } else if (const auto* write =
+                   std::get_if<MirIntegerWriteInstruction>(&instruction.data)) {
+      verify_value(write->value, value_types, instruction.range);
+      verify_value(write->destination, value_types, instruction.range);
+      verify_value(write->offset, value_types, instruction.range);
+      require_no_result(instruction);
+      verify_value_type(write->offset, *semantics_.find_type("int32"),
+                        value_types, instruction.range);
+      const std::optional<TypeId> value_type =
+          known_value_type(write->value, value_types);
+      if (value_type && value_type->value < semantics_.types().size() &&
+          !is_integer_type(semantics_.type(*value_type).kind)) {
+        report(instruction.range,
+               "integer endian write consumes a non-integer value");
+      }
+      const std::optional<TypeId> element = array_element_type(
+          write->destination, value_types, instruction.range);
+      if (element && *element != *semantics_.find_type("byte")) {
+        report(instruction.range,
+               "integer endian write destination is not byte[]");
+      }
+    } else if (const auto* read =
+                   std::get_if<MirIntegerReadInstruction>(&instruction.data)) {
+      verify_value(read->source, value_types, instruction.range);
+      verify_value(read->offset, value_types, instruction.range);
+      require_result(instruction);
+      verify_value_type(read->offset, *semantics_.find_type("int32"),
+                        value_types, instruction.range);
+      const std::optional<TypeId> element =
+          array_element_type(read->source, value_types, instruction.range);
+      if (element && *element != *semantics_.find_type("byte")) {
+        report(instruction.range, "integer endian read source is not byte[]");
+      }
+      if (instruction.type.value < semantics_.types().size() &&
+          !is_integer_type(semantics_.type(instruction.type).kind)) {
+        report(instruction.range,
+               "integer endian read does not produce an integer");
+      }
     } else if (const auto* unary =
                    std::get_if<MirUnaryInstruction>(&instruction.data)) {
       verify_value(unary->operand, value_types, instruction.range);
       require_result(instruction);
+      if (unary->operation == TokenKind::kTilde) {
+        const std::optional<TypeId> operand_type =
+            known_value_type(unary->operand, value_types);
+        if (operand_type && operand_type->value < semantics_.types().size() &&
+            (!is_integer_type(semantics_.type(*operand_type).kind) ||
+             instruction.type != *operand_type)) {
+          report(instruction.range,
+                 "integer complement has incompatible types");
+        }
+      }
     } else if (const auto* binary =
                    std::get_if<MirBinaryInstruction>(&instruction.data)) {
       verify_value(binary->left, value_types, instruction.range);
       verify_value(binary->right, value_types, instruction.range);
       require_result(instruction);
+      const std::optional<TypeId> left_type =
+          known_value_type(binary->left, value_types);
+      const std::optional<TypeId> right_type =
+          known_value_type(binary->right, value_types);
+      const bool is_bitwise = binary->operation == TokenKind::kAmpersand ||
+                              binary->operation == TokenKind::kPipe ||
+                              binary->operation == TokenKind::kCaret;
+      const bool is_shift = binary->operation == TokenKind::kShiftLeft ||
+                            binary->operation == TokenKind::kShiftRight;
+      if (is_bitwise && left_type && right_type &&
+          left_type->value < semantics_.types().size() &&
+          right_type->value < semantics_.types().size() &&
+          (!is_integer_type(semantics_.type(*left_type).kind) ||
+           *left_type != *right_type || instruction.type != *left_type)) {
+        report(instruction.range,
+               "bitwise instruction has incompatible integer types");
+      }
+      if (is_shift && left_type && right_type &&
+          left_type->value < semantics_.types().size() &&
+          right_type->value < semantics_.types().size() &&
+          (!is_integer_type(semantics_.type(*left_type).kind) ||
+           !is_integer_type(semantics_.type(*right_type).kind) ||
+           instruction.type != *left_type)) {
+        report(instruction.range,
+               "shift instruction has incompatible integer types");
+      }
     } else if (const auto* conversion =
                    std::get_if<MirConvertInstruction>(&instruction.data)) {
       verify_value(conversion->value, value_types, instruction.range);
