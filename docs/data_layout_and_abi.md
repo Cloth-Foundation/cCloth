@@ -19,6 +19,13 @@ The command-line driver selects them with `--target=x86_64` and
 `--target=wasm32`. Source types keep the same meaning on both targets; only
 their target representation changes.
 
+Target endianness currently describes native storage for ABI and backend
+validation; it does not change arithmetic, assignment, or numeric-conversion
+semantics. The planned Stage 21 byte-order surface will encode and decode
+fixed-width integers with an explicitly requested little-endian or big-endian
+order. It will not expose raw object storage or make “native endian” portable
+source behavior.
+
 ## Primitive representation
 
 Fixed-width integer and floating-point names retain their declared bit widths.

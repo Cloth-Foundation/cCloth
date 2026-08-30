@@ -1,172 +1,184 @@
-# Cloth deferred-work ledger
+# Cloth work ledger
 
-This file is the central inventory of work deliberately left out through Stage
-19. Feature documents remain authoritative for existing behavior; this
-ledger records accepted gaps and their prerequisites. An unchecked item has no
-implied schedule or stage number.
+`ROADMAP.md` defines stage order and scope. This file tracks the concrete work
+inside scheduled stages and preserves accepted but unscheduled gaps. Implemented
+behavior belongs in `docs/` rather than in a growing history of checked boxes.
 
-When completing an item, update its owning design document, implementation, and
-tests in the same change, then mark it complete here with the implementing stage
-or release. New entries should describe a concrete missing capability rather
-than a general aspiration.
+Rules:
 
-## Language and object model
+- only work under the active stage may be implemented as a feature;
+- a planned stage is not active until its design and implementation start are
+  explicitly approved;
+- new ideas enter the unscheduled backlog unless the roadmap is changed first;
+- completing an item requires implementation, verification, tests, and updates
+  to its owning contract; and
+- moving or splitting an item must preserve its prerequisites and non-goals.
 
-- [x] Add the optional unnamed `class {}` envelope and validated
-  single-inheritance graph. Completed in Stage 16.1.
-- [ ] Complete the remaining file-kind declarations for an implicit file type.
-  Stage 18 defines `interface {}`. `struct {}` and `enum {}` still require
-  layout, value/reference semantics, construction, visibility, and import
-  contracts before implementation.
-- [ ] Implement nested type declarations. `class`, `struct`, and `enum` are
-  reserved declaration starters today but are intentionally diagnosed as
-  unsupported.
-- [x] Define inherited object layout and descriptor ancestry. Stage 16.2 uses a
-  complete padded base prefix, flattened GC reference maps, and a direct-parent
-  descriptor link.
-- [x] Define explicit base-constructor chaining. Stage 16.3 freezes
-  `User(...): Human(...) { ... }`, allocates the most-derived object once, and
-  runs each base's fields and constructor before derived initialization.
-- [x] Decouple constructor visibility from implicit class visibility. The
-  post-Stage-18 constructor refinement gives `User.co` public `User(...)` and
-  private `user(...)` or `_User(...)` declarations, while enforcing access for
-  ordinary and base constructor calls.
-- [x] Add inherited lookup, base-reference conversions, and hierarchy-aware
-  `is`/`as`. Stage 16.4 follows the base chain for visibility and runtime type
+## Active stage
+
+No feature stage is active. Stage 20 is complete. The next scheduled action is
+the Stage 21.1 design contract; implementation must not begin until that
+contract and its explicit implementation start are approved.
+
+## Scheduled work
+
+### Stage 21: Integer binary representation and byte order
+
+- [ ] **21.1 — Integer operator contract.** Freeze valid operand types, result
+  types, precedence, signed complement, signed right shift, shift-count bounds,
+  compound assignment, constant behavior, and diagnostics for `&`, `|`, `^`,
+  `~`, `<<`, and `>>`.
+- [ ] **21.2 — Integer operator implementation.** Carry the approved contract
+  through parser/AST, semantic analysis, HIR, MIR verification, LLVM lowering,
+  invalid-program coverage, and native execution tests.
+- [ ] **21.3 — Byte-order contract.** Approve the source surface and semantics
+  for explicit little-endian and big-endian encoding and decoding of fixed-width
+  integers. Specify byte-array size, offset, bounds, signedness, evaluation
+  order, and failure behavior without exposing host-native memory.
+- [ ] **21.4 — Byte-order implementation.** Implement the approved surface,
+  retain the operation explicitly through verified compiler representations,
+  and test identical byte sequences independent of target layout metadata.
+- [ ] Complete the Stage 21 exit audit in `ROADMAP.md`, including development
+  and sanitizer suites and recording every deliberate deferral below.
+
+### Stage 22: Project manifest and local dependencies
+
+- [ ] **22.1 — Manifest contract.** Define a versioned `cloth.toml` schema for
+  package identity, source roots, entry files, and local path dependencies.
+- [ ] **22.2 — Dependency graph.** Resolve local dependencies deterministically
+  and diagnose cycles, duplicate identities, missing paths, and invalid source
+  roots before source parsing.
+- [ ] **22.3 — CLI integration.** Make project discovery and compilation consume
+  the manifest while preserving identifier-based imports.
+- [ ] **22.4 — Project verification.** Add parser/configuration unit tests,
+  multi-project integration fixtures, build documentation, and the Stage 22
+  development/sanitizer exit audit.
+
+### Stage 23: Separate compilation and deterministic linking
+
+- [ ] **23.1 — Artifact contract.** Define the versioned package artifact and
+  the semantic, MIR/ABI, and dependency metadata it owns.
+- [ ] **23.2 — Canonical identity.** Preserve type descriptors, interface
+  identities, mangled callables, and runtime registration across artifacts.
+- [ ] **23.3 — Link pipeline.** Link local package artifacts deterministically
+  and diagnose duplicate, missing, or incompatible definitions.
+- [ ] **23.4 — Equivalence verification.** Compare separate and whole-project
+  compilation in ABI, linker, invalid-input, and native execution tests, then
+  complete the Stage 23 development/sanitizer exit audit.
+
+## Unscheduled backlog
+
+These entries are intentionally unnumbered. They cannot be pulled into an
+active stage without first updating `ROADMAP.md`.
+
+### Language and object model
+
+- Define enums as an implicit file kind. A future stage must freeze case syntax,
+  discriminants and payload policy, representation, construction, equality,
+  visibility, imports, and control-flow integration before implementation.
+- Define structs as an implicit file kind. A future stage must freeze value
+  semantics, layout, copying, construction, methods, conformance and inheritance
+  rules, managed-reference fields, equality, visibility, imports, and ABI
+  behavior before implementation.
+- Implement nested type declarations. `class`, `struct`, and `enum` are
+  reserved declaration starters and currently diagnosed as unsupported.
+- Add flow-sensitive smart casts after a successful `value is T` test.
+- Add primitive boxing before primitives may widen to `object`.
+- Define the reflection surface beyond the stable `::typeName` meta query.
+- Evaluate generics, traits, or an interface-based alternative after the Cloth
+  1.0 boundary.
+- Add first-class function values.
+- Design user-defined conversions without weakening lossless implicit numeric
+  conversion or checked built-in conversion.
+- Decide whether Cloth synthesizes implicit default constructors.
+- Decide whether distinct unit and never types belong beside `void`.
+
+### Expressions, numeric operations, and control flow
+
+- Add wrapping and saturating conversions as explicit primitive meta operations
+  without changing the checked `NumericType(value)` contract. Their exact
+  spelling, signedness behavior, and integer/floating scope remain subject to a
+  future stage contract.
+- Evaluate optional numeric literal suffixes as syntax ergonomics without
+  changing contextual literal typing, default `int32`/`float64` inference,
+  representability checks, or overload-resolution rules.
+- Add floating-point bit representation and byte-order operations after the
+  integer-only Stage 21 boundary is proven.
+- Design recoverable exceptions, including syntax, control flow, unwinding,
+  runtime representation, and a stable exception ABI.
+
+### Optimization
+
+- Add a general constant-folding optimizer stage after the language semantics
+  it consumes are stable. Folding must preserve evaluation order, overflow and
+  trap behavior, floating-point rounding, diagnostics, and target-independent
+  results; it is not required for language correctness.
+
+### Nullability
+
+- Add nullable value types. This is required before safe access or safe meta
+  queries can produce nullable primitive values.
+- Add safe function calls on nullable receivers. Until then, callers narrow or
+  assert the receiver first.
+
+### Arrays, iteration, and collections
+
+- Add contextual typing for empty and null-only array literals.
+- Reify complete array element-type identity before checked `is`/`as` with
+  array targets.
+- Design multidimensional arrays, resizable lists, and slices without weakening
+  fixed-length `T[]`.
+- Add deep array equality as an explicit operation; `==` remains reference
   identity.
-- [x] Define explicit overrides and dynamic dispatch. Stage 16.5 requires
-  `override func` for an exact inherited instance signature, preserves stable
-  virtual slots, dispatches through the most-derived descriptor, and suppresses
-  self dispatch during field initialization and constructor execution.
-- [x] Add base-qualified calls. Stage 16.6 uses `super.Method(...)` for the
-  current file class's direct-base view, retains ordinary overload lookup, and
-  invokes the selected implementation directly on `self`.
-- [x] Add abstract declaration syntax and identity. Stage 17.1 reserves
-  `abstract` and `sealed`, accepts public bodyless `abstract func`
-  declarations in an `abstract class`, retains the identity through MIR, and
-  uses a verified unreachable ABI stub rather than inventing an implementation.
-- [x] Reject direct abstract-class construction and require every concrete
-  subclass to implement all inherited abstract slots. Stage 17.2 derives the
-  transitive obligation set from the resolved virtual table while allowing
-  abstract intermediates and explicit abstract-base constructor chaining.
-- [x] Enforce sealed classes and final override contracts. Stage 17.3 rejects
-  inheritance from a sealed file class and requires function `final` to close
-  an inherited virtual slot through `final override func`.
-- [x] Add covariant managed-reference override returns. Stage 17.4 accepts a
-  narrower return assignable to the inherited return while keeping primitives,
-  `void`, and invariant array-to-array returns exact.
-- [x] Add interfaces and class conformance. Stage 18 defines interface files,
-  multiple interface inheritance, `class : Human is InterfaceA, InterfaceB`,
-  transitive conformance, checked conversions, deterministic dispatch tables,
-  and runtime interface lookup.
-- [ ] Add flow-sensitive smart casts after a successful `value is T` test.
-- [ ] Add primitive boxing before primitives may widen to `object`.
-- [ ] Define the intended reflection surface; Stage 15 exposes only the stable
-  `::typeName` meta query.
-- [ ] Add generics and traits or their eventual interface-based equivalent.
-- [ ] Add first-class function values.
-- [x] Add contextual numeric literals and lossless primitive widening. Stage
-  20.1 preserves default `int32`/`float64` inference, range-checks literals in
-  typed contexts, and records typed-value widening explicitly in MIR.
-- [x] Add overload-directed literal typing. Stage 20.2 prefers complete exact
-  default-type signatures, otherwise requires one uniquely compatible
-  literal-fit or widening candidate, and applies the selected types uniformly
-  to functions, constructors, and base initializers.
-- [x] Add checked explicit numeric conversions. Stage 20.3 uses
-  `NumericType(value)`, diagnoses invalid literal conversions at compile time,
-  and emits checked MIR/LLVM conversions for runtime values without implicit
-  wrapping.
-- [ ] Design user-defined conversions without weakening the lossless implicit
-  numeric-conversion contract.
-- [ ] Add implicit default constructors if Cloth should synthesize them.
-- [ ] Decide whether distinct unit and never types belong beside `void`.
+- Extend `for (... in ...)` beyond arrays only after defining the required
+  range, binding, destructuring, async, or iterable contracts independently.
 
-## Expressions and control flow
+### Strings, formatting, and representation
 
-- [x] Add arithmetic compound assignment, numeric prefix/postfix
-  increment/decrement, and classical `for` loops. Stage 19 introduced exact
-  operands; Stage 20.1 permits the right operand to widen losslessly while
-  preserving the target type. Locations are evaluated once, and `continue`
-  routes through the classical loop's update block.
-- [ ] Implement bitwise binary operators, shifts, and their compound assignment
-  forms. The lexer and assignment parser reserve the relevant tokens, but
-  semantic analysis rejects them until their type and overflow contracts are
-  defined.
-- [ ] Design recoverable exceptions, including source syntax, control-flow
-  semantics, unwinding, runtime representation, and a stable exception ABI.
-
-## Nullability
-
-- [ ] Add nullable value types. This is a prerequisite for safe access and safe
-  meta queries that produce primitives, such as a primitive field or a string
-  length.
-- [ ] Add safe function calls on nullable receivers. Until then, callers must
-  narrow or assert the receiver first.
-
-## Arrays, iteration, and collections
-
-- [ ] Add contextual typing for empty and null-only array literals.
-- [ ] Reify complete array element-type identity, then implement sound checked
-  `is`/`as` operations for array targets.
-- [ ] Design multidimensional arrays, resizable lists, and slices without
-  weakening the fixed-length `T[]` contract.
-- [ ] Add deep array equality as an explicit operation; `==` remains reference
-  identity.
-- [ ] Extend `for (... in ...)` beyond arrays with index/value bindings, numeric
-  ranges, destructuring, asynchronous iteration, and a general `Iterable<T>`
-  protocol.
-
-## Strings, formatting, and representation
-
-- [ ] Add string indexing, slicing, and iteration over a deliberately chosen
+- Add string indexing, slicing, and iteration over a deliberately selected
   Unicode unit.
-- [ ] Add interpolation and type-checked formatting.
-- [ ] Add case conversion, Unicode normalization, searching, and interning.
-- [ ] Decide how a source-defined standard-library string API layers over the
+- Add interpolation and type-checked formatting.
+- Add case conversion, Unicode normalization, searching, and interning.
+- Decide how a source-defined standard-library string API layers over the
   primitive immutable UTF-8 representation.
-- [ ] Add array rendering and user-defined object-to-string formatting while
+- Add array rendering and user-defined object-to-string formatting while
   preserving the stable default representation.
 
-## Static storage and initialization
+### Static storage and initialization
 
-- [ ] Define deterministic static initialization order and collector root
-  registration, then support dynamic initializers, mutable static fields, and
+- Define deterministic static initialization order and collector root
+  registration before dynamic initializers, mutable static fields, or
   reference-valued static fields.
 
-## Packages, dependencies, and distribution
+### Packages, dependencies, and distribution
 
-- [ ] Define a project manifest and dependency table.
-- [ ] Add package registries, semantic version selection, and remote dependency
-  retrieval.
-- [ ] Define and distribute the standard library.
-- [ ] Add separate compilation. File-class descriptors need coalescing or
-  runtime registration so descriptor identity remains canonical across native
-  modules.
+- Add package registries, semantic-version selection, lockfiles, and remote
+  dependency retrieval after the local-only Stage 22 contract.
+- Define and distribute the standard library.
 
-## Backend, runtime, and tooling
+### Backend, runtime, and tooling
 
-- [ ] Add a WebAssembly runtime and linker path; wasm32 LLVM IR emission already
+- Add a WebAssembly runtime and linker path; wasm32 LLVM IR emission already
   exists.
-- [ ] Expand native output beyond the current x86-64 pipeline.
-- [ ] Add selectable optimization levels and debug information.
-- [ ] Define command-line argument delivery to `Main`.
-- [ ] Add platform packaging and distribution tooling.
+- Expand native output beyond the current x86-64 pipeline.
+- Add selectable optimization levels and debug information.
+- Define command-line argument delivery to `Main`.
+- Add platform packaging and distribution tooling.
 
-## Memory management
+### Memory management
 
-- [ ] Move compiler syntax and semantic/HIR storage to an arena or
-  garbage-collected ownership model without making addresses into identities.
-- [ ] Reuse proven-dead shadow-stack root slots without changing the root-frame
+- Move compiler syntax and semantic/HIR storage to an arena or
+  garbage-collected ownership model without making addresses identities.
+- Reuse proven-dead shadow-stack root slots without changing the root-frame
   ABI.
-- [ ] Add multi-mutator collection support before Cloth programs gain native
-  threading.
-- [ ] Evaluate finalizers, weak references, concurrent tracing, generational
-  collection, and moving collection. Each requires its own observable-semantics
-  and barrier design; none is implied by the current precise collector.
+- Add multi-mutator collection support before native threading.
+- Evaluate finalizers, weak references, concurrent tracing, generational
+  collection, and moving collection separately; each requires observable
+  semantics and barrier design.
 
 ## Intentional invariants and non-goals
 
-These are current design decisions, not unfinished checklist items:
+These are current decisions, not unfinished work:
 
 - Arrays are invariant; `User[]` does not widen to `object[]`.
 - Cloth does not expose unchecked C-style variadic `printf`.
@@ -175,4 +187,5 @@ These are current design decisions, not unfinished checklist items:
 - Object addresses, allocation identifiers, collector state, and reclamation
   timing are not source-visible behavior.
 - `.` is declared member access; `::` is reserved for language-defined meta
-  queries and qualified paths.
+  operations and qualified paths.
+- Generics and traits are outside the Cloth 1.0 scope.

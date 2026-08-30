@@ -83,7 +83,9 @@ types, interfaces, overriding, class and interface dispatch, covariant
 managed-reference returns, capitalization-based constructor visibility, and
 `super` calls. Structured control flow includes array iteration and classical
 `for` loops, with arithmetic compound assignment and prefix/postfix numeric
-updates.
+updates. Numeric values use contextual literals, lossless implicit widening,
+overload-directed literal typing, and checked explicit `NumericType(value)`
+conversion.
 
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++
@@ -186,6 +188,19 @@ Cloth is production-minded even while its design is evolving. Changes should
 keep contracts concise, diagnostics actionable, compiler boundaries explicit,
 and tests proportional to the behavior being introduced.
 
+### Follow the staged roadmap
+
+[ROADMAP.md](ROADMAP.md) is the authoritative implementation order, and
+[TODO.md](TODO.md) contains the concrete scheduled work and unscheduled
+backlog. Only one stage may be active. Before feature implementation begins,
+the stage must have approved scope, non-goals, exit criteria, work items, and an
+explicit implementation go-ahead.
+
+Design approval does not activate a stage. New ideas discovered during active
+work belong in the unscheduled backlog unless they are required by an existing
+exit criterion and the roadmap is updated first. This keeps a focused change
+from silently becoming a broader language project.
+
 ### Propose a change with an RFC
 
 Open an RFC before implementing a change to source syntax, language semantics,
@@ -202,9 +217,10 @@ internal refactors do not normally need one.
 6. Define how the behavior will be tested and documented.
 
 Keep an RFC scoped to one coherent decision. Implementation should begin once
-the intended behavior is clear enough for review. Merged language and
-architecture documents are the source of truth; the issue preserves discussion
-and alternatives.
+the intended behavior is clear enough for review, the work is assigned to the
+active roadmap stage, and implementation is explicitly approved. Merged
+language and architecture documents are the source of truth; the issue
+preserves discussion and alternatives.
 
 ### Implement a feature
 
@@ -296,9 +312,11 @@ formatting changes.
 | `editors/` | Editor integrations, including the VS Code extension |
 | `docs/` | Language and compiler contracts |
 | `cmake/` | Shared build, tooling, and test configuration |
-| `TODO.md` | Deferred work and design guardrails |
+| `ROADMAP.md` | Authoritative stage order, boundaries, and exit criteria |
+| `TODO.md` | Scheduled stage work and unscheduled backlog |
 
-Start with [Language design](docs/language_design.md) and the
+Start with the [compiler roadmap](ROADMAP.md),
+[Language design](docs/language_design.md), and the
 [implemented grammar](docs/grammar.md). The main compiler boundaries are
 documented in [semantic analysis](docs/semantic_analysis.md),
 [numeric literals and widening](docs/numeric_conversions.md),
