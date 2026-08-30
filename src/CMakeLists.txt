@@ -25,6 +25,7 @@ add_library(cloth_compiler
     project/project_layout.cc
     sema/file_class_symbols.cc
     sema/field_initialization_analysis.cc
+    sema/numeric_types.cc
     sema/semantic_analyzer.cc
     sema/semantic_model.cc
     sema/visibility.cc

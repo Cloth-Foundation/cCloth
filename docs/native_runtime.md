@@ -74,6 +74,8 @@ cloth_rt_array_alloc(length, element_size, element_alignment,
 cloth_rt_array_length(array) -> int32
 cloth_rt_array_element(array, index) -> element address
 cloth_rt_require_receiver(reference)
+cloth_rt_require_non_null(reference)
+cloth_rt_require_numeric_conversion(valid)
 cloth_rt_print(string)
 cloth_rt_print_{i8,i16,i32,i64}(signed integer)
 cloth_rt_print_{u8,u16,u32,u64}(unsigned integer)
@@ -138,6 +140,11 @@ An array header records its fixed length, element size, payload address, and
 whether elements are references. Payload storage is zero-initialized and
 properly aligned. Null access, negative indices, and indices greater than or
 equal to `::length` terminate through the runtime failure path.
+
+`cloth_rt_require_numeric_conversion` terminates with
+`numeric conversion is out of range` when a compiler-emitted conversion
+predicate is false. The runtime does not perform the conversion or define
+wrapping behavior; source and target types remain explicit in MIR.
 
 Runtime contract violations write a concise message to standard error and
 terminate the process. There is no recovery or exception ABI yet.

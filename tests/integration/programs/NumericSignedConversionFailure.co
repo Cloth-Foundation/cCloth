@@ -1,0 +1,4 @@
+static func Main() {
+  int32 value = -1;
+  println(uint(value));
+}

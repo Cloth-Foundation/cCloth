@@ -1,0 +1,24 @@
+static func Main() {
+  int32 wide = 127;
+  println(int8(wide));
+
+  float64 decimal = 12.9;
+  println(int32(decimal));
+
+  float64 negativeDecimal = -12.9;
+  println(int32(negativeDecimal));
+
+  int32 positive = 255;
+  println(uint16(positive));
+
+  uint64 signedMaximum = 9223372036854775807;
+  println(int64(signedMaximum));
+
+  println(float(wide));
+
+  float64 precise = 0.25;
+  println(float(precise));
+
+  float64 negativeFraction = -0.5;
+  println(uint(negativeFraction));
+}

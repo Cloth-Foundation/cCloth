@@ -91,6 +91,11 @@ struct CheckedCastExpression {
   TypeSyntax target;
 };
 
+struct NumericConversionExpression {
+  TypeSyntax target;
+  ExpressionId value;
+};
+
 struct AssignmentExpression {
   ExpressionId target;
   TokenKind operation;
@@ -142,10 +147,10 @@ struct ParenthesizedExpression {
 using ExpressionData = std::variant<
     InvalidExpression, IdentifierExpression, LiteralExpression, SuperExpression,
     UnaryExpression, UpdateExpression, BinaryExpression, TypeTestExpression,
-    CheckedCastExpression, AssignmentExpression, MemberAccessExpression,
-    MetaAccessExpression, SafeMemberAccessExpression, NullCoalesceExpression,
-    NullAssertExpression, CallExpression, ArrayLiteralExpression,
-    IndexExpression, ParenthesizedExpression>;
+    CheckedCastExpression, NumericConversionExpression, AssignmentExpression,
+    MemberAccessExpression, MetaAccessExpression, SafeMemberAccessExpression,
+    NullCoalesceExpression, NullAssertExpression, CallExpression,
+    ArrayLiteralExpression, IndexExpression, ParenthesizedExpression>;
 
 struct Expression {
   SourceRange range;

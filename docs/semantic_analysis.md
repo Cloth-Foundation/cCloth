@@ -70,9 +70,18 @@ The core type table contains:
 - one canonical nullable wrapper for each used nullable reference type
 
 `int`, `uint`, and `float` are target-independent aliases of `int32`, `uint32`,
-and `float32` respectively. Integer and floating literals have `int32` and
-`float64` type respectively. General implicit numeric conversions are not
-implemented. References are non-null by default. `T?` is a distinct nullable
+and `float32` respectively. Integer and floating literals default to `int32`
+and `float64`, but adopt an expected numeric type when representable. Typed
+numeric values use lossless widening: increasing width within a signed or
+unsigned family, a smaller unsigned integer to a larger signed integer, and
+`float32` to `float64`. Narrowing, signed-to-unsigned, integer/floating
+cross-conversion, and equal-width cross-family conversion remain invalid
+implicitly. `NumericType(value)` explicitly converts between numeric types.
+Literal operands are checked and committed to the target during semantic
+analysis. Runtime operands use checked conversion semantics; out-of-range
+integer results, non-finite floating-to-integer values, and finite
+`float64`-to-`float32` overflow trap rather than wrap.
+References are non-null by default. `T?` is a distinct nullable
 wrapper, `T` widens to `T?`, and `null` is assignable only to `T?`. Nullable
 qualifiers are invalid on primitive and void types.
 
@@ -182,8 +191,13 @@ primitive, `object`, and `null`; file classes and arrays use object widening,
 and `println()` is a separate
 zero-argument intrinsic. Locals and members retain normal precedence over core
 names, so a source declaration can shadow either overload set. Exact parameter
-matches take precedence over non-null-to-nullable widening. Callables cannot
-overload solely on nullability because the ABI erases the qualifier.
+matches take precedence over numeric or reference widening. Numeric literal
+expressions also match parameters that can represent their value. If no exact
+default-type signature exists, exactly one widening or literal-fit candidate
+must remain; otherwise the call is ambiguous. The selected parameter types are
+then committed to the literals. Ordinary constructors and base-constructor
+initializers use the same resolver. Callables cannot overload solely on
+nullability because the ABI erases the qualifier.
 Public static functions and fields can be qualified by a file-class name, such
 as `Repository.Find(id)`. Instance members require an object.
 
@@ -295,8 +309,9 @@ A classical `for` initializer enters a header scope shared by its condition,
 updates, and nested body scope. An omitted condition is an unconditional loop;
 otherwise the condition follows the ordinary boolean condition rules. Update
 expressions are checked in runtime order after the body for flow-sensitive
-invalidation. Arithmetic compound assignments require exact matching numeric
-types, except that `string += string` is also valid; `%=` remains integer-only.
+invalidation. Arithmetic compound assignments accept a right operand that
+losslessly widens to the target type, except that `string += string` is also
+valid; `%=` remains integer-only.
 `++` and `--` require mutable numeric locations. Compound assignment and update
 are always rejected for `final` symbols because both operations read and write
 their targets.

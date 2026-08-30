@@ -191,6 +191,9 @@ ExpressionId ExpressionParser::parse_primary_expression() {
   if (match(TokenKind::kKwSuper)) {
     return storage_.add_expression(Expression{token.range, SuperExpression{}});
   }
+  if (is_numeric_type_token(token.kind)) {
+    return parse_numeric_conversion_expression();
+  }
 
   if (token.kind == TokenKind::kLeftBracket) {
     return parse_array_literal_expression();
@@ -250,6 +253,47 @@ ExpressionId ExpressionParser::parse_primary_expression() {
     advance();
   }
   return make_invalid_expression(token.range);
+}
+
+ExpressionId ExpressionParser::parse_numeric_conversion_expression() {
+  const Token& target = advance();
+  const TypeSyntax target_type{target.lexeme, true, target.range};
+  if (!match(TokenKind::kLeftParen)) {
+    diagnostics_.error(current().range,
+                       "expected '(' after numeric conversion type");
+    return make_invalid_expression(target.range);
+  }
+
+  ExpressionId value =
+      make_invalid_expression(point_range(current().range.begin));
+  if (current().kind == TokenKind::kRightParen) {
+    diagnostics_.error(current().range,
+                       "expected a value in numeric conversion");
+  } else {
+    value = parse_expression();
+  }
+
+  if (match(TokenKind::kComma)) {
+    diagnostics_.error(tokens_[current_ - 1].range,
+                       "numeric conversion requires exactly one value");
+    while (!at_limit() && current().kind != TokenKind::kRightParen) {
+      static_cast<void>(parse_expression());
+      if (!match(TokenKind::kComma)) {
+        break;
+      }
+    }
+  }
+
+  SourceLocation end = expression_range(value).end;
+  if (match(TokenKind::kRightParen)) {
+    end = tokens_[current_ - 1].range.end;
+  } else {
+    diagnostics_.error(current().range,
+                       "expected ')' after numeric conversion");
+  }
+  return storage_.add_expression(
+      Expression{SourceRange{target.range.begin, end},
+                 NumericConversionExpression{target_type, value}});
 }
 
 ExpressionId ExpressionParser::parse_call_expression(ExpressionId callee) {

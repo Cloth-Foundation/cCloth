@@ -3,6 +3,7 @@
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/hir/hir.h"
+#include "cloth/sema/numeric_types.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
@@ -70,6 +71,18 @@ class HirVerifier {
                      std::get_if<HirCheckedCastExpression>(&expression.data)) {
         verify_expression(cast->value, expression.range);
         verify_type(cast->target, expression.range);
+      } else if (const auto* conversion =
+                     std::get_if<HirNumericConversionExpression>(
+                         &expression.data)) {
+        verify_expression(conversion->value, expression.range);
+        if (conversion->value.value < expressions.size() &&
+            (!is_numeric_type(semantics_.type(expression.type).kind) ||
+             !is_numeric_type(
+                 semantics_.type(expressions[conversion->value.value].type)
+                     .kind))) {
+          report(expression.range,
+                 "numeric conversion has a non-numeric source or target");
+        }
       } else if (const auto* assignment =
                      std::get_if<HirAssignmentExpression>(&expression.data)) {
         verify_expression(assignment->target, expression.range);

@@ -301,6 +301,7 @@ formatting changes.
 Start with [Language design](docs/language_design.md) and the
 [implemented grammar](docs/grammar.md). The main compiler boundaries are
 documented in [semantic analysis](docs/semantic_analysis.md),
+[numeric literals and widening](docs/numeric_conversions.md),
 [interfaces](docs/interfaces.md),
 [control flow and MIR](docs/control_flow_and_mir.md),
 [data layout and ABI](docs/data_layout_and_abi.md), the

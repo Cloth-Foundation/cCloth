@@ -722,6 +722,153 @@ void nullable_conversion(TestContext& test) {
       "non-null-to-nullable return lacks an explicit conversion");
 }
 
+void numeric_widening_conversion(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Numbers.co",
+                  "func Expand(int16 signedSmall, uint16 unsignedSmall, "
+                  "float32 single): float64 {\n"
+                  "  int32 signedWide = signedSmall;\n"
+                  "  int32 unsignedWide = unsignedSmall;\n"
+                  "  int32[] values = [1];\n"
+                  "  int32 first = values[signedSmall];\n"
+                  "  signedWide += signedSmall;\n"
+                  "  return single;\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid numeric widening failed MIR lowering");
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  test.expect(
+      body_has_conversion(body, cloth::MirConversionKind::kWidenNumeric),
+      "numeric widening was not explicit in MIR");
+
+  std::size_t widening_count = 0;
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      const auto* conversion =
+          std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+      widening_count +=
+          conversion != nullptr &&
+                  conversion->kind == cloth::MirConversionKind::kWidenNumeric
+              ? 1U
+              : 0U;
+    }
+  }
+  test.expect(widening_count == 5,
+              "numeric widening did not cover locals, compound assignment, "
+              "array indexing, and return");
+
+  cloth::MirModule broken = compilation.result->mir;
+  for (cloth::MirBasicBlock& block : broken.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      auto* conversion =
+          std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+      if (conversion != nullptr &&
+          conversion->kind == cloth::MirConversionKind::kWidenNumeric) {
+        conversion->kind = cloth::MirConversionKind::kWidenReference;
+        break;
+      }
+    }
+  }
+  cloth::DiagnosticEngine diagnostics;
+  test.expect(
+      !cloth::verify_mir(broken, compilation.result->semantics, diagnostics),
+      "MIR verifier accepted a mislabeled numeric conversion");
+  test.expect(has_diagnostic(diagnostics,
+                             "reference widening consumes incompatible types"),
+              "mislabeled numeric conversion produced the wrong diagnostic");
+}
+
+void overload_directed_literal_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Calls.co",
+                  "func Take(uint value): uint { return value; }\n"
+                  "func Use(): uint { return Take(4294967295); }\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "overload-directed literal failed MIR lowering");
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[1].body;
+  const cloth::MirCallInstruction* selected_call = nullptr;
+  std::optional<cloth::MirValueId> argument;
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* call =
+              std::get_if<cloth::MirCallInstruction>(&instruction.data);
+          call != nullptr && !call->arguments.empty()) {
+        selected_call = call;
+        argument = call->arguments[0];
+      }
+    }
+  }
+  bool argument_is_uint32_literal = false;
+  if (argument) {
+    for (const cloth::MirBasicBlock& block : body.blocks) {
+      for (const cloth::MirInstruction& instruction : block.instructions) {
+        argument_is_uint32_literal =
+            argument_is_uint32_literal ||
+            (instruction.result == argument &&
+             instruction.type ==
+                 *compilation.result->semantics.find_type("uint32") &&
+             std::holds_alternative<cloth::MirLiteralInstruction>(
+                 instruction.data));
+      }
+    }
+  }
+  test.expect(selected_call != nullptr && argument_is_uint32_literal,
+              "call argument did not retain its contextual literal type");
+  test.expect(
+      !body_has_conversion(body, cloth::MirConversionKind::kWidenNumeric),
+      "contextual call literal was lowered as a typed-value conversion");
+}
+
+void checked_numeric_conversion_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Conversions.co",
+                  "func Narrow(int32 value): int8 { return int8(value); }\n"
+                  "func Constant(): int8 { return int8(12); }\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "checked numeric conversion failed MIR lowering");
+  const cloth::MirBody& runtime =
+      compilation.result->mir.files[0].functions[0].body;
+  const cloth::MirBody& constant =
+      compilation.result->mir.files[0].functions[1].body;
+  test.expect(
+      body_has_conversion(runtime, cloth::MirConversionKind::kCheckedNumeric),
+      "runtime numeric conversion is not explicit in MIR");
+  test.expect(
+      !body_has_conversion(constant, cloth::MirConversionKind::kCheckedNumeric),
+      "constant numeric conversion emitted an unnecessary runtime check");
+
+  cloth::MirModule broken = compilation.result->mir;
+  bool corrupted = false;
+  for (cloth::MirBasicBlock& block : broken.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      const auto* conversion =
+          std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+      if (conversion != nullptr &&
+          conversion->kind == cloth::MirConversionKind::kCheckedNumeric) {
+        instruction.type = compilation.result->semantics.string_type();
+        corrupted = true;
+      }
+    }
+  }
+  cloth::DiagnosticEngine diagnostics;
+  test.expect(
+      corrupted && !cloth::verify_mir(broken, compilation.result->semantics,
+                                      diagnostics),
+      "MIR verifier accepted an invalid checked numeric conversion");
+  test.expect(
+      has_diagnostic(diagnostics,
+                     "checked numeric conversion consumes incompatible types"),
+      "invalid checked numeric conversion produced the wrong diagnostic");
+}
+
 void nullable_narrowing_conversion(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co", "string Name = \"Ada\";\n");
@@ -1358,6 +1505,11 @@ int main() {
       {"for terminating body reachability", for_terminating_body_reachability},
       {"classical for and update lowering", classical_for_and_update_lowering},
       {"nullable conversion", nullable_conversion},
+      {"numeric widening conversion", numeric_widening_conversion},
+      {"overload-directed literal lowering",
+       overload_directed_literal_lowering},
+      {"checked numeric conversion lowering",
+       checked_numeric_conversion_lowering},
       {"nullable narrowing conversion", nullable_narrowing_conversion},
       {"null ergonomics lowering", null_ergonomics_lowering},
       {"call receivers", call_receivers},

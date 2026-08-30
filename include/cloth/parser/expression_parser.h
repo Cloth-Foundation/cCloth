@@ -27,6 +27,7 @@ class ExpressionParser {
   [[nodiscard]] ExpressionId parse_unary_expression();
   [[nodiscard]] ExpressionId parse_postfix_expression();
   [[nodiscard]] ExpressionId parse_primary_expression();
+  [[nodiscard]] ExpressionId parse_numeric_conversion_expression();
   [[nodiscard]] ExpressionId parse_call_expression(ExpressionId callee);
   [[nodiscard]] ExpressionId parse_array_literal_expression();
   [[nodiscard]] ExpressionId parse_index_expression(ExpressionId object);

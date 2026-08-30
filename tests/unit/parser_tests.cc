@@ -923,6 +923,42 @@ void checked_type_expressions(TestContext& test) {
       "missing checked target type produced the wrong diagnostic");
 }
 
+void numeric_conversion_expressions(TestContext& test) {
+  const ParsedSource source{
+      "Conversions.co",
+      "func Narrow(int32 value): int8 { return int8(value); }\n"
+      "func Whole(): int32 { return int32(12.9); }\n"};
+  test.expect(error_count(source) == 0,
+              "valid numeric conversions did not parse");
+
+  std::size_t conversions = 0;
+  bool found_int8 = false;
+  bool found_int32 = false;
+  for (const cloth::Expression& expression :
+       source.ast().storage.expressions()) {
+    const auto* conversion =
+        std::get_if<cloth::NumericConversionExpression>(&expression.data);
+    if (conversion == nullptr) {
+      continue;
+    }
+    ++conversions;
+    found_int8 = found_int8 || conversion->target.name == "int8";
+    found_int32 = found_int32 || conversion->target.name == "int32";
+  }
+  test.expect(conversions == 2 && found_int8 && found_int32,
+              "numeric conversion syntax lost its dedicated AST node");
+
+  const ParsedSource malformed{
+      "MalformedConversions.co",
+      "func Empty(): int8 { return int8(); }\n"
+      "func Many(int32 value): int8 { return int8(value, value); }\n"};
+  test.expect(
+      has_diagnostic(malformed, "expected a value in numeric conversion") &&
+          has_diagnostic(malformed,
+                         "numeric conversion requires exactly one value"),
+      "malformed numeric conversions produced the wrong diagnostics");
+}
+
 void arrays(TestContext& test) {
   const ParsedSource source{"Arrays.co",
                             "int32[] Values = [1, 2, 3];\n"
@@ -1222,6 +1258,7 @@ int main() {
       {"base-qualified call syntax", base_qualified_call_syntax},
       {"meta queries", meta_queries},
       {"checked type expressions", checked_type_expressions},
+      {"numeric conversion expressions", numeric_conversion_expressions},
       {"arrays", arrays},
       {"nullable types", nullable_types},
       {"null-ergonomic expressions", null_ergonomic_expressions},

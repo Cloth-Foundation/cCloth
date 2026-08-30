@@ -65,18 +65,29 @@ than a general aspiration.
   `::typeName` meta query.
 - [ ] Add generics and traits or their eventual interface-based equivalent.
 - [ ] Add first-class function values.
-- [ ] Decide and implement user-defined conversions and implicit numeric
-  promotions. Current overload resolution prefers exact canonical signatures
-  and otherwise requires one uniquely compatible candidate.
+- [x] Add contextual numeric literals and lossless primitive widening. Stage
+  20.1 preserves default `int32`/`float64` inference, range-checks literals in
+  typed contexts, and records typed-value widening explicitly in MIR.
+- [x] Add overload-directed literal typing. Stage 20.2 prefers complete exact
+  default-type signatures, otherwise requires one uniquely compatible
+  literal-fit or widening candidate, and applies the selected types uniformly
+  to functions, constructors, and base initializers.
+- [x] Add checked explicit numeric conversions. Stage 20.3 uses
+  `NumericType(value)`, diagnoses invalid literal conversions at compile time,
+  and emits checked MIR/LLVM conversions for runtime values without implicit
+  wrapping.
+- [ ] Design user-defined conversions without weakening the lossless implicit
+  numeric-conversion contract.
 - [ ] Add implicit default constructors if Cloth should synthesize them.
 - [ ] Decide whether distinct unit and never types belong beside `void`.
 
 ## Expressions and control flow
 
 - [x] Add arithmetic compound assignment, numeric prefix/postfix
-  increment/decrement, and classical `for` loops. Stage 19 preserves exact
-  operand types, evaluates update locations once, and routes `continue` through
-  the classical loop's update block.
+  increment/decrement, and classical `for` loops. Stage 19 introduced exact
+  operands; Stage 20.1 permits the right operand to widen losslessly while
+  preserving the target type. Locations are evaluated once, and `continue`
+  routes through the classical loop's update block.
 - [ ] Implement bitwise binary operators, shifts, and their compound assignment
   forms. The lexer and assignment parser reserve the relevant tokens, but
   semantic analysis rejects them until their type and overflow contracts are

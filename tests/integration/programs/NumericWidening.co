@@ -1,0 +1,57 @@
+uint Stored = 0;
+
+NumericWidening(uint stored) {
+  Stored = stored;
+}
+
+static func Pick(int32 value): int32 {
+  return 32;
+}
+
+static func Pick(int64 value): int32 {
+  return 64;
+}
+
+static func Unsigned(uint value): uint {
+  return value;
+}
+
+static func Single(float value): float {
+  return value;
+}
+
+static func Main(): int32 {
+  int16 signedSmall = 30000;
+  int32 signedWide = signedSmall;
+  signedWide += signedSmall;
+
+  uint16 unsignedSmall = 65535;
+  int32 unsignedWide = unsignedSmall;
+
+  float single = 0.5;
+  float64 precise = single;
+
+  int64 reassigned = 10;
+  reassigned = 20;
+  int64 minimum = -9223372036854775808;
+
+  uint64 maximum = 18446744073709551615;
+  uint64 unsignedValue = 4;
+  var symmetric = 1 + unsignedValue;
+  int16 zero = 0;
+  int32[] values = [7];
+  println(signedWide);
+  println(unsignedWide);
+  println(precise);
+  println(reassigned);
+  println(minimum);
+  println(maximum);
+  println(symmetric);
+  println(values[zero]);
+  NumericWidening created = NumericWidening(4294967295);
+  println(Pick(1));
+  println(Unsigned(4294967295));
+  println(Single(0.25));
+  println(created.Stored);
+  return 0;
+}

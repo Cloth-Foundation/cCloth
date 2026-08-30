@@ -1,6 +1,7 @@
 #include "cloth/mir/mir.h"
 
 #include "cloth/hir/hir.h"
+#include "cloth/sema/numeric_types.h"
 #include "cloth/sema/semantic_model.h"
 
 #include <algorithm>
@@ -184,6 +185,11 @@ class BodyBuilder {
       return value;
     }
     const SemanticType& target = semantics_.type(expected);
+    if (can_widen_numeric(semantics_.type(actual).kind, target.kind)) {
+      return emit_value(
+          expected, range,
+          MirConvertInstruction{value, MirConversionKind::kWidenNumeric});
+    }
     if (can_widen_reference(actual, expected) &&
         is_non_null_reference(actual)) {
       return emit_value(
@@ -256,6 +262,24 @@ class BodyBuilder {
       current = semantics_.file(*current).base_file;
     }
     return false;
+  }
+
+  std::optional<TypeId> common_numeric_type(TypeId left, TypeId right) const {
+    const TypeKind left_kind = semantics_.type(left).kind;
+    const TypeKind right_kind = semantics_.type(right).kind;
+    if (!is_numeric_type(left_kind) || !is_numeric_type(right_kind)) {
+      return std::nullopt;
+    }
+    if (left == right) {
+      return left;
+    }
+    if (can_widen_numeric(left_kind, right_kind)) {
+      return right;
+    }
+    if (can_widen_numeric(right_kind, left_kind)) {
+      return left;
+    }
+    return std::nullopt;
   }
 
   void lower_block(HirBlockId id) {
@@ -565,12 +589,17 @@ class BodyBuilder {
           binary->operation == TokenKind::kPipePipe) {
         return lower_short_circuit(*binary, expression);
       }
-      const MirValueId left = require_value(
+      MirValueId left = require_value(
           lower_expression(binary->left),
           hir_.storage.expression(binary->left).type, expression.range);
-      const MirValueId right = require_value(
+      MirValueId right = require_value(
           lower_expression(binary->right),
           hir_.storage.expression(binary->right).type, expression.range);
+      if (const std::optional<TypeId> common =
+              common_numeric_type(value_type(left), value_type(right))) {
+        left = coerce(left, *common, expression.range);
+        right = coerce(right, *common, expression.range);
+      }
       return emit_value(expression.type, expression.range,
                         MirBinaryInstruction{left, binary->operation, right});
     }
@@ -589,6 +618,20 @@ class BodyBuilder {
           lower_expression(cast->value), value_syntax.type, value_syntax.range);
       return emit_value(expression.type, expression.range,
                         MirCheckedCastInstruction{value, cast->target});
+    }
+    if (const auto* conversion =
+            std::get_if<HirNumericConversionExpression>(&expression.data)) {
+      const HirExpression& value_syntax =
+          hir_.storage.expression(conversion->value);
+      const MirValueId value =
+          require_value(lower_expression(conversion->value), value_syntax.type,
+                        value_syntax.range);
+      if (value_type(value) == expression.type) {
+        return value;
+      }
+      return emit_value(
+          expression.type, expression.range,
+          MirConvertInstruction{value, MirConversionKind::kCheckedNumeric});
     }
     if (const auto* assignment =
             std::get_if<HirAssignmentExpression>(&expression.data)) {
@@ -632,8 +675,10 @@ class BodyBuilder {
       const HirExpression& subscript = hir_.storage.expression(index->index);
       const MirValueId array = require_value(lower_expression(index->object),
                                              object.type, object.range);
-      const MirValueId lowered_index = require_value(
-          lower_expression(index->index), subscript.type, subscript.range);
+      MirValueId lowered_index = require_value(lower_expression(index->index),
+                                               subscript.type, subscript.range);
+      lowered_index = coerce(lowered_index, *semantics_.find_type("int32"),
+                             subscript.range);
       const SemanticType& array_type = semantics_.type(object.type);
       if (array_type.kind != TypeKind::kArray || !array_type.element_type) {
         return invalid_value(expression.range);
@@ -874,6 +919,7 @@ class BodyBuilder {
         return invalid_value(expression.range);
       }
       const MirValueId current = load_location(location, expression.range);
+      value = coerce(value, location.type, value_syntax.range);
       value = emit_value(location.type, expression.range,
                          MirBinaryInstruction{current, *operation, value});
     }
@@ -1021,8 +1067,10 @@ class BodyBuilder {
       const HirExpression& subscript = hir_.storage.expression(index->index);
       const MirValueId array = require_value(lower_expression(index->object),
                                              object.type, object.range);
-      const MirValueId lowered_index = require_value(
-          lower_expression(index->index), subscript.type, subscript.range);
+      MirValueId lowered_index = require_value(lower_expression(index->index),
+                                               subscript.type, subscript.range);
+      lowered_index = coerce(lowered_index, *semantics_.find_type("int32"),
+                             subscript.range);
       const SemanticType& array_type = semantics_.type(object.type);
       if (array_type.kind != TypeKind::kArray || !array_type.element_type) {
         return LoweredLocation{std::nullopt, std::nullopt,

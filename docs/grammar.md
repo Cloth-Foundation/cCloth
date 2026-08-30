@@ -305,6 +305,7 @@ array_literal
 primary_expression
     = identifier
     | "super"
+    | numeric_conversion
     | integer_literal
     | float_literal
     | string_literal
@@ -314,6 +315,15 @@ primary_expression
     | "null"
     | array_literal
     | "(" expression ")" ;
+
+numeric_conversion
+    = numeric_type "(" expression ")" ;
+
+numeric_type
+    = "byte"
+    | "int" | "int8" | "int16" | "int32" | "int64"
+    | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
+    | "float" | "float32" | "float64" ;
 ```
 
 The precedence table, from lowest to highest, is:
@@ -357,6 +367,11 @@ The declaration pass enforces these rules separately from the grammar:
   preserving assignment compatibility. It cannot widen nullability or class
   identity; array types remain invariant. Primitive and `void` returns are
   exact.
+- Integer and floating literals default to `int32` and `float64`, but adopt a
+  representable expected numeric type in typed value contexts. Primitive values
+  widen only when every source value is exactly representable by the target.
+  Narrowing and cross-family conversion remain invalid implicitly.
+  `NumericType(value)` explicitly requests a checked numeric conversion.
 - A class base clause names at most one visible file class. A class conformance
   clause and an interface inheritance clause name visible interfaces. Neither
   the class graph nor the interface graph may contain a cycle.

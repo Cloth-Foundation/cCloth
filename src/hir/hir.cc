@@ -173,6 +173,11 @@ class Lowerer {
         data = HirCheckedCastExpression{expression(cast->value),
                                         *semantic.checked_type};
       }
+    } else if (const auto* conversion =
+                   std::get_if<NumericConversionExpression>(&syntax.data)) {
+      if (semantic.type != semantics_.error_type()) {
+        data = HirNumericConversionExpression{expression(conversion->value)};
+      }
     } else if (const auto* assignment =
                    std::get_if<AssignmentExpression>(&syntax.data)) {
       data = HirAssignmentExpression{expression(assignment->target),

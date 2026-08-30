@@ -108,6 +108,70 @@ void arithmetic_and_control_flow(TestContext& test) {
               "integer negation was not lowered");
 }
 
+void numeric_literal_and_widening_lowering(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Numbers.co",
+              "func Expand(int16 signedSmall, uint16 unsignedSmall, "
+              "float32 single): float64 {\n"
+              "  int32 signedWide = signedSmall;\n"
+              "  int32 unsignedWide = unsignedSmall;\n"
+              "  int64 literal = 10;\n"
+              "  literal = 20;\n"
+              "  uint64 maximum = 18446744073709551615;\n"
+              "  float ratio = 0.5;\n"
+              "  signedWide += signedSmall;\n"
+              "  return single;\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.result->is_valid,
+              "numeric literal or widening program failed compilation");
+  test.expect(sources.llvm.has_value(),
+              "numeric literal or widening program emitted no LLVM IR");
+  test.expect(sources.contains("sext i16") && sources.contains("zext i16") &&
+                  sources.contains("fpext float"),
+              "LLVM numeric widening uses the wrong extension operations");
+  test.expect(sources.contains("i64 18446744073709551615"),
+              "uint64 literal lost its full unsigned range");
+  test.expect(sources.contains("store i64 20"),
+              "contextual int64 assignment was not lowered at its target type");
+  test.expect(sources.contains("float 5.000000000e-01"),
+              "contextual float32 literal was not rounded and lowered once");
+}
+
+void checked_numeric_conversion_lowering(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Conversions.co",
+              "func Narrow(int32 value): int8 { return int8(value); }\n"
+              "func Unsigned(int32 value): uint32 { return uint(value); }\n"
+              "func Whole(float64 value): int32 { return int32(value); }\n"
+              "func Decimal(int32 value): float32 { return float(value); }\n"
+              "func Single(float64 value): float32 { return float(value); }\n"
+              "func Constant(): int32 { return int32(12.9); }\n");
+  sources.compile();
+
+  test.expect(sources.result->is_valid,
+              "checked numeric conversion program failed compilation");
+  test.expect(sources.llvm.has_value(),
+              "checked numeric conversion program emitted no LLVM IR");
+  test.expect(
+      sources.contains(
+          "declare void @cloth_rt_require_numeric_conversion(i8)") &&
+          sources.contains("call void @cloth_rt_require_numeric_conversion"),
+      "checked numeric conversion runtime boundary is missing");
+  test.expect(sources.contains(" = trunc i32 ") &&
+                  sources.contains(" = fptosi double ") &&
+                  sources.contains(" = sitofp i32 ") &&
+                  sources.contains(" = fptrunc double "),
+              "LLVM numeric conversion uses the wrong operations");
+  test.expect(sources.contains("call double @llvm.trunc.f64(double ") &&
+                  sources.contains("fcmp oge double") &&
+                  sources.contains("fcmp olt double"),
+              "floating-to-integer conversion lacks checked truncation");
+  test.expect(sources.contains("ret i32 12"),
+              "constant floating-to-integer conversion was not folded");
+}
+
 void object_construction(TestContext& test) {
   CompiledSources sources;
   sources.add("Model.co",
@@ -736,7 +800,7 @@ void rejects_out_of_range_literal(TestContext& test) {
   test.expect(!sources.llvm,
               "LLVM emitter accepted an out-of-range integer literal");
   test.expect(
-      has_diagnostic(sources.diagnostics, "integer literal is out of range"),
+      has_diagnostic(sources.diagnostics, "is out of range for 'int32'"),
       "out-of-range literal produced the wrong diagnostic");
 }
 
@@ -746,6 +810,10 @@ int main() {
   const std::vector<TestCase> tests{
       {"target header", target_header},
       {"arithmetic and control flow", arithmetic_and_control_flow},
+      {"numeric literal and widening lowering",
+       numeric_literal_and_widening_lowering},
+      {"checked numeric conversion lowering",
+       checked_numeric_conversion_lowering},
       {"object construction", object_construction},
       {"inherited type descriptors", inherited_type_descriptors},
       {"constructor chaining", constructor_chaining},

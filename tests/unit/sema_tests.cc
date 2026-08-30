@@ -1527,6 +1527,174 @@ void exact_overload_resolution(TestContext& test) {
               "bound expressions lost the selected overload");
 }
 
+void overload_directed_numeric_literals(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Base.co",
+            "uint Value;\n"
+            "Base(uint value) { Value = value; }\n");
+  valid.add("Derived.co", "class : Base { Derived(): Base(4294967295) {} }\n");
+  valid.add("Numbers.co",
+            "uint Value;\n"
+            "Numbers(uint value) { Value = value; }\n"
+            "func Pick(int32 value): int32 { return value; }\n"
+            "func Pick(int64 value): int32 { return 64; }\n"
+            "func Unsigned(uint value): uint { return value; }\n"
+            "func Single(float value): float { return value; }\n"
+            "func Calls(): uint {\n"
+            "  int32 picked = Pick(1);\n"
+            "  float ratio = Single(0.5);\n"
+            "  Numbers boxed = Numbers(4294967295);\n"
+            "  return Unsigned((4294967295));\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "overload-directed numeric literal call failed");
+  test.expect(valid.result->is_valid,
+              "contextual call compilation was marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  const cloth::FileSemantics& derived = semantics.file(cloth::FileId{1});
+  test.expect(
+      !derived.constructors.empty() &&
+          semantics.symbol(derived.constructors[0]).base_constructor &&
+          semantics
+                  .symbol(*semantics.symbol(derived.constructors[0])
+                               .base_constructor)
+                  .parameter_types[0] == *semantics.find_type("uint32"),
+      "base constructor did not use its literal-directed overload context");
+
+  std::optional<cloth::SymbolId> int32_pick;
+  for (const cloth::SymbolId symbol :
+       semantics.file(cloth::FileId{2}).functions) {
+    const cloth::SemanticSymbol& function = semantics.symbol(symbol);
+    if (function.name == "Pick" && !function.parameter_types.empty() &&
+        function.parameter_types[0] == *semantics.find_type("int32")) {
+      int32_pick = symbol;
+    }
+  }
+  bool selected_default_exact = false;
+  bool found_uint32_literal = false;
+  bool found_float32_literal = false;
+  bool found_uint32_constructor = false;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    if (const auto* literal =
+            std::get_if<cloth::HirLiteralExpression>(&expression.data)) {
+      const cloth::TypeKind kind = semantics.type(expression.type).kind;
+      found_uint32_literal =
+          found_uint32_literal ||
+          (literal->lexeme == "4294967295" && kind == cloth::TypeKind::kUint32);
+      found_float32_literal =
+          found_float32_literal ||
+          (literal->lexeme == "0.5" && kind == cloth::TypeKind::kFloat32);
+    }
+    if (const auto* call =
+            std::get_if<cloth::HirCallExpression>(&expression.data);
+        call != nullptr && call->callable) {
+      selected_default_exact =
+          selected_default_exact || call->callable == int32_pick;
+      const cloth::SemanticSymbol& callable = semantics.symbol(*call->callable);
+      found_uint32_constructor =
+          found_uint32_constructor ||
+          (callable.kind == cloth::SymbolKind::kConstructor &&
+           !callable.parameter_types.empty() &&
+           callable.parameter_types[0] == *semantics.find_type("uint32"));
+    }
+  }
+  test.expect(selected_default_exact,
+              "default int32 literal did not prefer its exact overload");
+  test.expect(found_uint32_literal && found_float32_literal,
+              "selected call parameter types were not committed to literals");
+  test.expect(found_uint32_constructor,
+              "ordinary constructor literal context was not retained in HIR");
+
+  AnalyzedCompilation ambiguous;
+  ambiguous.add("Ambiguous.co",
+                "func Choose(int64 value) {}\n"
+                "func Choose(uint64 value) {}\n"
+                "func Bad() { Choose(1); }\n");
+  ambiguous.analyze();
+  test.expect(
+      ambiguous.has_diagnostic("call is ambiguous between 2 overloads"),
+      "representable literal selected an overload by declaration order");
+
+  AnalyzedCompilation no_match;
+  no_match.add("NoMatch.co",
+               "func Tiny(int8 value) {}\n"
+               "func Wide(uint64 value) {}\n"
+               "func Bad() {\n"
+               "  Tiny(128);\n"
+               "  Wide(18446744073709551616);\n"
+               "}\n");
+  no_match.analyze();
+  test.expect(no_match.error_count() == 2 &&
+                  no_match.has_diagnostic("no matching overload"),
+              "unrepresentable call literal did not fail overload resolution");
+}
+
+void explicit_numeric_conversions(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Conversions.co",
+            "func Narrow(int32 value): int8 { return int8(value); }\n"
+            "func Whole(float64 value): int32 { return int32(value); }\n"
+            "func Decimal(int32 value): float32 { return float(value); }\n"
+            "func Constants(): uint {\n"
+            "  int8 small = int8(127);\n"
+            "  int32 whole = int32(12.9);\n"
+            "  float ratio = float(10);\n"
+            "  return uint(-0.5);\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid explicit numeric conversions failed semantic analysis");
+  test.expect(valid.result->is_valid,
+              "explicit numeric conversion compilation was marked invalid");
+  std::size_t conversions = 0;
+  bool found_int8_literal = false;
+  bool found_integer_to_float_literal = false;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    conversions +=
+        std::holds_alternative<cloth::HirNumericConversionExpression>(
+            expression.data)
+            ? 1U
+            : 0U;
+    if (const auto* literal =
+            std::get_if<cloth::HirLiteralExpression>(&expression.data)) {
+      const cloth::TypeKind kind =
+          valid.result->semantics.type(expression.type).kind;
+      found_int8_literal =
+          found_int8_literal ||
+          (literal->lexeme == "127" && kind == cloth::TypeKind::kInt8);
+      found_integer_to_float_literal =
+          found_integer_to_float_literal ||
+          (literal->lexeme == "10" && kind == cloth::TypeKind::kFloat32);
+    }
+  }
+  test.expect(conversions == 7,
+              "explicit numeric conversions were not retained in HIR");
+  test.expect(found_int8_literal && found_integer_to_float_literal,
+              "constant conversion did not commit its target literal type");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadConversions.co",
+              "func Bad() {\n"
+              "  int8 tooLarge = int8(128);\n"
+              "  uint negative = uint(-1);\n"
+              "  int32 text = int32(\"cloth\");\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(
+      invalid.has_diagnostic("numeric literal is out of range for explicit "
+                             "conversion to 'int8'") &&
+          invalid.has_diagnostic("numeric literal is out of range for explicit "
+                                 "conversion to 'uint32'") &&
+          invalid.has_diagnostic(
+              "numeric conversion requires a numeric value; found 'string'"),
+      "invalid explicit numeric conversions produced the wrong diagnostics");
+}
+
 void no_matching_overload(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Calls.co",
@@ -1715,6 +1883,91 @@ void classical_for_and_update_semantics(TestContext& test) {
   }
   test.expect(incomplete_returns == 1,
               "classical for return-flow analysis is incorrect");
+}
+
+void contextual_numeric_literals_and_widening(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Numbers.co",
+            "int64 Wide = 10;\n"
+            "int64 Minimum = -9223372036854775808;\n"
+            "uint Maximum = 4294967295;\n"
+            "uint64 FullRange = 18446744073709551615;\n"
+            "float Ratio = 0.5;\n"
+            "func Expand(int16 small, uint16 unsignedSmall, float32 single): "
+            "float64 {\n"
+            "  int32 wide = small;\n"
+            "  int32 unsignedWide = unsignedSmall;\n"
+            "  int64 sum = small + wide;\n"
+            "  var symmetric = 1 + FullRange;\n"
+            "  wide += small;\n"
+            "  Wide = 20;\n"
+            "  return single;\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid contextual literals or numeric widenings failed");
+  test.expect(valid.result->is_valid,
+              "numeric widening compilation was marked invalid");
+  const cloth::SemanticModel& semantics = valid.result->semantics;
+  bool found_int64_ten = false;
+  bool found_uint32_maximum = false;
+  bool found_float32_half = false;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    const auto* literal =
+        std::get_if<cloth::HirLiteralExpression>(&expression.data);
+    if (literal == nullptr) {
+      continue;
+    }
+    const cloth::TypeKind kind = semantics.type(expression.type).kind;
+    found_int64_ten = found_int64_ten || (literal->lexeme == "10" &&
+                                          kind == cloth::TypeKind::kInt64);
+    found_uint32_maximum =
+        found_uint32_maximum ||
+        (literal->lexeme == "4294967295" && kind == cloth::TypeKind::kUint32);
+    found_float32_half =
+        found_float32_half ||
+        (literal->lexeme == "0.5" && kind == cloth::TypeKind::kFloat32);
+  }
+  test.expect(found_int64_ten && found_uint32_maximum && found_float32_half,
+              "context did not determine numeric literal types");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadNumbers.co",
+              "func Reject(int32 signedValue, uint32 unsignedValue, "
+              "float64 precise) {\n"
+              "  int16 narrow = signedValue;\n"
+              "  int32 sameWidth = unsignedValue;\n"
+              "  uint32 losesSign = signedValue;\n"
+              "  float32 losesPrecision = precise;\n"
+              "  float floatTooLarge = "
+              "340282400000000000000000000000000000000.0;\n"
+              "  int8 tooLarge = 128;\n"
+              "  uint8 negative = -1;\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(invalid.has_diagnostic(
+                  "local initializer has type 'int32'; expected 'int16'"),
+              "integer narrowing was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "local initializer has type 'uint32'; expected 'int32'"),
+              "same-width unsigned-to-signed conversion was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "local initializer has type 'int32'; expected 'uint32'"),
+              "signed-to-unsigned conversion was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "local initializer has type 'float64'; expected 'float32'"),
+              "floating-point narrowing was accepted");
+  test.expect(invalid.has_diagnostic("floating literal '") &&
+                  invalid.has_diagnostic("is out of range for 'float32'"),
+              "out-of-range float32 literal was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "integer literal '128' is out of range for 'int8'"),
+              "out-of-range signed literal was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "integer literal '-1' is out of range for 'uint8'"),
+              "negative unsigned literal was accepted");
 }
 
 void complete_return_paths(TestContext& test) {
@@ -2549,6 +2802,9 @@ int main() {
       {"unknown types and names", unknown_types_and_names},
       {"type checking", type_checking},
       {"exact overload resolution", exact_overload_resolution},
+      {"overload-directed numeric literals",
+       overload_directed_numeric_literals},
+      {"explicit numeric conversions", explicit_numeric_conversions},
       {"no matching overload", no_matching_overload},
       {"invalid body retains signature", invalid_body_does_not_hide_signature},
       {"constructor binding", constructor_binding},
@@ -2556,6 +2812,8 @@ int main() {
       {"structured loop semantics", structured_loop_semantics},
       {"classical for and update semantics",
        classical_for_and_update_semantics},
+      {"contextual numeric literals and widening",
+       contextual_numeric_literals_and_widening},
       {"complete return paths", complete_return_paths},
       {"case collision", case_collision},
       {"null assignability", null_assignability},

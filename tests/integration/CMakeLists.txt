@@ -178,6 +178,33 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/for_updates.txt
         EXACT
     )
+    cloth_add_native_output_test(numeric_widening
+        OUTPUT "cloth numeric widening"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NumericWidening.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/numeric_widening.txt
+        EXACT
+    )
+    cloth_add_native_output_test(numeric_conversions
+        OUTPUT "cloth numeric conversions"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NumericConversions.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/numeric_conversions.txt
+        EXACT
+    )
+    cloth_add_native_failure_test(numeric_conversion_failure
+        OUTPUT "cloth numeric conversion failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NumericConversionFailure.co
+        ERROR "numeric conversion is out of range"
+    )
+    cloth_add_native_failure_test(numeric_signed_conversion_failure
+        OUTPUT "cloth signed numeric conversion failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NumericSignedConversionFailure.co
+        ERROR "numeric conversion is out of range"
+    )
+    cloth_add_native_failure_test(numeric_float_conversion_failure
+        OUTPUT "cloth floating numeric conversion failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NumericFloatConversionFailure.co
+        ERROR "numeric conversion is out of range"
+    )
 endif()
 
 cloth_add_cli_failure_test(lexical_error

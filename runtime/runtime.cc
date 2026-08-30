@@ -968,6 +968,13 @@ extern "C" void cloth_rt_require_non_null(const void* value) noexcept {
   }
 }
 
+extern "C" void cloth_rt_require_numeric_conversion(
+    std::uint8_t valid) noexcept {
+  if (valid == 0) {
+    runtime_failure("numeric conversion is out of range");
+  }
+}
+
 extern "C" void cloth_rt_print(const void* value) noexcept {
   if (value == nullptr) {
     runtime_failure("print received a null string");

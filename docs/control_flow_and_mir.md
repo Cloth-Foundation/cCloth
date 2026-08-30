@@ -94,6 +94,24 @@ semantic ancestry and rejects unrelated source and target types. Every
 reference widening erases to the same pointer. A checked cast retains both the
 nullable result type and its non-null runtime target.
 
+Stage 20.1 adds `kWidenNumeric` for typed primitive values. MIR inserts the
+conversion at declarations, assignments, returns, calls, array elements,
+iteration bindings, compound assignments, and mixed-width binary operations.
+The verifier reconstructs the source and target numeric properties and rejects
+anything except a lossless widening.
+
+Stage 20.2 commits overload-directed numeric literals to the selected parameter
+types before HIR lowering. Calls therefore receive exact-typed MIR literal
+values; `kWidenNumeric` remains reserved for conversions of already typed
+values.
+
+Stage 20.3 retains `NumericType(value)` as a dedicated HIR expression. A
+representable literal already has the target type and needs no runtime MIR
+operation. An already typed operand lowers to `kCheckedNumeric`; the verifier
+requires numeric source and target types. LLVM lowering performs the range
+check before integer truncation, signedness changes, floating-to-integer
+conversion, or finite `float64`-to-`float32` overflow.
+
 Evaluation is left-to-right. Array element operands are evaluated before the
 array instruction, and indexed assignment evaluates the array and index before
 the assigned value. Compound assignment and increment/decrement lower through

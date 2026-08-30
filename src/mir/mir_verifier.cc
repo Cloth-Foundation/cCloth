@@ -3,6 +3,7 @@
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/mir/mir.h"
+#include "cloth/sema/numeric_types.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
@@ -437,7 +438,23 @@ class MirVerifier {
           known_value_type(conversion->value, value_types);
       if (instruction.type != semantics_.error_type() &&
           instruction.type.value < semantics_.types().size()) {
-        if (conversion->kind == MirConversionKind::kWidenReference) {
+        if (conversion->kind == MirConversionKind::kWidenNumeric) {
+          if (source_type && *source_type != semantics_.error_type() &&
+              source_type->value < semantics_.types().size() &&
+              !can_widen_numeric(semantics_.type(*source_type).kind,
+                                 semantics_.type(instruction.type).kind)) {
+            report(instruction.range,
+                   "numeric widening consumes incompatible types");
+          }
+        } else if (conversion->kind == MirConversionKind::kCheckedNumeric) {
+          if (source_type && *source_type != semantics_.error_type() &&
+              source_type->value < semantics_.types().size() &&
+              (!is_numeric_type(semantics_.type(*source_type).kind) ||
+               !is_numeric_type(semantics_.type(instruction.type).kind))) {
+            report(instruction.range,
+                   "checked numeric conversion consumes incompatible types");
+          }
+        } else if (conversion->kind == MirConversionKind::kWidenReference) {
           if (source_type &&
               !can_widen_reference(*source_type, instruction.type)) {
             report(instruction.range,

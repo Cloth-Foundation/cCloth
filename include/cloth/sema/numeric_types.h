@@ -1,0 +1,36 @@
+#ifndef CLOTH_SEMA_NUMERIC_TYPES_H_
+#define CLOTH_SEMA_NUMERIC_TYPES_H_
+
+#include "cloth/sema/semantic_model.h"
+
+#include <cstdint>
+#include <optional>
+
+namespace cloth {
+
+enum class NumericCategory {
+  kSignedInteger,
+  kUnsignedInteger,
+  kFloatingPoint,
+};
+
+struct NumericTypeProperties {
+  NumericCategory category;
+  std::uint32_t bit_width;
+};
+
+[[nodiscard]] std::optional<NumericTypeProperties> numeric_type_properties(
+    TypeKind kind) noexcept;
+
+[[nodiscard]] bool is_integer_type(TypeKind kind) noexcept;
+
+[[nodiscard]] bool is_numeric_type(TypeKind kind) noexcept;
+
+// Returns true only when every value of source has an exact representation in
+// target. Equal types are deliberately excluded because no conversion is
+// required.
+[[nodiscard]] bool can_widen_numeric(TypeKind source, TypeKind target) noexcept;
+
+}  // namespace cloth
+
+#endif  // CLOTH_SEMA_NUMERIC_TYPES_H_

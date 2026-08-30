@@ -103,6 +103,9 @@ declare i32 @cloth_rt_array_length(ptr)
 declare ptr @cloth_rt_array_element(ptr, i32)
 declare void @cloth_rt_require_receiver(ptr)
 declare void @cloth_rt_require_non_null(ptr)
+declare void @cloth_rt_require_numeric_conversion(i8)
+declare float @llvm.trunc.f32(float)
+declare double @llvm.trunc.f64(double)
 declare void @cloth_rt_print(ptr)
 declare void @cloth_rt_print_char(i32)
 declare void @cloth_rt_print_i8(i8)
@@ -136,6 +139,12 @@ not emit allocatable class descriptors.
 program-lifetime bytes. Concatenation returns a new managed string with owned
 bytes. Equality compares byte content, and meta-query calls expose cached scalar
 and byte lengths without revealing the runtime layout.
+Checked numeric conversion passes an emitted range predicate to
+`cloth_rt_require_numeric_conversion` before executing a potentially invalid
+LLVM conversion. Integer narrowing uses `trunc`, integer/floating conversion
+uses `sitofp`, `uitofp`, `fptosi`, or `fptoui`, and floating narrowing uses
+`fptrunc`. Floating-to-integer lowering first applies the matching `llvm.trunc`
+intrinsic so the range predicate follows Cloth's truncate-toward-zero contract.
 Object widening is pointer-preserving. `::typeName` calls the runtime and
 returns a managed string. Stage 16.4 base widening is equally pointer-preserving
 because the base object is a byte-zero prefix. File-class checks pass the
@@ -164,6 +173,12 @@ perform null and bounds checked element addressing.
 the runtime null-reference path otherwise.
 The print functions cover all primitive ABI widths, file-class references, and
 line feeds. LLVM `i1` booleans are extended to the runtime ABI's `i8`.
+
+Contextual integer literals use the complete signed or unsigned range selected
+by semantic analysis. Contextual decimal literals are emitted after one
+conversion to their selected IEEE-754 width. Typed numeric widening lowers to
+`sext` for signed integers, `zext` for unsigned integers, and `fpext` for
+`float32` to `float64`; it is never erased as a representation-preserving cast.
 
 These declarations intentionally keep allocation, strings, traps, and
 collector mechanics outside generated user functions. Stage 13.1 emits

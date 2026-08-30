@@ -1,0 +1,4 @@
+static func Main() {
+  int32 value = 500;
+  println(int8(value));
+}

@@ -31,6 +31,28 @@ namespace cloth {
   }
 }
 
+[[nodiscard]] constexpr bool is_numeric_type_token(TokenKind kind) noexcept {
+  switch (kind) {
+    case TokenKind::kKwInt:
+    case TokenKind::kKwInt8:
+    case TokenKind::kKwInt16:
+    case TokenKind::kKwInt32:
+    case TokenKind::kKwInt64:
+    case TokenKind::kKwUint:
+    case TokenKind::kKwUint8:
+    case TokenKind::kKwUint16:
+    case TokenKind::kKwUint32:
+    case TokenKind::kKwUint64:
+    case TokenKind::kKwFloat:
+    case TokenKind::kKwFloat32:
+    case TokenKind::kKwFloat64:
+    case TokenKind::kKwByte:
+      return true;
+    default:
+      return false;
+  }
+}
+
 [[nodiscard]] constexpr bool can_start_type(TokenKind kind) noexcept {
   return kind == TokenKind::kIdentifier || is_primitive_type(kind);
 }

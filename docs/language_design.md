@@ -163,9 +163,17 @@ discovery order.
 `int`, `uint`, and `float` are portable aliases of `int32`, `uint32`, and
 `float32`. `string` is a core immutable UTF-8 reference type. Its `+` operator
 concatenates, `==` and `!=` compare content, and its read-only meta queries are
-`::length`, `::byteLength`, and `::isEmpty`. General implicit numeric
-conversions are not part of the initial language; overload selection uses exact
-canonical parameter types. `object` is the universal non-null managed-reference
+`::length`, `::byteLength`, and `::isEmpty`. Numeric literals use their expected
+integer or floating type when representable and otherwise default to `int32` or
+`float64`. Primitive numeric values widen only through the lossless rules in
+`numeric_conversions.md`; overload selection prefers exact canonical parameter
+types, then requires one uniquely compatible widening or literal-fit candidate.
+Intentional numeric conversion uses `NumericType(value)`. Runtime narrowing and
+signedness changes are checked and trap when the mathematical result is not
+representable; numeric literals are validated at compile time. The syntax is a
+numeric operation rather than a primitive constructor, and it does not change
+the failure contract of nullable reference `as`.
+`object` is the universal non-null managed-reference
 type for file classes, strings, and arrays; widening to it is representation
 preserving and does not box primitives. References are non-null by default. `T?` is a
 distinct nullable reference type: `T` widens to `T?`, while `null` is assignable
@@ -367,8 +375,9 @@ Comma-separated updates are local to this header syntax and do not introduce a
 general comma operator. `break` skips the updates and exits the loop.
 
 `+=`, `-=`, `*=`, `/=`, and `%=` require a mutable target and preserve its
-exact type. Numeric operands must have the same type; `%=` is integer-only, and
-`string += string` appends strings. Prefix and postfix `++`/`--` accept mutable
+exact type. The right numeric operand may widen losslessly to that target;
+`%=` is integer-only, and `string += string` appends strings. Prefix and postfix
+`++`/`--` accept mutable
 numeric locations. Prefix yields the stored result, while postfix yields the
 previous value. Member receivers and array/index operands are captured once for
 every compound assignment or update. A `final` binding cannot use either form.

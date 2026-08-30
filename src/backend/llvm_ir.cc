@@ -6,6 +6,7 @@
 #include "cloth/lexer/token.h"
 #include "cloth/mir/mir.h"
 #include "cloth/runtime/runtime.h"
+#include "cloth/sema/numeric_types.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -48,20 +50,50 @@ std::uint32_t decode_character(std::string_view lexeme) noexcept {
   return static_cast<unsigned char>(value);
 }
 
+template <typename Value>
+std::optional<std::string> format_floating_literal(Value value) {
+  std::array<char, 128> buffer{};
+  const auto formatted = std::to_chars(
+      buffer.data(), buffer.data() + buffer.size(), value,
+      std::chars_format::scientific, std::numeric_limits<Value>::max_digits10);
+  if (formatted.ec != std::errc{}) {
+    return std::nullopt;
+  }
+  return std::string{buffer.data(), formatted.ptr};
+}
+
 std::optional<std::string> lower_scalar_literal(
-    const MirLiteralInstruction& literal, const AbiTypeLayout& type) {
+    const MirLiteralInstruction& literal, const AbiTypeLayout& type,
+    TypeKind semantic_kind) {
   switch (literal.kind) {
     case LiteralKind::kInteger: {
       std::uint64_t parsed = 0;
       const char* const begin = literal.lexeme.data();
       const char* const end = begin + literal.lexeme.size();
       const auto result = std::from_chars(begin, end, parsed);
-      const std::uint64_t maximum =
-          type.bit_width == 0 ? 0
-          : type.bit_width >= 64
-              ? static_cast<std::uint64_t>(
-                    std::numeric_limits<std::int64_t>::max())
-              : (std::uint64_t{1} << (type.bit_width - 1)) - 1;
+      const std::optional<NumericTypeProperties> properties =
+          numeric_type_properties(semantic_kind);
+      if (properties &&
+          properties->category == NumericCategory::kFloatingPoint) {
+        if (result.ec != std::errc{} || result.ptr != end) {
+          return std::nullopt;
+        }
+        return semantic_kind == TypeKind::kFloat32
+                   ? format_floating_literal(static_cast<float>(parsed))
+                   : format_floating_literal(static_cast<double>(parsed));
+      }
+      std::uint64_t maximum = 0;
+      if (properties &&
+          properties->category == NumericCategory::kUnsignedInteger) {
+        maximum = properties->bit_width >= 64
+                      ? std::numeric_limits<std::uint64_t>::max()
+                      : (std::uint64_t{1} << properties->bit_width) - 1;
+      } else if (properties &&
+                 properties->category == NumericCategory::kSignedInteger) {
+        // The extra magnitude is needed by a following unary minus to form the
+        // minimum signed value. Semantic analysis rejects it when positive.
+        maximum = std::uint64_t{1} << (properties->bit_width - 1);
+      }
       if (type.bit_width == 0 || result.ec != std::errc{} ||
           result.ptr != end || parsed > maximum) {
         return std::nullopt;
@@ -69,20 +101,41 @@ std::optional<std::string> lower_scalar_literal(
       return std::to_string(parsed);
     }
     case LiteralKind::kFloat: {
-      double parsed = 0.0;
       const char* const begin = literal.lexeme.data();
       const char* const end = begin + literal.lexeme.size();
+      const std::optional<NumericTypeProperties> properties =
+          numeric_type_properties(semantic_kind);
+      if (properties &&
+          properties->category != NumericCategory::kFloatingPoint) {
+        double parsed = 0.0;
+        const auto parsed_result =
+            std::from_chars(begin, end, parsed, std::chars_format::general);
+        const double truncated = std::trunc(parsed);
+        const long double upper = std::ldexp(1.0L, 64);
+        if (parsed_result.ec != std::errc{} || parsed_result.ptr != end ||
+            !std::isfinite(parsed) || truncated < 0.0 ||
+            static_cast<long double>(truncated) >= upper) {
+          return std::nullopt;
+        }
+        return std::to_string(static_cast<std::uint64_t>(truncated));
+      }
+      if (semantic_kind == TypeKind::kFloat32) {
+        float parsed = 0.0F;
+        const auto parsed_result =
+            std::from_chars(begin, end, parsed, std::chars_format::general);
+        if (parsed_result.ec != std::errc{} || parsed_result.ptr != end) {
+          return std::nullopt;
+        }
+        return format_floating_literal(parsed);
+      }
+      double parsed = 0.0;
       const auto parsed_result =
           std::from_chars(begin, end, parsed, std::chars_format::general);
-      std::array<char, 128> buffer{};
-      const auto formatted =
-          std::to_chars(buffer.data(), buffer.data() + buffer.size(), parsed,
-                        std::chars_format::scientific, 17);
-      if (parsed_result.ec != std::errc{} || parsed_result.ptr != end ||
-          formatted.ec != std::errc{}) {
+      if (semantic_kind != TypeKind::kFloat64 ||
+          parsed_result.ec != std::errc{} || parsed_result.ptr != end) {
         return std::nullopt;
       }
-      return std::string{buffer.data(), formatted.ptr};
+      return format_floating_literal(parsed);
     }
     case LiteralKind::kCharacter:
       return std::to_string(decode_character(literal.lexeme));
@@ -290,6 +343,12 @@ class BodyEmitter {
   void emit_binary(const MirInstruction& instruction,
                    const MirBinaryInstruction& binary,
                    std::ostringstream& output);
+  void emit_conversion(const MirInstruction& instruction,
+                       const MirConvertInstruction& conversion,
+                       std::ostringstream& output);
+  void emit_checked_numeric_conversion(const MirInstruction& instruction,
+                                       const MirConvertInstruction& conversion,
+                                       std::ostringstream& output);
   void emit_is_non_null(const MirInstruction& instruction,
                         const MirIsNonNullInstruction& test,
                         std::ostringstream& output);
@@ -409,6 +468,9 @@ class ModuleEmitter {
            << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
            << "declare void @cloth_rt_require_receiver(ptr)\n"
            << "declare void @cloth_rt_require_non_null(ptr)\n"
+           << "declare void @cloth_rt_require_numeric_conversion(i8)\n"
+           << "declare float @llvm.trunc.f32(float)\n"
+           << "declare double @llvm.trunc.f64(double)\n"
            << "declare void @cloth_rt_print(ptr)\n"
            << "declare void @cloth_rt_print_char(i32)\n"
            << "declare void @cloth_rt_print_i8(i8)\n"
@@ -721,7 +783,8 @@ class ModuleEmitter {
       return;
     }
     const std::optional<std::string> value =
-        lower_scalar_literal(*literal, abi_.types.at(abi_field->type.value));
+        lower_scalar_literal(*literal, abi_.types.at(abi_field->type.value),
+                             semantics_.type(abi_field->type).kind);
     if (!value) {
       report(instruction->range, "static field literal is out of range");
       return;
@@ -1481,7 +1544,7 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
     emit_binary(instruction, *binary, output);
   } else if (const auto* conversion =
                  std::get_if<MirConvertInstruction>(&instruction.data)) {
-    values_.at(instruction.result->value) = value(conversion->value);
+    emit_conversion(instruction, *conversion, output);
   } else if (const auto* test =
                  std::get_if<MirIsNonNullInstruction>(&instruction.data)) {
     emit_is_non_null(instruction, *test, output);
@@ -1515,7 +1578,8 @@ void BodyEmitter::emit_literal(const MirInstruction& instruction,
     case LiteralKind::kCharacter:
     case LiteralKind::kBoolean: {
       const std::optional<std::string> value = lower_scalar_literal(
-          literal, module_.abi().types.at(instruction.type.value));
+          literal, module_.abi().types.at(instruction.type.value),
+          module_.semantics().type(instruction.type).kind);
       if (!value) {
         module_.report(instruction.range,
                        literal.kind == LiteralKind::kInteger
@@ -1784,6 +1848,227 @@ void BodyEmitter::emit_binary(const MirInstruction& instruction,
   }
   output << "  " << result_name(instruction) << " = " << operation << ' '
          << type << ' ' << value(binary.left) << ", " << value(binary.right)
+         << '\n';
+}
+
+void BodyEmitter::emit_conversion(const MirInstruction& instruction,
+                                  const MirConvertInstruction& conversion,
+                                  std::ostringstream& output) {
+  if (conversion.kind == MirConversionKind::kCheckedNumeric) {
+    emit_checked_numeric_conversion(instruction, conversion, output);
+    return;
+  }
+  if (conversion.kind != MirConversionKind::kWidenNumeric) {
+    values_.at(instruction.result->value) = value(conversion.value);
+    return;
+  }
+
+  const TypeId source_type = value_type(conversion.value);
+  const TypeKind source_kind = module_.semantics().type(source_type).kind;
+  const TypeKind target_kind = module_.semantics().type(instruction.type).kind;
+  const std::optional<NumericTypeProperties> source =
+      numeric_type_properties(source_kind);
+  const std::optional<NumericTypeProperties> target =
+      numeric_type_properties(target_kind);
+  if (!source || !target || !can_widen_numeric(source_kind, target_kind)) {
+    module_.report(instruction.range,
+                   "invalid numeric widening reached LLVM lowering");
+    return;
+  }
+
+  std::string_view operation;
+  if (source->category == NumericCategory::kFloatingPoint) {
+    operation = "fpext";
+  } else if (source->category == NumericCategory::kSignedInteger) {
+    operation = "sext";
+  } else {
+    operation = "zext";
+  }
+  output << "  " << result_name(instruction) << " = " << operation << ' '
+         << module_.llvm_type(source_type) << ' ' << value(conversion.value)
+         << " to " << module_.llvm_type(instruction.type) << '\n';
+}
+
+void BodyEmitter::emit_checked_numeric_conversion(
+    const MirInstruction& instruction, const MirConvertInstruction& conversion,
+    std::ostringstream& output) {
+  const TypeId source_type = value_type(conversion.value);
+  const TypeKind source_kind = module_.semantics().type(source_type).kind;
+  const TypeKind target_kind = module_.semantics().type(instruction.type).kind;
+  const std::optional<NumericTypeProperties> source =
+      numeric_type_properties(source_kind);
+  const std::optional<NumericTypeProperties> target =
+      numeric_type_properties(target_kind);
+  if (!source || !target) {
+    module_.report(instruction.range,
+                   "invalid checked numeric conversion reached LLVM lowering");
+    return;
+  }
+
+  const std::string operand = value(conversion.value);
+  const std::string source_llvm_type = module_.llvm_type(source_type);
+  const std::string target_llvm_type = module_.llvm_type(instruction.type);
+  const auto emit_binary_condition =
+      [this, &output](std::string_view operation, std::string_view type,
+                      std::string_view left, std::string_view right) {
+        const std::string result = next_address();
+        output << "  " << result << " = " << operation << ' ' << type << ' '
+               << left << ", " << right << '\n';
+        return result;
+      };
+  const auto combine_conditions = [&emit_binary_condition](
+                                      std::optional<std::string>& current,
+                                      std::string condition) {
+    if (!current) {
+      current = std::move(condition);
+      return;
+    }
+    current = emit_binary_condition("and", "i1", *current, condition);
+  };
+  const auto require_condition =
+      [this, &output](const std::optional<std::string>& condition) {
+        if (!condition) {
+          return;
+        }
+        const std::string widened = next_address();
+        output << "  " << widened << " = zext i1 " << *condition << " to i8\n"
+               << "  call void @cloth_rt_require_numeric_conversion(i8 "
+               << widened << ")\n";
+      };
+  const auto floating_constant = [&source](long double value) {
+    const std::optional<std::string> formatted =
+        source->bit_width == 32
+            ? format_floating_literal(static_cast<float>(value))
+            : format_floating_literal(static_cast<double>(value));
+    return formatted.value_or("0.000000e+00");
+  };
+
+  if (source->category != NumericCategory::kFloatingPoint &&
+      target->category != NumericCategory::kFloatingPoint) {
+    std::optional<std::string> valid;
+    if (source->category == NumericCategory::kSignedInteger &&
+        target->category == NumericCategory::kUnsignedInteger) {
+      combine_conditions(
+          valid,
+          emit_binary_condition("icmp sge", source_llvm_type, operand, "0"));
+      if (target->bit_width < source->bit_width) {
+        const std::uint64_t maximum =
+            (std::uint64_t{1} << target->bit_width) - 1;
+        combine_conditions(
+            valid, emit_binary_condition("icmp sle", source_llvm_type, operand,
+                                         std::to_string(maximum)));
+      }
+    } else if (source->category == NumericCategory::kUnsignedInteger &&
+               target->category == NumericCategory::kSignedInteger) {
+      if (target->bit_width <= source->bit_width) {
+        const std::uint64_t maximum =
+            (std::uint64_t{1} << (target->bit_width - 1)) - 1;
+        combine_conditions(
+            valid, emit_binary_condition("icmp ule", source_llvm_type, operand,
+                                         std::to_string(maximum)));
+      }
+    } else if (target->bit_width < source->bit_width) {
+      if (source->category == NumericCategory::kSignedInteger) {
+        const std::uint64_t magnitude = std::uint64_t{1}
+                                        << (target->bit_width - 1);
+        combine_conditions(
+            valid, emit_binary_condition("icmp sge", source_llvm_type, operand,
+                                         "-" + std::to_string(magnitude)));
+        combine_conditions(
+            valid, emit_binary_condition("icmp sle", source_llvm_type, operand,
+                                         std::to_string(magnitude - 1)));
+      } else {
+        const std::uint64_t maximum =
+            (std::uint64_t{1} << target->bit_width) - 1;
+        combine_conditions(
+            valid, emit_binary_condition("icmp ule", source_llvm_type, operand,
+                                         std::to_string(maximum)));
+      }
+    }
+    require_condition(valid);
+
+    if (source->bit_width == target->bit_width) {
+      values_.at(instruction.result->value) = operand;
+      return;
+    }
+    const std::string_view operation =
+        source->bit_width > target->bit_width
+            ? "trunc"
+            : (source->category == NumericCategory::kSignedInteger ? "sext"
+                                                                   : "zext");
+    output << "  " << result_name(instruction) << " = " << operation << ' '
+           << source_llvm_type << ' ' << operand << " to " << target_llvm_type
+           << '\n';
+    return;
+  }
+
+  if (source->category != NumericCategory::kFloatingPoint) {
+    const std::string_view operation =
+        source->category == NumericCategory::kSignedInteger ? "sitofp"
+                                                            : "uitofp";
+    output << "  " << result_name(instruction) << " = " << operation << ' '
+           << source_llvm_type << ' ' << operand << " to " << target_llvm_type
+           << '\n';
+    return;
+  }
+
+  if (target->category != NumericCategory::kFloatingPoint) {
+    const std::string truncated = next_address();
+    output << "  " << truncated << " = call " << source_llvm_type
+           << " @llvm.trunc.f" << source->bit_width << '(' << source_llvm_type
+           << ' ' << operand << ")\n";
+    const long double upper = std::ldexp(
+        1.0L,
+        static_cast<int>(target->category == NumericCategory::kSignedInteger
+                             ? target->bit_width - 1
+                             : target->bit_width));
+    const long double lower =
+        target->category == NumericCategory::kSignedInteger ? -upper : 0.0L;
+    std::optional<std::string> valid;
+    combine_conditions(
+        valid, emit_binary_condition("fcmp oge", source_llvm_type, truncated,
+                                     floating_constant(lower)));
+    combine_conditions(
+        valid, emit_binary_condition("fcmp olt", source_llvm_type, truncated,
+                                     floating_constant(upper)));
+    require_condition(valid);
+    const std::string_view operation =
+        target->category == NumericCategory::kSignedInteger ? "fptosi"
+                                                            : "fptoui";
+    output << "  " << result_name(instruction) << " = " << operation << ' '
+           << source_llvm_type << ' ' << truncated << " to " << target_llvm_type
+           << '\n';
+    return;
+  }
+
+  if (source->bit_width < target->bit_width) {
+    output << "  " << result_name(instruction) << " = fpext "
+           << source_llvm_type << ' ' << operand << " to " << target_llvm_type
+           << '\n';
+    return;
+  }
+
+  std::optional<std::string> valid;
+  const double maximum = static_cast<double>(std::numeric_limits<float>::max());
+  combine_conditions(
+      valid, emit_binary_condition("fcmp oge", source_llvm_type, operand,
+                                   floating_constant(-maximum)));
+  combine_conditions(
+      valid, emit_binary_condition("fcmp ole", source_llvm_type, operand,
+                                   floating_constant(maximum)));
+  const std::string bits = next_address();
+  const std::string exponent = next_address();
+  const std::string non_finite = next_address();
+  output << "  " << bits << " = bitcast double " << operand << " to i64\n"
+         << "  " << exponent << " = and i64 " << bits
+         << ", 9218868437227405312\n"
+         << "  " << non_finite << " = icmp eq i64 " << exponent
+         << ", 9218868437227405312\n";
+  const std::string range_or_non_finite =
+      emit_binary_condition("or", "i1", *valid, non_finite);
+  require_condition(range_or_non_finite);
+  output << "  " << result_name(instruction) << " = fptrunc "
+         << source_llvm_type << ' ' << operand << " to " << target_llvm_type
          << '\n';
 }
 

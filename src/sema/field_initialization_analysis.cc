@@ -297,6 +297,11 @@ class FieldInitializationAnalyzer {
       analyze_expression(cast->value, assignments, false);
       return;
     }
+    if (const auto* conversion =
+            std::get_if<NumericConversionExpression>(&expression.data)) {
+      analyze_expression(conversion->value, assignments, false);
+      return;
+    }
     if (const auto* assignment =
             std::get_if<AssignmentExpression>(&expression.data)) {
       analyze_expression(assignment->target, assignments,

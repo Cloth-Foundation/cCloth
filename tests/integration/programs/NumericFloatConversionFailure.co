@@ -1,0 +1,4 @@
+static func Main() {
+  float64 value = 340282400000000000000000000000000000000.0;
+  println(float(value));
+}
