@@ -265,3 +265,37 @@ cloth_add_cli_failure_test(inheritance_error
     ${CLOTH_INTEGRATION_ERRORS}/InheritanceErrors.co)
 
 cloth_finalize_tests(LABEL integration)
+
+if(CLOTH_TEST_SHUTTLE)
+    find_program(CLOTH_CARGO_EXECUTABLE NAMES cargo REQUIRED)
+    if(NOT EXISTS "${CLOTH_SHUTTLE_SOURCE_DIR}/tests/toolchain_tests.rs")
+        message(FATAL_ERROR
+            "CLOTH_TEST_SHUTTLE requires the Stage 22 Shuttle checkout at "
+            "CLOTH_SHUTTLE_SOURCE_DIR; initialize the shuttle submodule")
+    endif()
+    set(shuttle_suites toolchain_tests)
+    if(CLOTH_LLVM_LLC_EXECUTABLE)
+        list(APPEND shuttle_suites native_tests)
+    endif()
+    foreach(suite IN LISTS shuttle_suites)
+        add_test(NAME cloth_shuttle_${suite}
+            COMMAND ${CMAKE_COMMAND} -E env
+                "CLOTHC_UNDER_TEST=$<TARGET_FILE:clothc>"
+                ${CLOTH_CARGO_EXECUTABLE} test --locked
+                --test ${suite} -- --ignored
+        )
+        set_tests_properties(cloth_shuttle_${suite} PROPERTIES
+            WORKING_DIRECTORY "${CLOTH_SHUTTLE_SOURCE_DIR}"
+            LABELS "integration;toolchain"
+            TIMEOUT 120
+            RESOURCE_LOCK shuttle_cargo
+        )
+        if(CLOTH_ENABLE_SANITIZERS AND WIN32 AND
+           CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            set_tests_properties(cloth_shuttle_${suite} PROPERTIES
+                ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:${CLOTH_CLANG_RUNTIME_DIRECTORY}"
+            )
+        endif()
+    endforeach()
+endif()

@@ -8,11 +8,14 @@
 #include "cloth/hir/hir_printer.h"
 #include "cloth/lexer/token.h"
 #include "cloth/mir/mir_printer.h"
+#include "cloth/source/path.h"
 #include "cloth/source/source_file.h"
 #include "cloth/target/data_layout.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -27,6 +30,14 @@
 #include <utility>
 #include <vector>
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#if !defined(NOMINMAX)
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace {
 
 struct OutputOptions {
@@ -36,6 +47,20 @@ struct OutputOptions {
   std::optional<std::filesystem::path> native_output;
   std::optional<std::string> entry_file;
 };
+
+bool argument_starts_with(const std::filesystem::path& argument,
+                          std::string_view prefix) {
+  const auto& native = argument.native();
+  if (native.size() < prefix.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < prefix.size(); ++index) {
+    if (native[index] != prefix[index]) {
+      return false;
+    }
+  }
+  return true;
+}
 
 std::optional<std::string> ascii_argument(
     const std::filesystem::path& argument) {
@@ -137,39 +162,68 @@ cloth::NativeToolchain native_toolchain() {
   return toolchain;
 }
 
-std::filesystem::path temporary_output_path(
-    const std::filesystem::path& output) {
-  std::filesystem::path temporary = output;
-  temporary += ".tmp";
-  return temporary;
-}
-
-bool prepare_temporary_output(const std::filesystem::path& temporary) {
-  std::error_code error;
-  std::filesystem::remove(temporary, error);
-  if (error) {
-    std::cerr << temporary.generic_string()
-              << ": error: could not remove stale temporary output\n";
-    return false;
+class TemporaryOutput {
+ public:
+  explicit TemporaryOutput(const std::filesystem::path& output) {
+    static std::atomic<std::uint64_t> sequence{0};
+    const auto ticks =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    for (int attempt = 0; attempt < 16; ++attempt) {
+      directory_ =
+          output.parent_path() / (".cloth-output." + std::to_string(ticks) +
+                                  "." + std::to_string(sequence.fetch_add(1)));
+      std::error_code error;
+      if (std::filesystem::create_directory(directory_, error)) {
+        path_ = directory_ / "completed";
+        ready_ = true;
+        return;
+      }
+      if (error) {
+        break;
+      }
+    }
+    std::cerr << cloth::path_to_utf8(output)
+              << ": error: could not create private output directory\n";
   }
-  return true;
-}
+
+  ~TemporaryOutput() {
+    if (ready_) {
+      std::error_code error;
+      std::filesystem::remove(path_, error);
+      error.clear();
+      std::filesystem::remove(directory_, error);
+    }
+  }
+
+  TemporaryOutput(const TemporaryOutput&) = delete;
+  TemporaryOutput& operator=(const TemporaryOutput&) = delete;
+
+  [[nodiscard]] bool ready() const noexcept { return ready_; }
+  [[nodiscard]] const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
+
+ private:
+  std::filesystem::path directory_;
+  std::filesystem::path path_;
+  bool ready_ = false;
+};
 
 bool promote_output(const std::filesystem::path& temporary,
                     const std::filesystem::path& output) {
   std::error_code error;
-  std::filesystem::remove(output, error);
-  if (error) {
-    std::cerr << output.generic_string()
-              << ": error: could not replace previous output\n";
-    std::filesystem::remove(temporary, error);
-    return false;
+#if defined(_WIN32)
+  if (!MoveFileExW(temporary.c_str(), output.c_str(),
+                   MOVEFILE_REPLACE_EXISTING)) {
+    error = std::error_code{static_cast<int>(GetLastError()),
+                            std::system_category()};
   }
+#else
   std::filesystem::rename(temporary, output, error);
+#endif
   if (error) {
-    std::cerr << output.generic_string()
+    std::cerr << cloth::path_to_utf8(output)
               << ": error: could not install completed output\n";
-    std::filesystem::remove(temporary, error);
     return false;
   }
   return true;
@@ -177,34 +231,38 @@ bool promote_output(const std::filesystem::path& temporary,
 
 bool write_llvm_module(const cloth::LlvmIrModule& module,
                        const std::filesystem::path& output) {
-  const std::filesystem::path temporary = temporary_output_path(output);
-  if (!prepare_temporary_output(temporary)) {
+  const TemporaryOutput temporary{output};
+  if (!temporary.ready()) {
     return false;
   }
-  std::ofstream stream{temporary, std::ios::binary};
+  std::ofstream stream{temporary.path(), std::ios::binary};
   if (!stream) {
-    std::cerr << output.generic_string()
+    std::cerr << cloth::path_to_utf8(output)
               << ": error: could not open LLVM output\n";
     return false;
   }
   stream << module.text;
   stream.close();
   if (!stream) {
-    std::cerr << output.generic_string()
+    std::cerr << cloth::path_to_utf8(output)
               << ": error: could not write LLVM output\n";
-    std::error_code error;
-    std::filesystem::remove(temporary, error);
     return false;
   }
-  return promote_output(temporary, output);
+  return promote_output(temporary.path(), output);
 }
 
 int compile(cloth::Compilation& compilation, const OutputOptions& options) {
   cloth::DiagnosticEngine diagnostics;
   const cloth::CompilationResult result = compilation.analyze(diagnostics);
 
+  if (result.is_valid && options.entry_file && !options.native_output) {
+    static_cast<void>(cloth::find_native_entry_point(
+        result.abi, result.semantics, diagnostics, *options.entry_file));
+  }
+
   std::optional<cloth::LlvmIrModule> llvm_module;
-  if ((options.emit_llvm || options.native_output) && result.is_valid) {
+  if ((options.emit_llvm || options.native_output) && result.is_valid &&
+      !diagnostics.has_errors()) {
     llvm_module = cloth::emit_llvm_ir(
         result.mir, result.abi, result.semantics, diagnostics,
         cloth::LlvmIrOptions{options.native_output.has_value(),
@@ -219,20 +277,17 @@ int compile(cloth::Compilation& compilation, const OutputOptions& options) {
     if (!llvm_module) {
       return 1;
     }
-    const std::filesystem::path temporary =
-        temporary_output_path(*options.native_output);
-    if (!prepare_temporary_output(temporary)) {
+    const TemporaryOutput temporary{*options.native_output};
+    if (!temporary.ready()) {
       return 2;
     }
-    const auto build = cloth::build_native_executable(*llvm_module, temporary,
-                                                      native_toolchain());
+    const auto build = cloth::build_native_executable(
+        *llvm_module, temporary.path(), native_toolchain());
     if (!build) {
       std::cerr << "clothc: error: " << build.error().message << '\n';
-      std::error_code error;
-      std::filesystem::remove(temporary, error);
       return 2;
     }
-    return promote_output(temporary, *options.native_output) ? 0 : 2;
+    return promote_output(temporary.path(), *options.native_output) ? 0 : 2;
   }
   if (options.emit_llvm) {
     if (!llvm_module) {
@@ -331,7 +386,7 @@ int run_direct(std::span<const std::filesystem::path> arguments) {
       }
       continue;
     }
-    if (text && text->starts_with("--build=")) {
+    if (argument_starts_with(argument, "--build=")) {
       if (options.native_output) {
         std::cerr << "clothc: error: native output was specified more than "
                      "once\n";
@@ -345,14 +400,15 @@ int run_direct(std::span<const std::filesystem::path> arguments) {
       options.native_output = path;
       continue;
     }
-    if (text && (*text == "--emit-llvm" || text->starts_with("--emit-llvm="))) {
+    if (text == "--emit-llvm" ||
+        argument_starts_with(argument, "--emit-llvm=")) {
       if (options.emit_llvm) {
         std::cerr
             << "clothc: error: LLVM output was specified more than once\n";
         return 2;
       }
       options.emit_llvm = true;
-      if (text->starts_with("--emit-llvm=")) {
+      if (argument_starts_with(argument, "--emit-llvm=")) {
         const std::filesystem::path path = argument_suffix(argument, 12);
         if (path.empty()) {
           std::cerr << "clothc: error: LLVM output path is empty\n";
@@ -362,7 +418,7 @@ int run_direct(std::span<const std::filesystem::path> arguments) {
       }
       continue;
     }
-    if (text && text->starts_with("--source-root=")) {
+    if (argument_starts_with(argument, "--source-root=")) {
       if (source_root) {
         std::cerr
             << "clothc: error: source root was specified more than once\n";
@@ -415,7 +471,7 @@ int run_direct(std::span<const std::filesystem::path> arguments) {
     auto source = cloth::SourceFile::load(source_path);
     if (!source) {
       const cloth::SourceLoadError& load_error = source.error();
-      std::cerr << load_error.path.generic_string()
+      std::cerr << cloth::path_to_utf8(load_error.path)
                 << ": error: " << load_error.message << '\n';
       return 2;
     }

@@ -5,6 +5,9 @@ option(CLOTH_ENABLE_SANITIZERS
        "Enable supported address and undefined-behavior sanitizers" OFF)
 option(CLOTH_ENABLE_COVERAGE "Enable compiler coverage instrumentation" OFF)
 option(CLOTH_BUILD_FUZZERS "Build opt-in lexer/parser fuzz targets" OFF)
+option(CLOTH_TEST_SHUTTLE "Run Shuttle/clothc process-contract tests" OFF)
+set(CLOTH_SHUTTLE_SOURCE_DIR "${PROJECT_SOURCE_DIR}/shuttle" CACHE PATH
+    "Shuttle checkout used by the cross-tool tests")
 set(CLOTH_TEST_TIMEOUT_SECONDS 15 CACHE STRING
     "Maximum runtime in seconds for each CTest test")
 

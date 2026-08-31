@@ -16,8 +16,9 @@ Rules:
 
 ## Active stage
 
-Stage 22 is active. Stages 22.1 through 22.3 are complete; Stage 22.4 has not
-started. The ownership boundary is recorded in
+Stage 22 is complete, including the cross-tool exit audit in `docs/testing.md`.
+No stage is active. Stage 23 remains planned and requires its artifact-contract
+approval before implementation. The ownership boundary is recorded in
 `docs/shuttle_and_compiler.md`.
 
 ## Scheduled work
@@ -56,7 +57,7 @@ started. The ownership boundary is recorded in
   source-root, dependency, entry, target, and output inputs to `clothc`; remove
   compiler manifest discovery; and preserve standalone compilation and
   identifier-based imports.
-- [ ] **22.4 — Cross-tool verification.** Add configuration unit tests,
+- [x] **22.4 — Cross-tool verification.** Add configuration unit tests,
   multi-project fixtures spanning both repositories, direct and Shuttle build
   documentation, and the Stage 22 development/sanitizer exit audit.
 

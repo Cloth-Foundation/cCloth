@@ -899,45 +899,10 @@ class ModuleEmitter {
   }
 
   void emit_native_entry_point() {
-    const AbiCallable* entry = nullptr;
-    SourceRange entry_range = fallback_range();
-    bool saw_main = false;
-    for (const AbiFileClass& file : abi_.files) {
-      const SemanticSymbol& file_symbol =
-          semantics_.symbol(semantics_.file(file.file).symbol);
-      if (options_.entry_file && file_symbol.name != *options_.entry_file) {
-        continue;
-      }
-      entry_range = file_symbol.range;
-      for (const AbiCallable& callable : file.functions) {
-        const SemanticSymbol& symbol = semantics_.symbol(callable.symbol);
-        if (symbol.name != "Main") {
-          continue;
-        }
-        saw_main = true;
-        entry_range = symbol.range;
-        const TypeKind return_kind = semantics_.type(callable.return_type).kind;
-        const bool valid_signature =
-            symbol.is_static && symbol.parameter_types.empty() &&
-            callable.linkage == AbiLinkage::kExternal &&
-            (return_kind == TypeKind::kVoid || return_kind == TypeKind::kInt32);
-        if (!valid_signature) {
-          continue;
-        }
-        if (entry != nullptr) {
-          report(symbol.range,
-                 "native program has more than one eligible 'Main' function");
-          return;
-        }
-        entry = &callable;
-      }
-    }
+    const AbiCallable* entry = find_native_entry_point(
+        abi_, semantics_, diagnostics_, options_.entry_file);
     if (entry == nullptr) {
-      report(entry_range,
-             saw_main
-                 ? "entry point 'Main' must be public and static, take no "
-                   "parameters, and return no value or int32"
-                 : "native program requires a public static 'Main' function");
+      is_valid_ = false;
       return;
     }
 
@@ -2565,6 +2530,51 @@ std::string BodyEmitter::next_address() {
 }
 
 }  // namespace
+
+const AbiCallable* find_native_entry_point(
+    const AbiModule& abi, const SemanticModel& semantics,
+    DiagnosticEngine& diagnostics, std::optional<std::string_view> entry_file) {
+  const AbiCallable* entry = nullptr;
+  SourceRange entry_range = point_range(SourceLocation{"<entry>", 0, 1, 1});
+  bool saw_main = false;
+  for (const AbiFileClass& file : abi.files) {
+    const SemanticSymbol& file_symbol =
+        semantics.symbol(semantics.file(file.file).symbol);
+    if (entry_file && file_symbol.name != *entry_file) {
+      continue;
+    }
+    entry_range = file_symbol.range;
+    for (const AbiCallable& callable : file.functions) {
+      const SemanticSymbol& symbol = semantics.symbol(callable.symbol);
+      if (symbol.name != "Main") {
+        continue;
+      }
+      saw_main = true;
+      entry_range = symbol.range;
+      const TypeKind return_kind = semantics.type(callable.return_type).kind;
+      if (!symbol.is_static || !symbol.parameter_types.empty() ||
+          callable.linkage != AbiLinkage::kExternal ||
+          (return_kind != TypeKind::kVoid && return_kind != TypeKind::kInt32)) {
+        continue;
+      }
+      if (entry != nullptr) {
+        diagnostics.error(
+            symbol.range,
+            "native program has more than one eligible 'Main' function");
+        return nullptr;
+      }
+      entry = &callable;
+    }
+  }
+  if (entry == nullptr) {
+    diagnostics.error(
+        entry_range,
+        saw_main ? "entry point 'Main' must be public and static, take no "
+                   "parameters, and return no value or int32"
+                 : "native program requires a public static 'Main' function");
+  }
+  return entry;
+}
 
 std::optional<LlvmIrModule> emit_llvm_ir(const MirModule& mir,
                                          const AbiModule& abi,

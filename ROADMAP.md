@@ -61,8 +61,7 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 21 | Fixed-width integer operators and host-independent byte-order operations |
 
 Stage 21 is the current completed language baseline. Coordinated toolchain Stage
-22 is active; Stages 22.1 through 22.3 are complete, and Stage 22.4 has not
-started.
+22 is complete, including its cross-tool exit audit. Stage 23 remains planned.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -105,7 +104,7 @@ Exit criteria:
 
 ## Stage 22: Shuttle project contract and compiler build protocol
 
-Status: **active**
+Status: **complete**
 
 Objective: establish Shuttle as Cloth's project and build system, replace the
 compiler-owned metadata-only `cloth.toml` marker, and connect both tools through
@@ -146,6 +145,8 @@ Exit criteria:
 
 The architectural ownership and migration rules are defined in
 [`docs/shuttle_and_compiler.md`](docs/shuttle_and_compiler.md).
+The exit audit and repeatable verification commands are recorded in
+[`docs/testing.md`](docs/testing.md#stage-22-exit-audit).
 
 ## Stage 23: Shuttle-orchestrated separate compilation and linking
 

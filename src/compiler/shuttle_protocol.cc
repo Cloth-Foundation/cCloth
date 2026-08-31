@@ -1,6 +1,7 @@
 #include "cloth/compiler/shuttle_protocol.h"
 
 #include "cloth/sema/visibility.h"
+#include "cloth/source/path.h"
 
 #include <algorithm>
 #include <array>
@@ -77,7 +78,12 @@ bool valid_utf8(std::string_view value) {
 
 std::optional<std::string> argument_text(
     const std::filesystem::path& argument) {
-  const std::u8string encoded = argument.generic_u8string();
+  std::u8string encoded;
+  try {
+    encoded = argument.u8string();
+  } catch (const std::system_error&) {
+    return std::nullopt;
+  }
   std::string result{reinterpret_cast<const char*>(encoded.data()),
                      encoded.size()};
   if (!valid_utf8(result)) {
@@ -326,6 +332,9 @@ bool valid_semver(std::string_view value) {
   std::array<std::string_view, 3> core;
   std::size_t begin = 0;
   for (std::string_view& part : core) {
+    if (begin > value.size()) {
+      return false;
+    }
     const std::size_t end = value.find('.', begin);
     part =
         value.substr(begin, end == std::string_view::npos ? value.size() - begin
@@ -402,6 +411,10 @@ std::expected<std::filesystem::path, std::string> canonical_directory(
   if (error || !std::filesystem::is_directory(result, error) || error) {
     return std::unexpected("could not resolve " + std::string{description} +
                            " '" + *text + "'");
+  }
+  if (const auto resolved_text = path_text(result, description);
+      !resolved_text) {
+    return std::unexpected(resolved_text.error());
   }
   return result;
 }
@@ -575,7 +588,7 @@ std::string source_package_name(const std::filesystem::path& relative) {
     if (!result.empty()) {
       result += '.';
     }
-    result += component.generic_string();
+    result += path_to_utf8(component);
   }
   return result;
 }
@@ -605,10 +618,10 @@ std::string ascii_case_key(std::string value) {
 
 std::expected<void, std::string> validate_source_directory(
     const std::filesystem::path& relative, std::string_view package) {
-  if (!is_valid_identifier(relative.filename().generic_string())) {
+  if (!is_valid_identifier(path_to_utf8(relative.filename()))) {
     return std::unexpected("package '" + std::string{package} +
                            "' has invalid source directory '" +
-                           relative.generic_string() + "'");
+                           path_to_utf8(relative) + "'");
   }
   return {};
 }
@@ -633,6 +646,10 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
       const std::filesystem::directory_iterator end;
       std::vector<std::filesystem::directory_entry> entries;
       while (!error && iterator != end) {
+        if (const auto text = path_text(iterator->path(), "source path");
+            !text) {
+          return std::unexpected(text.error());
+        }
         entries.push_back(*iterator);
         iterator.increment(error);
       }
@@ -641,7 +658,7 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
                                "': " + error.message());
       }
       std::ranges::sort(entries, {}, [](const auto& entry) {
-        return entry.path().filename().generic_string();
+        return path_to_utf8(entry.path().filename());
       });
 
       for (const std::filesystem::directory_entry& entry : entries) {
@@ -650,7 +667,7 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
         const bool is_directory = entry.is_directory(error);
         if (error) {
           return std::unexpected("could not inspect source '" +
-                                 entry.path().generic_string() + "'");
+                                 path_to_utf8(entry.path()) + "'");
         }
         if (is_directory) {
           const auto valid = validate_source_directory(relative, package.name);
@@ -658,13 +675,13 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
             return std::unexpected(valid.error());
           }
           top_level_packages[package.name].insert(
-              relative.begin()->generic_string());
+              path_to_utf8(*relative.begin()));
           if (!entry.is_symlink(error) && !error) {
             pending_directories.insert(relative);
           }
           if (error) {
             return std::unexpected("could not inspect source directory '" +
-                                   entry.path().generic_string() + "'");
+                                   path_to_utf8(entry.path()) + "'");
           }
           continue;
         }
@@ -672,12 +689,12 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
             entry.path().extension() != ".co") {
           if (error) {
             return std::unexpected("could not inspect source file '" +
-                                   entry.path().generic_string() + "'");
+                                   path_to_utf8(entry.path()) + "'");
           }
           continue;
         }
 
-        const std::string stem = entry.path().stem().generic_string();
+        const std::string stem = path_to_utf8(entry.path().stem());
         if (!is_valid_identifier(stem)) {
           return std::unexpected("package '" + package.name +
                                  "' has invalid Cloth file stem '" + stem +
@@ -686,8 +703,11 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
         std::filesystem::path canonical =
             std::filesystem::canonical(entry.path(), error);
         if (error || !is_within(package.source_root, canonical)) {
-          return std::unexpected("source '" + entry.path().generic_string() +
+          return std::unexpected("source '" + path_to_utf8(entry.path()) +
                                  "' escapes package source root");
+        }
+        if (const auto text = path_text(canonical, "source path"); !text) {
+          return std::unexpected(text.error());
         }
         const std::string source_package = source_package_name(relative);
         const std::string logical =
@@ -702,14 +722,14 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
         logical_sources.emplace(logical_key, logical);
         if (const auto previous = physical_sources.find(canonical);
             previous != physical_sources.end()) {
-          return std::unexpected("source file '" + canonical.generic_string() +
+          return std::unexpected("source file '" + path_to_utf8(canonical) +
                                  "' is owned by both '" + previous->second +
                                  "' and '" + package.name + "'");
         }
         physical_sources.emplace(canonical, package.name);
         auto source = SourceFile::load(canonical);
         if (!source) {
-          return std::unexpected(source.error().path.generic_string() + ": " +
+          return std::unexpected(path_to_utf8(source.error().path) + ": " +
                                  source.error().message);
         }
         sources.push_back(ShuttleSourceInput{std::move(*source), package.name,
@@ -774,7 +794,7 @@ std::expected<std::optional<std::string>, std::string> validate_entry(
   }
   return logical_source_name(request.root_package,
                              source_package_name(*request.entry),
-                             request.entry->stem().generic_string());
+                             path_to_utf8(request.entry->stem()));
 }
 
 std::expected<void, std::string> validate_acyclic(

@@ -1,5 +1,7 @@
 #include "cloth/source/source_file.h"
 
+#include "cloth/source/path.h"
+
 #include <fstream>
 #include <iterator>
 #include <utility>
@@ -40,12 +42,12 @@ std::expected<SourceFile, SourceLoadError> SourceFile::load(
 
 SourceFile SourceFile::from_memory(std::filesystem::path path,
                                    std::string contents) {
-  auto display_path = path.generic_string();
+  auto display_path = path_to_utf8(path);
   if (display_path.empty()) {
     display_path = "<memory>";
   }
 
-  auto stem = path.stem().generic_string();
+  auto stem = path_to_utf8(path.stem());
   return SourceFile{std::make_unique<Storage>(
       Storage{std::move(path), std::move(display_path), std::move(stem),
               std::move(contents)})};

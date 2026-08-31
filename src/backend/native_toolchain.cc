@@ -1,5 +1,7 @@
 #include "cloth/backend/native_toolchain.h"
 
+#include "cloth/source/path.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -62,12 +64,12 @@ std::wstring quote_windows_argument(std::wstring_view argument) {
 }
 
 ProcessResult run_process(const std::filesystem::path& executable,
-                          std::span<const std::string> arguments) {
+                          std::span<const std::filesystem::path> arguments,
+                          const std::filesystem::path& working_directory) {
   std::wstring command_line = quote_windows_argument(executable.wstring());
-  for (const std::string& argument : arguments) {
+  for (const std::filesystem::path& argument : arguments) {
     command_line.push_back(L' ');
-    command_line +=
-        quote_windows_argument(std::filesystem::path{argument}.wstring());
+    command_line += quote_windows_argument(argument.native());
   }
   std::vector<wchar_t> mutable_command(command_line.begin(),
                                        command_line.end());
@@ -77,8 +79,8 @@ ProcessResult run_process(const std::filesystem::path& executable,
   startup.cb = sizeof(startup);
   PROCESS_INFORMATION process{};
   if (CreateProcessW(executable.c_str(), mutable_command.data(), nullptr,
-                     nullptr, FALSE, 0, nullptr, nullptr, &startup,
-                     &process) == FALSE) {
+                     nullptr, FALSE, 0, nullptr, working_directory.c_str(),
+                     &startup, &process) == FALSE) {
     return std::unexpected{"could not start process (Windows error " +
                            std::to_string(GetLastError()) + ")"};
   }
@@ -99,12 +101,14 @@ ProcessResult run_process(const std::filesystem::path& executable,
 #else
 
 ProcessResult run_process(const std::filesystem::path& executable,
-                          std::span<const std::string> arguments) {
+                          std::span<const std::filesystem::path> arguments,
+                          const std::filesystem::path& working_directory) {
   std::vector<std::string> owned_arguments;
   owned_arguments.reserve(arguments.size() + 1);
   owned_arguments.push_back(executable.string());
-  owned_arguments.insert(owned_arguments.end(), arguments.begin(),
-                         arguments.end());
+  for (const std::filesystem::path& argument : arguments) {
+    owned_arguments.push_back(argument.native());
+  }
   std::vector<char*> native_arguments;
   native_arguments.reserve(owned_arguments.size() + 1);
   for (std::string& argument : owned_arguments) {
@@ -119,6 +123,9 @@ ProcessResult run_process(const std::filesystem::path& executable,
         std::error_code{errno, std::generic_category()}.message()};
   }
   if (child == 0) {
+    if (chdir(working_directory.c_str()) != 0) {
+      _exit(127);
+    }
     execv(native_arguments[0], native_arguments.data());
     _exit(127);
   }
@@ -146,14 +153,19 @@ ProcessResult run_process(const std::filesystem::path& executable,
 
 class TemporaryFiles {
  public:
-  TemporaryFiles(std::filesystem::path ir, std::filesystem::path object)
-      : ir_(std::move(ir)), object_(std::move(object)) {}
+  TemporaryFiles(std::filesystem::path ir, std::filesystem::path object,
+                 std::filesystem::path linked)
+      : ir_(std::move(ir)),
+        object_(std::move(object)),
+        linked_(std::move(linked)) {}
 
   ~TemporaryFiles() {
     std::error_code error;
     static_cast<void>(std::filesystem::remove(ir_, error));
     error.clear();
     static_cast<void>(std::filesystem::remove(object_, error));
+    error.clear();
+    static_cast<void>(std::filesystem::remove(linked_, error));
   }
 
   TemporaryFiles(const TemporaryFiles&) = delete;
@@ -162,6 +174,7 @@ class TemporaryFiles {
  private:
   std::filesystem::path ir_;
   std::filesystem::path object_;
+  std::filesystem::path linked_;
 };
 
 std::expected<void, NativeBuildError> validate_tool(
@@ -170,7 +183,7 @@ std::expected<void, NativeBuildError> validate_tool(
   if (path.empty() || !std::filesystem::is_regular_file(path, error)) {
     return std::unexpected(NativeBuildError{std::string{description} +
                                             " was not found at '" +
-                                            path.generic_string() + "'"});
+                                            path_to_utf8(path) + "'"});
   }
   return {};
 }
@@ -186,8 +199,10 @@ std::string unique_suffix() {
 
 std::expected<void, NativeBuildError> run_stage(
     std::string_view stage, const std::filesystem::path& executable,
-    const std::vector<std::string>& arguments) {
-  const ProcessResult result = run_process(executable, arguments);
+    const std::vector<std::filesystem::path>& arguments,
+    const std::filesystem::path& working_directory) {
+  const ProcessResult result = run_process(
+      std::filesystem::absolute(executable), arguments, working_directory);
   if (!result) {
     return std::unexpected(
         NativeBuildError{std::string{stage} + ": " + result.error()});
@@ -225,17 +240,17 @@ std::expected<void, NativeBuildError> build_native_executable(
   }
 
   const std::filesystem::path output_directory =
-      output_path.has_parent_path() ? output_path.parent_path()
-                                    : std::filesystem::current_path();
+      std::filesystem::absolute(output_path).parent_path();
   std::error_code error;
   if (!std::filesystem::is_directory(output_directory, error)) {
     return std::unexpected(
         NativeBuildError{"native output directory does not exist: '" +
-                         output_directory.generic_string() + "'"});
+                         path_to_utf8(output_directory) + "'"});
   }
 
-  const std::string temporary_base =
-      output_path.filename().generic_string() + ".cloth." + unique_suffix();
+  // Native tools may use a narrow Windows argv. Keep project paths in the
+  // OS-native working directory, and pass only private ASCII artifact names.
+  const std::string temporary_base = "cloth." + unique_suffix();
   const std::filesystem::path ir_path =
       output_directory / (temporary_base + ".ll");
 #if defined(_WIN32)
@@ -245,41 +260,61 @@ std::expected<void, NativeBuildError> build_native_executable(
   const std::filesystem::path object_path =
       output_directory / (temporary_base + ".o");
 #endif
-  TemporaryFiles temporary_files{ir_path, object_path};
+  const std::filesystem::path linked_path =
+      output_directory / (temporary_base + ".bin");
+  TemporaryFiles temporary_files{ir_path, object_path, linked_path};
 
   std::ofstream ir_output{ir_path, std::ios::binary};
   ir_output << module.text;
   ir_output.close();
   if (!ir_output) {
-    return std::unexpected(
-        NativeBuildError{"could not write temporary LLVM IR: '" +
-                         ir_path.generic_string() + "'"});
+    return std::unexpected(NativeBuildError{
+        "could not write temporary LLVM IR: '" + path_to_utf8(ir_path) + "'"});
   }
 
-  std::vector<std::string> llc_arguments{
+  std::vector<std::filesystem::path> llc_arguments{
       "-filetype=obj", "-mtriple=" + toolchain.target_triple, "-o",
-      object_path.string(), ir_path.string()};
-  if (auto result =
-          run_stage("LLVM object emission", toolchain.llc, llc_arguments);
+      object_path.filename(), ir_path.filename()};
+  if (auto result = run_stage("LLVM object emission", toolchain.llc,
+                              llc_arguments, output_directory);
       !result) {
     return result;
   }
 
-  std::vector<std::string> linker_arguments;
+  std::vector<std::filesystem::path> linker_arguments;
   if (toolchain.linker_flavor == NativeLinkerFlavor::kMsvc) {
-    linker_arguments = {"/nologo", object_path.string(),
-                        toolchain.runtime_library.string(),
-                        "/Fe:" + output_path.string()};
+    linker_arguments = {"/nologo",
+                        object_path.filename(),
+                        std::filesystem::absolute(toolchain.runtime_library),
+                        "/Fe:" + linked_path.filename().string(),
+                        "/link",
+                        "/Brepro"};
   } else {
     if (toolchain.link_static_runtime) {
       linker_arguments = {"-static"};
     }
+#if defined(_WIN32)
+    linker_arguments.emplace_back(toolchain.target_triple.ends_with("msvc")
+                                      ? "-Wl,/Brepro"
+                                      : "-Wl,--no-insert-timestamp");
+#endif
     linker_arguments.insert(
         linker_arguments.end(),
-        {object_path.string(), toolchain.runtime_library.string(), "-o",
-         output_path.string()});
+        {object_path.filename(),
+         std::filesystem::absolute(toolchain.runtime_library), "-o",
+         linked_path.filename()});
   }
-  return run_stage("native linking", toolchain.linker, linker_arguments);
+  if (auto result = run_stage("native linking", toolchain.linker,
+                              linker_arguments, output_directory);
+      !result) {
+    return result;
+  }
+  std::filesystem::rename(linked_path, output_path, error);
+  if (error) {
+    return std::unexpected(NativeBuildError{
+        "could not install linked executable: " + error.message()});
+  }
+  return {};
 }
 
 }  // namespace cloth

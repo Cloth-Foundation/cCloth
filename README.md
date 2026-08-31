@@ -116,7 +116,7 @@ Requirements:
 - A C++23 compiler such as recent Clang, GCC, or MSVC
 - LLVM `llc` and a C++ linker driver to build native Cloth executables
 - Optional LLVM `opt` for backend verification tests
-- Rust 1.85 or newer to build Shuttle itself
+- Rust 1.85 or newer with Cargo for Shuttle and the cross-tool tests
 
 No third-party C++ libraries are required. From the repository root:
 
@@ -128,8 +128,9 @@ cargo build --manifest-path shuttle/Cargo.toml --locked
 ```
 
 The development preset creates `build/dev`, enables tests, and treats compiler
-warnings as errors. See [Testing](docs/testing.md) for sanitizer, coverage, and
-fuzzing presets.
+warnings as errors. It also runs Shuttle's shared tests against that compiler.
+For a compiler-only checkout, configure with `-DCLOTH_TEST_SHUTTLE=OFF`.
+See [Testing](docs/testing.md) for sanitizer, coverage, and fuzzing presets.
 
 ## Build and run a Cloth project
 

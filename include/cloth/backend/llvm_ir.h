@@ -8,6 +8,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace cloth {
 
@@ -19,6 +20,13 @@ struct LlvmIrOptions {
   bool emit_native_entry_point{false};
   std::optional<std::string> entry_file{};
 };
+
+// Selects and validates the executable entry independently of IR emission.
+// The returned callable borrows abi; failures are reported to diagnostics.
+[[nodiscard]] const AbiCallable* find_native_entry_point(
+    const AbiModule& abi, const SemanticModel& semantics,
+    DiagnosticEngine& diagnostics,
+    std::optional<std::string_view> entry_file = std::nullopt);
 
 // Emits opaque-pointer LLVM IR from verified MIR and ABI. The emitter has no
 // link-time dependency on LLVM; LLVM's opt tool verifies the result in tests.

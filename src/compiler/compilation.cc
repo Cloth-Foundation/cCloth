@@ -10,6 +10,7 @@
 #include "cloth/parser/parser.h"
 #include "cloth/parser/syntax_facts.h"
 #include "cloth/sema/semantic_analyzer.h"
+#include "cloth/source/path.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -41,7 +42,7 @@ std::string qualified_name(std::string_view owning_package,
 }
 
 std::string path_key(const std::filesystem::path& path) {
-  std::string key = path.lexically_normal().generic_string();
+  std::string key = path_to_utf8(path.lexically_normal());
 #if defined(_WIN32)
   for (char& character : key) {
     if (character >= 'A' && character <= 'Z') {
@@ -116,7 +117,7 @@ std::optional<std::string> package_from_path(
     if (component == "..") {
       return std::nullopt;
     }
-    const std::string segment = component.generic_string();
+    const std::string segment = path_to_utf8(component);
     if (!is_valid_identifier(segment)) {
       return std::nullopt;
     }
@@ -277,8 +278,7 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
     if (!source) {
       if (report_failure) {
         diagnostics.error(range, "could not load " + std::string{description} +
-                                     " at '" + absolute->generic_string() +
-                                     "'");
+                                     " at '" + path_to_utf8(*absolute) + "'");
       }
       return;
     }
@@ -315,7 +315,7 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
       return;
     }
     std::ranges::sort(paths, {}, [](const std::filesystem::path& path) {
-      return path.generic_string();
+      return path_to_utf8(path);
     });
     for (const std::filesystem::path& path : paths) {
       load_source(path, range, "source file", true);
