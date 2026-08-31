@@ -97,10 +97,11 @@ unimplemented interface cannot overlap.
 ## Dispatch and runtime representation
 
 Each interface receives a deterministic 64-bit identity derived from its
-qualified name. The compiler diagnoses an identity collision within a
-compilation. Each interface also owns a deterministic flattened contract-slot
-order: inherited contracts precede locally introduced contracts, and duplicate
-signatures are coalesced.
+[canonical nominal identity](canonical_identity.md), including exact manifest
+package version or standalone ownership. The compiler diagnoses an identity
+collision within a compilation. Each interface also owns a deterministic
+flattened contract-slot order: inherited contracts precede locally introduced
+contracts, and duplicate signatures are coalesced.
 
 Every concrete class descriptor contains one dispatch entry for each
 transitive interface. Entries are sorted by interface identity for binary

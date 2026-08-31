@@ -47,6 +47,7 @@ struct ShuttleSourceInput {
   SourceFile source;
   std::string package;
   std::string source_package;
+  std::string version;
 };
 
 struct ShuttleBuildPlan {

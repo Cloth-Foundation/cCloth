@@ -2,6 +2,7 @@
 #define CLOTH_SEMA_SEMANTIC_MODEL_H_
 
 #include "cloth/ast/ast.h"
+#include "cloth/identity/canonical_identity.h"
 #include "cloth/sema/visibility.h"
 #include "cloth/source/source_range.h"
 
@@ -182,6 +183,7 @@ struct FileSemantics {
   std::vector<SymbolId> interface_functions{};
   std::vector<InterfaceImplementation> interface_implementations{};
   std::optional<std::uint64_t> interface_id{};
+  NominalIdentity identity{};
 };
 
 class SemanticModel {

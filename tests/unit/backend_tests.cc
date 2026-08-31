@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "abi_names.h"
 #include "test.h"
 
 namespace {
@@ -211,8 +212,10 @@ void object_construction(TestContext& test) {
       sources.contains("@.cloth.type.references.0 = private unnamed_addr "
                        "constant [1 x i64] [i64 16]") &&
           sources.contains("@.cloth.type.virtuals.0 = private constant [1 x "
-                           "ptr] [ptr @_C1F5_Model3_GetP0]") &&
-          sources.contains("@.cloth.type.0 = private constant { i64, ptr, "
+                           "ptr] [ptr @" +
+                           cloth::test::function_name("Model", "Get") + "]") &&
+          sources.contains("@" + cloth::test::descriptor_name("Model") +
+                           " = constant { i64, ptr, "
                            "ptr, i64, i64, i64, ptr, i64, ptr, i64, ptr, "
                            "i64 } { i64 "
                            "0, ptr "
@@ -223,7 +226,8 @@ void object_construction(TestContext& test) {
   test.expect(sources.contains("define internal ptr @_C1I5_Model4_Name") &&
                   sources.contains("call ptr @_C1I5_Model4_Name(ptr %self)"),
               "field initializer was not composed with construction");
-  test.expect(sources.contains("call ptr @cloth_rt_alloc(ptr @.cloth.type.0)"),
+  test.expect(sources.contains("call ptr @cloth_rt_alloc(ptr @" +
+                               cloth::test::descriptor_name("Model") + ")"),
               "constructor does not allocate through its type descriptor");
   test.expect(sources.contains("getelementptr i8, ptr %self, i64 16"),
               "field access does not use its verified ABI offset");
@@ -240,18 +244,22 @@ void inherited_type_descriptors(TestContext& test) {
       sources.contains("@.cloth.type.references.0 = private unnamed_addr "
                        "constant [2 x i64] [i64 16, i64 40]") &&
           sources.contains(
-              "@.cloth.type.0 = private constant { i64, ptr, ptr, i64, i64, "
+              "@" + cloth::test::descriptor_name("Derived") +
+              " = constant { i64, ptr, ptr, i64, i64, "
               "i64, ptr, i64, ptr, i64, ptr, i64 } { i64 0, ptr "
-              "@.cloth.type.1, ptr "
+              "@" +
+              cloth::test::descriptor_name("Base") +
+              ", ptr "
               "@.cloth.str.0, i64 7, i64 48, i64 8, ptr "
               "@.cloth.type.references.0, i64 2, ptr null, i64 0, ptr null, "
               "i64 0 }"),
       "derived descriptor lost its parent pointer or inherited GC map");
-  test.expect(sources.contains(
-                  "@.cloth.type.1 = private constant { i64, ptr, ptr, i64, "
-                  "i64, i64, ptr, i64, ptr, i64, ptr, i64 } { i64 0, ptr "
-                  "null, ptr "),
-              "root descriptor unexpectedly gained a parent pointer");
+  test.expect(
+      sources.contains("@" + cloth::test::descriptor_name("Base") +
+                       " = constant { i64, ptr, ptr, i64, "
+                       "i64, i64, ptr, i64, ptr, i64, ptr, i64 } { i64 0, ptr "
+                       "null, ptr "),
+      "root descriptor unexpectedly gained a parent pointer");
 }
 
 void constructor_chaining(TestContext& test) {
@@ -265,21 +273,26 @@ void constructor_chaining(TestContext& test) {
 
   test.expect(sources.llvm.has_value(),
               "constructor chain failed LLVM lowering");
+  test.expect(sources.contains(
+                  "define void @" +
+                  cloth::test::initializer_name("Base", "Base", {"int32"}) +
+                  "(ptr %self, i32 ") &&
+                  sources.contains("define void @" +
+                                   cloth::test::initializer_name(
+                                       "Derived", "Derived", {"int32"}) +
+                                   "(ptr %self, "
+                                   "i32 "),
+              "constructor initializer entry points were not emitted");
   test.expect(
-      sources.contains(
-          "define internal void @_C1I4_Base4_BaseP1_i32(ptr %self, i32 ") &&
-          sources.contains(
-              "define internal void @_C1I7_Derived7_DerivedP1_i32(ptr %self, "
-              "i32 "),
-      "constructor initializer entry points were not emitted");
-  test.expect(
-      count_occurrences(sources.llvm->text,
-                        "call void @_C1I4_Base4_BaseP1_i32(ptr %self, i32 ") ==
-          2,
+      count_occurrences(sources.llvm->text, "call void @" +
+                                                cloth::test::initializer_name(
+                                                    "Base", "Base", {"int32"}) +
+                                                "(ptr %self, i32 ") == 2,
       "derived allocation and initializer entries did not chain to the base");
   test.expect(
       count_occurrences(sources.llvm->text,
-                        "call ptr @cloth_rt_alloc(ptr @.cloth.type.1)") == 1,
+                        "call ptr @cloth_rt_alloc(ptr @" +
+                            cloth::test::descriptor_name("Derived") + ")") == 1,
       "derived constructor did not allocate exactly one object");
 }
 
@@ -303,16 +316,20 @@ void inherited_member_access_and_subtyping(TestContext& test) {
 
   test.expect(sources.llvm.has_value(),
               "inherited behavior failed LLVM lowering");
-  test.expect(sources.contains("@.cloth.type.virtuals.0 = private constant "
-                               "[1 x ptr] [ptr @_C1F4_Base4_ReadP0]") &&
-                  sources.contains(" = getelementptr inbounds ptr, ptr ") &&
-                  sources.contains("call i32 @_C1F4_Base4_KindP0()"),
-              "inherited virtual or static calls lost their ABI targets");
+  test.expect(
+      sources.contains("@.cloth.type.virtuals.0 = private constant "
+                       "[1 x ptr] [ptr @" +
+                       cloth::test::function_name("Base", "Read") + "]") &&
+          sources.contains(" = getelementptr inbounds ptr, ptr ") &&
+          sources.contains("call i32 @" +
+                           cloth::test::function_name("Base", "Kind") + "()"),
+      "inherited virtual or static calls lost their ABI targets");
   test.expect(sources.contains("getelementptr i8, ptr ") &&
                   sources.contains(", i64 16\n"),
               "inherited field access lost its base offset");
   test.expect(sources.contains("call i8 @cloth_rt_object_is_type(ptr ") &&
-                  sources.contains(", ptr @.cloth.type.0)"),
+                  sources.contains(", ptr @" +
+                                   cloth::test::descriptor_name("Base") + ")"),
               "base type test lost its ancestry-aware runtime boundary");
 }
 
@@ -335,11 +352,17 @@ void virtual_dispatch(TestContext& test) {
   test.expect(
       sources.contains(
           "@.cloth.type.virtuals.0 = private constant [2 x ptr] [ptr "
-          "@_C1F4_Base5_ValueP0, ptr @_C1F4_Base4_NameP0]") &&
+          "@" +
+          cloth::test::function_name("Base", "Value") + ", ptr @" +
+          cloth::test::function_name("Base", "Name") + "]") &&
           sources.contains(
               "@.cloth.type.virtuals.1 = private constant [3 x ptr] [ptr "
-              "@_C1F7_Derived5_ValueP0, ptr @_C1F4_Base4_NameP0, ptr "
-              "@_C1F7_Derived5_ExtraP0]"),
+              "@" +
+              cloth::test::function_name("Derived", "Value") + ", ptr @" +
+              cloth::test::function_name("Base", "Name") +
+              ", ptr "
+              "@" +
+              cloth::test::function_name("Derived", "Extra") + "]"),
       "derived vtable did not replace and extend stable base slots");
   test.expect(sources.contains(
                   "getelementptr inbounds { i64, ptr, ptr, i64, i64, i64, ptr, "
@@ -347,7 +370,9 @@ void virtual_dispatch(TestContext& test) {
                   sources.contains("getelementptr inbounds ptr, ptr ") &&
                   sources.contains("call i32 %"),
               "virtual call was not emitted through descriptor slot zero");
-  test.expect(!sources.contains("call i32 @_C1F4_Base5_ValueP0(ptr %receiver"),
+  test.expect(!sources.contains("call i32 @" +
+                                cloth::test::function_name("Base", "Value") +
+                                "(ptr %receiver"),
               "base-typed call bypassed dynamic dispatch");
 }
 
@@ -364,7 +389,9 @@ void base_qualified_call(TestContext& test) {
 
   test.expect(sources.llvm.has_value(),
               "base-qualified call failed LLVM emission");
-  test.expect(sources.contains("call i32 @_C1F4_Base5_ValueP0(ptr %receiver)"),
+  test.expect(sources.contains("call i32 @" +
+                               cloth::test::function_name("Base", "Value") +
+                               "(ptr %receiver)"),
               "base-qualified call did not use the selected base ABI symbol");
 }
 
@@ -428,9 +455,11 @@ void interface_dispatch(TestContext& test) {
                   widget.interfaces[0].functions.size() == 1,
               "class descriptor lost its interface dispatch map");
   test.expect(
-      sources.contains("@.cloth.type.interface.functions.1.0 = private "
-                       "constant [1 x ptr] [ptr "
-                       "@_C1F6_Widget6_RenderP1_i32]") &&
+      sources.contains(
+          "@.cloth.type.interface.functions.1.0 = private "
+          "constant [1 x ptr] [ptr "
+          "@" +
+          cloth::test::function_name("Widget", "Render", {"int32"}) + "]") &&
           sources.contains("@.cloth.type.interfaces.1 = private constant "
                            "[1 x { i64, ptr, i64 }]") &&
           sources.contains("call ptr @cloth_rt_interface_function(ptr ") &&
@@ -438,8 +467,10 @@ void interface_dispatch(TestContext& test) {
                            ", i64 0)") &&
           sources.contains("call i8 @cloth_rt_object_is_interface(ptr "),
       "interface calls or checked operations lost runtime dispatch metadata");
-  test.expect(!sources.contains("@.cloth.type.0 = private constant"),
-              "interface declaration emitted an allocatable class descriptor");
+  test.expect(
+      !sources.contains("@" + cloth::test::descriptor_name("Renderable") +
+                        " = constant"),
+      "interface declaration emitted an allocatable class descriptor");
 }
 
 void arrays(TestContext& test) {
@@ -535,15 +566,20 @@ void call_receivers(TestContext& test) {
   sources.compile();
 
   test.expect(sources.llvm.has_value(), "call module failed to emit");
-  test.expect(sources.contains("call i32 @_C1F4_User4_EchoP1_i32(i32 1)"),
-              "static call gained an ABI receiver");
+  test.expect(
+      sources.contains("call i32 @" +
+                       cloth::test::function_name("User", "Echo", {"int32"}) +
+                       "(i32 1)"),
+      "static call gained an ABI receiver");
   test.expect(
       sources.contains("call void @cloth_rt_require_receiver(ptr %receiver)"),
       "unqualified call did not forward its receiver");
   test.expect(sources.contains("call void @cloth_rt_require_receiver(ptr %v0)"),
               "instance-qualified call did not pass its object");
-  test.expect(sources.contains("call ptr @_C1C4_User4_UserP0()"),
-              "constructor call gained an ABI receiver");
+  test.expect(
+      sources.contains("call ptr @" +
+                       cloth::test::constructor_name("User", "User") + "()"),
+      "constructor call gained an ABI receiver");
 }
 
 void static_members(TestContext& test) {
@@ -558,18 +594,27 @@ void static_members(TestContext& test) {
   sources.compile(cloth::LlvmIrOptions{true});
 
   test.expect(sources.llvm.has_value(), "static member module failed to emit");
+  test.expect(sources.contains(
+                  "@" + cloth::test::static_field_name("Statics", "Version") +
+                  " = constant i32 12, align 4"),
+              "static field was not emitted as constant global storage");
+  test.expect(sources.contains(
+                  "define i32 @" +
+                  cloth::test::function_name("Statics", "Twice", {"int32"}) +
+                  "(i32 %arg"),
+              "static function gained a receiver parameter");
+  test.expect(sources.contains(
+                  "load i32, ptr @" +
+                  cloth::test::static_field_name("Statics", "Version") + "") &&
+                  sources.contains("call i32 @" +
+                                   cloth::test::function_name(
+                                       "Statics", "Twice", {"int32"}) +
+                                   "(i32 %v"),
+              "unqualified static call did not use receiver-free ABI");
   test.expect(
-      sources.contains("@_C1S7_Statics7_Version = constant i32 12, align 4"),
-      "static field was not emitted as constant global storage");
-  test.expect(
-      sources.contains("define i32 @_C1F7_Statics5_TwiceP1_i32(i32 %arg"),
-      "static function gained a receiver parameter");
-  test.expect(
-      sources.contains("load i32, ptr @_C1S7_Statics7_Version") &&
-          sources.contains("call i32 @_C1F7_Statics5_TwiceP1_i32(i32 %v"),
-      "unqualified static call did not use receiver-free ABI");
-  test.expect(sources.contains("call i32 @_C1F7_Statics4_MainP0()"),
-              "native entry adapter did not call static Main directly");
+      sources.contains("call i32 @" +
+                       cloth::test::function_name("Statics", "Main") + "()"),
+      "native entry adapter did not call static Main directly");
 }
 
 void null_ergonomics(TestContext& test) {
@@ -700,14 +745,16 @@ void wasm32_module(TestContext& test) {
   test.expect(sources.contains("target triple = \"wasm32-unknown-unknown\""),
               "wasm32 triple is missing");
   test.expect(
-      sources.contains("@.cloth.type.0 = private constant { i64, ptr, ptr, "
+      sources.contains("@" + cloth::test::descriptor_name("Small") +
+                       " = constant { i64, ptr, ptr, "
                        "i64, i64, i64, ptr, i64, ptr, i64, ptr, i64 } { i64 "
                        "0, ptr "
                        "null, ptr "
                        "@.cloth.str.0, i64 5, i64 12, i64 4, ptr null, "
                        "i64 0, ptr @.cloth.type.virtuals.0, i64 2, ptr null, "
                        "i64 0 }") &&
-          sources.contains("call ptr @cloth_rt_alloc(ptr @.cloth.type.0)"),
+          sources.contains("call ptr @cloth_rt_alloc(ptr @" +
+                           cloth::test::descriptor_name("Small") + ")"),
       "wasm32 object descriptor did not preserve its ABI layout");
   test.expect(sources.contains(" = phi i32 ") &&
                   sources.contains("call i32 @cloth_rt_array_length(ptr ") &&
@@ -756,19 +803,24 @@ void print_and_native_entry_point(TestContext& test) {
       "object print intrinsic was not lowered");
   test.expect(sources.contains("call void @cloth_rt_print_newline()"),
               "println did not lower its line feed");
-  test.expect(sources.contains("define void @_C1F10_HelloWorld4_MainP0()") &&
+  test.expect(sources.contains(
+                  "define void @" +
+                  cloth::test::function_name("HelloWorld", "Main") + "()") &&
                   sources.contains("ret void") &&
                   sources.contains("define i32 @main()") &&
-                  sources.contains("call void @_C1F10_HelloWorld4_MainP0()"),
+                  sources.contains(
+                      "call void @" +
+                      cloth::test::function_name("HelloWorld", "Main") + "()"),
               "explicit void Main or its native entry adapter was not emitted");
 
   CompiledSources exit_code;
   exit_code.add("Program.co", "static func Main(): int32 { return 7; }\n");
   exit_code.compile(cloth::LlvmIrOptions{true});
-  test.expect(
-      exit_code.contains("%exit_code = call i32 @_C1F7_Program4_MainP0()") &&
-          exit_code.contains("ret i32 %exit_code"),
-      "int32 Main did not supply the process exit code");
+  test.expect(exit_code.contains("%exit_code = call i32 @" +
+                                 cloth::test::function_name("Program", "Main") +
+                                 "()") &&
+                  exit_code.contains("ret i32 %exit_code"),
+              "int32 Main did not supply the process exit code");
 }
 
 void rejects_invalid_native_entry_points(TestContext& test) {

@@ -1,6 +1,7 @@
 #include "cloth/abi/abi.h"
 
 #include "cloth/mir/mir.h"
+#include "cloth/sema/canonical_identity.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/sema/visibility.h"
 #include "cloth/target/data_layout.h"
@@ -90,65 +91,6 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
   return make_type_layout(type, AbiTypeKind::kInvalid, 0, 0, 1);
 }
 
-std::string encode_name(std::string_view name) {
-  return std::to_string(name.size()) + "_" + std::string{name};
-}
-
-std::string encode_type(TypeId type, const SemanticModel& semantics) {
-  const SemanticType& semantic_type = semantics.type(type);
-  switch (semantic_type.kind) {
-    case TypeKind::kError:
-      return "e";
-    case TypeKind::kVoid:
-      return "v";
-    case TypeKind::kNull:
-      return "n";
-    case TypeKind::kBool:
-      return "b";
-    case TypeKind::kChar:
-      return "c";
-    case TypeKind::kByte:
-      return "y";
-    case TypeKind::kInt8:
-      return "i8";
-    case TypeKind::kInt16:
-      return "i16";
-    case TypeKind::kInt32:
-      return "i32";
-    case TypeKind::kInt64:
-      return "i64";
-    case TypeKind::kUint8:
-      return "u8";
-    case TypeKind::kUint16:
-      return "u16";
-    case TypeKind::kUint32:
-      return "u32";
-    case TypeKind::kUint64:
-      return "u64";
-    case TypeKind::kFloat32:
-      return "f32";
-    case TypeKind::kFloat64:
-      return "f64";
-    case TypeKind::kString:
-      return "s";
-    case TypeKind::kObject:
-      return "o";
-    case TypeKind::kFileClass:
-      return "r" + encode_name(semantic_type.name);
-    case TypeKind::kInterface:
-      return "i" + encode_name(semantic_type.name);
-    case TypeKind::kArray:
-      return semantic_type.element_type
-                 ? "a" + encode_type(*semantic_type.element_type, semantics)
-                 : "ae";
-    case TypeKind::kNullable:
-      return semantic_type.element_type
-                 ? encode_type(*semantic_type.element_type, semantics)
-                 : "e";
-  }
-  return "e";
-}
-
 AbiLinkage lower_linkage(Visibility visibility) noexcept {
   return visibility == Visibility::kPublic ? AbiLinkage::kExternal
                                            : AbiLinkage::kInternal;
@@ -211,14 +153,19 @@ AbiTypeDescriptor lower_type_descriptor(const AbiClassLayout& layout,
   }
   std::ranges::sort(interfaces, {},
                     &AbiTypeDescriptor::InterfaceDispatch::interface_id);
-  return AbiTypeDescriptor{AbiHeapObjectKind::kFileClass,
-                           parent_file,
-                           class_symbol.name,
-                           layout.size,
-                           layout.alignment,
-                           std::move(reference_offsets),
-                           file.virtual_functions,
-                           std::move(interfaces)};
+  return AbiTypeDescriptor{
+      AbiHeapObjectKind::kFileClass,
+      parent_file,
+      class_symbol.name,
+      layout.size,
+      layout.alignment,
+      std::move(reference_offsets),
+      file.virtual_functions,
+      std::move(interfaces),
+      file.kind == FileTypeKind::kClass
+          ? mangle_canonical_identity(canonical_member_identity(
+                file.identity, CanonicalMemberKind::kDescriptor, ""))
+          : std::string{}};
 }
 
 AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
@@ -250,51 +197,33 @@ AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
                          ? mangle_abi_constructor_initializer(symbol, semantics)
                          : std::string{},
                      return_type,
-                     std::move(parameters)};
+                     std::move(parameters),
+                     kind == AbiCallableKind::kConstructor
+                         ? lower_linkage(symbol.visibility)
+                         : AbiLinkage::kInternal};
 }
 
 }  // namespace
 
 std::string mangle_abi_symbol(const SemanticSymbol& symbol,
                               const SemanticModel& semantics) {
-  std::string result = "_C1";
-  result += symbol.kind == SymbolKind::kConstructor ? 'C' : 'F';
-  if (symbol.file) {
-    const FileSemantics& file = semantics.file(*symbol.file);
-    result += encode_name(semantics.symbol(file.symbol).name);
-  } else {
-    result += encode_name("invalid");
-  }
-  result += encode_name(symbol.name);
-  result += 'P';
-  result += std::to_string(symbol.parameter_types.size());
-  for (const TypeId parameter : symbol.parameter_types) {
-    result += '_';
-    result += encode_type(parameter, semantics);
-  }
-  return result;
+  return mangle_canonical_identity(
+      canonical_symbol_identity(symbol, semantics,
+                                symbol.kind == SymbolKind::kConstructor
+                                    ? CanonicalMemberKind::kConstructor
+                                    : CanonicalMemberKind::kFunction));
 }
 
 std::string mangle_abi_static_field(const SemanticSymbol& symbol,
                                     const SemanticModel& semantics) {
-  std::string result = "_C1S";
-  if (symbol.file) {
-    const FileSemantics& file = semantics.file(*symbol.file);
-    result += encode_name(semantics.symbol(file.symbol).name);
-  } else {
-    result += encode_name("invalid");
-  }
-  result += encode_name(symbol.name);
-  return result;
+  return mangle_canonical_identity(canonical_symbol_identity(
+      symbol, semantics, CanonicalMemberKind::kStaticField));
 }
 
 std::string mangle_abi_constructor_initializer(const SemanticSymbol& symbol,
                                                const SemanticModel& semantics) {
-  std::string result = mangle_abi_symbol(symbol, semantics);
-  if (result.starts_with("_C1C")) {
-    result[3] = 'I';
-  }
-  return result;
+  return mangle_canonical_identity(canonical_symbol_identity(
+      symbol, semantics, CanonicalMemberKind::kConstructorInitializer));
 }
 
 AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,

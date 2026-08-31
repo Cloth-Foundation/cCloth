@@ -2,6 +2,7 @@
 
 #include "cloth/abi/abi.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
+#include "cloth/identity/package_identity.h"
 #include "cloth/lexer/literal.h"
 #include "cloth/lexer/token.h"
 #include "cloth/mir/mir.h"
@@ -432,6 +433,17 @@ class ModuleEmitter {
         options_(options) {}
 
   std::optional<LlvmIrModule> emit() {
+    if (options_.package &&
+        (options_.emit_native_entry_point || options_.entry_file ||
+         !is_valid_package_name(options_.package->name) ||
+         !is_valid_package_version(options_.package->version) ||
+         std::ranges::none_of(
+             semantics_.files(), [&](const FileSemantics& file) {
+               return file.identity.package == *options_.package;
+             }))) {
+      report(fallback_range(), "invalid package ownership or entry options");
+      return std::nullopt;
+    }
     if (mir_.files.size() != abi_.files.size()) {
       report(fallback_range(), "MIR and ABI file counts differ");
       return std::nullopt;
@@ -444,12 +456,22 @@ class ModuleEmitter {
     }
     for (const AbiFileClass& file : abi_.files) {
       if (file.kind == FileTypeKind::kClass) {
-        add_type_descriptor(file.file, file.type_descriptor);
+        if (owns(file)) {
+          add_type_descriptor(file.file, file.type_descriptor);
+        } else {
+          globals_.push_back(type_descriptor_global_name(file.file) +
+                             " = external constant { i64, ptr, ptr, i64, i64, "
+                             "i64, ptr, i64, ptr, i64, ptr, i64 }");
+        }
       }
     }
     for (std::size_t index = 0; index < mir_.files.size(); ++index) {
       if (abi_.files[index].kind == FileTypeKind::kClass) {
-        emit_file(mir_.files[index], abi_.files[index]);
+        if (owns(abi_.files[index])) {
+          emit_file(mir_.files[index], abi_.files[index]);
+        } else {
+          emit_imported_declarations(abi_.files[index]);
+        }
       }
     }
     if (options_.emit_native_entry_point) {
@@ -728,7 +750,7 @@ class ModuleEmitter {
             : "null";
     std::ostringstream global;
     global << descriptor_global
-           << " = private constant { i64, ptr, ptr, i64, i64, i64, ptr, i64, "
+           << " = constant { i64, ptr, ptr, i64, i64, i64, ptr, i64, "
               "ptr, i64, ptr, i64 } { i64 "
            << static_cast<std::uint64_t>(descriptor.kind) << ", ptr "
            << parent_global << ", ptr " << name_global << ", i64 "
@@ -746,8 +768,8 @@ class ModuleEmitter {
     return type_descriptor_globals_.at(file.value);
   }
 
-  static std::string type_descriptor_global_name(FileId file) {
-    return "@.cloth.type." + std::to_string(file.value);
+  std::string type_descriptor_global_name(FileId file) const {
+    return "@" + abi_.files.at(file.value).type_descriptor.mangled_name;
   }
 
   void report(SourceRange range, std::string message) {
@@ -756,6 +778,50 @@ class ModuleEmitter {
   }
 
  private:
+  bool owns(const AbiFileClass& file) const {
+    return !options_.package ||
+           semantics_.file(file.file).identity.package == *options_.package;
+  }
+
+  void emit_imported_callable(const AbiCallable& callable) {
+    if (callable.linkage != AbiLinkage::kExternal) {
+      return;
+    }
+    definitions_ << "declare " << llvm_type(callable.return_type) << " @"
+                 << callable.mangled_name << '(';
+    for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
+      if (index != 0) {
+        definitions_ << ", ";
+      }
+      definitions_ << llvm_type(callable.parameters[index].type);
+    }
+    definitions_ << ")\n";
+    if (callable.kind == AbiCallableKind::kConstructor &&
+        callable.initializer_linkage == AbiLinkage::kExternal) {
+      definitions_ << "declare void @" << callable.initializer_mangled_name
+                   << "(ptr";
+      for (const AbiParameter& parameter : callable.parameters) {
+        definitions_ << ", " << llvm_type(parameter.type);
+      }
+      definitions_ << ")\n";
+    }
+  }
+
+  void emit_imported_declarations(const AbiFileClass& file) {
+    for (const AbiStaticField& field : file.static_fields) {
+      if (field.linkage == AbiLinkage::kExternal) {
+        globals_.push_back("@" + field.mangled_name + " = external constant " +
+                           llvm_type(field.type));
+      }
+    }
+    for (const AbiCallable& callable : file.functions) {
+      emit_imported_callable(callable);
+    }
+    for (const AbiCallable& callable : file.constructors) {
+      emit_imported_callable(callable);
+    }
+  }
+
   void emit_file(const MirFileClass& mir_file, const AbiFileClass& abi_file) {
     for (const MemberReference& member : abi_file.member_order) {
       switch (member.kind) {
@@ -840,8 +906,12 @@ class ModuleEmitter {
   void emit_constructor_initializer(const AbiFileClass& file,
                                     const MirCallable& mir_callable,
                                     const AbiCallable& callable) {
-    definitions_ << "define internal void @"
-                 << callable.initializer_mangled_name << "(ptr %self";
+    definitions_ << "define "
+                 << (callable.initializer_linkage == AbiLinkage::kInternal
+                         ? "internal "
+                         : "")
+                 << "void @" << callable.initializer_mangled_name
+                 << "(ptr %self";
     for (const AbiParameter& parameter : callable.parameters) {
       definitions_ << ", " << llvm_type(parameter.type) << " %arg"
                    << parameter.symbol.value;

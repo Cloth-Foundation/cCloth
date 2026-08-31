@@ -13,6 +13,8 @@ add_library(cloth_compiler
     hir/hir.cc
     hir/hir_printer.cc
     hir/hir_verifier.cc
+    identity/canonical_identity.cc
+    identity/package_identity.cc
     lexer/lexer.cc
     lexer/literal.cc
     lexer/token.cc
@@ -23,6 +25,7 @@ add_library(cloth_compiler
     parser/definition_pass.cc
     parser/expression_parser.cc
     parser/parser.cc
+    sema/canonical_identity.cc
     sema/file_class_symbols.cc
     sema/field_initialization_analysis.cc
     sema/numeric_types.cc

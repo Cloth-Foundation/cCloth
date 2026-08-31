@@ -122,9 +122,9 @@ void package_dependency_import(TestContext& test) {
   compilation.set_package_dependencies(
       {cloth::CompilationDependency{"app", "models", "models"}});
   for (cloth::ShuttleSourceInput& source : plan->sources) {
-    compilation.add_package_source(std::move(source.source),
-                                   std::move(source.package),
-                                   std::move(source.source_package));
+    compilation.add_package_source(
+        std::move(source.source), std::move(source.package),
+        std::move(source.source_package), std::move(source.version));
   }
   cloth::DiagnosticEngine diagnostics;
   const cloth::CompilationResult result = compilation.analyze(diagnostics);

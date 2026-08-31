@@ -67,8 +67,10 @@ arguments as an argument vector without a command shell. Protocol version 1
 defines its argument shape, path encoding, version query, exit statuses, and
 diagnostic transport in
 [`shuttle/docs/compiler_protocol.md`](../shuttle/docs/compiler_protocol.md).
-Stage 23 will freeze the independently compiled artifact boundary and linking
-behavior.
+Stage 23 defines the independently compiled artifact boundary and linking
+behavior. The [artifact contract](proposals/stage_23_artifacts.md) and companion
+[process-v2 proposal](../shuttle/docs/proposals/compiler_protocol_v2.md) are
+approved for implementation, not a claim of implemented protocol-v2 support.
 
 ## Source imports
 

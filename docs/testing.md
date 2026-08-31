@@ -152,3 +152,26 @@ Clang/MSVC-library ASan/UBSan compiler:
 The Unix-only symbolic-link case remains platform-conditioned and was not run
 on this Windows host. Remote dependencies, separate artifacts, caching, and
 additional native targets remain outside Stage 22's approved scope.
+
+## Stage 23.2 identity foundation audit
+
+Verified on Windows on 2026-08-31 with the GNU development compiler and the
+Clang ASan/UBSan compiler:
+
+- 90/90 CTest entries pass in each configuration, including the 17 shared
+  Shuttle protocol/native cases;
+- the new identity suite fixes encoded byte/hash vectors and checks aliases,
+  relocation, source order, exact versions, domain separation, nullability,
+  package validation, and corrupted descriptor/initializer ABI metadata; and
+- existing native inheritance, interface, GC, entry, and deterministic-output
+  tests pass with ABI-2 names and external descriptor/initializer ownership.
+
+Both builds use warnings as errors; the C++ `check_format` target and both
+repositories' `git diff --check` also pass.
+
+Package-scoped LLVM unit coverage checks owning definitions, external
+dependency declarations, private-body exclusion, and rejected entry options.
+It currently uses a verified whole-project graph. This is not a Stage 23 exit
+audit: artifact deserialization, source-free imported-declaration reconstruction,
+protocol-v2 compile/link orchestration, and separate native-link equivalence
+remain outstanding.

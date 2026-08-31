@@ -130,17 +130,6 @@ std::string qualified_file_name(std::string_view owning_package,
   return result;
 }
 
-std::uint64_t interface_id(std::string_view qualified_name) noexcept {
-  constexpr std::uint64_t kOffset = 14695981039346656037ULL;
-  constexpr std::uint64_t kPrime = 1099511628211ULL;
-  std::uint64_t result = kOffset;
-  for (const char character : qualified_name) {
-    result ^= static_cast<unsigned char>(character);
-    result *= kPrime;
-  }
-  return result;
-}
-
 }  // namespace
 
 class SemanticAnalyzer {
@@ -240,8 +229,13 @@ class SemanticAnalyzer {
       file.is_abstract = syntax.is_abstract;
       file.is_sealed = syntax.is_sealed;
       file.kind = syntax.kind;
+      file.identity = NominalIdentity{
+          PackageIdentity{syntax.owning_package, syntax.owning_package_version},
+          syntax.package_name, syntax.name,
+          syntax.kind == FileTypeKind::kInterface ? NominalKind::kInterface
+                                                  : NominalKind::kClass};
       if (syntax.kind == FileTypeKind::kInterface) {
-        file.interface_id = interface_id(syntax.qualified_name);
+        file.interface_id = canonical_interface_id(file.identity);
       }
       if (syntax.is_abstract && syntax.is_sealed) {
         diagnostics_.error(syntax.range,

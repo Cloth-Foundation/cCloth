@@ -4,6 +4,7 @@
 #include "cloth/abi/abi_verifier.h"
 #include "cloth/flow/control_flow.h"
 #include "cloth/hir/hir_verifier.h"
+#include "cloth/identity/package_identity.h"
 #include "cloth/lexer/lexer.h"
 #include "cloth/mir/mir.h"
 #include "cloth/mir/mir_verifier.h"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -175,13 +177,15 @@ void Compilation::add_source(SourceFile source, std::string package_name) {
 
 void Compilation::add_package_source(SourceFile source,
                                      std::string owning_package,
-                                     std::string source_package) {
+                                     std::string source_package,
+                                     std::string package_version) {
   units_.push_back(Unit{std::move(source),
                         std::move(source_package),
                         std::move(owning_package),
                         {},
                         {},
-                        std::nullopt});
+                        std::nullopt,
+                        std::move(package_version)});
 }
 
 void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
@@ -201,13 +205,30 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
     }
   }
   std::set<std::string> loaded_packages;
+  std::map<std::string, std::string> package_versions;
 
   auto prepare_unit = [&](Unit& unit) {
     if (!unit.owning_package.empty()) {
+      if (!is_valid_package_name(unit.owning_package) ||
+          !is_valid_package_version(unit.package_version)) {
+        diagnostics.error(source_origin(unit.source),
+                          "source has an invalid owning package identity");
+      }
+      const auto [previous, inserted] =
+          package_versions.emplace(unit.owning_package, unit.package_version);
+      if (!inserted && previous->second != unit.package_version) {
+        diagnostics.error(source_origin(unit.source),
+                          "multiple versions of owning package '" +
+                              unit.owning_package + "'");
+      }
       if (!valid_package_name(unit.package_name)) {
         diagnostics.error(source_origin(unit.source),
                           "source has an invalid package name");
       }
+    } else if (!unit.package_version.empty()) {
+      diagnostics.error(
+          source_origin(unit.source),
+          "standalone source has a package version without an owner");
     } else if (normalized_source_root) {
       const auto path = absolute_path(unit.source.path());
       if (!path || !is_within(*normalized_source_root, *path)) {
@@ -236,6 +257,7 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
     unit.parse_result->file_class.package_name = unit.package_name;
     unit.parse_result->file_class.qualified_name = unit.qualified_name;
     unit.parse_result->file_class.owning_package = unit.owning_package;
+    unit.parse_result->file_class.owning_package_version = unit.package_version;
     for (ImportDecl& import : unit.parse_result->file_class.imports) {
       import.target_package = unit.owning_package;
       if (unit.owning_package.empty() || import.package_name.empty()) {

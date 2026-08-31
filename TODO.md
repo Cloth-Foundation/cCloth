@@ -17,8 +17,9 @@ Rules:
 ## Active stage
 
 Stage 22 is complete, including the cross-tool exit audit in `docs/testing.md`.
-No stage is active. Stage 23 remains planned and requires its artifact-contract
-approval before implementation. The ownership boundary is recorded in
+Stage 23 is active. The [23.1 contract](docs/proposals/stage_23_artifacts.md)
+and implementation start were approved on 2026-08-31. Work is at 23.2; process
+orchestration remains 23.3. The ownership boundary is recorded in
 `docs/shuttle_and_compiler.md`.
 
 ## Scheduled work
@@ -63,10 +64,30 @@ approval before implementation. The ownership boundary is recorded in
 
 ### Stage 23: Shuttle-orchestrated separate compilation and linking
 
-- [ ] **23.1 — Artifact contract.** Define the versioned package artifact and
-  the semantic, MIR/ABI, and dependency metadata it owns.
+- [x] **23.1 — Artifact contract.** Define the versioned package artifact and
+  the semantic/ABI, native payload, and dependency metadata it owns. Approve
+  the [artifact proposal](docs/proposals/stage_23_artifacts.md) and
+  [process-v2 proposal](shuttle/docs/proposals/compiler_protocol_v2.md), including
+  check-only artifacts, compatibility, validation, and deliberate non-goals.
 - [ ] **23.2 — Canonical identity.** Preserve type descriptors, interface
-  identities, mangled callables, and runtime registration across artifacts.
+  identities, mangled callables, constructor initializer linkage, and runtime
+  ownership across artifacts. Implement imported declaration/ABI views and
+  bounded artifact serialization/verification with canonical schema fixtures;
+  do not serialize MIR or dependency bodies.
+
+  - [x] Retain exact package versions and implement canonical type/member
+    identities with fixed encoding/hash fixtures and order/alias/path tests.
+  - [x] Give descriptors canonical ownership, expose accessible constructor
+    initializers, and add a package-scoped LLVM definition/declaration boundary.
+  - [ ] Build owned, verified imported declaration/ABI views without synthetic
+    source ASTs or dependency bodies.
+  - [ ] Freeze artifact record-schema fixtures and implement bounded canonical
+    serialization, integrity/compatibility validation, and malformed-input tests.
+
+  The implemented foundation is documented in
+  [canonical identity](docs/canonical_identity.md). 23.2 remains open; the backend
+  partition currently consumes a verified whole-project graph, not artifacts.
+
 - [ ] **23.3 — Link pipeline.** Make Shuttle order and invoke deterministic
   compilation and linking while the compiler diagnoses duplicate, missing, or
   incompatible artifact definitions.

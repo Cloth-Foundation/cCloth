@@ -50,9 +50,14 @@ This keeps token lexemes, syntax names, and source-range file names valid
 through semantic analysis and HIR consumption.
 
 Project compilations sort sources by qualified identity before allocating
-stable `FileId`, `TypeId`, and `SymbolId` handles. Explicit standalone
+compilation-local `FileId`, `TypeId`, and `SymbolId` handles. Explicit standalone
 compilations preserve input order. Source files whose qualified identities
 differ only by ASCII case are rejected on every host.
+
+Persistent identity is separate from those handles. `FileSemantics` retains an
+owned canonical identity containing the package name/version, source namespace,
+file stem, and type kind. ABI mangling and interface IDs use it without changing
+display names or import aliases. See [canonical identity](canonical_identity.md).
 
 ## Types
 

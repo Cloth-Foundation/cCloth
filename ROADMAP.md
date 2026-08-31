@@ -1,9 +1,10 @@
 # Cloth compiler roadmap
 
 This roadmap is the authoritative order of compiler stages. `TODO.md` owns the
-work items inside that order, while files under `docs/` define behavior that is
-already implemented. A backlog item is not scheduled merely because it is
-documented.
+work items inside that order, while the owning contracts under `docs/` define
+implemented behavior. Drafts under `docs/proposals/` are explicitly marked and
+are not implementation claims. A backlog item is not scheduled merely because
+it is documented.
 
 Stages that cross the Shuttle boundary record their shared objective and exit
 criteria here. Shuttle owns its implementation order and work ledger in the
@@ -61,7 +62,7 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 21 | Fixed-width integer operators and host-independent byte-order operations |
 
 Stage 21 is the current completed language baseline. Coordinated toolchain Stage
-22 is complete, including its cross-tool exit audit. Stage 23 remains planned.
+22 is complete, including its cross-tool exit audit. Stage 23 is active.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -150,7 +151,12 @@ The exit audit and repeatable verification commands are recorded in
 
 ## Stage 23: Shuttle-orchestrated separate compilation and linking
 
-Status: **planned**
+Status: **active**
+
+The [23.1 artifact proposal](docs/proposals/stage_23_artifacts.md) and companion
+[process-v2 proposal](shuttle/docs/proposals/compiler_protocol_v2.md) were
+approved with implementation authorization on 2026-08-31. Work begins at 23.2;
+approval does not mean the artifact or process interfaces are implemented.
 
 Objective: let Shuttle compile manifest-defined local packages independently
 while the compiler preserves canonical Cloth type, descriptor, callable, and
@@ -162,7 +168,8 @@ Deliverables:
 
 1. Freeze the compiler-owned package artifact boundary and its versioning rules.
 2. Preserve canonical mangling, type descriptors, interface identities, and
-   runtime registration across compilation units.
+   runtime ownership across compilation units; provide verified imported
+   declaration/ABI views and artifact serialization without persisting MIR.
 3. Have Shuttle order and invoke compilation and linking of local dependency
    artifacts with deterministic duplicate and mismatch diagnostics.
 4. Prove behavior with multi-package ABI, linker, and native integration tests.

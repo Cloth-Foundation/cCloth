@@ -19,6 +19,9 @@ struct LlvmIrModule {
 struct LlvmIrOptions {
   bool emit_native_entry_point{false};
   std::optional<std::string> entry_file{};
+  // Restricts definitions to one package; dependencies are ABI declarations.
+  // Package modules never contain a native entry wrapper.
+  std::optional<PackageIdentity> package{};
 };
 
 // Selects and validates the executable entry independently of IR emission.

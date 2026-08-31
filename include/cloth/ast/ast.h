@@ -355,6 +355,7 @@ struct FileClassDecl {
   FileTypeKind kind{FileTypeKind::kClass};
   std::vector<TypeSyntax> interfaces{};
   std::string owning_package{};
+  std::string owning_package_version{};
 };
 
 [[nodiscard]] std::string_view declaration_kind_name(

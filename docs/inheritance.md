@@ -136,15 +136,16 @@ initialization marker before the constructor body. Its verifier requires
 exactly one marker per constructor, the semantic base call when present, and
 the base-before-fields ordering.
 
-The ABI gives each constructor two entries. The allocating `_C1C` entry accepts
+The ABI gives each constructor two entries. The allocation entry accepts
 declared parameters, allocates the complete object, initializes it, and returns
 the reference. Its linkage follows constructor visibility: public constructors
-are externally linkable and private constructors remain internal. The internal
-`_C1I` initializer entry accepts `self` followed by the declared parameters and
-returns `void`. Base chaining calls `_C1I` on the same object, preventing a
-second allocation and preserving the most-derived descriptor throughout
-construction. Both entries root `self` for the complete initialization
-sequence.
+are externally linkable and private constructors remain internal. The
+initialization entry accepts `self` followed by the declared parameters and
+returns `void`. It is externally linkable for accessible constructors and
+internal for private constructors. Base chaining calls that entry on the same
+object, preventing a second allocation and preserving the most-derived
+descriptor throughout construction. Both entries root `self` for the complete initialization
+sequence. Both entries use [ABI-2 canonical identities](canonical_identity.md).
 
 ## Inherited member lookup
 

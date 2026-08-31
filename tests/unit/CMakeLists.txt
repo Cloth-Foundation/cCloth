@@ -1,5 +1,6 @@
 cloth_add_unit_test(cloth_abi_tests abi_tests.cc)
 cloth_add_unit_test(cloth_backend_tests backend_tests.cc)
+cloth_add_unit_test(cloth_identity_tests identity_tests.cc)
 cloth_add_unit_test(cloth_lexer_tests lexer_tests.cc)
 cloth_add_unit_test(cloth_parser_tests parser_tests.cc)
 cloth_add_unit_test(cloth_project_tests project_tests.cc)

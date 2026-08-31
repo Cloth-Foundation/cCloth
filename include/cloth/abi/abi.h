@@ -72,6 +72,7 @@ struct AbiTypeDescriptor {
                            const InterfaceDispatch&) = default;
   };
   std::vector<InterfaceDispatch> interfaces{};
+  std::string mangled_name{};
 
   friend bool operator==(const AbiTypeDescriptor&,
                          const AbiTypeDescriptor&) = default;
@@ -123,6 +124,7 @@ struct AbiCallable {
   std::string initializer_mangled_name;
   TypeId return_type;
   std::vector<AbiParameter> parameters;
+  AbiLinkage initializer_linkage{AbiLinkage::kInternal};
 
   friend bool operator==(const AbiCallable&, const AbiCallable&) = default;
 };

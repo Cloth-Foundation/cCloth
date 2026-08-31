@@ -41,12 +41,12 @@ no storage representation. An omitted function return annotation and explicit
 reference representation. A reference has the target pointer size and
 alignment. ABI references are opaque; the contract does not expose a native
 C++ object or commit the future garbage collector to non-moving addresses.
-Array element types remain structural semantic data and use an `a` prefix in
-mangled names. Nullable wrappers erase to the underlying reference encoding,
+Array element types remain structural semantic data in canonical identities.
+Nullable wrappers erase to the underlying reference encoding for overloads,
 so `T` and `T?` have identical layouts and mangling.
 Widening a managed reference to `object` is also representation preserving.
-The canonical mangling code for an explicitly declared `object` parameter is
-`o`; a concrete source type keeps its own encoding.
+An explicitly declared `object` parameter uses its primitive canonical identity;
+a concrete source type keeps its own encoding.
 
 Stage 16.4 derived-to-base widening is likewise representation preserving.
 Because the complete base layout begins at byte zero, neither non-null nor
@@ -88,8 +88,8 @@ layout, so a derived table covers inherited and local references.
 See [garbage_collection.md](garbage_collection.md) for the Stage 13.1 contract.
 
 Static fields are not object fields. Stage 12.2 records them in a separate ABI
-table and emits their literal value as constant global storage. Their `_C1S`
-name includes the qualified file class and field name. Static field linkage is
+table and emits their literal value as constant global storage. Their ABI-2
+name includes the canonical owner and field name. Static field linkage is
 still determined by capitalization.
 
 `string` and arrays remain opaque runtime types and do not use file-class field
@@ -131,17 +131,19 @@ function pointer, and invokes it with the unchanged receiver. ABI verification
 checks identity ordering, contract table lengths, and implementation symbol
 kinds in addition to the existing class-layout invariants.
 
-Each constructor has an allocation entry and an internal initialization entry.
-The `_C1C` allocation entry accepts only declared parameters, returns the new
+Each constructor has an allocation entry and an initialization entry.
+The allocation entry accepts only declared parameters, returns the new
 file-class reference, allocates the complete most-derived object, and runs its
 constructor MIR. Its linkage is external for the uppercase class-name spelling
 and internal for lowercase or underscore-prefixed private spellings.
-The `_C1I` initialization entry accepts a leading `self` slot followed by the
-same parameters and returns `void`. A derived constructor calls the selected
-accessible base `_C1I` entry on the same object before initializing its local
-fields. No base-chain step allocates another object, and the most-derived
-descriptor remains installed throughout construction. Field initializer
-composition and failure behavior remain a backend-lowering responsibility.
+The initialization entry accepts a leading `self` slot followed by the
+same parameters and returns `void`. Its linkage is external for an accessible
+constructor and internal for a private constructor. A derived constructor calls
+the selected accessible base initialization entry on the same object before
+initializing its local fields. No base-chain step allocates another object,
+and the most-derived descriptor remains installed throughout construction.
+Field initializer composition and failure behavior remain a backend-lowering
+responsibility.
 
 Public capitalization produces external linkage. Private capitalization
 produces internal linkage. Callable entry points use the target's C calling
@@ -149,23 +151,17 @@ convention so LLVM and non-Cloth tooling have a stable interoperability point.
 
 ## Mangling
 
-Callable symbols use the ABI-versioned `_C1` prefix. The encoding includes
-callable kind, length-prefixed qualified file-class and member names, parameter
-count, and canonical parameter types. Return types are omitted because Cloth
-does not overload on a return type. Package qualification prevents equal class
-stems in different packages from producing the same native symbol.
+ABI revision 2 uses `_C2` followed by hexadecimal canonical symbol identity.
+Identity includes the exact manifest package version (or a distinct standalone
+owner), source namespace, file kind/stem, member kind/name, and overload parameter
+types. Return types are omitted because Cloth does not overload on a return
+type. Allocation and initialization entries have distinct domain tags.
 
-Constructor allocation and initialization entries differ only in their callable
-kind code (`C` and `I`). Their shared suffix therefore identifies the same
-source constructor unambiguously while keeping the internal entry outside the
-source-level overload set.
-
-For example:
-
-```text
-func Pick(int32 value): int32
-_C1F6_Layout4_PickP1_i32
-```
+Class descriptors now also have canonical external names recorded in the ABI;
+their names no longer contain compilation-local file indices. Source visibility
+and source-visible type names are unchanged. The exact encoding, interface-ID
+algorithm, and package-definition ownership are specified in
+[canonical identity](canonical_identity.md).
 
 The ABI verifier reconstructs canonical layouts and signatures from MIR and the
 semantic model, checks target validity and field bounds, and rejects duplicate

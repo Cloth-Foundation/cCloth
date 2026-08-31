@@ -262,6 +262,12 @@ class AbiVerifier {
   void verify_unique_names() {
     std::unordered_set<std::string> names;
     for (const AbiFileClass& file : abi_.files) {
+      if (file.kind == FileTypeKind::kClass &&
+          (file.type_descriptor.mangled_name.empty() ||
+           !names.insert(file.type_descriptor.mangled_name).second)) {
+        report(symbol_range(file.symbol),
+               "descriptor name is empty or not unique");
+      }
       for (const AbiStaticField& field : file.static_fields) {
         if (!names.insert(field.mangled_name).second) {
           report(symbol_range(field.symbol),

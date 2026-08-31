@@ -338,9 +338,9 @@ int run_protocol(std::span<const std::filesystem::path> arguments) {
   }
   compilation.set_package_dependencies(std::move(dependencies));
   for (cloth::ShuttleSourceInput& source : plan->sources) {
-    compilation.add_package_source(std::move(source.source),
-                                   std::move(source.package),
-                                   std::move(source.source_package));
+    compilation.add_package_source(
+        std::move(source.source), std::move(source.package),
+        std::move(source.source_package), std::move(source.version));
   }
 
   OutputOptions options;

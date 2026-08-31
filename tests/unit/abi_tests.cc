@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "abi_names.h"
 #include "test.h"
 
 namespace {
@@ -226,12 +227,18 @@ void callable_abi(TestContext& test) {
               cloth::AbiParameterKind::kExplicit &&
           constructor.return_type ==
               source.result->semantics.file(cloth::FileId{0}).type &&
-          constructor.initializer_mangled_name == "_C1I6_Layout6_LayoutP1_i32",
+          constructor.initializer_mangled_name ==
+              cloth::test::initializer_name("Layout", "Layout", {"int32"}),
       "constructor allocation or initialization ABI is wrong");
-  test.expect(private_constructor.linkage == cloth::AbiLinkage::kInternal &&
-                  private_constructor.initializer_mangled_name ==
-                      "_C1I6_Layout6_layoutP1_s",
-              "private constructor leaked external ABI linkage");
+  test.expect(
+      private_constructor.linkage == cloth::AbiLinkage::kInternal &&
+          private_constructor.initializer_linkage ==
+              cloth::AbiLinkage::kInternal &&
+          private_constructor.initializer_mangled_name ==
+              cloth::test::initializer_name("Layout", "layout", {"string"}),
+      "private constructor leaked external ABI linkage");
+  test.expect(constructor.initializer_linkage == cloth::AbiLinkage::kExternal,
+              "accessible base constructor initializer has internal linkage");
 }
 
 void static_member_abi(TestContext& test) {
@@ -248,7 +255,8 @@ void static_member_abi(TestContext& test) {
                       source.result->semantics.file(cloth::FileId{0}).fields[1],
               "static field leaked into instance layout");
   test.expect(file.static_fields.size() == 1 &&
-                  file.static_fields[0].mangled_name == "_C1S6_Layout7_Version",
+                  file.static_fields[0].mangled_name ==
+                      cloth::test::static_field_name("Layout", "Version"),
               "static field ABI is missing or unstable");
   test.expect(file.functions[0].parameters.empty(),
               "static function gained a receiver parameter");
@@ -281,9 +289,11 @@ void deterministic_mangling(TestContext& test) {
   const std::vector<cloth::AbiCallable>& functions =
       source.result->abi.files[0].functions;
 
-  test.expect(functions[0].mangled_name == "_C1F6_Layout4_PickP1_i32",
+  test.expect(functions[0].mangled_name ==
+                  cloth::test::function_name("Layout", "Pick", {"int32"}),
               "int32 overload has an unstable mangled name");
-  test.expect(functions[1].mangled_name == "_C1F6_Layout4_PickP1_b",
+  test.expect(functions[1].mangled_name ==
+                  cloth::test::function_name("Layout", "Pick", {"bool"}),
               "bool overload has an unstable mangled name");
   test.expect(functions[0].mangled_name != functions[1].mangled_name,
               "overloads have colliding mangled names");
@@ -303,7 +313,8 @@ void array_abi(TestContext& test) {
   test.expect(layout.kind == cloth::AbiTypeKind::kReference &&
                   layout.storage == cloth::SizeAlignment{8, 8},
               "array ABI is not an opaque reference");
-  test.expect(callable.mangled_name.find("_ai32") != std::string::npos,
+  test.expect(callable.mangled_name ==
+                  cloth::test::function_name("Layout", "First", {"int32[]"}),
               "array parameter has no structural type encoding");
 }
 
@@ -326,7 +337,8 @@ void nullable_abi(TestContext& test) {
   test.expect(layout.kind == cloth::AbiTypeKind::kReference &&
                   layout.storage == cloth::SizeAlignment{8, 8},
               "nullable type does not use reference layout");
-  test.expect(callable.mangled_name == "_C1F6_Layout5_MaybeP1_r6_Layout",
+  test.expect(callable.mangled_name ==
+                  cloth::test::function_name("Layout", "Maybe", {"Layout"}),
               "nullable ABI mangling did not erase the source qualifier");
 }
 
@@ -349,8 +361,8 @@ void package_qualified_mangling(TestContext& test) {
   const std::string& right = result.abi.files[1].functions[0].mangled_name;
   test.expect(left != right,
               "package-qualified callables have colliding names");
-  test.expect(left.find("left.User") != std::string::npos &&
-                  right.find("right.User") != std::string::npos,
+  test.expect(left == cloth::test::function_name("left.User", "Make") &&
+                  right == cloth::test::function_name("right.User", "Make"),
               "mangled names do not retain qualified class identity");
 }
 

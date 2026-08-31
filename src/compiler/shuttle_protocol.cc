@@ -1,5 +1,6 @@
 #include "cloth/compiler/shuttle_protocol.h"
 
+#include "cloth/identity/package_identity.h"
 #include "cloth/sema/visibility.h"
 #include "cloth/source/path.h"
 
@@ -246,112 +247,6 @@ std::expected<ParsedArguments, std::string> parse_arguments(
   return parsed;
 }
 
-bool valid_package_name(std::string_view value) {
-  const auto ascii_lower = [](unsigned char character) {
-    return character >= 'a' && character <= 'z';
-  };
-  const auto ascii_digit = [](unsigned char character) {
-    return character >= '0' && character <= '9';
-  };
-  if (value.empty() || value.size() > 64 ||
-      !ascii_lower(static_cast<unsigned char>(value.front()))) {
-    return false;
-  }
-  bool after_separator = false;
-  for (const char raw_character : value) {
-    const auto character = static_cast<unsigned char>(raw_character);
-    if (character == '-') {
-      if (after_separator) {
-        return false;
-      }
-      after_separator = true;
-    } else if (ascii_lower(character) || ascii_digit(character)) {
-      after_separator = false;
-    } else {
-      return false;
-    }
-  }
-  return !after_separator;
-}
-
-bool valid_semver_identifier(std::string_view value, bool reject_leading_zero) {
-  if (value.empty()) {
-    return false;
-  }
-  const bool numeric = std::ranges::all_of(value, [](char character) {
-    return character >= '0' && character <= '9';
-  });
-  if (numeric && reject_leading_zero && value.size() > 1 &&
-      value.front() == '0') {
-    return false;
-  }
-  return std::ranges::all_of(value, [](char character) {
-    return (character >= '0' && character <= '9') ||
-           (character >= 'A' && character <= 'Z') ||
-           (character >= 'a' && character <= 'z') || character == '-';
-  });
-}
-
-bool valid_semver_identifiers(std::string_view value,
-                              bool reject_leading_zero) {
-  std::size_t begin = 0;
-  while (begin <= value.size()) {
-    const std::size_t end = value.find('.', begin);
-    const std::string_view part =
-        value.substr(begin, end == std::string_view::npos ? value.size() - begin
-                                                          : end - begin);
-    if (!valid_semver_identifier(part, reject_leading_zero)) {
-      return false;
-    }
-    if (end == std::string_view::npos) {
-      return true;
-    }
-    begin = end + 1;
-  }
-  return false;
-}
-
-bool valid_semver(std::string_view value) {
-  const std::size_t build_separator = value.find('+');
-  if (build_separator != std::string_view::npos) {
-    if (value.find('+', build_separator + 1) != std::string_view::npos ||
-        !valid_semver_identifiers(value.substr(build_separator + 1), false)) {
-      return false;
-    }
-    value = value.substr(0, build_separator);
-  }
-  const std::size_t prerelease_separator = value.find('-');
-  if (prerelease_separator != std::string_view::npos) {
-    if (!valid_semver_identifiers(value.substr(prerelease_separator + 1),
-                                  true)) {
-      return false;
-    }
-    value = value.substr(0, prerelease_separator);
-  }
-
-  std::array<std::string_view, 3> core;
-  std::size_t begin = 0;
-  for (std::string_view& part : core) {
-    if (begin > value.size()) {
-      return false;
-    }
-    const std::size_t end = value.find('.', begin);
-    part =
-        value.substr(begin, end == std::string_view::npos ? value.size() - begin
-                                                          : end - begin);
-    begin = end == std::string_view::npos ? value.size() + 1 : end + 1;
-  }
-  if (begin <= value.size()) {
-    return false;
-  }
-  return std::ranges::all_of(core, [](std::string_view part) {
-    return !part.empty() && (part.size() == 1 || part.front() != '0') &&
-           std::ranges::all_of(part, [](char character) {
-             return character >= '0' && character <= '9';
-           });
-  });
-}
-
 bool valid_dependency_alias(std::string_view value) {
   if (value.empty() || value.front() < 'a' || value.front() > 'z') {
     return false;
@@ -505,7 +400,7 @@ std::expected<ShuttleBuildRequest, std::string> validate_request(
     return std::unexpected(
         "native executable output currently supports only target 'x86_64'");
   }
-  if (!parsed.root_package || !valid_package_name(*parsed.root_package)) {
+  if (!parsed.root_package || !is_valid_package_name(*parsed.root_package)) {
     return std::unexpected("--root-package is missing or invalid");
   }
   if (parsed.packages.empty()) {
@@ -515,10 +410,10 @@ std::expected<ShuttleBuildRequest, std::string> validate_request(
   std::map<std::string, std::filesystem::path> package_roots;
   std::set<std::filesystem::path> unique_roots;
   for (ShuttlePackageInput& package : parsed.packages) {
-    if (!valid_package_name(package.name)) {
+    if (!is_valid_package_name(package.name)) {
       return std::unexpected("invalid package name '" + package.name + "'");
     }
-    if (!valid_semver(package.version)) {
+    if (!is_valid_package_version(package.version)) {
       return std::unexpected("invalid package version '" + package.version +
                              "' for package '" + package.name + "'");
     }
@@ -733,7 +628,8 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
                                  source.error().message);
         }
         sources.push_back(ShuttleSourceInput{std::move(*source), package.name,
-                                             std::move(source_package)});
+                                             std::move(source_package),
+                                             package.version});
         ++package_source_count;
       }
     }

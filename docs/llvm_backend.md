@@ -61,7 +61,7 @@ Instance functions receive the Stage 4 receiver slot followed by explicit
 parameters. Instance calls pass their receiver, and unqualified instance calls
 forward the current receiver. Static functions and allocating constructor calls
 have no receiver argument; constructors return the allocated object reference.
-The internal constructor initializer instead receives the existing object as
+The constructor initializer instead receives the existing object as
 its leading `self` argument and returns `void`.
 
 Static scalar fields lower to constant LLVM globals using their verified ABI
@@ -72,11 +72,20 @@ its receiver. An allocating constructor entry allocates the verified
 most-derived class size, installs that class's descriptor, executes the
 constructor MIR, and returns the object. Its LLVM linkage follows the
 constructor declaration's capitalization. Every constructor also has an
-internal initializer entry that executes the same MIR on an incoming `self`
-without allocating. A derived constructor
-invokes the selected accessible base initializer first; the MIR field marker
-then invokes only the derived class's local field helpers in declaration order
-before its body continues.
+initializer entry that executes the same MIR on an incoming `self` without
+allocating. Accessible constructor initializers have external linkage for base
+calls across packages; private constructor initializers remain internal. A
+derived constructor invokes the selected accessible base initializer first;
+the MIR field marker then invokes only the derived class's local field helpers
+in declaration order before its body continues.
+
+Class descriptors use their ABI-2 canonical external symbols rather than local
+file indices. The internal package selector emits only the selected package's
+definitions and declares dependency descriptors and accessible members. It
+rejects entry-wrapper generation in package modules. This currently consumes
+verified whole-project representations; artifact-based input loading and the
+public compile/link protocol are still pending. See
+[canonical identity](canonical_identity.md).
 
 ## Runtime boundary
 
