@@ -179,6 +179,24 @@ repositories' `git diff --check` also pass.
 
 Package-scoped LLVM unit coverage checks owning definitions, external
 dependency declarations, private-body exclusion, and rejected entry options.
-It currently uses a verified whole-project graph. This is the Stage 23.2 audit,
-not the complete Stage 23 exit audit: protocol-v2 compile/link orchestration and
-separate native-link equivalence remain outstanding.
+It uses a verified whole-project graph. At the Stage 23.2 checkpoint,
+protocol-v2 orchestration and separate native linking remained outstanding;
+the next audit records that pipeline work.
+
+## Stage 23.3 pipeline verification
+
+Verified on Windows on 2026-09-01 with the development compiler:
+
+- all 90 CTest entries pass, including direct native regressions;
+- compiler protocol tests cover strict version-2 compile, inspect, and link
+  argument groups plus capability and receipt schemas;
+- imported-package tests compile a consumer using only dependency declaration
+  views, with no dependency source AST, HIR, MIR body, or source access;
+- Shuttle's Rust format, lint, ordinary test, real-compiler check, and native
+  suites pass, covering deterministic diamond scheduling, receipt rejection,
+  compiler failure transport, writer locking, package-object linking, entry
+  selection, output preservation, relocation, spaces, and Unicode paths; and
+- protocol version 1 and direct compiler behavior remain covered and unchanged.
+
+Stage 23.4 still owns whole-project/separate equivalence expansion, malformed
+link-input coverage, and the coordinated development/sanitizer exit audit.

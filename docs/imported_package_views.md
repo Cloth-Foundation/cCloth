@@ -52,5 +52,6 @@ relationships.
 The version-1 `.cpa` reader/writer consumes and reconstructs this view. Its exact
 record schema, bounded canonical encoding, integrity checks, compatibility gate,
 and malformed-input policy are documented in
-[artifact schema v1](artifact_schema_v1.md). Artifact dependency closure and
-import visibility are connected in Stage 23.3.
+[artifact schema v1](artifact_schema_v1.md). Stage 23.3 connects artifact
+dependency closure and direct-alias import visibility without reopening
+dependency source files.

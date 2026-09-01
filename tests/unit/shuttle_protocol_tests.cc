@@ -1,18 +1,21 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/compiler/compilation.h"
 #include "cloth/compiler/shuttle_protocol.h"
+#include "cloth/compiler/shuttle_protocol_v2.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/sema/semantic_model.h"
 
+#include <array>
 #include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "test.h"
@@ -249,6 +252,90 @@ void output_configuration_validation(TestContext& test) {
   expect_rejected(test, arguments);  // Executables require an entry.
 }
 
+void protocol_v2_operations(TestContext& test) {
+  TemporaryDirectory temporary;
+  const auto source_root = temporary.path() / "src";
+  const auto artifact_path = temporary.path() / "dependency.cpa";
+  write_file(source_root / "Main.co", "static func Main() {}\n");
+  write_file(artifact_path, "fixture");
+  const std::string digest(64, '0');
+
+  const std::vector<std::filesystem::path> compile{"--shuttle-protocol",
+                                                   "2",
+                                                   "--operation",
+                                                   "compile",
+                                                   "--target",
+                                                   "wasm32",
+                                                   "--artifact-kind",
+                                                   "interface",
+                                                   "--output",
+                                                   temporary.path() / "app.cpa",
+                                                   "--package",
+                                                   "app",
+                                                   "1.2.3",
+                                                   source_root,
+                                                   "--entry",
+                                                   "Main.co"};
+  auto request = cloth::prepare_shuttle_v2_request(compile);
+  test.expect(request && std::holds_alternative<cloth::ShuttleV2CompileRequest>(
+                             *request),
+              "valid protocol-v2 compile request was rejected");
+
+  const std::array<std::filesystem::path, 6> inspect{
+      "--shuttle-protocol", "2", "--operation", "inspect", "--input",
+      artifact_path};
+  request = cloth::prepare_shuttle_v2_request(inspect);
+  test.expect(request && std::holds_alternative<cloth::ShuttleV2InspectRequest>(
+                             *request),
+              "valid protocol-v2 inspect request was rejected");
+
+  const std::vector<std::filesystem::path> link{"--shuttle-protocol",
+                                                "2",
+                                                "--operation",
+                                                "link",
+                                                "--target",
+                                                "x86_64",
+                                                "--output",
+                                                temporary.path() / "app.exe",
+                                                "--root-package",
+                                                "app",
+                                                "--entry",
+                                                "Main.co",
+                                                "--artifact",
+                                                "app",
+                                                "1.2.3",
+                                                digest,
+                                                artifact_path};
+  request = cloth::prepare_shuttle_v2_request(link);
+  test.expect(
+      request && std::holds_alternative<cloth::ShuttleV2LinkRequest>(*request),
+      "valid protocol-v2 link request was rejected");
+
+  auto invalid = compile;
+  invalid.insert(invalid.end(), {"--input", artifact_path});
+  test.expect(!cloth::prepare_shuttle_v2_request(invalid),
+              "compile accepted an inspect-only option");
+  invalid = compile;
+  invalid[1] = "1";
+  test.expect(!cloth::prepare_shuttle_v2_request(invalid),
+              "protocol-v2 parser accepted protocol 1");
+  invalid = compile;
+  invalid.insert(invalid.end(), {"--artifact-kind", "interface"});
+  test.expect(!cloth::prepare_shuttle_v2_request(invalid),
+              "duplicate singleton option was accepted");
+}
+
+void protocol_v2_json_contract(TestContext& test) {
+  const cloth::ArtifactDigest digest = cloth::sha256("compiler");
+  const std::string capabilities = cloth::shuttle_capabilities_json(digest);
+  test.expect(capabilities.starts_with("{\"schema\":1,\"protocols\":[1,2]") &&
+                  capabilities.contains("\"operations\":[\"compile\","
+                                        "\"inspect\",\"link\"]") &&
+                  capabilities.contains(cloth::artifact_digest_hex(digest)) &&
+                  !capabilities.ends_with('\n'),
+              "capability response does not match protocol schema 1");
+}
+
 }  // namespace
 
 int main() {
@@ -258,6 +345,8 @@ int main() {
       {"invalid protocol graphs", invalid_protocol_graphs},
       {"protocol configuration validation", protocol_configuration_validation},
       {"output configuration validation", output_configuration_validation},
+      {"protocol v2 operations", protocol_v2_operations},
+      {"protocol v2 JSON contract", protocol_v2_json_contract},
   };
   return cloth::test::run_tests(tests);
 }

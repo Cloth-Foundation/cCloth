@@ -1,11 +1,12 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/sema/semantic_analyzer.h"
 
 #include "cloth/lexer/literal.h"
 #include "cloth/lexer/token.h"
+#include "cloth/sema/canonical_identity.h"
 #include "cloth/sema/field_initialization_analysis.h"
 #include "cloth/sema/numeric_types.h"
 
@@ -15,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -139,11 +141,15 @@ std::string qualified_file_name(std::string_view owning_package,
 class SemanticAnalyzer {
  public:
   SemanticAnalyzer(std::span<const FileClassDecl* const> files,
-                   DiagnosticEngine& diagnostics)
-      : files_(files), diagnostics_(diagnostics) {}
+                   DiagnosticEngine& diagnostics,
+                   std::span<const ImportedPackageView> imported_packages)
+      : files_(files),
+        diagnostics_(diagnostics),
+        imported_packages_(imported_packages) {}
 
   SemanticAnalysisResult run() {
     register_file_classes();
+    register_imported_packages();
     register_imports();
     register_type_relationships();
     register_members();
@@ -238,6 +244,7 @@ class SemanticAnalyzer {
           syntax.package_name, syntax.name,
           syntax.kind == FileTypeKind::kInterface ? NominalKind::kInterface
                                                   : NominalKind::kClass};
+      file.member_order = syntax.member_order;
       if (syntax.kind == FileTypeKind::kInterface) {
         file.interface_id = canonical_interface_id(file.identity);
       }
@@ -252,16 +259,313 @@ class SemanticAnalyzer {
     visible_files_.resize(files_.size());
   }
 
+  void register_imported_packages() {
+    if (imported_packages_.empty()) {
+      return;
+    }
+
+    auto imported_range = [](const ImportedSourceLocation& location) {
+      return point_range(SourceLocation{
+          location.path, 0, static_cast<std::uint32_t>(location.line),
+          static_cast<std::uint32_t>(location.column)});
+    };
+    auto report_invalid = [this](std::string_view record) {
+      diagnostics_.error(
+          SourceLocation{"<artifact>", 0, 1, 1},
+          "verified imported declaration could not be registered: " +
+              std::string{record});
+    };
+
+    for (const ImportedPackageView& package : imported_packages_) {
+      for (const ImportedFile& imported : package.files) {
+        if (imported_file_ids_.contains(imported.identity)) {
+          report_invalid(imported.identity);
+          continue;
+        }
+        const FileId file_id{model_.files().size()};
+        const TypeKind type_kind = imported.kind == FileTypeKind::kInterface
+                                       ? TypeKind::kInterface
+                                       : TypeKind::kFileClass;
+        const std::string qualified_name =
+            qualified_file_name(imported.nominal_identity.package.name,
+                                imported.nominal_identity.source_package,
+                                imported.nominal_identity.name);
+        const TypeId type =
+            model_.add_type(SemanticType{type_kind, qualified_name, file_id});
+        const SourceRange range = imported_range(imported.location);
+        const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
+            imported.kind == FileTypeKind::kInterface ? SymbolKind::kInterface
+                                                      : SymbolKind::kFileClass,
+            qualified_name,
+            type,
+            {},
+            imported.visibility,
+            file_id,
+            range});
+        const SymbolId self_symbol =
+            model_.add_symbol(SemanticSymbol{SymbolKind::kSelf,
+                                             "self",
+                                             type,
+                                             {},
+                                             Visibility::kPrivate,
+                                             file_id,
+                                             range});
+        FileSemantics file{type, class_symbol, self_symbol, {}, {}, {}, {}, {}};
+        file.is_abstract = imported.is_abstract;
+        file.is_sealed = imported.is_sealed;
+        file.kind = imported.kind;
+        file.interface_id = imported.interface_id;
+        file.identity = imported.nominal_identity;
+        static_cast<void>(model_.add_file(std::move(file)));
+        imported_file_ids_.emplace(imported.identity, file_id);
+        imported_type_ids_.emplace(imported.identity, type);
+      }
+    }
+
+    for (std::size_t index = 0; index < model_.types().size(); ++index) {
+      const TypeId type{index};
+      imported_type_ids_.try_emplace(canonical_type_identity(type, model_),
+                                     type);
+    }
+    std::size_t remaining_types = 0;
+    for (const ImportedPackageView& package : imported_packages_) {
+      for (const ImportedType& imported : package.types) {
+        if (!imported_type_ids_.contains(imported.identity)) {
+          ++remaining_types;
+        }
+      }
+    }
+    while (remaining_types != 0) {
+      bool made_progress = false;
+      for (const ImportedPackageView& package : imported_packages_) {
+        for (const ImportedType& imported : package.types) {
+          if (imported_type_ids_.contains(imported.identity)) {
+            continue;
+          }
+          std::optional<TypeId> type;
+          if ((imported.kind == TypeKind::kArray ||
+               imported.kind == TypeKind::kNullable) &&
+              imported.element_identity) {
+            const auto element =
+                imported_type_ids_.find(*imported.element_identity);
+            if (element == imported_type_ids_.end()) {
+              continue;
+            }
+            type = imported.kind == TypeKind::kArray
+                       ? model_.get_array_type(element->second)
+                       : model_.get_nullable_type(element->second);
+          } else {
+            for (std::size_t index = 0; index < model_.types().size();
+                 ++index) {
+              const TypeId candidate{index};
+              if (model_.type(candidate).kind == imported.kind &&
+                  canonical_type_identity(candidate, model_) ==
+                      imported.identity) {
+                type = candidate;
+                break;
+              }
+            }
+          }
+          if (!type) {
+            continue;
+          }
+          imported_type_ids_.emplace(imported.identity, *type);
+          --remaining_types;
+          made_progress = true;
+        }
+      }
+      if (!made_progress) {
+        report_invalid("type closure");
+        break;
+      }
+    }
+
+    for (const ImportedPackageView& package : imported_packages_) {
+      for (const ImportedFile& imported_file : package.files) {
+        const auto file_entry = imported_file_ids_.find(imported_file.identity);
+        if (file_entry == imported_file_ids_.end()) {
+          continue;
+        }
+        const FileId file_id = file_entry->second;
+        for (const ImportedMember& imported : imported_file.members) {
+          const auto type = imported_type_ids_.find(imported.type_identity);
+          if (type == imported_type_ids_.end() ||
+              imported_member_ids_.contains(imported.identity)) {
+            report_invalid(imported.identity);
+            continue;
+          }
+          std::vector<TypeId> parameter_types;
+          std::vector<SymbolId> parameter_symbols;
+          bool parameters_valid = true;
+          for (const ImportedParameter& parameter : imported.parameters) {
+            const auto parameter_type =
+                imported_type_ids_.find(parameter.type_identity);
+            if (parameter_type == imported_type_ids_.end()) {
+              parameters_valid = false;
+              break;
+            }
+            parameter_types.push_back(parameter_type->second);
+            const SourceRange range = imported_range(imported.location);
+            const SymbolId parameter_symbol =
+                model_.add_symbol(SemanticSymbol{SymbolKind::kParameter,
+                                                 parameter.name,
+                                                 parameter_type->second,
+                                                 {},
+                                                 Visibility::kPrivate,
+                                                 file_id,
+                                                 range});
+            model_.mutable_symbol(parameter_symbol).is_final =
+                parameter.is_final;
+            parameter_symbols.push_back(parameter_symbol);
+          }
+          if (!parameters_valid) {
+            report_invalid(imported.identity);
+            continue;
+          }
+          SymbolKind kind = SymbolKind::kField;
+          if (imported.kind == ImportedMemberKind::kFunction) {
+            kind = SymbolKind::kFunction;
+          } else if (imported.kind == ImportedMemberKind::kConstructor) {
+            kind = SymbolKind::kConstructor;
+          }
+          const SymbolId symbol = model_.add_symbol(SemanticSymbol{
+              kind, imported.name, type->second, std::move(parameter_types),
+              imported.visibility, file_id, imported_range(imported.location)});
+          SemanticSymbol& semantic = model_.mutable_symbol(symbol);
+          semantic.parameter_symbols = std::move(parameter_symbols);
+          semantic.is_final = imported.is_final;
+          semantic.is_static = imported.is_static;
+          semantic.is_override = imported.is_override;
+          semantic.is_abstract = imported.is_abstract;
+          semantic.virtual_slot = imported.virtual_slot;
+          imported_member_ids_.emplace(imported.identity, symbol);
+        }
+      }
+    }
+
+    auto file_id =
+        [this](const std::string& identity) -> std::optional<FileId> {
+      const auto found = imported_file_ids_.find(identity);
+      return found == imported_file_ids_.end()
+                 ? std::nullopt
+                 : std::optional<FileId>{found->second};
+    };
+    auto member_id =
+        [this](const std::string& identity) -> std::optional<SymbolId> {
+      const auto found = imported_member_ids_.find(identity);
+      return found == imported_member_ids_.end()
+                 ? std::nullopt
+                 : std::optional<SymbolId>{found->second};
+    };
+    for (const ImportedPackageView& package : imported_packages_) {
+      for (const ImportedFile& imported : package.files) {
+        const auto current = file_id(imported.identity);
+        if (!current) {
+          continue;
+        }
+        FileSemantics& semantic_file = model_.mutable_file(*current);
+        if (imported.base_identity) {
+          semantic_file.base_file = file_id(*imported.base_identity);
+        }
+        for (const std::string& identity :
+             imported.direct_interface_identities) {
+          if (const auto interface = file_id(identity)) {
+            semantic_file.direct_interfaces.push_back(*interface);
+          }
+        }
+        for (const std::string& identity : imported.interface_identities) {
+          if (const auto interface = file_id(identity)) {
+            semantic_file.interfaces.push_back(*interface);
+          }
+        }
+
+        std::map<std::string, const ImportedMember*, std::less<>> members;
+        for (const ImportedMember& member : imported.members) {
+          members.emplace(member.identity, &member);
+          const auto symbol = member_id(member.identity);
+          if (!symbol) {
+            continue;
+          }
+          SemanticSymbol& semantic = model_.mutable_symbol(*symbol);
+          if (member.overridden_identity) {
+            semantic.overridden_symbol = member_id(*member.overridden_identity);
+          }
+          if (member.base_constructor_identity) {
+            semantic.base_constructor =
+                member_id(*member.base_constructor_identity);
+          }
+        }
+        for (const std::string& identity : imported.member_order) {
+          const auto member = members.find(identity);
+          const auto symbol = member_id(identity);
+          if (member == members.end() || !symbol) {
+            report_invalid(identity);
+            continue;
+          }
+          if (member->second->kind == ImportedMemberKind::kField) {
+            semantic_file.member_order.push_back(MemberReference{
+                DeclarationKind::kField, semantic_file.fields.size()});
+            semantic_file.fields.push_back(*symbol);
+          } else if (member->second->kind == ImportedMemberKind::kFunction) {
+            semantic_file.member_order.push_back(MemberReference{
+                DeclarationKind::kFunction, semantic_file.functions.size()});
+            semantic_file.functions.push_back(*symbol);
+          } else {
+            semantic_file.member_order.push_back(
+                MemberReference{DeclarationKind::kConstructor,
+                                semantic_file.constructors.size()});
+            semantic_file.constructors.push_back(*symbol);
+          }
+        }
+        for (const std::string& identity :
+             imported.virtual_function_identities) {
+          if (const auto function = member_id(identity)) {
+            semantic_file.virtual_functions.push_back(*function);
+          }
+        }
+        for (const std::string& identity :
+             imported.abstract_function_identities) {
+          if (const auto function = member_id(identity)) {
+            semantic_file.abstract_functions.push_back(*function);
+          }
+        }
+        for (const std::string& identity :
+             imported.interface_function_identities) {
+          if (const auto function = member_id(identity)) {
+            semantic_file.interface_functions.push_back(*function);
+          }
+        }
+        for (const ImportedInterfaceImplementation& implementation :
+             imported.interface_implementations) {
+          const auto interface = file_id(implementation.interface_identity);
+          if (!interface) {
+            report_invalid(implementation.interface_identity);
+            continue;
+          }
+          std::vector<SymbolId> functions;
+          for (const std::string& identity :
+               implementation.function_identities) {
+            if (const auto function = member_id(identity)) {
+              functions.push_back(*function);
+            }
+          }
+          semantic_file.interface_implementations.push_back(
+              InterfaceImplementation{*interface, std::move(functions)});
+        }
+      }
+    }
+  }
+
   void register_imports() {
     for (std::size_t current_index = 0; current_index < files_.size();
          ++current_index) {
       const FileId current_file{current_index};
       const FileClassDecl& current = *files_[current_index];
-      for (std::size_t target_index = 0; target_index < files_.size();
+      for (std::size_t target_index = 0; target_index < model_.files().size();
            ++target_index) {
-        const FileClassDecl& target = *files_[target_index];
-        if (target.owning_package != current.owning_package ||
-            target.package_name != current.package_name) {
+        const FileSemantics& target = model_.file(FileId{target_index});
+        if (target.identity.package.name != current.owning_package ||
+            target.identity.source_package != current.package_name) {
           continue;
         }
         const FileId target_file{target_index};
@@ -271,9 +575,9 @@ class SemanticAnalyzer {
             symbol.visibility == Visibility::kPrivate) {
           continue;
         }
-        visible_files_[current_index].push_back(
-            VisibleFile{target.name, target_file, VisibleFileKind::kSamePackage,
-                        target.range});
+        visible_files_[current_index].push_back(VisibleFile{
+            target.identity.name, target_file, VisibleFileKind::kSamePackage,
+            model_.symbol(target.symbol).range});
       }
 
       for (const ImportDecl& import : current.imports) {
@@ -312,10 +616,10 @@ class SemanticAnalyzer {
 
   void register_wildcard_import(FileId current_file, const ImportDecl& import) {
     bool found_package = false;
-    for (std::size_t index = 0; index < files_.size(); ++index) {
-      const FileClassDecl& target = *files_[index];
-      if (target.owning_package != import.target_package ||
-          target.package_name != import.package_name) {
+    for (std::size_t index = 0; index < model_.files().size(); ++index) {
+      const FileSemantics& target = model_.file(FileId{index});
+      if (target.identity.package.name != import.target_package ||
+          target.identity.source_package != import.package_name) {
         continue;
       }
       found_package = true;
@@ -325,7 +629,7 @@ class SemanticAnalyzer {
       if (symbol.visibility == Visibility::kPrivate) {
         continue;
       }
-      bind_visible_file(current_file, target.name, target_file,
+      bind_visible_file(current_file, target.identity.name, target_file,
                         VisibleFileKind::kWildcardImport, import.range);
     }
     if (!found_package) {
@@ -396,7 +700,7 @@ class SemanticAnalyzer {
                                    "' cannot inherit from sealed file class '" +
                                    base.name + "'");
             diagnostics_.note(
-                point_range(files_[base.file->value]->range.begin),
+                model_.symbol(model_.file(*base.file).symbol).range,
                 "sealed file class is declared here");
             model_.mutable_file(file_id).is_valid = false;
           } else {
@@ -439,7 +743,7 @@ class SemanticAnalyzer {
       }
     }
 
-    for (std::size_t left = 0; left < files_.size(); ++left) {
+    for (std::size_t left = 0; left < model_.files().size(); ++left) {
       const FileSemantics& left_file = model_.file(FileId{left});
       if (!left_file.interface_id) {
         continue;
@@ -447,9 +751,9 @@ class SemanticAnalyzer {
       for (std::size_t right = 0; right < left; ++right) {
         const FileSemantics& right_file = model_.file(FileId{right});
         if (right_file.interface_id == left_file.interface_id) {
-          diagnostics_.error(point_range(files_[left]->range.begin),
+          diagnostics_.error(model_.symbol(left_file.symbol).range,
                              "interface runtime identity collides with '" +
-                                 files_[right]->qualified_name + "'");
+                                 model_.symbol(right_file.symbol).name + "'");
           model_.mutable_file(FileId{left}).is_valid = false;
           model_.mutable_file(FileId{right}).is_valid = false;
         }
@@ -483,30 +787,33 @@ class SemanticAnalyzer {
       }
       path.clear();
       std::optional<FileId> current = root;
-      while (current && states[current->value] == VisitState::kUnvisited) {
+      while (current && current->value < files_.size() &&
+             states[current->value] == VisitState::kUnvisited) {
         states[current->value] = VisitState::kVisiting;
         path.push_back(*current);
         current = model_.file(*current).base_file;
       }
 
-      if (current && states[current->value] == VisitState::kVisiting) {
+      if (current && current->value < files_.size() &&
+          states[current->value] == VisitState::kVisiting) {
         const auto cycle_begin = std::find(path.begin(), path.end(), *current);
         std::string message = "inheritance cycle detected: ";
         for (auto member = cycle_begin; member != path.end(); ++member) {
           if (member != cycle_begin) {
             message += " -> ";
           }
-          message += files_[member->value]->qualified_name;
+          message += model_.symbol(model_.file(*member).symbol).name;
           hierarchy_invalid[member->value] = true;
         }
-        message += " -> " + files_[current->value]->qualified_name;
+        message += " -> " + model_.symbol(model_.file(*current).symbol).name;
         const FileClassDecl& syntax = *files_[path.back().value];
         diagnostics_.error(syntax.base_class->range, std::move(message));
       }
 
       for (auto member = path.rbegin(); member != path.rend(); ++member) {
         const std::optional<FileId> base = model_.file(*member).base_file;
-        if (base && hierarchy_invalid[base->value]) {
+        if (base && base->value < hierarchy_invalid.size() &&
+            hierarchy_invalid[base->value]) {
           hierarchy_invalid[member->value] = true;
         }
         states[member->value] = VisitState::kComplete;
@@ -692,10 +999,10 @@ class SemanticAnalyzer {
         if (complete[index] || file.kind != FileTypeKind::kInterface) {
           continue;
         }
-        if (std::ranges::any_of(file.direct_interfaces,
-                                [&complete](FileId parent) {
-                                  return !complete[parent.value];
-                                })) {
+        if (std::ranges::any_of(file.direct_interfaces, [&complete](
+                                                            FileId parent) {
+              return parent.value < complete.size() && !complete[parent.value];
+            })) {
           continue;
         }
 
@@ -761,7 +1068,7 @@ class SemanticAnalyzer {
           continue;
         }
         const std::optional<FileId> base = model_.file(file_id).base_file;
-        if (base && !complete[base->value]) {
+        if (base && base->value < complete.size() && !complete[base->value]) {
           continue;
         }
         validate_file_overrides(file_id);
@@ -801,7 +1108,8 @@ class SemanticAnalyzer {
         if (complete[index] || file.kind != FileTypeKind::kClass) {
           continue;
         }
-        if (file.base_file && !complete[file.base_file->value]) {
+        if (file.base_file && file.base_file->value < complete.size() &&
+            !complete[file.base_file->value]) {
           continue;
         }
 
@@ -1043,10 +1351,11 @@ class SemanticAnalyzer {
       }
       if (const std::optional<FileId> inaccessible =
               find_inaccessible_file(current_file, syntax.name)) {
-        diagnostics_.error(syntax.range,
-                           "file class '" +
-                               files_[inaccessible->value]->qualified_name +
-                               "' is private");
+        diagnostics_.error(
+            syntax.range,
+            "file class '" +
+                model_.symbol(model_.file(*inaccessible).symbol).name +
+                "' is private");
         model_.mutable_file(current_file).is_valid = false;
         return model_.error_type();
       }
@@ -1802,7 +2111,8 @@ class SemanticAnalyzer {
     if (const std::optional<FileId> inaccessible =
             find_inaccessible_file(current_file_, identifier.name)) {
       diagnostics_.error(
-          range, "file class '" + files_[inaccessible->value]->qualified_name +
+          range, "file class '" +
+                     model_.symbol(model_.file(*inaccessible).symbol).name +
                      "' is private");
       return ExpressionState{model_.error_type()};
     }
@@ -3377,7 +3687,8 @@ class SemanticAnalyzer {
       return declared_members(file_id, name);
     }
     std::optional<FileId> owner = file_id;
-    for (std::size_t depth = 0; owner && depth < files_.size(); ++depth) {
+    for (std::size_t depth = 0; owner && depth < model_.files().size();
+         ++depth) {
       std::vector<SymbolId> matches = declared_members(*owner, name);
       if (!matches.empty()) {
         std::erase_if(matches, [this, owner](SymbolId symbol_id) {
@@ -3397,7 +3708,8 @@ class SemanticAnalyzer {
       return false;
     }
     std::optional<FileId> owner = file_id;
-    for (std::size_t depth = 0; owner && depth < files_.size(); ++depth) {
+    for (std::size_t depth = 0; owner && depth < model_.files().size();
+         ++depth) {
       const std::vector<SymbolId> matches = declared_members(*owner, name);
       if (!matches.empty()) {
         return *owner != current_file_ &&
@@ -3412,9 +3724,10 @@ class SemanticAnalyzer {
   }
 
   std::optional<FileId> find_qualified_file(std::string_view name) const {
-    for (std::size_t index = 0; index < files_.size(); ++index) {
-      if (files_[index]->qualified_name == name &&
-          model_.file(FileId{index}).type != model_.error_type()) {
+    for (std::size_t index = 0; index < model_.files().size(); ++index) {
+      const FileSemantics& file = model_.file(FileId{index});
+      if (model_.symbol(file.symbol).name == name &&
+          file.type != model_.error_type()) {
         return FileId{index};
       }
     }
@@ -3576,7 +3889,8 @@ class SemanticAnalyzer {
       return false;
     }
     std::optional<FileId> current = model_.file(*subtype_info.file).base_file;
-    for (std::size_t depth = 0; current && depth < files_.size(); ++depth) {
+    for (std::size_t depth = 0; current && depth < model_.files().size();
+         ++depth) {
       if (*current == *supertype_info.file) {
         return true;
       }
@@ -4006,7 +4320,11 @@ class SemanticAnalyzer {
 
   std::span<const FileClassDecl* const> files_;
   DiagnosticEngine& diagnostics_;
+  std::span<const ImportedPackageView> imported_packages_;
   SemanticModel model_;
+  std::map<std::string, FileId, std::less<>> imported_file_ids_;
+  std::map<std::string, TypeId, std::less<>> imported_type_ids_;
+  std::map<std::string, SymbolId, std::less<>> imported_member_ids_;
   FileId current_file_{0};
   TypeId expected_return_type_{0};
   std::optional<SymbolKind> current_callable_kind_;
@@ -4021,9 +4339,9 @@ class SemanticAnalyzer {
 };
 
 SemanticAnalysisResult analyze_semantics(
-    std::span<const FileClassDecl* const> files,
-    DiagnosticEngine& diagnostics) {
-  return SemanticAnalyzer{files, diagnostics}.run();
+    std::span<const FileClassDecl* const> files, DiagnosticEngine& diagnostics,
+    std::span<const ImportedPackageView> imported_packages) {
+  return SemanticAnalyzer{files, diagnostics, imported_packages}.run();
 }
 
 }  // namespace cloth

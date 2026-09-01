@@ -1,6 +1,7 @@
 # Proposal: Stage 23 package artifacts
 
-Status: **approved Stage 23.1 contract, 2026-08-31; implementation in progress**.
+Status: **approved Stage 23.1 contract; Stage 23.3 pipeline implemented
+2026-09-01**.
 
 This proposal defines the compiler-owned boundary for separate compilation.
 Its companion [process protocol](../../shuttle/docs/proposals/compiler_protocol_v2.md)
@@ -324,8 +325,9 @@ does not cause Shuttle to use an older artifact left at its output path.
   imported declaration/ABI views, and ABI-2 whole-project lowering are in place.
   The frozen v1 schema now has bounded deterministic read/write, integrity and
   compatibility verification, and malformed-input coverage.
-- **23.3:** connect independent package compilation, entry-wrapper linking,
-  receipts, and deterministic Shuttle orchestration. No automatic cache.
+- **23.3 (complete 2026-09-01):** independent package compilation,
+  entry-wrapper linking, public receipts, deterministic Shuttle orchestration,
+  and OS-backed writer exclusion are connected. No automatic cache.
 - **23.4:** complete positive/negative equivalence and development/sanitizer
   audits before activating another stage.
 

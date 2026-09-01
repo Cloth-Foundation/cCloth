@@ -1,6 +1,7 @@
 BasedOnStyle: Google
 Standard: Latest
 ColumnLimit: 80
+CommentPragmas: '^ Part of the Cloth Compiler project'
 DerivePointerAlignment: false
 IncludeBlocks: Regroup
 IncludeCategories:

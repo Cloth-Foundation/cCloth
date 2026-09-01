@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/backend/native_toolchain.h"
@@ -220,6 +220,152 @@ std::expected<void, NativeBuildError> run_stage(
 }
 
 }  // namespace
+
+std::expected<void, NativeBuildError> build_native_object(
+    const LlvmIrModule& module, const std::filesystem::path& output_path,
+    const NativeToolchain& toolchain) {
+  if (output_path.empty()) {
+    return std::unexpected(NativeBuildError{"native object path is empty"});
+  }
+  if (toolchain.target_triple.empty()) {
+    return std::unexpected(
+        NativeBuildError{"native target triple is not configured"});
+  }
+  if (auto result = validate_tool(toolchain.llc, "LLVM llc"); !result) {
+    return result;
+  }
+  const std::filesystem::path output_directory =
+      std::filesystem::absolute(output_path).parent_path();
+  std::error_code error;
+  if (!std::filesystem::is_directory(output_directory, error) || error) {
+    return std::unexpected(
+        NativeBuildError{"native object directory does not exist: '" +
+                         path_to_utf8(output_directory) + "'"});
+  }
+  const std::filesystem::path ir_path =
+      output_directory / ("cloth." + unique_suffix() + ".ll");
+  struct IrCleanup {
+    std::filesystem::path path;
+    ~IrCleanup() {
+      std::error_code ignored;
+      static_cast<void>(std::filesystem::remove(path, ignored));
+    }
+  } cleanup{ir_path};
+  std::ofstream output{ir_path, std::ios::binary};
+  output << module.text;
+  output.close();
+  if (!output) {
+    return std::unexpected(NativeBuildError{
+        "could not write temporary LLVM IR: '" + path_to_utf8(ir_path) + "'"});
+  }
+  const std::vector<std::filesystem::path> arguments{
+      "-filetype=obj",
+      "-mtriple=" + toolchain.target_triple,
+      "-mcpu=" + toolchain.cpu,
+      "-mattr=" +
+          [&] {
+            std::string features;
+            for (std::size_t index = 0; index < toolchain.features.size();
+                 ++index) {
+              if (index != 0) features += ',';
+              features += toolchain.features[index];
+            }
+            return features;
+          }(),
+      "-relocation-model=" + toolchain.relocation_model,
+      "-code-model=" + toolchain.code_model,
+      "-o",
+      std::filesystem::absolute(output_path).filename(),
+      ir_path.filename()};
+  return run_stage("LLVM object emission", toolchain.llc, arguments,
+                   output_directory);
+}
+
+std::expected<void, NativeBuildError> link_native_objects(
+    std::span<const std::filesystem::path> object_paths,
+    const std::filesystem::path& output_path,
+    const NativeToolchain& toolchain) {
+  if (object_paths.empty()) {
+    return std::unexpected(
+        NativeBuildError{"native link has no object inputs"});
+  }
+  if (auto result = validate_tool(toolchain.linker, "native linker"); !result) {
+    return result;
+  }
+  if (auto result =
+          validate_tool(toolchain.runtime_library, "Cloth runtime library");
+      !result) {
+    return result;
+  }
+  const std::filesystem::path output_directory =
+      std::filesystem::absolute(output_path).parent_path();
+  std::error_code error;
+  if (!std::filesystem::is_directory(output_directory, error) || error) {
+    return std::unexpected(
+        NativeBuildError{"native output directory does not exist: '" +
+                         path_to_utf8(output_directory) + "'"});
+  }
+  std::vector<std::filesystem::path> object_names;
+  object_names.reserve(object_paths.size());
+  for (const std::filesystem::path& object : object_paths) {
+    error.clear();
+    const std::filesystem::path absolute_object =
+        std::filesystem::absolute(object);
+    if (!std::filesystem::is_regular_file(absolute_object, error) || error ||
+        !std::filesystem::equivalent(absolute_object.parent_path(),
+                                     output_directory, error) ||
+        error) {
+      return std::unexpected(NativeBuildError{
+          "native object is not a regular file in the staging directory: '" +
+          path_to_utf8(absolute_object) + "'"});
+    }
+    object_names.push_back(absolute_object.filename());
+  }
+  const std::filesystem::path linked_path =
+      output_directory / ("cloth." + unique_suffix() + ".bin");
+  struct LinkCleanup {
+    std::filesystem::path path;
+    ~LinkCleanup() {
+      std::error_code ignored;
+      static_cast<void>(std::filesystem::remove(path, ignored));
+    }
+  } cleanup{linked_path};
+  std::vector<std::filesystem::path> arguments;
+  if (toolchain.linker_flavor == NativeLinkerFlavor::kMsvc) {
+    arguments.push_back("/nologo");
+    for (const std::filesystem::path& object : object_names) {
+      arguments.push_back(object);
+    }
+    arguments.push_back(std::filesystem::absolute(toolchain.runtime_library));
+    arguments.push_back("/Fe:" + linked_path.filename().string());
+    arguments.push_back("/link");
+    arguments.push_back("/Brepro");
+  } else {
+    if (toolchain.link_static_runtime) arguments.push_back("-static");
+#if defined(_WIN32)
+    arguments.emplace_back(toolchain.target_triple.ends_with("msvc")
+                               ? "-Wl,/Brepro"
+                               : "-Wl,--no-insert-timestamp");
+#endif
+    for (const std::filesystem::path& object : object_names) {
+      arguments.push_back(object);
+    }
+    arguments.push_back(std::filesystem::absolute(toolchain.runtime_library));
+    arguments.push_back("-o");
+    arguments.push_back(linked_path.filename());
+  }
+  if (auto result = run_stage("native linking", toolchain.linker, arguments,
+                              output_directory);
+      !result) {
+    return result;
+  }
+  std::filesystem::rename(linked_path, output_path, error);
+  if (error) {
+    return std::unexpected(NativeBuildError{
+        "could not install linked executable: " + error.message()});
+  }
+  return {};
+}
 
 std::expected<void, NativeBuildError> build_native_executable(
     const LlvmIrModule& module, const std::filesystem::path& output_path,

@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #ifndef CLOTH_MIR_MIR_H_
@@ -260,6 +260,7 @@ struct MirFileClass {
   std::vector<MirCallable> functions;
   std::vector<MirCallable> constructors;
   std::vector<MemberReference> member_order;
+  bool is_imported_declaration{false};
 };
 
 struct MirModule {

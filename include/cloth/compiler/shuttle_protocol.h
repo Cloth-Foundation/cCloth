@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #ifndef CLOTH_COMPILER_SHUTTLE_PROTOCOL_H_
@@ -64,6 +64,15 @@ struct ShuttleBuildPlan {
 // include the leading --shuttle-protocol option but not the executable name.
 [[nodiscard]] std::expected<ShuttleBuildPlan, std::string>
 prepare_shuttle_build(std::span<const std::filesystem::path> arguments);
+
+// Shared source-snapshot boundary used by protocol v1 whole-graph builds and
+// protocol v2 single-package compilation.
+[[nodiscard]] std::expected<std::vector<ShuttleSourceInput>, std::string>
+load_shuttle_sources(const ShuttleBuildRequest& request);
+
+[[nodiscard]] std::expected<std::optional<std::string>, std::string>
+resolve_shuttle_entry(const ShuttleBuildRequest& request,
+                      std::span<const ShuttleSourceInput> sources);
 
 }  // namespace cloth
 

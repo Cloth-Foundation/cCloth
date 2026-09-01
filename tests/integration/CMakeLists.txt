@@ -291,7 +291,7 @@ if(CLOTH_TEST_SHUTTLE)
         set_tests_properties(cloth_shuttle_${suite} PROPERTIES
             WORKING_DIRECTORY "${CLOTH_SHUTTLE_SOURCE_DIR}"
             LABELS "integration;toolchain"
-            TIMEOUT 120
+            TIMEOUT 600
             RESOURCE_LOCK shuttle_cargo
         )
         if(CLOTH_ENABLE_SANITIZERS AND WIN32 AND

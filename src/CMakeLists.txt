@@ -10,7 +10,9 @@ add_library(cloth_compiler
     backend/llvm_ir.cc
     backend/native_toolchain.cc
     compiler/compilation.cc
+    compiler/package_pipeline.cc
     compiler/shuttle_protocol.cc
+    compiler/shuttle_protocol_v2.cc
     diagnostics/diagnostic_engine.cc
     flow/control_flow.cc
     hir/hir.cc

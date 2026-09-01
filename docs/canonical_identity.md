@@ -106,6 +106,6 @@ package requests with entry-wrapper options are rejected.
 The backend partition and imported-view extractor currently consume a verified
 whole-project semantic/MIR/ABI graph. The extracted view is detached and
 source-free, and the version-1 `.cpa` reader/writer preserves it. Protocol-v2
-commands and dependency-closure loading remain Stage 23.3 work. The runtime
+commands and dependency-closure loading are connected in Stage 23.3. The runtime
 descriptor representation, GC root frames, object layout, and native entry
 behavior remain unchanged.

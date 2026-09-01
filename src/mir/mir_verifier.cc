@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/mir/mir_verifier.h"
@@ -69,16 +69,27 @@ class MirVerifier {
     verify_symbol(file.symbol, range);
     for (const MirField& field : file.fields) {
       verify_symbol(field.symbol, range);
+      if (file.is_imported_declaration && field.initializer) {
+        report(range, "imported field declaration contains an initializer");
+      }
       if (field.initializer) {
         verify_body(*field.initializer,
                     symbol_type(field.symbol, semantics_.error_type()), true);
       }
     }
     for (const MirCallable& function : file.functions) {
-      verify_callable(function, SymbolKind::kFunction);
+      if (file.is_imported_declaration) {
+        verify_imported_callable(function, SymbolKind::kFunction);
+      } else {
+        verify_callable(function, SymbolKind::kFunction);
+      }
     }
     for (const MirCallable& constructor : file.constructors) {
-      verify_callable(constructor, SymbolKind::kConstructor);
+      if (file.is_imported_declaration) {
+        verify_imported_callable(constructor, SymbolKind::kConstructor);
+      } else {
+        verify_callable(constructor, SymbolKind::kConstructor);
+      }
     }
     for (const MemberReference& member : file.member_order) {
       switch (member.kind) {
@@ -99,6 +110,34 @@ class MirVerifier {
           break;
         case DeclarationKind::kNestedType:
           break;
+      }
+    }
+  }
+
+  void verify_imported_callable(const MirCallable& callable,
+                                SymbolKind expected_kind) {
+    const SourceRange range = symbol_range(callable.symbol);
+    verify_symbol(callable.symbol, range);
+    if (!callable.body.blocks.empty() || callable.body.value_count != 0) {
+      report(range, "imported callable declaration contains a MIR body");
+    }
+    if (callable.symbol.value >= semantics_.symbols().size()) {
+      return;
+    }
+    const SemanticSymbol& symbol = semantics_.symbol(callable.symbol);
+    if (symbol.kind != expected_kind) {
+      report(range, "imported callable has the wrong symbol kind");
+    }
+    if (callable.parameters != symbol.parameter_symbols ||
+        callable.parameters.size() != symbol.parameter_types.size()) {
+      report(range,
+             "imported callable parameters do not match its declaration");
+    }
+    for (const SymbolId parameter : callable.parameters) {
+      verify_symbol(parameter, range);
+      if (parameter.value < semantics_.symbols().size() &&
+          semantics_.symbol(parameter).kind != SymbolKind::kParameter) {
+        report(range, "imported callable parameter has the wrong symbol kind");
       }
     }
   }

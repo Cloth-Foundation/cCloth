@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/hir/hir_verifier.h"
@@ -274,8 +274,9 @@ class HirVerifier {
   }
 
   void verify_files() {
-    if (hir_.files.size() != semantics_.files().size()) {
-      report(fallback_range(), "file count does not match the semantic model");
+    if (hir_.files.size() > semantics_.files().size()) {
+      report(fallback_range(),
+             "file count exceeds the semantic declaration model");
     }
     for (std::size_t file_index = 0; file_index < hir_.files.size();
          ++file_index) {

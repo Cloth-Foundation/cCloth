@@ -1,11 +1,12 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #ifndef CLOTH_COMPILER_COMPILATION_H_
 #define CLOTH_COMPILER_COMPILATION_H_
 
 #include "cloth/abi/abi.h"
+#include "cloth/artifact/imported_package.h"
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/flow/control_flow.h"
@@ -54,6 +55,7 @@ class Compilation {
   void add_package_source(SourceFile source, std::string owning_package,
                           std::string source_package,
                           std::string package_version);
+  void add_imported_package(ImportedPackageView package);
   // Source ranges in the result refer to source storage owned here.
   [[nodiscard]] CompilationResult analyze(DiagnosticEngine& diagnostics);
 
@@ -80,6 +82,7 @@ class Compilation {
   std::optional<std::filesystem::path> source_root_;
   bool discover_package_sources_{false};
   std::vector<CompilationDependency> package_dependencies_;
+  std::vector<ImportedPackageView> imported_packages_;
   TargetDataLayout target_;
 };
 

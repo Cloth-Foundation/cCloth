@@ -19,7 +19,8 @@ Rules:
 Stage 22 is complete, including the cross-tool exit audit in `docs/testing.md`.
 Stage 23 is active. The [23.1 contract](docs/proposals/stage_23_artifacts.md)
 and implementation start were approved on 2026-08-31. Stage 23.2 is complete;
-process orchestration begins at 23.3. The ownership boundary is recorded in
+the protocol-v2 link pipeline in Stage 23.3 is complete, and equivalence
+verification proceeds at 23.4. The ownership boundary is recorded in
 `docs/shuttle_and_compiler.md`.
 
 ## Scheduled work
@@ -87,9 +88,9 @@ process orchestration begins at 23.3. The ownership boundary is recorded in
   Stage 23.2 is documented in [canonical identity](docs/canonical_identity.md),
   [imported package views](docs/imported_package_views.md), and the
   [artifact schema](docs/artifact_schema_v1.md). Protocol-v2 compilation,
-  dependency closure, and linking remain Stage 23.3 work.
+  dependency closure, and linking are connected by Stage 23.3.
 
-- [ ] **23.3 — Link pipeline.** Make Shuttle order and invoke deterministic
+- [x] **23.3 — Link pipeline.** Make Shuttle order and invoke deterministic
   compilation and linking while the compiler diagnoses duplicate, missing, or
   incompatible artifact definitions.
 - [ ] **23.4 — Equivalence verification.** Compare separate and whole-project

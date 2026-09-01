@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/abi/abi_printer.h"
@@ -7,7 +7,9 @@
 #include "cloth/backend/llvm_ir.h"
 #include "cloth/backend/native_toolchain.h"
 #include "cloth/compiler/compilation.h"
+#include "cloth/compiler/package_pipeline.h"
 #include "cloth/compiler/shuttle_protocol.h"
+#include "cloth/compiler/shuttle_protocol_v2.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/hir/hir_printer.h"
 #include "cloth/lexer/token.h"
@@ -364,6 +366,20 @@ int run_protocol(std::span<const std::filesystem::path> arguments) {
   return compile(compilation, options);
 }
 
+int run_protocol_v2(std::span<const std::filesystem::path> arguments,
+                    const std::filesystem::path& compiler_executable) {
+  auto request = cloth::prepare_shuttle_v2_request(arguments);
+  if (!request) {
+    std::cerr << "clothc: error: " << request.error() << '\n';
+    return 2;
+  }
+  cloth::ShuttleV2ExecutionResult result = cloth::execute_shuttle_v2_request(
+      *request, compiler_executable, native_toolchain());
+  std::cout << result.standard_output;
+  std::cerr << result.standard_error;
+  return result.exit_code;
+}
+
 int run_direct(std::span<const std::filesystem::path> arguments) {
   cloth::TargetDataLayout target = cloth::TargetDataLayout::llvm_x86_64();
   bool target_was_set = false;
@@ -484,7 +500,8 @@ int run_direct(std::span<const std::filesystem::path> arguments) {
   return compile(compilation, options);
 }
 
-int cloth_main(std::span<const std::filesystem::path> arguments) {
+int cloth_main(std::span<const std::filesystem::path> arguments,
+               const std::filesystem::path& compiler_executable) {
   if (arguments.empty()) {
     std::cerr << "usage: clothc [--source-root=<path>] "
                  "[--target=x86_64|wasm32] "
@@ -496,11 +513,32 @@ int cloth_main(std::span<const std::filesystem::path> arguments) {
     std::cout << cloth::kShuttleProtocolVersion << '\n';
     return 0;
   }
+  if (arguments.size() == 1 &&
+      ascii_argument(arguments.front()) == "--shuttle-protocol-capabilities") {
+    auto compiler = cloth::SourceFile::load(compiler_executable);
+    if (!compiler) {
+      std::cerr << "clothc: error: could not read the compiler executable\n";
+      return 2;
+    }
+    std::cout << cloth::shuttle_capabilities_json(
+                     cloth::sha256(compiler->contents()))
+              << '\n';
+    return 0;
+  }
   const bool protocol_mode =
       std::ranges::any_of(arguments, [](const std::filesystem::path& argument) {
         return ascii_argument(argument) == "--shuttle-protocol";
       });
-  return protocol_mode ? run_protocol(arguments) : run_direct(arguments);
+  if (!protocol_mode) return run_direct(arguments);
+  const auto protocol = std::ranges::find_if(
+      arguments, [](const std::filesystem::path& argument) {
+        return ascii_argument(argument) == "--shuttle-protocol";
+      });
+  if (protocol != arguments.end() && std::next(protocol) != arguments.end() &&
+      ascii_argument(*std::next(protocol)) == "2") {
+    return run_protocol_v2(arguments, compiler_executable);
+  }
+  return run_protocol(arguments);
 }
 
 }  // namespace
@@ -510,10 +548,20 @@ int wmain(int argc, wchar_t* argv[]) {
 #else
 int main(int argc, char* argv[]) {
 #endif
+  std::error_code executable_error;
+  std::filesystem::path compiler_executable =
+      argc > 0 ? std::filesystem::canonical(argv[0], executable_error)
+               : std::filesystem::path{};
+  if (executable_error || compiler_executable.empty()) {
+    executable_error.clear();
+    compiler_executable =
+        argc > 0 ? std::filesystem::absolute(argv[0], executable_error)
+                 : std::filesystem::path{};
+  }
   std::vector<std::filesystem::path> arguments;
   arguments.reserve(static_cast<std::size_t>(argc > 0 ? argc - 1 : 0));
   for (int index = 1; index < argc; ++index) {
     arguments.emplace_back(argv[index]);
   }
-  return cloth_main(arguments);
+  return cloth_main(arguments, compiler_executable);
 }

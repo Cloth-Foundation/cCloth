@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/compiler/shuttle_protocol.h"
@@ -757,6 +757,17 @@ std::expected<ShuttleBuildPlan, std::string> prepare_shuttle_build(
   }
   return ShuttleBuildPlan{std::move(*request), std::move(*sources),
                           std::move(*entry)};
+}
+
+std::expected<std::vector<ShuttleSourceInput>, std::string>
+load_shuttle_sources(const ShuttleBuildRequest& request) {
+  return enumerate_sources(request);
+}
+
+std::expected<std::optional<std::string>, std::string> resolve_shuttle_entry(
+    const ShuttleBuildRequest& request,
+    std::span<const ShuttleSourceInput> sources) {
+  return validate_entry(request, sources);
 }
 
 }  // namespace cloth

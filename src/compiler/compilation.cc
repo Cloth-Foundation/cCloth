@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/compiler/compilation.h"
@@ -190,6 +190,10 @@ void Compilation::add_package_source(SourceFile source,
                         {},
                         std::nullopt,
                         std::move(package_version)});
+}
+
+void Compilation::add_imported_package(ImportedPackageView package) {
+  imported_packages_.push_back(std::move(package));
 }
 
 void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
@@ -396,7 +400,7 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
   }
 
   SemanticAnalysisResult semantic_result =
-      analyze_semantics(files, diagnostics);
+      analyze_semantics(files, diagnostics, imported_packages_);
   HirModule hir = lower_to_hir(files, semantic_result.model);
   const bool hir_is_valid = verify_hir(hir, semantic_result.model, diagnostics);
   ControlFlowAnalysis control_flow;
@@ -408,6 +412,36 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
     control_flow =
         analyze_control_flow(hir, semantic_result.model, diagnostics);
     mir = lower_to_mir(hir, semantic_result.model);
+    for (std::size_t index = mir.files.size();
+         index < semantic_result.model.files().size(); ++index) {
+      const FileId file_id{index};
+      const FileSemantics& semantic_file = semantic_result.model.file(file_id);
+      MirFileClass imported{file_id,
+                            semantic_file.symbol,
+                            semantic_file.base_file,
+                            {},
+                            {},
+                            {},
+                            semantic_file.member_order,
+                            true};
+      imported.fields.reserve(semantic_file.fields.size());
+      for (const SymbolId symbol : semantic_file.fields) {
+        imported.fields.push_back(MirField{symbol, std::nullopt});
+      }
+      const auto add_callables = [&](std::span<const SymbolId> symbols,
+                                     std::vector<MirCallable>& output) {
+        output.reserve(symbols.size());
+        for (const SymbolId symbol : symbols) {
+          const SemanticSymbol& semantic = semantic_result.model.symbol(symbol);
+          output.push_back(
+              MirCallable{symbol, semantic.parameter_symbols,
+                          MirBody{semantic.range, MirBlockId{0}, {}, 0}});
+        }
+      };
+      add_callables(semantic_file.functions, imported.functions);
+      add_callables(semantic_file.constructors, imported.constructors);
+      mir.files.push_back(std::move(imported));
+    }
     mir_is_valid = verify_mir(mir, semantic_result.model, diagnostics);
     if (mir_is_valid) {
       abi = lower_to_abi(mir, semantic_result.model, target_);

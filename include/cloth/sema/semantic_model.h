@@ -1,5 +1,5 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #ifndef CLOTH_SEMA_SEMANTIC_MODEL_H_
@@ -188,6 +188,7 @@ struct FileSemantics {
   std::vector<InterfaceImplementation> interface_implementations{};
   std::optional<std::uint64_t> interface_id{};
   NominalIdentity identity{};
+  std::vector<MemberReference> member_order{};
 };
 
 class SemanticModel {

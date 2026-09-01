@@ -1,8 +1,9 @@
-// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
-// See LICENSE.txt in the project root for license information.
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM
+// Exceptions. See LICENSE.txt in the project root for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 #include "cloth/artifact/imported_package.h"
+#include "cloth/backend/llvm_ir.h"
 #include "cloth/compiler/compilation.h"
 #include "cloth/identity/canonical_identity.h"
 
@@ -262,6 +263,58 @@ void deterministic_and_corruption_checked(TestContext& test) {
   expect_rejected(std::move(broken), "noncanonical file order was accepted");
 }
 
+void compiles_against_imported_declarations_without_dependency_sources(
+    TestContext& test) {
+  const PackageGraph graph;
+  test.expect(graph.result->is_valid,
+              "package graph failed compilation: " + graph.diagnostic_text());
+  if (!graph.result->is_valid) return;
+  auto imported = build_models(graph);
+  test.expect(imported.is_valid(),
+              "dependency view failed: " + issue_text(imported));
+  if (!imported.view) return;
+
+  cloth::Compilation consumer;
+  consumer.set_package_dependencies({{"app", "dep", "models"}});
+  consumer.add_imported_package(std::move(*imported.view));
+  consumer.add_package_source(
+      cloth::SourceFile::from_memory(
+          "isolated/app/Derived.co",
+          "import dep::Base;\n"
+          "import dep.geometry::Shape;\n"
+          "class : Base is Shape {\n"
+          "  Derived(int32 count): Base(count) {}\n"
+          "  override func Read(): int32 { return super.Read(); }\n"
+          "  func Size(): int32 { return Read(); }\n"
+          "}\n"),
+      "app", "", "0.4.0");
+  cloth::DiagnosticEngine diagnostics;
+  auto result = consumer.analyze(diagnostics);
+  std::string errors;
+  for (const cloth::Diagnostic& diagnostic : diagnostics.diagnostics()) {
+    if (!errors.empty()) errors += "; ";
+    errors += diagnostic.message;
+  }
+  test.expect(result.is_valid,
+              "isolated consumer compilation failed: " + errors);
+  if (!result.is_valid) return;
+  test.expect(result.hir.files.size() == 1 && result.mir.files.size() == 3 &&
+                  result.mir.files[1].is_imported_declaration &&
+                  result.mir.files[2].is_imported_declaration,
+              "dependency declarations leaked into source-owned HIR or bodies");
+  cloth::LlvmIrOptions options;
+  options.package = cloth::PackageIdentity{"app", "0.4.0"};
+  const auto llvm = cloth::emit_llvm_ir(result.mir, result.abi,
+                                        result.semantics, diagnostics, options);
+  test.expect(llvm.has_value() && !diagnostics.has_errors(),
+              "isolated consumer LLVM emission failed");
+  if (!llvm) return;
+  test.expect(llvm->text.contains(" = external constant") &&
+                  llvm->text.contains("declare void @") &&
+                  llvm->text.contains("define "),
+              "consumer did not emit dependency declarations and owned code");
+}
+
 }  // namespace
 
 int main() {
@@ -274,6 +327,8 @@ int main() {
        remains_owned_after_compilation_destruction},
       {"deterministic and corruption checked",
        deterministic_and_corruption_checked},
+      {"compiles against imported declarations without dependency sources",
+       compiles_against_imported_declarations_without_dependency_sources},
   };
   return cloth::test::run_tests(tests);
 }
