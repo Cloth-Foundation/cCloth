@@ -273,6 +273,12 @@ void compiles_against_imported_declarations_without_dependency_sources(
   test.expect(imported.is_valid(),
               "dependency view failed: " + issue_text(imported));
   if (!imported.view) return;
+  auto whole_app = cloth::build_imported_package_view(
+      {"app", "0.4.0"}, graph.result->semantics, graph.result->mir,
+      graph.result->abi);
+  test.expect(whole_app.is_valid(),
+              "whole-project consumer view failed: " + issue_text(whole_app));
+  if (!whole_app.view) return;
 
   cloth::Compilation consumer;
   consumer.set_package_dependencies({{"app", "dep", "models"}});
@@ -302,6 +308,13 @@ void compiles_against_imported_declarations_without_dependency_sources(
                   result.mir.files[1].is_imported_declaration &&
                   result.mir.files[2].is_imported_declaration,
               "dependency declarations leaked into source-owned HIR or bodies");
+  auto isolated_app = cloth::build_imported_package_view(
+      {"app", "0.4.0"}, result.semantics, result.mir, result.abi);
+  test.expect(isolated_app.is_valid(),
+              "isolated consumer view failed: " + issue_text(isolated_app));
+  test.expect(isolated_app.view == whole_app.view,
+              "separate compilation changed consumer semantic or ABI records");
+
   cloth::LlvmIrOptions options;
   options.package = cloth::PackageIdentity{"app", "0.4.0"};
   const auto llvm = cloth::emit_llvm_ir(result.mir, result.abi,
@@ -313,6 +326,37 @@ void compiles_against_imported_declarations_without_dependency_sources(
                   llvm->text.contains("declare void @") &&
                   llvm->text.contains("define "),
               "consumer did not emit dependency declarations and owned code");
+  cloth::DiagnosticEngine whole_diagnostics;
+  const auto whole_llvm =
+      cloth::emit_llvm_ir(graph.result->mir, graph.result->abi,
+                          graph.result->semantics, whole_diagnostics, options);
+  const auto symbol_inventory = [](const std::string& text) {
+    std::vector<std::string> inventory;
+    for (std::size_t begin = 0; begin < text.size();) {
+      const std::size_t end = text.find('\n', begin);
+      const std::string_view line{
+          text.data() + begin,
+          (end == std::string::npos ? text.size() : end) - begin};
+      const std::size_t symbol = line.find("@_C");
+      const bool function =
+          line.starts_with("define ") || line.starts_with("declare ");
+      if (symbol != std::string_view::npos && (function || symbol == 0)) {
+        const std::size_t symbol_end = line.find_first_of("( =,", symbol);
+        const bool definition =
+            line.starts_with("define ") ||
+            (symbol == 0 && line.find(" = external") == std::string_view::npos);
+        inventory.emplace_back(definition ? "definition " : "declaration ");
+        inventory.back().append(line.substr(symbol, symbol_end - symbol));
+      }
+      begin = end == std::string::npos ? text.size() : end + 1;
+    }
+    std::ranges::sort(inventory);
+    return inventory;
+  };
+  test.expect(
+      whole_llvm.has_value() && !whole_diagnostics.has_errors() &&
+          symbol_inventory(whole_llvm->text) == symbol_inventory(llvm->text),
+      "separate compilation changed canonical linker-symbol ownership");
 }
 
 }  // namespace

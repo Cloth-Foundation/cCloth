@@ -15,8 +15,8 @@ test script default to 10 seconds, preventing a broken loop backedge from
 hanging a development or CI run. Configure `CLOTH_TEST_TIMEOUT_SECONDS` to
 change the outer limit.
 
-The shared Shuttle suites have a separate 120-second CTest limit, including
-Cargo startup and compilation; each child process inside them has a 30-second
+The shared Shuttle suites have a separate 1,200-second CTest limit, including
+Cargo startup and compilation; each child process inside them has a 300-second
 limit. CTest serializes their Cargo access even under parallel test execution.
 
 Test ownership follows the behavior being exercised:
@@ -183,20 +183,32 @@ It uses a verified whole-project graph. At the Stage 23.2 checkpoint,
 protocol-v2 orchestration and separate native linking remained outstanding;
 the next audit records that pipeline work.
 
-## Stage 23.3 pipeline verification
+## Stage 23 exit audit
 
-Verified on Windows on 2026-09-01 with the development compiler:
+Verified on Windows on 2026-09-01 with the GNU development compiler and the
+Clang/MSVC-library ASan/UBSan compiler:
 
-- all 90 CTest entries pass, including direct native regressions;
-- compiler protocol tests cover strict version-2 compile, inspect, and link
-  argument groups plus capability and receipt schemas;
-- imported-package tests compile a consumer using only dependency declaration
-  views, with no dependency source AST, HIR, MIR body, or source access;
-- Shuttle's Rust format, lint, ordinary test, real-compiler check, and native
-  suites pass, covering deterministic diamond scheduling, receipt rejection,
-  compiler failure transport, writer locking, package-object linking, entry
-  selection, output preservation, relocation, spaces, and Unicode paths; and
-- protocol version 1 and direct compiler behavior remain covered and unchanged.
+- 92/92 CTest entries pass in each configuration, including all 14 protocol
+  and seven native Shuttle/`clothc` cases;
+- whole-project and separate compilation produce equal imported semantic/ABI
+  records and canonical linker-symbol ownership for the covered package graph;
+- the native equivalence graph covers cross-package construction, inherited
+  fields, `super`, abstract and covariant functions, final overrides,
+  interfaces, checked casts and `::typeName`, nullable flow, arrays, strings,
+  and a 2,000-object cross-package GC chain with identical output and status;
+- consumer packages compile from validated artifacts after every dependency
+  source tree is removed, while rejected programs retain the same diagnostic
+  categories and use logical artifact declaration locations;
+- missing closures, wrong identities, wrong digests, corrupted payloads,
+  duplicate artifact inputs, and output/input aliasing fail without replacing
+  prior artifacts or executables;
+- relocated native builds produce byte-identical executables and package
+  artifacts from identical inputs, and both `x86_64` and `wasm32` interface
+  paths remain covered; and
+- all 36 ordinary Shuttle tests, Rust 1.85 checking, Rust formatting and Clippy
+  with warnings denied, C++ formatting and warnings-as-errors, and repository
+  whitespace checks pass.
 
-Stage 23.4 still owns whole-project/separate equivalence expansion, malformed
-link-input coverage, and the coordinated development/sanitizer exit audit.
+Stage 23 is complete. Automatic reuse across commands, remote artifacts,
+registries, additional native targets, and ABI stability across compiler
+releases remain deliberately outside its contract.

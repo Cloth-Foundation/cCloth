@@ -70,8 +70,7 @@ diagnostic transport in
 Stage 23 defines the independently compiled artifact boundary and linking
 behavior. The [artifact contract](proposals/stage_23_artifacts.md) and companion
 [process-v2 contract](../shuttle/docs/proposals/compiler_protocol_v2.md) are
-implemented through Stage 23.3. Equivalence and exit verification remain in
-Stage 23.4.
+implemented and verified through Stage 23.4.
 
 ## Source imports
 

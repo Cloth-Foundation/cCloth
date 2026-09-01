@@ -14,14 +14,12 @@ Rules:
   to its owning contract; and
 - moving or splitting an item must preserve its prerequisites and non-goals.
 
-## Active stage
+## Stage status
 
 Stage 22 is complete, including the cross-tool exit audit in `docs/testing.md`.
-Stage 23 is active. The [23.1 contract](docs/proposals/stage_23_artifacts.md)
-and implementation start were approved on 2026-08-31. Stage 23.2 is complete;
-the protocol-v2 link pipeline in Stage 23.3 is complete, and equivalence
-verification proceeds at 23.4. The ownership boundary is recorded in
-`docs/shuttle_and_compiler.md`.
+Stage 23 is also complete, including its coordinated development and sanitizer
+exit audit. No later stage is active. The ownership boundary remains recorded
+in `docs/shuttle_and_compiler.md`.
 
 ## Scheduled work
 
@@ -93,7 +91,7 @@ verification proceeds at 23.4. The ownership boundary is recorded in
 - [x] **23.3 — Link pipeline.** Make Shuttle order and invoke deterministic
   compilation and linking while the compiler diagnoses duplicate, missing, or
   incompatible artifact definitions.
-- [ ] **23.4 — Equivalence verification.** Compare separate and whole-project
+- [x] **23.4 — Equivalence verification.** Compare separate and whole-project
   compilation in ABI, linker, invalid-input, and native execution tests, then
   complete the Stage 23 development/sanitizer exit audit.
 

@@ -323,6 +323,11 @@ void protocol_v2_operations(TestContext& test) {
   invalid.insert(invalid.end(), {"--artifact-kind", "interface"});
   test.expect(!cloth::prepare_shuttle_v2_request(invalid),
               "duplicate singleton option was accepted");
+  invalid = link;
+  invalid.insert(invalid.end(),
+                 {"--artifact", "app", "1.2.3", digest, artifact_path});
+  test.expect(!cloth::prepare_shuttle_v2_request(invalid),
+              "duplicate package artifact was accepted");
 }
 
 void protocol_v2_json_contract(TestContext& test) {

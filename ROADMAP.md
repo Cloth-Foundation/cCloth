@@ -62,7 +62,8 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 21 | Fixed-width integer operators and host-independent byte-order operations |
 
 Stage 21 is the current completed language baseline. Coordinated toolchain Stage
-22 is complete, including its cross-tool exit audit. Stage 23 is active.
+22 and separate-compilation Stage 23 are complete, including their cross-tool
+exit audits. No later stage is active.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -151,14 +152,14 @@ The exit audit and repeatable verification commands are recorded in
 
 ## Stage 23: Shuttle-orchestrated separate compilation and linking
 
-Status: **active**
+Status: **complete**
 
 The [23.1 artifact proposal](docs/proposals/stage_23_artifacts.md) and companion
 [process-v2 proposal](shuttle/docs/proposals/compiler_protocol_v2.md) were
 approved with implementation authorization on 2026-08-31. Stage 23.2's
 canonical identity, imported declaration views, and bounded artifact codec are
 complete. Stage 23.3's package compile/link pipeline is also complete. Work
-proceeds to equivalence and exit verification in Stage 23.4.
+through Stage 23.4 completed equivalence and exit verification on 2026-09-01.
 
 Objective: let Shuttle compile manifest-defined local packages independently
 while the compiler preserves canonical Cloth type, descriptor, callable, and
@@ -192,9 +193,9 @@ Exit criteria:
 
 ## Beyond Stage 23
 
-No later stage number is assigned yet. Before Stage 23 closes, the remaining
-backlog will be reviewed against the smallest credible Cloth 1.0 release. That
-review—not ad hoc implementation—will choose and scope Stage 24.
+No later stage number is assigned yet. The remaining backlog must be reviewed
+against a credible Cloth 1.0 release before Stage 24 is chartered. That
+review—not ad hoc implementation—will choose and scope the next stage.
 
 The following post-Stage-23 candidates are recorded without priority or order:
 

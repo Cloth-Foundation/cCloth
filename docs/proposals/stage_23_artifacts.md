@@ -1,13 +1,12 @@
 # Proposal: Stage 23 package artifacts
 
-Status: **approved Stage 23.1 contract; Stage 23.3 pipeline implemented
-2026-09-01**.
+Status: **implemented; Stage 23 completed 2026-09-01**.
 
 This proposal defines the compiler-owned boundary for separate compilation.
 Its companion [process protocol](../../shuttle/docs/proposals/compiler_protocol_v2.md)
 defines how Shuttle requests the work. Both contracts and the implementation
 start were approved together. The work ledger records implemented portions;
-approval alone does not claim that artifact or protocol operations exist.
+the Stage 23 exit audit records the completed implementation and verification.
 
 ## Objective and scope
 
@@ -328,8 +327,8 @@ does not cause Shuttle to use an older artifact left at its output path.
 - **23.3 (complete 2026-09-01):** independent package compilation,
   entry-wrapper linking, public receipts, deterministic Shuttle orchestration,
   and OS-backed writer exclusion are connected. No automatic cache.
-- **23.4:** complete positive/negative equivalence and development/sanitizer
-  audits before activating another stage.
+- **23.4 (complete 2026-09-01):** positive/negative equivalence and coordinated
+  development/sanitizer audits passed. No later stage was activated.
 
 Required tests cover metadata round trips and canonical byte determinism;
 truncated, oversized, corrupted, duplicate, and incompatible artifacts; alias
