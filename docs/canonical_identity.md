@@ -3,7 +3,8 @@
 Stage 23.2 separates persistent identity from display names and compilation-local
 handles. This document describes the implemented identity/ownership foundation;
 the approved [artifact contract](proposals/stage_23_artifacts.md) also schedules
-serialization and imported declaration loading, which are not implemented yet.
+serialization. Owned imported declaration/ABI views are documented in
+[imported package views](imported_package_views.md).
 
 ## Identity inputs
 
@@ -102,8 +103,9 @@ public callables, accessible constructor initializers, and public static storage
 Private dependency implementation bodies are not emitted. Unknown owners and
 package requests with entry-wrapper options are rejected.
 
-This backend boundary currently consumes a verified whole-project semantic/MIR/ABI
-graph. It is not yet a source-free dependency loader, `.cpa` writer, or protocol-v2
-command. Those remaining 23.2/23.3 work items stay open in `TODO.md`. The runtime
+The backend partition and imported-view extractor currently consume a verified
+whole-project semantic/MIR/ABI graph. The extracted view is detached and
+source-free, and the version-1 `.cpa` reader/writer preserves it. Protocol-v2
+commands and dependency-closure loading remain Stage 23.3 work. The runtime
 descriptor representation, GC root frames, object layout, and native entry
 behavior remain unchanged.

@@ -320,10 +320,10 @@ does not cause Shuttle to use an older artifact left at its output path.
 
 - **23.1:** artifact and process contracts approved with implementation
   authorization on 2026-08-31.
-- **23.2:** implement canonical identity, external ownership, and imported
-  declaration/ABI views. Update whole-project lowering to the same ABI revision
-  and retain existing language behavior. Freeze serialized record/tag fixtures,
-  then implement bounded artifact read/write and verification against them.
+- **23.2 (complete 2026-08-31):** canonical identity, external ownership,
+  imported declaration/ABI views, and ABI-2 whole-project lowering are in place.
+  The frozen v1 schema now has bounded deterministic read/write, integrity and
+  compatibility verification, and malformed-input coverage.
 - **23.3:** connect independent package compilation, entry-wrapper linking,
   receipts, and deterministic Shuttle orchestration. No automatic cache.
 - **23.4:** complete positive/negative equivalence and development/sanitizer

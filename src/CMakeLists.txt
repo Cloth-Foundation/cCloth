@@ -2,6 +2,9 @@ add_library(cloth_compiler
     abi/abi.cc
     abi/abi_printer.cc
     abi/abi_verifier.cc
+    artifact/imported_package.cc
+    artifact/package_artifact.cc
+    artifact/sha256.cc
     ast/ast.cc
     ast/ast_printer.cc
     backend/llvm_ir.cc

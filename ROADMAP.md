@@ -155,8 +155,9 @@ Status: **active**
 
 The [23.1 artifact proposal](docs/proposals/stage_23_artifacts.md) and companion
 [process-v2 proposal](shuttle/docs/proposals/compiler_protocol_v2.md) were
-approved with implementation authorization on 2026-08-31. Work begins at 23.2;
-approval does not mean the artifact or process interfaces are implemented.
+approved with implementation authorization on 2026-08-31. Stage 23.2's
+canonical identity, imported declaration views, and bounded artifact codec are
+complete. Work proceeds to the protocol-v2 link pipeline in Stage 23.3.
 
 Objective: let Shuttle compile manifest-defined local packages independently
 while the compiler preserves canonical Cloth type, descriptor, callable, and

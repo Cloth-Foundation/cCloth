@@ -1,3 +1,7 @@
+# Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
+# See LICENSE.txt in the project root for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 include_guard(GLOBAL)
 
 find_program(CLOTH_CLANG_FORMAT_EXECUTABLE NAMES clang-format)

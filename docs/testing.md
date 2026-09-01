@@ -153,16 +153,24 @@ The Unix-only symbolic-link case remains platform-conditioned and was not run
 on this Windows host. Remote dependencies, separate artifacts, caching, and
 additional native targets remain outside Stage 22's approved scope.
 
-## Stage 23.2 identity foundation audit
+## Stage 23.2 exit audit
 
 Verified on Windows on 2026-08-31 with the GNU development compiler and the
 Clang ASan/UBSan compiler:
 
-- 90/90 CTest entries pass in each configuration, including the 17 shared
+- 92/92 CTest entries pass in each configuration, including the 17 shared
   Shuttle protocol/native cases;
 - the new identity suite fixes encoded byte/hash vectors and checks aliases,
   relocation, source order, exact versions, domain separation, nullability,
-  package validation, and corrupted descriptor/initializer ABI metadata; and
+  package validation, and corrupted descriptor/initializer ABI metadata;
+- the imported-package suite verifies detached ownership, private declaration
+  retention, reachable type closure, nullable overload identity, static literal
+  values, inheritance/interface layouts, constructor initializer signatures,
+  canonical ordering, and corrupted cross-record rejection;
+- the package-artifact suite fixes SHA-256 and canonical schema vectors, verifies
+  byte-identical interface/object round trips and exact target compatibility,
+  and rejects oversized, truncated, corrupted, noncanonical, structurally
+  invalid, or wrong-machine artifacts before they become imported views; and
 - existing native inheritance, interface, GC, entry, and deterministic-output
   tests pass with ABI-2 names and external descriptor/initializer ownership.
 
@@ -171,7 +179,6 @@ repositories' `git diff --check` also pass.
 
 Package-scoped LLVM unit coverage checks owning definitions, external
 dependency declarations, private-body exclusion, and rejected entry options.
-It currently uses a verified whole-project graph. This is not a Stage 23 exit
-audit: artifact deserialization, source-free imported-declaration reconstruction,
-protocol-v2 compile/link orchestration, and separate native-link equivalence
-remain outstanding.
+It currently uses a verified whole-project graph. This is the Stage 23.2 audit,
+not the complete Stage 23 exit audit: protocol-v2 compile/link orchestration and
+separate native-link equivalence remain outstanding.

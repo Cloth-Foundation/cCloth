@@ -1,6 +1,12 @@
+# Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
+# See LICENSE.txt in the project root for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 cloth_add_unit_test(cloth_abi_tests abi_tests.cc)
 cloth_add_unit_test(cloth_backend_tests backend_tests.cc)
 cloth_add_unit_test(cloth_identity_tests identity_tests.cc)
+cloth_add_unit_test(cloth_imported_package_tests imported_package_tests.cc)
+cloth_add_unit_test(cloth_package_artifact_tests package_artifact_tests.cc)
 cloth_add_unit_test(cloth_lexer_tests lexer_tests.cc)
 cloth_add_unit_test(cloth_parser_tests parser_tests.cc)
 cloth_add_unit_test(cloth_project_tests project_tests.cc)

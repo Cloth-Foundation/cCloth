@@ -1,3 +1,7 @@
+# Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
+# See LICENSE.txt in the project root for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 set(CLOTH_INTEGRATION_PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/programs")
 set(CLOTH_INTEGRATION_EXPECTED "${CMAKE_CURRENT_SOURCE_DIR}/expected")
 set(CLOTH_INTEGRATION_ERRORS "${CMAKE_CURRENT_SOURCE_DIR}/errors")

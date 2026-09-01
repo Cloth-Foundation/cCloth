@@ -1,3 +1,7 @@
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE.txt in the project root for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/lexer/lexer.h"
 #include "cloth/parser/parser.h"

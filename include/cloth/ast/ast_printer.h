@@ -1,3 +1,7 @@
+// Part of the Cloth Compiler project, under the Apache License v2.0 with LLVM Exceptions.
+// See LICENSE.txt in the project root for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
 #ifndef CLOTH_AST_AST_PRINTER_H_
 #define CLOTH_AST_AST_PRINTER_H_
 
