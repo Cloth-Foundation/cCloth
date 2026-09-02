@@ -9,10 +9,23 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
+
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#if !defined(NOMINMAX)
+#define NOMINMAX
+#endif
+// clang-format off
+#include <windows.h>
+#include <bcrypt.h>
+// clang-format on
+#endif
 
 namespace cloth {
 namespace {
@@ -51,6 +64,63 @@ int lowercase_hex_value(char character) {
   if (character >= 'a' && character <= 'f') return character - 'a' + 10;
   return -1;
 }
+
+#if defined(_WIN32)
+std::optional<ArtifactDigest> windows_sha256(
+    std::span<const std::uint8_t> bytes) {
+  BCRYPT_ALG_HANDLE provider = nullptr;
+  BCRYPT_HASH_HANDLE hash = nullptr;
+  const auto failed = [&]() -> std::optional<ArtifactDigest> {
+    if (hash != nullptr) static_cast<void>(BCryptDestroyHash(hash));
+    if (provider != nullptr) {
+      static_cast<void>(BCryptCloseAlgorithmProvider(provider, 0));
+    }
+    return std::nullopt;
+  };
+
+  if (BCryptOpenAlgorithmProvider(&provider, BCRYPT_SHA256_ALGORITHM, nullptr,
+                                  0) < 0) {
+    return failed();
+  }
+  DWORD object_size = 0;
+  DWORD digest_size = 0;
+  DWORD returned = 0;
+  if (BCryptGetProperty(provider, BCRYPT_OBJECT_LENGTH,
+                        reinterpret_cast<PUCHAR>(&object_size),
+                        sizeof(object_size), &returned, 0) < 0 ||
+      returned != sizeof(object_size) ||
+      BCryptGetProperty(provider, BCRYPT_HASH_LENGTH,
+                        reinterpret_cast<PUCHAR>(&digest_size),
+                        sizeof(digest_size), &returned, 0) < 0 ||
+      returned != sizeof(digest_size) || digest_size != 32) {
+    return failed();
+  }
+  std::vector<UCHAR> object(object_size);
+  if (BCryptCreateHash(provider, &hash, object.data(), object_size, nullptr, 0,
+                       0) < 0) {
+    return failed();
+  }
+  constexpr std::size_t kMaximumChunk =
+      static_cast<std::size_t>(std::numeric_limits<ULONG>::max());
+  for (std::size_t offset = 0; offset < bytes.size();) {
+    const ULONG count =
+        static_cast<ULONG>(std::min(bytes.size() - offset, kMaximumChunk));
+    auto* data = const_cast<PUCHAR>(
+        reinterpret_cast<const UCHAR*>(bytes.data() + offset));
+    if (BCryptHashData(hash, data, count, 0) < 0) return failed();
+    offset += count;
+  }
+  ArtifactDigest digest;
+  if (BCryptFinishHash(hash, digest.bytes.data(), digest_size, 0) < 0) {
+    return failed();
+  }
+  static_cast<void>(BCryptDestroyHash(hash));
+  hash = nullptr;
+  static_cast<void>(BCryptCloseAlgorithmProvider(provider, 0));
+  provider = nullptr;
+  return digest;
+}
+#endif
 
 }  // namespace
 
@@ -112,7 +182,8 @@ void Sha256Hasher::process_block(std::span<const std::uint8_t, 64> block) {
 void Sha256Hasher::update(std::span<const std::uint8_t> bytes) {
   if (finished_ || bytes.empty()) return;
   byte_count_ += static_cast<std::uint64_t>(bytes.size());
-  while (!bytes.empty()) {
+
+  if (pending_size_ != 0) {
     const std::size_t count =
         std::min(bytes.size(), pending_.size() - pending_size_);
     std::ranges::copy(bytes.first(count), std::span<std::uint8_t>{pending_}
@@ -124,6 +195,16 @@ void Sha256Hasher::update(std::span<const std::uint8_t> bytes) {
       process_block(std::span<const std::uint8_t, 64>{pending_});
       pending_size_ = 0;
     }
+  }
+
+  while (bytes.size() >= pending_.size()) {
+    process_block(
+        std::span<const std::uint8_t, 64>{bytes.data(), pending_.size()});
+    bytes = bytes.subspan(pending_.size());
+  }
+  if (!bytes.empty()) {
+    std::ranges::copy(bytes, pending_.begin());
+    pending_size_ = bytes.size();
   }
 }
 
@@ -157,6 +238,9 @@ ArtifactDigest Sha256Hasher::finish() {
 }  // namespace artifact_internal
 
 ArtifactDigest sha256(std::span<const std::uint8_t> bytes) {
+#if defined(_WIN32)
+  if (const auto digest = windows_sha256(bytes)) return *digest;
+#endif
   artifact_internal::Sha256Hasher hasher;
   hasher.update(bytes);
   return hasher.finish();

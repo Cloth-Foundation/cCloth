@@ -100,6 +100,8 @@ ShuttleV2ExecutionResult failure(int exit_code, std::string message) {
   return {exit_code, {}, std::move(message)};
 }
 
+ShuttleV2ExecutionResult cache_miss() { return {3, {}, {}}; }
+
 std::string render_diagnostics(const DiagnosticEngine& diagnostics) {
   std::ostringstream output;
   for (const Diagnostic& diagnostic : diagnostics.diagnostics()) {
@@ -278,6 +280,65 @@ std::expected<std::vector<LoadedArtifact>, std::string> load_artifacts(
     loaded.push_back({input, std::move(*bytes), std::move(*decoded.artifact)});
   }
   return loaded;
+}
+
+std::expected<LoadedArtifact, std::string> load_candidate(
+    const std::filesystem::path& path,
+    const ArtifactCompatibility& expected_compatibility,
+    PackageArtifactKind expected_kind, const PackageIdentity& package) {
+  constexpr std::uint64_t kMaximumFileSize =
+      64 + kMaximumArtifactMetadataSize + kMaximumArtifactPayloadSize;
+  auto bytes = read_file(path, kMaximumFileSize, "candidate package artifact");
+  if (!bytes) return std::unexpected(bytes.error());
+  auto decoded = read_package_artifact(*bytes, expected_compatibility);
+  if (!decoded.is_valid() || decoded.artifact->kind != expected_kind ||
+      decoded.artifact->imported.package != package) {
+    return std::unexpected("candidate package artifact is not reusable");
+  }
+  ShuttleV2ArtifactInput input{package, *decoded.digest, path};
+  return LoadedArtifact{std::move(input), std::move(*bytes),
+                        std::move(*decoded.artifact)};
+}
+
+std::expected<std::vector<ArtifactSource>, std::string> source_inventory(
+    std::span<const ShuttleSourceInput> sources,
+    const std::filesystem::path& source_root) {
+  std::vector<ArtifactSource> inventory;
+  inventory.reserve(sources.size());
+  for (const ShuttleSourceInput& source : sources) {
+    std::error_code error;
+    std::filesystem::path relative =
+        std::filesystem::relative(source.source.path(), source_root, error);
+    if (error) {
+      return std::unexpected("could not derive logical source path");
+    }
+    std::string logical = path_to_utf8(relative);
+    std::ranges::replace(logical, '\\', '/');
+    inventory.push_back({std::move(logical), sha256(source.source.contents())});
+  }
+  std::ranges::sort(inventory, {}, &ArtifactSource::path);
+  return inventory;
+}
+
+std::expected<std::vector<ArtifactDependency>, std::string>
+dependency_inventory(std::span<const ShuttleV2DependencyInput> dependencies,
+                     std::span<const LoadedArtifact> artifacts) {
+  std::map<std::string, const LoadedArtifact*, std::less<>> by_name;
+  for (const LoadedArtifact& artifact : artifacts) {
+    by_name.emplace(artifact.input.package.name, &artifact);
+  }
+  std::vector<ArtifactDependency> inventory;
+  inventory.reserve(dependencies.size());
+  for (const ShuttleV2DependencyInput& dependency : dependencies) {
+    const auto found = by_name.find(dependency.package);
+    if (found == by_name.end()) {
+      return std::unexpected("direct dependency is missing");
+    }
+    inventory.push_back({dependency.alias, found->second->input.package,
+                         found->second->input.digest});
+  }
+  std::ranges::sort(inventory, {}, &ArtifactDependency::alias);
+  return inventory;
 }
 
 std::expected<void, std::string> validate_closure(
@@ -573,6 +634,10 @@ ShuttleV2ExecutionResult execute_compile(
   if (!sources) return failure(2, "clothc: error: " + sources.error());
   auto entry = resolve_shuttle_entry(source_request, *sources);
   if (!entry) return failure(2, "clothc: error: " + entry.error());
+  auto artifact_sources = source_inventory(*sources, request.source_root);
+  if (!artifact_sources) {
+    return failure(2, "clothc: error: " + artifact_sources.error());
+  }
   std::array<std::filesystem::path, 4> protected_paths{
       compiler_executable, {}, {}, {}};
   if (request.artifact_kind == PackageArtifactKind::kObject) {
@@ -619,37 +684,11 @@ ShuttleV2ExecutionResult execute_compile(
     return failure(2, "clothc: error: " + message);
   }
 
-  std::vector<ArtifactSource> artifact_sources;
-  artifact_sources.reserve(compilation.source_count());
-  for (std::size_t index = 0; index < compilation.source_count(); ++index) {
-    const SourceFile& source = compilation.source(index);
-    std::error_code error;
-    std::filesystem::path relative =
-        std::filesystem::relative(source.path(), request.source_root, error);
-    if (error) {
-      return failure(2, "clothc: error: could not derive logical source path");
-    }
-    std::string logical = path_to_utf8(relative);
-    std::ranges::replace(logical, '\\', '/');
-    artifact_sources.push_back({std::move(logical), sha256(source.contents())});
+  auto direct_dependencies =
+      dependency_inventory(request.dependencies, *dependencies);
+  if (!direct_dependencies) {
+    return failure(2, "clothc: error: " + direct_dependencies.error());
   }
-  std::ranges::sort(artifact_sources, {}, &ArtifactSource::path);
-
-  std::map<std::string, const LoadedArtifact*, std::less<>> by_name;
-  for (const LoadedArtifact& dependency : *dependencies) {
-    by_name.emplace(dependency.input.package.name, &dependency);
-  }
-  std::vector<ArtifactDependency> direct_dependencies;
-  for (const ShuttleV2DependencyInput& dependency : request.dependencies) {
-    const auto found = by_name.find(dependency.package);
-    if (found == by_name.end()) {
-      return failure(2, "clothc: error: direct dependency is missing");
-    }
-    direct_dependencies.push_back({dependency.alias,
-                                   found->second->input.package,
-                                   found->second->input.digest});
-  }
-  std::ranges::sort(direct_dependencies, {}, &ArtifactDependency::alias);
 
   std::vector<std::uint8_t> native_payload;
   const PrivateOutputDirectory staged{request.output};
@@ -679,9 +718,9 @@ ShuttleV2ExecutionResult execute_compile(
     native_payload = std::move(*bytes);
   }
   PackageArtifact artifact{
-      request.artifact_kind,       std::move(*expected),
-      std::move(artifact_sources), std::move(direct_dependencies),
-      std::move(*imported.view),   {},
+      request.artifact_kind,        std::move(*expected),
+      std::move(*artifact_sources), std::move(*direct_dependencies),
+      std::move(*imported.view),    {},
       std::move(native_payload)};
   artifact.symbols =
       artifact_symbols(artifact.imported, *dependencies, request.artifact_kind);
@@ -728,6 +767,75 @@ ShuttleV2ExecutionResult execute_inspect(
       0,
       shuttle_artifact_receipt_json(*decoded.artifact, *decoded.digest) + '\n',
       {}};
+}
+
+ShuttleV2ExecutionResult execute_reuse(
+    const ShuttleV2ReuseRequest& request,
+    const std::filesystem::path& compiler_executable,
+    const NativeToolchain& toolchain) {
+  auto expected = compatibility(request.target, request.artifact_kind,
+                                compiler_executable, toolchain);
+  if (!expected) return failure(2, "clothc: error: " + expected.error());
+  auto candidate = load_candidate(request.input, *expected,
+                                  request.artifact_kind, request.package);
+  if (!candidate) return cache_miss();
+
+  auto dependencies =
+      load_artifacts(request.artifacts, *expected, request.artifact_kind);
+  if (!dependencies) {
+    return failure(2, "clothc: error: " + dependencies.error());
+  }
+  std::vector<std::string> closure_roots;
+  std::set<std::string, std::less<>> direct_packages;
+  for (const ShuttleV2DependencyInput& dependency : request.dependencies) {
+    closure_roots.push_back(dependency.package);
+    direct_packages.insert(dependency.package);
+  }
+  if (auto valid = validate_closure(*dependencies, closure_roots); !valid) {
+    return failure(2, "clothc: error: " + valid.error());
+  }
+  if (direct_packages.size() != closure_roots.size()) {
+    return failure(2,
+                   "clothc: error: multiple aliases target the same package");
+  }
+  auto direct_dependencies =
+      dependency_inventory(request.dependencies, *dependencies);
+  if (!direct_dependencies) {
+    return failure(2, "clothc: error: " + direct_dependencies.error());
+  }
+  if (candidate->artifact.dependencies != *direct_dependencies) {
+    return cache_miss();
+  }
+
+  ShuttleBuildRequest source_request{
+      request.target,
+      ShuttleOutputKind::kCheck,
+      std::nullopt,
+      request.package.name,
+      request.entry ? std::optional<std::filesystem::path>{*request.entry}
+                    : std::nullopt,
+      {{request.package.name, request.package.version, request.source_root}},
+      {}};
+  for (const ShuttleV2DependencyInput& dependency : request.dependencies) {
+    source_request.dependencies.push_back(
+        {request.package.name, dependency.alias, dependency.package});
+  }
+  auto sources = load_shuttle_sources(source_request);
+  if (!sources) return failure(2, "clothc: error: " + sources.error());
+  auto current_sources = source_inventory(*sources, request.source_root);
+  if (!current_sources) {
+    return failure(2, "clothc: error: " + current_sources.error());
+  }
+  if (candidate->artifact.sources != *current_sources) return cache_miss();
+  if (request.entry && !select_entry(candidate->artifact, *request.entry)) {
+    return cache_miss();
+  }
+
+  return {0,
+          shuttle_artifact_receipt_json(candidate->artifact,
+                                        candidate->input.digest) +
+              '\n',
+          {}};
 }
 
 ShuttleV2ExecutionResult execute_link(
@@ -817,6 +925,9 @@ ShuttleV2ExecutionResult execute_shuttle_v2_request(
   }
   if (const auto* inspect = std::get_if<ShuttleV2InspectRequest>(&request)) {
     return execute_inspect(*inspect);
+  }
+  if (const auto* reuse = std::get_if<ShuttleV2ReuseRequest>(&request)) {
+    return execute_reuse(*reuse, compiler_executable, toolchain);
   }
   return execute_link(std::get<ShuttleV2LinkRequest>(request),
                       compiler_executable, toolchain);

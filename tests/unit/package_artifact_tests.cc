@@ -216,14 +216,24 @@ void object_round_trip_and_compatibility(TestContext& test) {
                   decoded.artifact->compatibility.native ==
                       artifact.compatibility.native,
               "object payload or native compatibility changed on read");
+  const auto expect_incompatible = [&](cloth::ArtifactCompatibility expected,
+                                       std::string_view description) {
+    const auto rejected =
+        cloth::read_package_artifact(encoded.artifact->bytes, expected);
+    test.expect(
+        !rejected.is_valid() && !rejected.issues.empty() &&
+            rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
+        std::string{description} + " compatibility mismatch was accepted");
+  };
   auto incompatible = artifact.compatibility;
   incompatible.native->cpu = "different";
-  const auto rejected =
-      cloth::read_package_artifact(encoded.artifact->bytes, incompatible);
-  test.expect(
-      !rejected.is_valid() && !rejected.issues.empty() &&
-          rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
-      "exact native compatibility mismatch was accepted");
+  expect_incompatible(incompatible, "native configuration");
+  incompatible = artifact.compatibility;
+  incompatible.native->runtime_digest = cloth::sha256("changed runtime");
+  expect_incompatible(incompatible, "runtime");
+  incompatible = artifact.compatibility;
+  incompatible.native->tools[0].digest = cloth::sha256("changed tool");
+  expect_incompatible(incompatible, "native tool");
   auto malformed_object = encoded.artifact->bytes;
   const std::size_t payload_offset =
       64 + static_cast<std::size_t>(read_u64(malformed_object, 16));

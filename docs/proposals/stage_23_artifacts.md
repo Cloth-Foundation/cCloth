@@ -278,8 +278,13 @@ This is artifact compatibility, not source freshness. A valid old artifact can
 still represent old source. Shuttle compiles every package once per invocation
 and reuses that result across consumers of the same graph node. It does not
 skip compilation merely because an output file exists. Compiler protocol tests
-can explicitly reuse compatible supplied artifacts without reopening sources;
-automatic reuse between Shuttle commands remains a later caching stage.
+can explicitly reuse compatible supplied artifacts without reopening sources.
+At Stage 23 completion, automatic reuse between commands remained deferred.
+
+Stage 24 supplies that local reuse layer without changing artifact format 1.
+Its state and validation extension is specified in
+`shuttle/docs/proposals/stage_24_reuse.md`; the artifact remains the authority
+for exact source, dependency, compiler, target, runtime, and tool identities.
 
 ## Linking and failure behavior
 

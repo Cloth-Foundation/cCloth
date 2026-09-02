@@ -44,6 +44,17 @@ struct ShuttleV2InspectRequest {
   std::filesystem::path input;
 };
 
+struct ShuttleV2ReuseRequest {
+  TargetDataLayout target;
+  PackageArtifactKind artifact_kind;
+  std::filesystem::path input;
+  PackageIdentity package;
+  std::filesystem::path source_root;
+  std::optional<std::string> entry;
+  std::vector<ShuttleV2DependencyInput> dependencies;
+  std::vector<ShuttleV2ArtifactInput> artifacts;
+};
+
 struct ShuttleV2LinkRequest {
   TargetDataLayout target;
   std::filesystem::path output;
@@ -54,7 +65,7 @@ struct ShuttleV2LinkRequest {
 
 using ShuttleV2Request =
     std::variant<ShuttleV2CompileRequest, ShuttleV2InspectRequest,
-                 ShuttleV2LinkRequest>;
+                 ShuttleV2ReuseRequest, ShuttleV2LinkRequest>;
 
 [[nodiscard]] std::expected<ShuttleV2Request, std::string>
 prepare_shuttle_v2_request(std::span<const std::filesystem::path> arguments);

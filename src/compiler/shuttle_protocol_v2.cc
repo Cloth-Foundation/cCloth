@@ -270,16 +270,25 @@ std::expected<void, std::string> validate_artifacts(
   return {};
 }
 
-std::expected<ShuttleV2CompileRequest, std::string> compile_request(
+struct PackageOperationInputs {
+  TargetDataLayout target;
+  PackageArtifactKind artifact_kind;
+  PackageIdentity package;
+  std::filesystem::path source_root;
+  std::optional<std::string> entry;
+  std::vector<ShuttleV2DependencyInput> dependencies;
+  std::vector<ShuttleV2ArtifactInput> artifacts;
+};
+
+std::expected<PackageOperationInputs, std::string> package_operation_inputs(
     ParsedArguments parsed) {
-  if (parsed.input || parsed.root_package || parsed.packages.size() != 1) {
+  if (parsed.input || parsed.output || parsed.root_package ||
+      parsed.packages.size() != 1) {
     return std::unexpected(
-        "compile requires one --package and forbids inspect/link options");
+        "package operation requires exactly one source package");
   }
   auto target = parse_target(parsed.target);
-  auto output = output_file(parsed.output);
   if (!target) return std::unexpected(target.error());
-  if (!output) return std::unexpected(output.error());
   PackageArtifactKind kind;
   if (parsed.artifact_kind == "interface") {
     kind = PackageArtifactKind::kInterface;
@@ -318,14 +327,33 @@ std::expected<ShuttleV2CompileRequest, std::string> compile_request(
   if (auto valid = validate_artifacts(parsed.artifacts); !valid) {
     return std::unexpected(valid.error());
   }
-  return ShuttleV2CompileRequest{std::move(*target),
-                                 kind,
+  return PackageOperationInputs{std::move(*target),
+                                kind,
+                                {std::move(name), std::move(version)},
+                                std::move(*root),
+                                std::move(parsed.entry),
+                                std::move(parsed.dependencies),
+                                std::move(parsed.artifacts)};
+}
+
+std::expected<ShuttleV2CompileRequest, std::string> compile_request(
+    ParsedArguments parsed) {
+  if (parsed.input || !parsed.output) {
+    return std::unexpected("compile requires --output and forbids --input");
+  }
+  auto output = output_file(parsed.output);
+  if (!output) return std::unexpected(output.error());
+  parsed.output.reset();
+  auto package = package_operation_inputs(std::move(parsed));
+  if (!package) return std::unexpected(package.error());
+  return ShuttleV2CompileRequest{std::move(package->target),
+                                 package->artifact_kind,
                                  std::move(*output),
-                                 {std::move(name), std::move(version)},
-                                 std::move(*root),
-                                 std::move(parsed.entry),
-                                 std::move(parsed.dependencies),
-                                 std::move(parsed.artifacts)};
+                                 std::move(package->package),
+                                 std::move(package->source_root),
+                                 std::move(package->entry),
+                                 std::move(package->dependencies),
+                                 std::move(package->artifacts)};
 }
 
 std::expected<ShuttleV2InspectRequest, std::string> inspect_request(
@@ -338,6 +366,26 @@ std::expected<ShuttleV2InspectRequest, std::string> inspect_request(
   auto input = input_file(*parsed.input, "artifact input");
   if (!input) return std::unexpected(input.error());
   return ShuttleV2InspectRequest{std::move(*input)};
+}
+
+std::expected<ShuttleV2ReuseRequest, std::string> reuse_request(
+    ParsedArguments parsed) {
+  if (!parsed.input || parsed.output) {
+    return std::unexpected("reuse requires --input and forbids --output");
+  }
+  auto input = input_file(*parsed.input, "candidate artifact");
+  if (!input) return std::unexpected(input.error());
+  parsed.input.reset();
+  auto package = package_operation_inputs(std::move(parsed));
+  if (!package) return std::unexpected(package.error());
+  return ShuttleV2ReuseRequest{std::move(package->target),
+                               package->artifact_kind,
+                               std::move(*input),
+                               std::move(package->package),
+                               std::move(package->source_root),
+                               std::move(package->entry),
+                               std::move(package->dependencies),
+                               std::move(package->artifacts)};
 }
 
 std::expected<ShuttleV2LinkRequest, std::string> link_request(
@@ -395,6 +443,9 @@ std::expected<ShuttleV2Request, std::string> prepare_shuttle_v2_request(
   if (*parsed->operation == "link") {
     return link_request(std::move(*parsed));
   }
+  if (*parsed->operation == "reuse") {
+    return reuse_request(std::move(*parsed));
+  }
   return std::unexpected("unsupported operation '" + *parsed->operation + "'");
 }
 
@@ -402,7 +453,7 @@ std::string shuttle_capabilities_json(const ArtifactDigest& compiler_id) {
   return "{\"schema\":1,\"protocols\":[1,2],\"artifact_formats\":[1],"
          "\"compiler_id\":\"" +
          artifact_digest_hex(compiler_id) +
-         "\",\"operations\":[\"compile\",\"inspect\",\"link\"],"
+         "\",\"operations\":[\"compile\",\"inspect\",\"link\",\"reuse\"],"
          "\"interface_targets\":[\"x86_64\",\"wasm32\"],"
          "\"object_targets\":[\"x86_64\"]}";
 }

@@ -63,7 +63,7 @@ and deliberate deferrals are recorded in `TODO.md`.
 
 Stage 21 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
-exit audits. No later stage is active.
+exit audits. Build-responsiveness Stage 24 is active.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -191,13 +191,60 @@ Exit criteria:
 - incompatible or duplicate artifacts fail deterministically; and
 - development and sanitizer suites pass.
 
-## Beyond Stage 23
+## Stage 24: Responsive and observable local builds
+
+Status: **active**
+
+Objective: make Shuttle's local build loop visibly active and materially faster
+without weakening exact artifact identity, deterministic output, or validation.
+
+Prerequisite: Stage 23.
+
+Deliverables:
+
+1. Establish repeatable clean and unchanged-build baselines, and emit concise
+   package/phase progress to standard error without contaminating compiler
+   protocol or program output.
+2. Remove measured cold-path overhead while retaining exact compiler, runtime,
+   native-tool, source, and dependency identities.
+3. Reuse validated unchanged local package artifacts across commands with
+   conservative invalidation, atomic state publication, and existing writer
+   exclusion.
+4. Compile independent ready packages concurrently under an explicit job bound,
+   while preserving deterministic artifacts and diagnostics.
+
+Non-goals:
+
+- per-file, per-function, or optimizer-level incremental compilation;
+- a compiler daemon, watch mode, or background service;
+- shared, remote, or distributed caches;
+- changing Cloth source semantics, the manifest schema, or package artifact
+  compatibility merely to improve speed; and
+- hiding work behind unverified timestamps or trusting stale outputs.
+
+Exit criteria:
+
+- build progress identifies every package compile/reuse and final link, appears
+  before long-running work, and leaves program standard output unchanged;
+- clean builds retain exact Stage 23 behavior with materially lower measured
+  overhead on the recorded small-project benchmark;
+- unchanged builds perform no package compilation, while source, manifest,
+  dependency, compiler, target, runtime, or native-tool changes invalidate the
+  affected artifacts;
+- parallel and single-job builds produce byte-identical package artifacts and
+  equivalent diagnostics; and
+- development, sanitizer, Rust, cross-tool, native, and responsiveness suites
+  pass.
+
+The build-output and reuse contracts are owned by Shuttle's Stage 24 documents.
+
+## Beyond Stage 24
 
 No later stage number is assigned yet. The remaining backlog must be reviewed
-against a credible Cloth 1.0 release before Stage 24 is chartered. That
+against a credible Cloth 1.0 release before Stage 25 is chartered. That
 review—not ad hoc implementation—will choose and scope the next stage.
 
-The following post-Stage-23 candidates are recorded without priority or order:
+The following post-Stage-24 candidates are recorded without priority or order:
 
 - wrapping and saturating conversions as explicit primitive meta operations;
 - optional numeric literal suffixes;
@@ -205,7 +252,7 @@ The following post-Stage-23 candidates are recorded without priority or order:
 - enums as an implicit file kind; and
 - structs as an implicit file kind.
 
-This candidate list assumes Stages 21–23 and their prerequisites are complete.
+This candidate list assumes Stages 21–24 and their prerequisites are complete.
 Each candidate still requires its own stage charter, dependency review,
 non-goals, approved language or optimizer contract, concrete `TODO.md` items,
 and explicit implementation go-ahead. Inclusion here does not activate or

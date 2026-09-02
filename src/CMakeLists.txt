@@ -40,11 +40,29 @@ add_library(cloth_compiler
     source/source_file.cc
     target/data_layout.cc
 )
+# Exact artifact compatibility hashes can cover large compiler and native-tool
+# binaries. Keep this primitive optimized in diagnostic builds so protocol
+# validation does not dominate small-project compilation. Coverage builds retain
+# their explicit unoptimized instrumentation policy.
+if(NOT CLOTH_ENABLE_COVERAGE)
+    if(CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+        set_source_files_properties(artifact/sha256.cc PROPERTIES
+            COMPILE_OPTIONS "/O2"
+        )
+    else()
+        set_source_files_properties(artifact/sha256.cc PROPERTIES
+            COMPILE_OPTIONS "-O2"
+        )
+    endif()
+endif()
 target_compile_features(cloth_compiler PUBLIC cxx_std_23)
 target_include_directories(cloth_compiler
     PUBLIC
         ${PROJECT_SOURCE_DIR}/include
 )
+if(WIN32)
+    target_link_libraries(cloth_compiler PRIVATE bcrypt)
+endif()
 cloth_enable_warnings(cloth_compiler)
 
 add_executable(clothc main.cc)

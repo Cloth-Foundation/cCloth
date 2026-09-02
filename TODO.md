@@ -18,8 +18,9 @@ Rules:
 
 Stage 22 is complete, including the cross-tool exit audit in `docs/testing.md`.
 Stage 23 is also complete, including its coordinated development and sanitizer
-exit audit. No later stage is active. The ownership boundary remains recorded
-in `docs/shuttle_and_compiler.md`.
+exit audit. Stage 24 is active under the responsive-build charter in
+`ROADMAP.md`. The ownership boundary remains recorded in
+`docs/shuttle_and_compiler.md`.
 
 ## Scheduled work
 
@@ -94,6 +95,22 @@ in `docs/shuttle_and_compiler.md`.
 - [x] **23.4 — Equivalence verification.** Compare separate and whole-project
   compilation in ABI, linker, invalid-input, and native execution tests, then
   complete the Stage 23 development/sanitizer exit audit.
+
+### Stage 24: Responsive and observable local builds
+
+- [x] **24.1 — Baseline and progress contract.** Record clean-build phase
+  timings and define stable package, link, completion, and run progress on
+  standard error without changing compiler diagnostics or program streams.
+- [x] **24.2 — Cold-path efficiency.** Optimize the measured exact-identity and
+  process overhead while preserving Stage 23 compatibility and validation.
+- [x] **24.3 — Validated local reuse.** Persist conservative Shuttle-owned
+  package input state, reuse only integrity- and compatibility-validated
+  artifacts, and invalidate affected dependents precisely.
+- [ ] **24.4 — Deterministic parallel scheduling.** Execute independent ready
+  packages under a bounded job policy and prove single-job/parallel output and
+  diagnostic equivalence.
+- [ ] Complete the Stage 24 development, sanitizer, Rust, cross-tool, native,
+  cold-build, and unchanged-build exit audit.
 
 ## Unscheduled backlog
 

@@ -289,6 +289,15 @@ void protocol_v2_operations(TestContext& test) {
                              *request),
               "valid protocol-v2 inspect request was rejected");
 
+  auto reuse = compile;
+  reuse[3] = "reuse";
+  reuse[8] = "--input";
+  reuse[9] = artifact_path;
+  request = cloth::prepare_shuttle_v2_request(reuse);
+  test.expect(
+      request && std::holds_alternative<cloth::ShuttleV2ReuseRequest>(*request),
+      "valid protocol-v2 reuse request was rejected");
+
   const std::vector<std::filesystem::path> link{"--shuttle-protocol",
                                                 "2",
                                                 "--operation",
@@ -335,7 +344,7 @@ void protocol_v2_json_contract(TestContext& test) {
   const std::string capabilities = cloth::shuttle_capabilities_json(digest);
   test.expect(capabilities.starts_with("{\"schema\":1,\"protocols\":[1,2]") &&
                   capabilities.contains("\"operations\":[\"compile\","
-                                        "\"inspect\",\"link\"]") &&
+                                        "\"inspect\",\"link\",\"reuse\"]") &&
                   capabilities.contains(cloth::artifact_digest_hex(digest)) &&
                   !capabilities.ends_with('\n'),
               "capability response does not match protocol schema 1");

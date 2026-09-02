@@ -6,8 +6,11 @@
 
 #include "cloth/source/path.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <fstream>
-#include <iterator>
+#include <limits>
+#include <system_error>
 #include <utility>
 
 namespace cloth {
@@ -34,11 +37,23 @@ std::expected<SourceFile, SourceLoadError> SourceFile::load(
         SourceLoadError{path, "could not open source file for reading"});
   }
 
-  std::string contents{std::istreambuf_iterator<char>{input},
-                       std::istreambuf_iterator<char>{}};
-  if (input.bad()) {
+  std::error_code error;
+  const std::uintmax_t size = std::filesystem::file_size(path, error);
+  constexpr std::uintmax_t kMaximumRead =
+      static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max());
+  if (error || size > kMaximumRead ||
+      size > static_cast<std::uintmax_t>(
+                 std::numeric_limits<std::size_t>::max())) {
     return std::unexpected(
-        SourceLoadError{path, "failed while reading source file"});
+        SourceLoadError{path, "source file size could not be read"});
+  }
+  std::string contents(static_cast<std::size_t>(size), '\0');
+  if (!contents.empty()) {
+    input.read(contents.data(), static_cast<std::streamsize>(contents.size()));
+  }
+  if (!input || input.peek() != std::ifstream::traits_type::eof()) {
+    return std::unexpected(
+        SourceLoadError{path, "source file changed or failed while reading"});
   }
 
   return from_memory(path, std::move(contents));

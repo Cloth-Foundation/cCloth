@@ -212,3 +212,42 @@ Clang/MSVC-library ASan/UBSan compiler:
 Stage 23 is complete. Automatic reuse across commands, remote artifacts,
 registries, additional native targets, and ABI stability across compiler
 releases remain deliberately outside its contract.
+
+## Stage 24.2 responsiveness checkpoint
+
+Verified on Windows on 2026-09-01 with release Shuttle and the GNU development
+compiler. The repeatable one-package `examples/Shuttle.toml` `wasm32` check fell
+from an initial 9.35-second observation to a 161.9-millisecond median across
+five warm-file-system runs. The compiler capability query within that path fell
+from 5.86 seconds to a 70.2-millisecond median. This is a 98.3% end-to-end
+reduction without changing exact artifact or tool identity.
+
+Shuttle now reports preparation, every package, linking, completion time, and
+program launch on standard error by default; `--quiet` suppresses successful
+progress without suppressing compiler diagnostics or program streams. All
+92 development and 92 sanitizer CTest entries pass, along with all 37 ordinary
+Shuttle tests, the Rust 1.85 baseline, Rust formatting and Clippy, C++ formatting,
+and repository whitespace checks. At this checkpoint, Stage 24.1 and 24.2 were
+complete; validated reuse and deterministic parallel scheduling remained active.
+
+## Stage 24.3 reuse checkpoint
+
+Verified on Windows on 2026-09-01 with the GNU development compiler and the
+Clang/MSVC-library ASan/UBSan compiler. Protocol version 2 now validates reuse
+against the exact current source inventory, dependency artifact closure,
+compiler, target, runtime, and native tools before returning a receipt. A clean
+status-3 miss has empty streams and is the only path from validation to
+compilation.
+
+Shuttle persists immutable, atomically published manifest/receipt records and
+requires both an exact manifest snapshot and a matching compiler receipt.
+Tests cover unchanged interface/object graphs, manifest-only invalidation,
+source and dependency invalidation, target isolation, changed compilers,
+runtime/tool compatibility, malformed state, corrupt candidate repair, entry
+failures, and concurrent interface/object writers.
+
+All 92 development and 92 sanitizer CTest entries pass, including all 17
+protocol and eight native Shuttle/`clothc` cases. All 40 ordinary Shuttle tests,
+the Rust 1.85 baseline, Rust formatting and Clippy, C++ formatting, and
+repository whitespace checks pass. Stage 24.3 is complete; bounded deterministic
+parallel scheduling remains Stage 24.4.
