@@ -1,5 +1,11 @@
 # Cloth
 
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/Cloth-Foundation/cCloth/gradle.yml?style=for-the-badge)
+![GitHub License](https://img.shields.io/github/license/Cloth-Foundation/cCloth?style=for-the-badge)
+![GitHub Repo stars](https://img.shields.io/github/stars/Cloth-Foundation/cCloth?style=for-the-badge)
+![GitHub forks](https://img.shields.io/github/forks/Cloth-Foundation/cCloth?style=for-the-badge)
+![GitHub contributors](https://img.shields.io/github/contributors/Cloth-Foundation/cCloth?style=for-the-badge)
+
 Cloth is a statically typed, LLVM-backed programming language for building
 portable software with native compilation and managed memory. It brings
 together the parts we value in C++, Java, C#, and Go while deliberately
@@ -87,6 +93,10 @@ updates. Numeric values use contextual literals, lossless implicit widening,
 overload-directed literal typing, and checked explicit `NumericType(value)`
 conversion. Fixed-width integers also provide bitwise and checked shift
 operators plus explicit little-endian and big-endian `byte[]` meta operations.
+
+[Value structs](docs/structs.md) are available for parsing, type checking, and
+typed HIR through `--check`. Their native lowering and artifact support are
+still in development.
 
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++
@@ -179,11 +189,13 @@ summaries. Diagnostics go to standard error. The complete command shape is:
 ```text
 clothc [--target=x86_64|wasm32]
        [--source-root=<path>]
-       [--emit-llvm[=<path>] | --build=<path>]
+       [--check | --emit-llvm[=<path>] | --build=<path>]
        <source.co>...
 ```
 
 Native `--build` output currently requires `--target=x86_64`.
+`--check` validates the frontend and prints typed HIR without generating code
+or artifacts. It supports the same source discovery and import rules.
 
 ## Projects and imports
 
