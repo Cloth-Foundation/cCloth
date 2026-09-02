@@ -1,5 +1,6 @@
 import Point;
 import Data;
+import DerivedProjector;
 import Empty;
 import Holder;
 import Label;
@@ -28,6 +29,14 @@ static func ReplaceElement(Packet[] values): uint32 {
 
 static func Captured(Packet value, uint32 ignored): uint32 {
   return value.First.Code;
+}
+
+static func Select(Point value): int32 { return value.X; }
+static func Select(Data value): uint64 { return value.CountTo; }
+
+static func Next(Holder holder): Packet {
+  holder.Value.First.Code++;
+  return holder.Value;
 }
 
 static func Main() {
@@ -86,4 +95,30 @@ static func Main() {
   int32 index = 0;
   packets[index++].First.Code++;
   println(index);
+
+  println(Select(point));
+  println(Select(Data(true, 40)));
+  println(Select(Data(false, 40)));
+  println(Label("same", 1) == Label("same", 2));
+  final Packet frozen = Packet("fixed");
+  frozen.Object.Text = "updated";
+  frozen.Touch();
+  println(frozen.Links[0].Text);
+
+  var derived = DerivedProjector(Packet("derived"));
+  Projector base = derived;
+  Transform inherited = derived;
+  println(base.Apply(point).X);
+  println(inherited.Apply(point).X);
+  println(derived.Cached.First.Text);
+  println(derived.Extra.First.Text);
+  println(point.X);
+
+  holder.Value.First.Code = 0;
+  println(Next(holder)::typeName);
+  println(holder.Value.First.Code);
+  println(Next(holder));
+  println(holder.Value.First.Code);
+  Empty[] empty = [Empty(), Empty()];
+  println(empty[0] == empty[1]);
 }

@@ -934,10 +934,11 @@ class MetadataDecoder {
   }
 
  private:
-  void issue(std::string record, std::string message) {
+  void issue(std::string record, std::string message,
+             ArtifactIssueCode code = ArtifactIssueCode::kMalformedMetadata) {
     if (issues_.size() < 32) {
-      issues_.push_back(ArtifactIssue{ArtifactIssueCode::kMalformedMetadata,
-                                      std::move(record), std::move(message)});
+      issues_.push_back(
+          ArtifactIssue{code, std::move(record), std::move(message)});
     }
   }
 
@@ -1344,9 +1345,10 @@ std::optional<std::vector<ImportedType>> MetadataDecoder::decode_types(
     }
     const auto* reference_values =
         array(fields->at("reference_offsets"), "types");
-    if (reference_values == nullptr ||
-        reference_values->size() > kMaxLayoutReferences) {
-      issue("types", "invalid or excessive reference map");
+    if (reference_values == nullptr) return std::nullopt;
+    if (reference_values->size() > kMaxLayoutReferences) {
+      issue("types", "reference map exceeds layout limits",
+            ArtifactIssueCode::kLimitExceeded);
       return std::nullopt;
     }
     std::vector<std::uint64_t> references;
@@ -1999,6 +2001,11 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
     issue(std::string{kRecord}, "descriptor ABI is invalid");
     return std::nullopt;
   }
+  if (reference_values->size() > kMaxLayoutReferences) {
+    issue(std::string{kRecord}, "reference map exceeds layout limits",
+          ArtifactIssueCode::kLimitExceeded);
+    return std::nullopt;
+  }
   std::vector<std::uint64_t> references;
   for (const JsonValue& item : *reference_values) {
     const auto offset = integer(item, kRecord);
@@ -2430,8 +2437,11 @@ std::vector<ArtifactIssue> verify_package_artifact(
 
   for (const ImportedPackageIssue& issue :
        verify_imported_package_view(artifact.imported)) {
-    append_issue(issues, ArtifactIssueCode::kInvalidModel, issue.record,
-                 issue.message);
+    append_issue(issues,
+                 issue.code == ImportedPackageIssueCode::kLimitExceeded
+                     ? ArtifactIssueCode::kLimitExceeded
+                     : ArtifactIssueCode::kInvalidModel,
+                 issue.record, issue.message);
   }
   if (!is_sorted_unique(artifact.sources, &ArtifactSource::path)) {
     append_issue(issues, ArtifactIssueCode::kInvalidModel, "sources",

@@ -1,6 +1,6 @@
 # Stage 26.3: aggregate ABI and artifact review
 
-Status: **approved, frozen, and implemented in 26.3; 26.4 exit audit pending**.
+Status: **approved, frozen, and implemented; coordinated 26.4 exit audit complete**.
 
 Stage 26.3's boundary contract and implementation were approved on 2026-09-02,
 after clarifying that runtime metadata references introduce no source borrowing
@@ -451,10 +451,12 @@ scalarized aggregates, lost copies, invalid writable paths, missing roots/maps,
 wrong callable modes, layout cycles/overflow, forged dependency layouts, and old
 versions. Both target layouts must verify; native execution remains x86-64.
 
-26.4 remains the coordinated equivalence and exit audit: source-free dependencies,
+26.4 is the coordinated equivalence and exit audit: source-free dependencies,
 whole-project versus separate behavior, serial/parallel bytes, layout invalidation,
 GC stress, and the complete compiler/Rust test matrix. Neither this review nor
-26.3 alone marks all of Stage 26 complete.
+26.3 alone marks all of Stage 26 complete. The
+[26.4 audit](../testing.md#stage-264-struct-exit-audit) subsequently passed on
+2026-09-02, closing the stage without a further compatibility revision.
 
 ## Pre-implementation review checks, 2026-09-02
 
@@ -479,4 +481,5 @@ execution, both target layouts, malformed aggregate metadata, and source-free
 Shuttle dependencies. Full format-3 artifact lengths and SHA-256 hashes are
 frozen for both target layouts, with deterministic byte-for-byte re-encoding.
 The [implementation checkpoint](../testing.md#stage-263-aggregate-implementation-checkpoint)
-records the compiler and Rust gates. Stage 26.4 remains open.
+records the compiler and Rust gates. At that checkpoint, Stage 26.4 remained open;
+its completed exit audit is recorded separately above.

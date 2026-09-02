@@ -353,6 +353,50 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
   expect_rejected(std::move(changed), "invalid UTF-8 metadata was accepted");
 }
 
+void reference_map_limit_failures(TestContext& test) {
+  auto oversized = make_artifact();
+  oversized.imported.files[0].abi.descriptor->reference_offsets.resize(65'537,
+                                                                       0);
+  const auto rejected_model = cloth::write_package_artifact(oversized);
+  test.expect(
+      std::ranges::any_of(rejected_model.issues,
+                          [](const auto& issue) {
+                            return issue.code ==
+                                   cloth::ArtifactIssueCode::kLimitExceeded;
+                          }),
+      "oversized descriptor model lost its limit diagnostic");
+  const auto encoded = cloth::write_package_artifact(make_artifact());
+  test.expect(encoded.is_valid(), "reference-map fixture did not encode");
+  if (!encoded.artifact) return;
+  const auto original = metadata_text(encoded.artifact->bytes);
+  std::string excessive = "[\"0\"";
+  for (std::size_t index = 1; index < 65'537; ++index) excessive += ",\"0\"";
+  excessive += ']';
+  for (const std::string_view section : {"\"descriptor\":", "\"types\":["}) {
+    auto changed = original;
+    const auto section_offset = changed.find(section);
+    const std::string_view key = "\"reference_offsets\":";
+    const auto key_offset = changed.find(key, section_offset);
+    test.expect(key_offset != std::string::npos,
+                "reference-map fixture is missing");
+    if (key_offset == std::string::npos) continue;
+    const auto begin = key_offset + key.size();
+    const auto end = changed.find(']', begin);
+    changed.replace(begin, end - begin + 1, excessive);
+    const auto bytes =
+        replace_metadata(encoded.artifact->bytes, std::move(changed));
+    const auto rejected = cloth::read_package_artifact(bytes);
+    test.expect(!rejected.is_valid() &&
+                    std::ranges::any_of(
+                        rejected.issues,
+                        [](const auto& issue) {
+                          return issue.code ==
+                                 cloth::ArtifactIssueCode::kLimitExceeded;
+                        }),
+                "oversized reference map lost its limit diagnostic");
+  }
+}
+
 void writer_rejects_invalid_models(TestContext& test) {
   auto artifact = make_artifact();
   artifact.sources.clear();
@@ -430,6 +474,7 @@ int main() {
        metadata_canonicality_and_reference_failures},
       {"writer rejects invalid models", writer_rejects_invalid_models},
       {"enum metadata failures", enum_metadata_failures},
+      {"reference-map limit failures", reference_map_limit_failures},
   };
   return cloth::test::run_tests(tests);
 }

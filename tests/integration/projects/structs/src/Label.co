@@ -8,4 +8,10 @@ struct {
     Text = text;
     Code = 7;
   }
+
+  Label(string text, byte marker) {
+    tag = marker;
+    Text = text;
+    Code = 7;
+  }
 }

@@ -1,6 +1,6 @@
 # Proposal: Stage 26 value structs
 
-Status: **approved and implemented through 26.3; 26.4 exit audit pending**.
+Status: **approved and implemented; coordinated 26.4 exit audit complete**.
 
 The source contract and implementation start were approved on 2026-09-02,
 including read-only value receivers. Aggregate ABI/schema decisions were
@@ -13,6 +13,9 @@ execution, and source-free packages. The
 [26.3 aggregate ABI contract](stage_26_aggregate_abi.md) freezes the exact layout,
 callable, runtime, artifact, and resource-limit decisions without changing the
 approved source semantics.
+
+The [26.4 exit audit](../testing.md#stage-264-struct-exit-audit) passed on
+2026-09-02 without expanding this source contract or its non-goals.
 
 ## Purpose and scope
 

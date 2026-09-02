@@ -118,6 +118,12 @@ closure. Count each canonical struct value map and class heap map once.
 The backend additionally caps aggregate backing storage plus aggregate
 root-address slots at 256 KiB per callable.
 
+Aggregate resource-policy violations produce `ArtifactIssueCode::kLimitExceeded`,
+distinct from malformed metadata or invalid semantic models. Value and heap-descriptor
+map counts are checked before constructing their decoded offset vectors.
+Imported-model verification preserves this classification through artifact
+validation; it is not inferred from diagnostic wording.
+
 The 64-byte envelope, metadata limit 64 MiB, payload limit 1 GiB, JSON depth
 limit 128, canonical decimal-string integers, and lowercase identity hex are
 unchanged. `aggregate_tests.cc` freezes complete interface-artifact sizes and

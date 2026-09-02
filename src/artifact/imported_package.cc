@@ -27,9 +27,11 @@ namespace {
 
 class IssueCollector {
  public:
-  void add(std::string record, std::string message) {
+  void add(
+      std::string record, std::string message,
+      ImportedPackageIssueCode code = ImportedPackageIssueCode::kInvalidModel) {
     issues_.push_back(
-        ImportedPackageIssue{std::move(record), std::move(message)});
+        ImportedPackageIssue{std::move(record), std::move(message), code});
   }
 
   [[nodiscard]] std::vector<ImportedPackageIssue> take() {
@@ -603,9 +605,15 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
   if (type.identity != expected_identity) {
     issues.add(record, "canonical type identity does not match its record");
   }
+  if ((type.kind == TypeKind::kStruct && type.storage.size > kMaxStructSize) ||
+      type.reference_offsets.size() > kMaxLayoutReferences) {
+    issues.add(record,
+               "aggregate value or reference map exceeds resource limits",
+               ImportedPackageIssueCode::kLimitExceeded);
+    return;
+  }
   if (type.kind == TypeKind::kStruct &&
-      (type.storage.size == 0 || type.storage.size > kMaxStructSize ||
-       !is_power_of_two(type.storage.alignment) ||
+      (type.storage.size == 0 || !is_power_of_two(type.storage.alignment) ||
        type.storage.size % type.storage.alignment != 0)) {
     issues.add(record,
                "aggregate value size or alignment exceeds the contract");
@@ -617,13 +625,11 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
       type.reference_offsets != scalar_references) {
     issues.add(record, "scalar value reference map is invalid");
   }
-  if (type.reference_offsets.size() > kMaxLayoutReferences ||
-      !std::ranges::is_sorted(type.reference_offsets) ||
+  if (!std::ranges::is_sorted(type.reference_offsets) ||
       std::adjacent_find(type.reference_offsets.begin(),
                          type.reference_offsets.end()) !=
           type.reference_offsets.end()) {
-    issues.add(record,
-               "value reference map is not bounded, sorted, and unique");
+    issues.add(record, "value reference map is not sorted and unique");
   }
   for (const auto offset : type.reference_offsets) {
     if (target.pointer.alignment == 0 ||
@@ -713,6 +719,13 @@ void verify_class_abi(
     issues.add(record, "class size or alignment is invalid");
   }
   const bool aggregate = file.kind == FileTypeKind::kStruct;
+  if ((aggregate && abi.fields.size() > kMaxStructFields) ||
+      (abi.descriptor &&
+       abi.descriptor->reference_offsets.size() > kMaxLayoutReferences)) {
+    issues.add(record, "field or reference-map count exceeds layout limits",
+               ImportedPackageIssueCode::kLimitExceeded);
+    return;
+  }
   if (aggregate ? abi.descriptor.has_value() : !abi.descriptor.has_value()) {
     issues.add(record, "heap descriptor presence disagrees with nominal kind");
     return;
@@ -761,10 +774,14 @@ void verify_class_abi(
     const auto type = types.find(field.type_identity);
     if (type != types.end()) {
       for (const auto offset : type->second->reference_offsets) {
-        if (offset > abi.size || field.offset > abi.size - offset ||
-            expected_references.size() == kMaxLayoutReferences) {
-          issues.add(record, "flattened reference map exceeds layout limits");
-          break;
+        if (expected_references.size() == kMaxLayoutReferences) {
+          issues.add(record, "flattened reference map exceeds layout limits",
+                     ImportedPackageIssueCode::kLimitExceeded);
+          return;
+        }
+        if (offset > abi.size || field.offset > abi.size - offset) {
+          issues.add(record, "flattened reference slot exceeds layout bounds");
+          return;
         }
         expected_references.push_back(field.offset + offset);
       }
@@ -1025,7 +1042,8 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
     if (type->kind == TypeKind::kStruct &&
         (type->storage.size > kMaxStructSize ||
          type->reference_offsets.size() > kMaxLayoutReferences)) {
-      issues.add("layout", "aggregate type exceeds resource limits");
+      issues.add("layout", "aggregate type exceeds resource limits",
+                 ImportedPackageIssueCode::kLimitExceeded);
       return;
     }
   }
@@ -1063,12 +1081,15 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
     ++visited;
     const bool aggregate = file.kind == FileTypeKind::kStruct;
     const auto record = "layout " + file.logical_path;
-    const auto fail = [&](std::string message) {
-      issues.add(record, std::move(message));
+    const auto fail = [&](std::string message,
+                          ImportedPackageIssueCode code =
+                              ImportedPackageIssueCode::kInvalidModel) {
+      issues.add(record, std::move(message), code);
     };
     const auto& abi = file.abi;
     if (abi.fields.size() > kMaxStructFields && aggregate) {
-      fail("struct exceeds the field-count limit");
+      fail("struct exceeds the field-count limit",
+           ImportedPackageIssueCode::kLimitExceeded);
       return;
     }
     std::size_t depth = aggregate ? 1 : 0;
@@ -1137,13 +1158,15 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
         return;
       }
       const auto size = (offset + alignment - 1) & ~(alignment - 1);
-      if ((aggregate && (size > kMaxStructSize || depth > kMaxStructDepth)) ||
-          (complete_base &&
-           (abi.header_size != header || abi.size != size ||
-            abi.alignment != alignment || abi.fields != fields))) {
-        fail(
-            "layout does not match declaration-order reconstruction or exceeds "
-            "limits");
+      if (aggregate && (size > kMaxStructSize || depth > kMaxStructDepth)) {
+        fail("aggregate layout exceeds size or nesting limits",
+             ImportedPackageIssueCode::kLimitExceeded);
+        return;
+      }
+      if (complete_base &&
+          (abi.header_size != header || abi.size != size ||
+           abi.alignment != alignment || abi.fields != fields)) {
+        fail("layout does not match declaration-order reconstruction");
         return;
       }
     }
@@ -1159,7 +1182,8 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
                          : 0;
     if (reference_count > kMaxLayoutReferences ||
         reference_count > kMaxAggregateMapEntries - map_entries) {
-      fail("flattened reference maps exceed closure resource limits");
+      fail("flattened reference maps exceed closure resource limits",
+           ImportedPackageIssueCode::kLimitExceeded);
       return;
     }
     map_entries += reference_count;
@@ -1493,8 +1517,8 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
          !file.virtual_function_identities.empty() ||
          !file.abstract_function_identities.empty() ||
          !file.interface_function_identities.empty() ||
-         !file.interface_implementations.empty() || file.abi.header_size != 0 ||
-         file.abi.fields.size() > kMaxStructFields)) {
+         !file.interface_implementations.empty() ||
+         file.abi.header_size != 0)) {
       issues.add(
           record,
           "struct declaration carries invalid storage or inheritance metadata");

@@ -7,7 +7,7 @@ traces managed references contained in them; programmers manage no lifetimes.
 
 The [source contract](proposals/stage_26_structs.md) and
 [aggregate ABI contract](proposals/stage_26_aggregate_abi.md) record the approved
-design. Stage 26.4 remains the coordinated equivalence and exit audit.
+design. The [Stage 26 exit audit](testing.md#stage-264-struct-exit-audit) is complete.
 
 ## Declaration and initialization
 

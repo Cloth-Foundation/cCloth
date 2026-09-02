@@ -17,4 +17,5 @@ struct {
   func Observe(uint32 ignored): uint32 { return First.Code; }
   func Copy(): Packet { return self; }
   func CopyAgain(): Packet { return Copy(); }
+  func Touch() { Object.Text += "*"; Links[0].Text += "!"; }
 }

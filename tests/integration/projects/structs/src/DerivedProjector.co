@@ -1,0 +1,15 @@
+import Point;
+import Packet;
+import Projector;
+
+class : Projector {
+  Packet Extra;
+
+  DerivedProjector(Packet value): Projector() { Extra = value; }
+
+  override func Apply(Point value): Point {
+    var result = super.Apply(value);
+    result.X += 10;
+    return result;
+  }
+}

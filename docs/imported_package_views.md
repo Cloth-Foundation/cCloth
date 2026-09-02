@@ -79,3 +79,9 @@ closure. Cycles, missing owners, forged maps, conflicting claims, and aggregate
 limits are checked before declarations enter semantic analysis or a native link.
 The reconstruction follows only inline fields and class bases; managed references
 do not create layout cycles.
+
+Imported verification distinguishes malformed models from resource-limit
+violations using `ImportedPackageIssueCode`. Artifact readers/writers preserve
+limit failures as `ArtifactIssueCode::kLimitExceeded`; clients need not classify
+diagnostic text. Reference-map counts are checked before constructing decoded
+value/descriptor maps, and flattened-map expansion stops at its declared bound.

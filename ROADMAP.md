@@ -61,16 +61,17 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 20 | Contextual literals, lossless numeric widening, overload-directed literals, and checked explicit numeric conversions |
 | 21 | Fixed-width integer operators and host-independent byte-order operations |
 | 25 | Named value enums with public cases, scalar lowering, and separate-compilation support |
+| 26 | Inline value structs with precise tracing, aggregate calls, and source-free package support |
 
-Stage 25 is the current completed language baseline. Coordinated toolchain Stage
+Stage 26 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
 exit audits. Build-responsiveness Stage 24 is also complete.
 
-Stage 26 is active for value structs. The approved source contract, frontend,
-and [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md)
-are complete through 26.3. Native execution and source-free packages are
-supported with artifact format 3, compiler ABI 4, and runtime ABI 2. Stage 26.4
-remains the coordinated equivalence and exit audit.
+Stage 26 is complete for value structs, including its approved source contract,
+frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
+and coordinated 26.4 exit audit. Native execution and source-free
+packages use artifact format 3, compiler ABI 4, and runtime ABI 2. No later stage
+is activated by this completion.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -300,7 +301,7 @@ Exit criteria:
 
 ## Stage 26: Value structs
 
-Status: **active — 26.1 through 26.3 complete; 26.4 exit audit pending**
+Status: **complete — coordinated 26.4 exit audit passed 2026-09-02**
 
 The [26.1 struct contract](docs/proposals/stage_26_structs.md), including read-only
 value receivers, and the implementation start were approved on 2026-09-02.
@@ -314,9 +315,10 @@ full-artifact golden hashes separate from the design-only review vectors.
 The [struct implementation](docs/structs.md) covers frontend checking, aggregate
 MIR/ABI/LLVM lowering, precise tracing, and source-free artifacts. All 121
 development and 121 sanitizer CTests pass, including native and shared Shuttle
-tests. The [26.3 checkpoint](docs/testing.md#stage-263-aggregate-implementation-checkpoint)
-records verification; struct-specific serial/parallel equivalence and layout
-invalidation remain part of the 26.4 exit audit.
+tests. The [26.4 exit audit](docs/testing.md#stage-264-struct-exit-audit) records
+struct-specific serial/parallel byte equivalence, private-layout/member
+invalidation, source-free privacy and inherited calls, native/forced-GC coverage,
+and the complete compiler/Rust quality gates.
 
 Objective: introduce nominal aggregate values with explicit initialization,
 predictable copying and mutation, precise tracing of contained references,
@@ -365,7 +367,7 @@ Exit criteria:
 
 ## Beyond Stage 26
 
-No later stage number is assigned. Planning structs does not schedule the rest
+No later stage number is assigned. Completing structs does not schedule the rest
 of the backlog or freeze the Cloth 1.0 release scope.
 
 The following candidates remain recorded without priority or order:

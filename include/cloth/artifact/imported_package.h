@@ -233,9 +233,15 @@ struct ImportedPackageView {
                          const ImportedPackageView&) = default;
 };
 
+enum class ImportedPackageIssueCode {
+  kInvalidModel,
+  kLimitExceeded,
+};
+
 struct ImportedPackageIssue {
   std::string record;
   std::string message;
+  ImportedPackageIssueCode code = ImportedPackageIssueCode::kInvalidModel;
 
   friend bool operator==(const ImportedPackageIssue&,
                          const ImportedPackageIssue&) = default;

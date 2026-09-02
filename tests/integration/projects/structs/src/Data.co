@@ -3,5 +3,10 @@ struct {
 
   Data(uint64 countTo) { CountTo = countTo; }
 
+  Data(bool exact, uint64 countTo) {
+    if (exact) { CountTo = countTo; return; }
+    CountTo = countTo + 1;
+  }
+
   func GetCountTo(): uint64 { return self.CountTo; }
 }

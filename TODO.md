@@ -27,13 +27,14 @@ Stage 25 is complete for named value enums. Its
 approved on 2026-09-02, followed by the coordinated exit audit in `docs/testing.md`.
 Attached constant data and runtime payloads remain deferred.
 
-Stage 26 is active for value structs. The
+Stage 26 is complete for value structs. The
 [26.1 source contract](docs/proposals/stage_26_structs.md), including read-only
 value receivers, and 26.2 implementation were approved on 2026-09-02.
 The frontend and [26.3 aggregate implementation](docs/proposals/stage_26_aggregate_abi.md)
 are complete, including native execution and source-free packages. Artifact
 format 3, compiler ABI 4, and runtime ABI 2 require rebuilding older packages.
-Stage 26.4 remains open for the coordinated equivalence and exit audit.
+The [26.4 exit audit](docs/testing.md#stage-264-struct-exit-audit) passed on
+2026-09-02. No later stage is active; deferred ideas remain in the backlog.
 
 ## Scheduled work
 
@@ -197,7 +198,7 @@ Stage 26.4 remains open for the coordinated equivalence and exit audit.
   layouts, and all ordinary Rust checks. See the
   [implementation checkpoint](docs/testing.md#stage-263-aggregate-implementation-checkpoint).
 
-- [ ] **26.4 — Equivalence and exit audit.** Cover shallow copying, final and
+- [x] **26.4 — Equivalence and exit audit.** Cover shallow copying, final and
   reference boundaries, nested writes with side effects, constructor flow,
   equality/NaN, arrays and iteration, overloads, class/interface calls carrying
   struct values, output, imported private layouts, and forced-GC survival.
@@ -205,6 +206,20 @@ Stage 26.4 remains open for the coordinated equivalence and exit audit.
   versus separate execution, serial/parallel bytes, and layout-change
   invalidation. Update owning documents and pass development, sanitizer,
   native/shared-tool, and Rust gates before marking the stage complete.
+
+  - [x] Audit native value semantics, overloads, inherited/interface calls,
+    constructor flow, final/reference boundaries, and malformed aggregate IR.
+  - [x] Prove relocated serial/parallel struct artifacts are byte-identical;
+    verify private-layout/member edits invalidate consumers while unrelated
+    packages remain reusable, including source-free rejection of private access.
+  - [x] Run the complete development, sanitizer, native/shared-tool, and Rust
+    matrix; update both repositories' contracts and close the coordinated audit.
+
+  Completed on 2026-09-02: 121/121 development and sanitizer CTests, including
+  22 shared protocol and 12 native Shuttle cases, plus all 43 ordinary Rust
+  tests and quality gates. The audit also corrected aggregate resource-limit
+  diagnostic classification and bounded decoded descriptor maps. No syntax or
+  compatibility revision changed. See the [exit audit](docs/testing.md#stage-264-struct-exit-audit).
 
 ## Unscheduled backlog
 
@@ -222,8 +237,7 @@ active stage without first updating `ROADMAP.md`.
 - Design case enumeration and enum reflection separately from Stage 25's typed
   printing and `::typeName` contract; do not expose internal tags as a stable
   serialization format.
-- Struct foundations and native lowering are implemented through 26.3 above;
-  the Stage 26 exit audit remains open.
+- Struct foundations, native lowering, and the Stage 26 exit audit are complete.
   Mutating struct receivers, struct conformance/boxing, reference returns, and
   user-defined copy/move hooks remain future contracts unless the approved
   Stage 26 scope explicitly changes.
@@ -239,6 +253,8 @@ active stage without first updating `ROADMAP.md`.
   conversion or checked built-in conversion.
 - Decide whether Cloth synthesizes implicit default constructors.
 - Decide whether distinct unit and never types belong beside `void`.
+- Add reflection ability to allow "::name" meta access on declarations to return
+  a `string` representation of the declaration name (if applicable).
 
 ### Expressions, numeric operations, and control flow
 
@@ -262,6 +278,7 @@ active stage without first updating `ROADMAP.md`.
   it consumes are stable. Folding must preserve evaluation order, overflow and
   trap behavior, floating-point rounding, diagnostics, and target-independent
   results; it is not required for language correctness.
+- Add ability to make full qualified name calls.
 
 ### Nullability
 
@@ -307,7 +324,7 @@ active stage without first updating `ROADMAP.md`.
 - Add Shuttle package registries, semantic-version selection, lockfile
   generation, and remote dependency retrieval after the local-only Stage 22
   contract.
-- Define and distribute the standard library.
+- Define and distribute the standard library (started in std sub module).
 
 ### Backend, runtime, and tooling
 
@@ -317,6 +334,7 @@ active stage without first updating `ROADMAP.md`.
 - Add selectable optimization levels and debug information.
 - Define command-line argument delivery to `Main`.
 - Add platform packaging and distribution tooling.
+- Add ability for Shuttle to build to .lib or .a (Linux/MacOS) for library files.
 
 ### Memory management
 
@@ -328,6 +346,8 @@ active stage without first updating `ROADMAP.md`.
 - Evaluate finalizers, weak references, concurrent tracing, generational
   collection, and moving collection separately; each requires observable
   semantics and barrier design.
+- Enforce and introduce "impl" keyword for implementing interface functions where
+  required. Must be enforced when implementing a interface function.
 
 ## Intentional invariants and non-goals
 

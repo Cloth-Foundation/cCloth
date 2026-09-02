@@ -277,6 +277,18 @@ void imported_aggregates(TestContext& test) {
       const auto issues = cloth::verify_imported_package_view(broken);
       test.expect(!issues.empty(),
                   "import verifier accepted aggregate metadata corruption");
+      if (mutation == 5) {
+        auto oversized = artifact;
+        oversized.imported = broken;
+        const auto rejected = cloth::write_package_artifact(oversized);
+        test.expect(std::ranges::any_of(
+                        rejected.issues,
+                        [](const auto& issue) {
+                          return issue.code ==
+                                 cloth::ArtifactIssueCode::kLimitExceeded;
+                        }),
+                    "oversized aggregate artifact lost its limit diagnostic");
+      }
       if (mutation == 7) {
         test.expect(std::ranges::any_of(issues,
                                         [](const auto& issue) {
@@ -449,6 +461,71 @@ void mir_aggregate_invariants(TestContext& test) {
   }
 }
 
+void aggregate_phi_invariants(TestContext& test) {
+  cloth::Compilation compilation;
+  add_point(compilation);
+  add(compilation, "Select.co", R"(
+    static func Pick(bool choose, Point a, Point b): Point {
+      if (choose) { return a; }
+      return b;
+    }
+  )");
+  cloth::DiagnosticEngine diagnostics;
+  auto result = compilation.analyze(diagnostics);
+  test.expect(result.is_valid, messages(diagnostics));
+  if (!result.is_valid) return;
+  auto& function = result.mir.files[1].functions[0];
+  const auto range = function.body.range;
+  const auto point = *result.semantics.find_type("Point");
+  const auto boolean = *result.semantics.find_type("bool");
+  using cloth::MirBlockId;
+  using cloth::MirValueId;
+  function.body = cloth::MirBody{
+      range,
+      MirBlockId{0},
+      {
+          {true,
+           {{MirValueId{0}, boolean, range,
+             cloth::MirLoadSymbolInstruction{function.parameters[0]}},
+            {MirValueId{1}, point, range,
+             cloth::MirLoadSymbolInstruction{function.parameters[1]}},
+            {MirValueId{2}, point, range,
+             cloth::MirLoadSymbolInstruction{function.parameters[2]}}},
+           {range, cloth::MirBranchTerminator{MirValueId{0}, MirBlockId{1},
+                                              MirBlockId{2}}}},
+          {true, {}, {range, cloth::MirJumpTerminator{MirBlockId{3}}}},
+          {true, {}, {range, cloth::MirJumpTerminator{MirBlockId{3}}}},
+          {true,
+           {{MirValueId{3}, point, range,
+             cloth::MirPhiInstruction{{{MirBlockId{1}, MirValueId{1}},
+                                       {MirBlockId{2}, MirValueId{2}}}}}},
+           {range, cloth::MirReturnTerminator{MirValueId{3}}}},
+      },
+      4};
+  test.expect(cloth::verify_mir(result.mir, result.semantics, diagnostics),
+              messages(diagnostics));
+  for (int mutation = 0; mutation < 5; ++mutation) {
+    auto broken = result.mir;
+    auto& body = broken.files[1].functions[0].body;
+    auto& instructions = body.blocks[3].instructions;
+    auto& phi = std::get<cloth::MirPhiInstruction>(instructions[0].data);
+    if (mutation == 0) phi.incoming.pop_back();
+    if (mutation == 1) phi.incoming[1].predecessor = MirBlockId{1};
+    if (mutation == 2) phi.incoming[1].predecessor = MirBlockId{0};
+    if (mutation == 3) phi.incoming[1].value = MirValueId{0};
+    if (mutation == 4) {
+      instructions.insert(
+          instructions.begin(),
+          {MirValueId{body.value_count++}, boolean, range,
+           cloth::MirLiteralInstruction{cloth::LiteralKind::kBoolean, "true"}});
+    }
+    cloth::DiagnosticEngine invalid;
+    test.expect(
+        !cloth::verify_mir(broken, result.semantics, invalid),
+        "MIR accepted malformed aggregate phi " + std::to_string(mutation));
+  }
+}
+
 void lowering_boundary(TestContext& test) {
   cloth::Compilation compilation;
   add_point(compilation);
@@ -467,6 +544,7 @@ int main() {
       {"aggregate size limit", aggregate_size_limit},
       {"imported aggregates", imported_aggregates},
       {"aggregate resource limits", aggregate_resource_limits},
+      {"aggregate phi invariants", aggregate_phi_invariants},
       {"MIR aggregate invariants", mir_aggregate_invariants},
       {"lowering boundary", lowering_boundary},
   };

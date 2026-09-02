@@ -371,8 +371,55 @@ live in `cloth_aggregate_tests`. The native stress harness uses the existing
 integration runner and production verification/emission pipeline rather than
 adding a runtime GC-testing API or a new launch script.
 
-This closes **26.3 only**. Artifact format 3, compiler ABI 4 (`_C4`), and runtime
-ABI 2 require rebuilding older packages. Process protocol 2, receipt schema 1,
-and manifest schema 1 remain unchanged. Stage 26.4 owns the remaining coordinated
-exit audit, including struct-specific serial/parallel artifact equivalence and
-layout-change dependent invalidation.
+That checkpoint closed **26.3 only**. Artifact format 3, compiler ABI 4 (`_C4`),
+and runtime ABI 2 require rebuilding older packages. Process protocol 2, receipt schema 1,
+and manifest schema 1 remain unchanged. The remaining coordinated exit work was
+verified in 26.4 below.
+
+## Stage 26.4 struct exit audit
+
+Verified on Windows on 2026-09-02 with GNU development and Clang/MSVC-library
+ASan/UBSan builds. All **121 CTest entries pass in each configuration**, including
+all **22 shared compiler-protocol tests and 12 native Shuttle tests**. The CTest
+entry count is unchanged because coverage was added to the existing suites.
+
+- Native and forced-GC fixtures now also exercise constructor overloads and
+  early returns, struct-parameter overload resolution, inherited/interface
+  dispatch and `super` calls carrying values, inherited aggregate fields,
+  final/reference mutation boundaries, private-field equality, arrays of empty
+  structs, and exactly-once output/meta evaluation. The same sources pass LLVM
+  verification for x86-64 and wasm32.
+- Aggregate MIR corruption tests reject missing, duplicate, and non-predecessor
+  phi edges, scalar inputs to aggregate phis, and phis after ordinary
+  instructions. Existing HIR, initialization, ABI, map, cycle, and resource
+  boundary regressions remain green.
+- Relocated `--jobs 1` and `--jobs 4` struct builds produce byte-identical
+  interface artifacts on both targets and byte-identical native artifacts and
+  executables on x86-64, including across a PE timestamp boundary. Native output
+  matches whole-project compilation before and after dependency edits.
+- Adding a private struct field changes layout/reference offsets; adding a
+  member changes the declaration contract. Both edits rebuild `data-models` and
+  its consumer while reusing byte-identical `foundation` and `tools` artifacts.
+  Subsequent unchanged builds reuse all four packages. These checks run for
+  interface artifacts on both targets and native objects/execution on x86-64.
+- Source-free consumers retain private layouts, overloads, aggregate constructor
+  arguments/results, inherited fields, and interface/base calls. Private
+  constructors, fields, and methods remain inaccessible after dependency sources
+  are removed; failed consumer compilation preserves its previous artifact.
+- The audit found and fixed one diagnostic-contract mismatch: aggregate resource
+  violations were rejected but classified as invalid models/malformed metadata.
+  Typed limit issues now survive imported-model and artifact validation, and
+  value/descriptor map counts are checked before constructing decoded offset
+  vectors. Re-signed oversized-map artifacts and oversized writer models cover
+  the fix without changing the existing golden bytes or compatibility versions.
+
+All 43 ordinary Shuttle tests, Rust 1.85 checking, Rust formatting, Clippy with
+warnings denied, C++ formatting/warnings-as-errors, and both repositories'
+whitespace checks pass. Existing fixtures and runners were extended; no new
+test launch scripts or production testing switches were introduced.
+
+**Stage 26 is complete.** Artifact format 3, compiler ABI 4, runtime ABI 2,
+process protocol 2, receipt schema 1, and manifest schema 1 are unchanged by
+26.4. Mutating receivers, struct conformance/boxing, reference returns, nullable
+struct values, aggregate constants, and other listed non-goals remain deferred.
+No later stage is implicitly activated.
