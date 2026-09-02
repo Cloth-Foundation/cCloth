@@ -423,3 +423,33 @@ process protocol 2, receipt schema 1, and manifest schema 1 are unchanged by
 26.4. Mutating receivers, struct conformance/boxing, reference returns, nullable
 struct values, aggregate constants, and other listed non-goals remain deferred.
 No later stage is implicitly activated.
+
+## Stage 26.5.1 explicit interface overrides
+
+Verified on Windows on 2026-09-02: **122/122 development and 122/122 ASan/UBSan
+CTests pass**, including 22 shared protocol and 12 native Shuttle tests. All 43
+ordinary Rust tests, Rust 1.85 checking, formatting, Clippy with warnings denied,
+and C++ formatting/warnings-as-errors pass.
+
+The focused override suite covers direct/transitive and multiple contracts,
+overloads, abstract restatements, final sealing, inherited implementation reuse,
+class/interface targets together, covariance, invalid modifiers/signatures, and
+base-only `super`. Reversed source registration exposed a covariance ordering
+bug: class interface closures are now completed before base-first override
+validation. Both source orders pass.
+
+Imported-package tests reject missing/spurious markers and forged replaced-class
+identities, while accepting interface-only overrides without a base target.
+Shared protocol tests remove dependency sources, reject missing/unmatched
+markers without replacing completed output, and accept the corrected consumer.
+Existing native/equivalence fixtures retain class and interface dispatch.
+
+VS Code contributes the existing `override` modifier and an editable function
+snippet. All three Node support tests pass with each compiler, including actual
+compilation of the snippet and rejection after removing its marker. On Windows,
+the sanitizer run needs the Clang ASan runtime directory on `PATH`, as in CTest.
+Legacy new-file generator alignment remains explicitly deferred in `TODO.md`.
+
+**26.5.1 is complete.** Existing interface implementations must add `override`;
+inherited implementations need no redeclaration. No `impl` keyword, artifact
+schema, physical ABI, process protocol, or manifest revision was introduced.

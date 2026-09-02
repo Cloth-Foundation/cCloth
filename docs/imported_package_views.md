@@ -44,6 +44,16 @@ order, layout bounds and alignment, GC reference offsets, descriptor ancestry,
 interface IDs and dispatch, static storage, callable signatures, receiver
 placement, and constructor initializer ownership.
 
+Override verification derives targets from owned class/interface declarations,
+not from supplied dispatch tables. Local implementations require the existing
+`is_override` marker. Their optional `overridden_identity` identifies only the
+nearest replaced class function; it is absent for interface-only overrides.
+Inherited methods are not required to anticipate interfaces later adopted by a
+descendant. Unknown dependency-owned targets are deferred to closure verification
+before declarations enter analysis or linking. Missing/spurious markers, final
+replacement, and forged replaced-class identities are rejected without adding
+artifact fields or changing physical calling conventions.
+
 Extraction runs the verifier before returning a view. A failed extraction has
 no partial view and reports deterministic record-scoped issues. Tests cover
 private metadata, constant values, nullable signatures, unrelated-type

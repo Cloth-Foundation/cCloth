@@ -34,7 +34,9 @@ The frontend and [26.3 aggregate implementation](docs/proposals/stage_26_aggrega
 are complete, including native execution and source-free packages. Artifact
 format 3, compiler ABI 4, and runtime ABI 2 require rebuilding older packages.
 The [26.4 exit audit](docs/testing.md#stage-264-struct-exit-audit) passed on
-2026-09-02. No later stage is active; deferred ideas remain in the backlog.
+2026-09-02. Stage 26.5.1 is complete for the approved explicit interface-override
+contract; its exit audit is recorded in `docs/testing.md`. Unrelated ideas
+remain in the backlog.
 
 ## Scheduled work
 
@@ -221,6 +223,22 @@ The [26.4 exit audit](docs/testing.md#stage-264-struct-exit-audit) passed on
   diagnostic classification and bounded decoded descriptor maps. No syntax or
   compatibility revision changed. See the [exit audit](docs/testing.md#stage-264-struct-exit-audit).
 
+### Stage 26.5.1: Explicit interface overrides
+
+- [x] Require `override` on locally declared interface implementations and
+  abstract class restatements; reject unmatched markers while preserving
+  inherited implementations, final/covariant overrides, and base-only `super`.
+- [x] Verify the explicit marker and replaced-class-member identity in imported
+  packages without changing record shapes or physical ABI; migrate fixtures and
+  test source-free, multiple-interface, inherited, and invalid contracts.
+- [x] Update documentation and VS Code highlighting/snippets with regression
+  tests; pass development/sanitizer, shared/native, Rust, and editor checks.
+
+Completed on 2026-09-02: 122/122 development and sanitizer CTests, all 43
+ordinary Rust tests and quality gates, and three VS Code checks with each
+compiler. The covariance regression also removed source-order dependence from
+class override validation. Existing ABI and artifact versions are unchanged.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -346,8 +364,9 @@ active stage without first updating `ROADMAP.md`.
 - Evaluate finalizers, weak references, concurrent tracing, generational
   collection, and moving collection separately; each requires observable
   semantics and barrier design.
-- Enforce and introduce "impl" keyword for implementing interface functions where
-  required. Must be enforced when implementing a interface function.
+- Align the remaining VS Code new-file generators and legacy language claims
+  with the current file-based language; the focused 26.5.1 override support does
+  not redesign historical trait/library scaffolds.
 
 ## Intentional invariants and non-goals
 

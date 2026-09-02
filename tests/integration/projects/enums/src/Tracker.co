@@ -5,7 +5,7 @@ class is Source {
 
   Tracker() { state = Status.Ready; }
 
-  func Next(): Status {
+  override func Next(): Status {
     Count++;
     state = Status.running;
     return state;

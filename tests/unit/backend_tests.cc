@@ -433,10 +433,11 @@ void interface_dispatch(TestContext& test) {
   CompiledSources sources;
   sources.add("Renderable.co",
               "interface { func Render(int32 width): string; }\n");
-  sources.add("Widget.co",
-              "class is Renderable {\n"
-              "  func Render(int32 width): string { return \"widget\"; }\n"
-              "}\n");
+  sources.add(
+      "Widget.co",
+      "class is Renderable {\n"
+      "  override func Render(int32 width): string { return \"widget\"; }\n"
+      "}\n");
   sources.add(
       "Use.co",
       "func Read(Renderable value): string {\n"

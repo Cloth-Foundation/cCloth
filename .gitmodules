@@ -10,3 +10,6 @@
 [submodule "shuttle"]
 	path = shuttle
 	url = https://github.com/Cloth-Foundation/Shuttle
+[submodule "documentation"]
+	path = documentation
+	url = https://github.com/Cloth-Foundation/Documentation

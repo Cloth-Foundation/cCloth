@@ -682,6 +682,19 @@ void verify_member(const ImportedFile& file, const ImportedMember& member,
        member.is_override || member.is_abstract)) {
     issues.add(record, "non-function carries function dispatch metadata");
   }
+  if (member.kind == ImportedMemberKind::kFunction) {
+    if (member.is_override &&
+        (file.kind != FileTypeKind::kClass || member.is_static ||
+         member.visibility != Visibility::kPublic)) {
+      issues.add(record, "override requires a public class instance function");
+    }
+    if (member.overridden_identity && !member.is_override) {
+      issues.add(record, "replaced class function requires override");
+    }
+    if (member.is_final && (!member.is_override || member.is_abstract)) {
+      issues.add(record, "final function requires a concrete override");
+    }
+  }
   if (member.kind == ImportedMemberKind::kConstructor && member.is_static) {
     issues.add(record, "constructor is marked static");
   }
@@ -1001,6 +1014,116 @@ void verify_class_abi(
   }
   if (descriptor.interfaces.size() != file.interface_implementations.size()) {
     issues.add(record, "descriptor interface dispatch set is incomplete");
+  }
+}
+
+// Use declarations, not the supplied dispatch tables, to establish override
+// intent. A standalone artifact may refer to foreign declarations; those
+// obligations are checked once the dependency closure is available.
+void verify_override_contracts(
+    std::span<const ImportedPackageView* const> packages, bool require_owners,
+    IssueCollector& issues) {
+  std::map<std::string, const ImportedFile*> files;
+  for (const auto* package : packages) {
+    for (const auto& file : package->files) files.emplace(file.identity, &file);
+  }
+  const auto is_instance_function = [](const ImportedMember& member) {
+    return member.kind == ImportedMemberKind::kFunction && !member.is_static &&
+           member.visibility == Visibility::kPublic;
+  };
+  const auto matches = [&](const ImportedMember& candidate,
+                           const ImportedMember& member) {
+    return is_instance_function(candidate) && candidate.name == member.name &&
+           std::ranges::equal(candidate.parameters, member.parameters, {},
+                              &ImportedParameter::type_identity,
+                              &ImportedParameter::type_identity);
+  };
+  for (const auto& [identity, file] : files) {
+    if (file->kind != FileTypeKind::kClass) continue;
+    const std::string record = "overrides " + file->logical_path;
+    std::vector<const ImportedFile*> bases;
+    std::vector<std::string> pending_interfaces =
+        file->direct_interface_identities;
+    bool bases_complete = true;
+    std::set<std::string> visited{identity};
+    auto base_identity = file->base_identity;
+    while (base_identity) {
+      if (!visited.insert(*base_identity).second) {
+        issues.add(record, "class override hierarchy contains a cycle");
+        bases_complete = false;
+        break;
+      }
+      const auto base = files.find(*base_identity);
+      if (base == files.end()) {
+        if (require_owners) issues.add(record, "base declaration is missing");
+        bases_complete = false;
+        break;
+      }
+      bases.push_back(base->second);
+      const auto& interfaces = base->second->direct_interface_identities;
+      pending_interfaces.insert(pending_interfaces.end(), interfaces.begin(),
+                                interfaces.end());
+      base_identity = base->second->base_identity;
+    }
+    std::vector<const ImportedFile*> interfaces;
+    bool interfaces_complete = bases_complete;
+    visited.clear();
+    while (!pending_interfaces.empty()) {
+      std::string next = std::move(pending_interfaces.back());
+      pending_interfaces.pop_back();
+      if (!visited.insert(next).second) continue;
+      const auto parent = files.find(next);
+      if (parent == files.end()) {
+        if (require_owners) {
+          issues.add(record, "interface declaration is missing");
+        }
+        interfaces_complete = false;
+        continue;
+      }
+      interfaces.push_back(parent->second);
+      const auto& parents = parent->second->direct_interface_identities;
+      pending_interfaces.insert(pending_interfaces.end(), parents.begin(),
+                                parents.end());
+    }
+    for (const auto& member : file->members) {
+      if (!is_instance_function(member)) continue;
+      const ImportedMember* replaced = nullptr;
+      for (const auto* base : bases) {
+        const auto found = std::ranges::find_if(
+            base->members,
+            [&](const auto& candidate) { return matches(candidate, member); });
+        if (found != base->members.end()) {
+          replaced = &*found;
+          break;
+        }
+      }
+      const bool implements =
+          std::ranges::any_of(interfaces, [&](const auto* parent) {
+            return std::ranges::any_of(parent->members,
+                                       [&](const auto& candidate) {
+                                         return matches(candidate, member);
+                                       });
+          });
+      const std::string member_record = record + ": " + member.name;
+      if ((replaced || implements) && !member.is_override) {
+        issues.add(member_record,
+                   "class or interface implementation requires override");
+      }
+      if (!replaced && !implements && interfaces_complete &&
+          member.is_override) {
+        issues.add(member_record,
+                   "override has no class or interface contract");
+      }
+      if (replaced && replaced->is_final) {
+        issues.add(member_record, "override replaces a final function");
+      }
+      if ((replaced || bases_complete) &&
+          member.overridden_identity !=
+              (replaced ? std::optional{replaced->identity} : std::nullopt)) {
+        issues.add(member_record,
+                   "replaced class function does not match override target");
+      }
+    }
   }
 }
 
@@ -1578,6 +1701,7 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
   }
   const ImportedPackageView* single = &view;
   verify_layout_graph({&single, 1}, false, issues);
+  verify_override_contracts({&single, 1}, false, issues);
   return issues.take();
 }
 
@@ -1589,6 +1713,7 @@ std::vector<ImportedPackageIssue> verify_imported_package_closure(
   }
   IssueCollector issues;
   verify_layout_graph(packages, true, issues);
+  verify_override_contracts(packages, true, issues);
   return issues.take();
 }
 

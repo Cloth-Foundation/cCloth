@@ -6,7 +6,7 @@ class is Transform {
   Packet Cached = Packet("base");
   Projector() {}
 
-  func Apply(Point value): Point {
+  override func Apply(Point value): Point {
     value.X += 5;
     return value;
   }

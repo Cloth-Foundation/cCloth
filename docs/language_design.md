@@ -109,10 +109,17 @@ class : Human is Named, Serializable {
 ```
 
 Conformance is structural at the member boundary but nominal at the type
-boundary: a matching public function satisfies a declared interface contract,
-while the class becomes an interface subtype only through an explicit or
+boundary: a matching public instance function satisfies a declared interface
+contract, and a local declaration must explicitly mark that intent with
+`override`. An inherited implementation needs no redeclaration. The class
+becomes an interface subtype only through an explicit or
 inherited `is` clause. Concrete classes complete every transitive contract;
 abstract classes may defer requirements to a concrete descendant.
+
+The same `override` keyword covers class replacement and interface
+implementation. Interface-only implementations introduce virtual slots without
+base-class targets; `super` remains base-class-only. Interface declarations use
+plain `func`, while abstract class restatements use `abstract override func`.
 
 Interface values use the same managed pointer as class values. Class and child
 interface references widen without representation changes. Checked reverse

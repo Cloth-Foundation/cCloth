@@ -1395,7 +1395,7 @@ void interface_dispatch_lowering(TestContext& test) {
   compilation.add("Renderable.co", "interface { func Render(): string; }\n");
   compilation.add("Widget.co",
                   "class is Renderable {\n"
-                  "  func Render(): string { return \"widget\"; }\n"
+                  "  override func Render(): string { return \"widget\"; }\n"
                   "}\n");
   compilation.add("Use.co",
                   "func Upcast(Widget value): Renderable { return value; }\n"

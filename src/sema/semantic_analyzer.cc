@@ -1194,6 +1194,7 @@ class SemanticAnalyzer {
   }
 
   void validate_overrides() {
+    std::vector<FileId> ordered_classes;
     std::vector<bool> complete(files_.size(), false);
     std::size_t remaining = files_.size();
     while (remaining != 0) {
@@ -1213,7 +1214,18 @@ class SemanticAnalyzer {
         if (base && base->value < complete.size() && !complete[base->value]) {
           continue;
         }
-        validate_file_overrides(file_id);
+        FileSemantics& file = model_.mutable_file(file_id);
+        std::vector<FileId> interfaces;
+        if (base) interfaces = model_.file(*base).interfaces;
+        for (const FileId direct : file.direct_interfaces) {
+          for (const FileId inherited : model_.file(direct).interfaces) {
+            if (std::ranges::find(interfaces, inherited) == interfaces.end()) {
+              interfaces.push_back(inherited);
+            }
+          }
+        }
+        file.interfaces = std::move(interfaces);
+        ordered_classes.push_back(file_id);
         complete[index] = true;
         --remaining;
         made_progress = true;
@@ -1221,6 +1233,11 @@ class SemanticAnalyzer {
       if (!made_progress) {
         break;
       }
+    }
+    // Return covariance may mention any class, including a later source file.
+    // Complete every interface closure before validating functions base-first.
+    for (const FileId file_id : ordered_classes) {
+      validate_file_overrides(file_id);
     }
   }
 
@@ -1235,13 +1252,6 @@ class SemanticAnalyzer {
       }
     }
 
-    auto append_interface = [](std::vector<FileId>& interfaces,
-                               FileId interface_file) {
-      if (std::ranges::find(interfaces, interface_file) == interfaces.end()) {
-        interfaces.push_back(interface_file);
-      }
-    };
-
     while (remaining != 0) {
       bool made_progress = false;
       for (std::size_t index = 0; index < files_.size(); ++index) {
@@ -1255,18 +1265,8 @@ class SemanticAnalyzer {
           continue;
         }
 
-        std::vector<FileId> interfaces;
-        if (file.base_file) {
-          interfaces = model_.file(*file.base_file).interfaces;
-        }
-        for (const FileId direct : file.direct_interfaces) {
-          for (const FileId inherited : model_.file(direct).interfaces) {
-            append_interface(interfaces, inherited);
-          }
-        }
-
         std::vector<InterfaceImplementation> implementations;
-        for (const FileId interface_file : interfaces) {
+        for (const FileId interface_file : file.interfaces) {
           const FileSemantics& contract = model_.file(interface_file);
           std::vector<SymbolId> functions;
           bool complete_contract = true;
@@ -1317,7 +1317,6 @@ class SemanticAnalyzer {
                 InterfaceImplementation{interface_file, std::move(functions)});
           }
         }
-        file.interfaces = std::move(interfaces);
         file.interface_implementations = std::move(implementations);
         complete[index] = true;
         --remaining;
@@ -1364,10 +1363,34 @@ class SemanticAnalyzer {
       }
 
       if (!matching_slot) {
-        if (symbol.is_override) {
-          diagnostics_.error(symbol.range, "function '" + symbol.name +
-                                               "' does not override an "
-                                               "inherited function");
+        std::optional<SymbolId> interface_requirement;
+        for (const FileId interface_file : file.interfaces) {
+          for (const SymbolId requirement_id :
+               model_.file(interface_file).interface_functions) {
+            const auto& requirement = model_.symbol(requirement_id);
+            if (requirement.name == symbol.name &&
+                requirement.parameter_types == symbol.parameter_types) {
+              interface_requirement = requirement_id;
+              break;
+            }
+          }
+          if (interface_requirement) break;
+        }
+        if (symbol.is_override && !interface_requirement) {
+          diagnostics_.error(symbol.range,
+                             "function '" + symbol.name +
+                                 "' does not override an inherited "
+                                 "class or interface function");
+          symbol.is_valid = false;
+          file.is_valid = false;
+        }
+        if (!symbol.is_override && interface_requirement) {
+          diagnostics_.error(
+              symbol.range,
+              "function '" + callable_signature(symbol) +
+                  "' implements an interface function; add 'override'");
+          diagnostics_.note(model_.symbol(*interface_requirement).range,
+                            "interface function contract is declared here");
           symbol.is_valid = false;
           file.is_valid = false;
         }

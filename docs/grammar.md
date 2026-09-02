@@ -148,15 +148,19 @@ declaration. An explicit class body consumes the remainder of the file. A
 project source root supplies the package identity.
 
 Function modifiers may appear in any order but may not be repeated.
-`override` is valid only on a public instance function that exactly matches an
-inherited name and canonical parameter signature. It cannot be combined with
-`static`; semantic analysis enforces the complete override contract.
+`override` is required on a locally declared public class instance function that
+matches a base-class or interface name and canonical parameter signature. It is
+invalid without such a contract or when combined with `static`. Abstract class
+restatements also require it; interface declarations themselves remain plain
+`func`. An inherited implementation needs no redeclaration. Semantic analysis
+enforces the complete [override contract](interfaces.md#class-conformance).
 An override may keep the inherited return type or use a covariant managed-
 reference return type that is assignable to it. Primitive and `void` returns
 must match exactly.
 
-On a function, `final` must be paired with `override`. The declaration keeps
-the inherited virtual slot but prevents a descendant from replacing it.
+On a function, `final` must be paired with `override`. The declaration seals its
+virtual slot against replacement, including a newly introduced interface-only
+implementation slot.
 Function `final` is contextual and does not change the existing field,
 parameter, local, or iteration-binding forms.
 

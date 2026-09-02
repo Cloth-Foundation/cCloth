@@ -50,7 +50,7 @@ struct PackageGraph {
               "class : Base is Shape {\n"
               "  Derived(int32 count): Base(count) {}\n"
               "  override func Read(): int32 { return super.Read(); }\n"
-              "  func Size(): int32 { return Read(); }\n"
+              "  override func Size(): int32 { return Read(); }\n"
               "}\n"),
           "app", "", "0.4.0");
     };
@@ -291,7 +291,7 @@ void compiles_against_imported_declarations_without_dependency_sources(
           "class : Base is Shape {\n"
           "  Derived(int32 count): Base(count) {}\n"
           "  override func Read(): int32 { return super.Read(); }\n"
-          "  func Size(): int32 { return Read(); }\n"
+          "  override func Size(): int32 { return Read(); }\n"
           "}\n"),
       "app", "", "0.4.0");
   cloth::DiagnosticEngine diagnostics;

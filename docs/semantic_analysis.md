@@ -38,6 +38,13 @@ Compatible covariant returns select the narrowest contract; incompatible
 returns are diagnosed at the contributing declarations. Interface cycles and
 runtime-identity collisions are rejected deterministically.
 
+All class interface closures are completed before override resolution, so
+covariant returns are independent of source registration order. A local
+public instance declaration matching an interface contract requires `override`,
+including an abstract restatement. A marker with neither a base-class nor an
+interface target is invalid. Interface-only overrides introduce virtual slots
+without a replaced-class symbol; inherited implementations need no redeclaration.
+
 After class overrides are finalized, conformance maps each interface contract
 slot to the selected most-derived public virtual function. Abstract classes may
 retain an incomplete map. Concrete classes must complete every transitive
@@ -265,8 +272,9 @@ explicit derived-constructor initializer may select an abstract base's
 constructor because it initializes an already allocated derived object.
 
 A sealed file class may inherit but cannot be inherited, and cannot also be
-abstract. A final function must be a concrete override. It retains the
-inherited virtual slot and remains callable, including by a descendant's
+abstract. A final function must be a concrete override. It seals its inherited
+or newly introduced interface-implementation slot and remains callable,
+including by a descendant's
 direct `super` call, but override validation rejects any attempt to replace it.
 An abstract function cannot be final.
 

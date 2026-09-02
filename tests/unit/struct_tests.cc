@@ -267,7 +267,7 @@ void class_and_interface_values(TestContext& test) {
     class is Transform {
       final Point Origin;
       Factory() { Origin = Point(0, 0); }
-      func Apply(Point p): Point { p.X += 2; return p; }
+      override func Apply(Point p): Point { p.X += 2; return p; }
       static func Main() {
         Transform transform = Factory();
         println(transform.Apply(Point(1, 2)));

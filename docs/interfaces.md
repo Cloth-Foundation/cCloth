@@ -63,9 +63,37 @@ visibility, and deterministic file identity.
 
 A public instance function satisfies an interface requirement when its name
 and canonical parameter types match and its return type is assignable to the
-contract return. The implementing function remains an ordinary class virtual
-function. It does not use `override` unless it also replaces an inherited class
-implementation.
+contract return. A locally declared implementation must use `override`, whether
+it satisfies an interface contract, replaces an inherited class function, or
+does both:
+
+```cloth
+// Widget.co
+class is Renderable {
+  override func Render(int32 width): string {
+    return "Widget";
+  }
+}
+```
+
+The marker is checked: a function with no matching class or interface contract
+cannot use `override`. One declaration may satisfy several interfaces with the
+same signature. Overloads are checked separately. Return types remain subject
+to the existing covariance rules; the marker does not allow numeric widening.
+
+An interface-only implementation introduces an ordinary class virtual slot; it
+does not acquire a base-class implementation. `super` still selects a class
+ancestor and cannot call an interface contract. `final override func` may seal
+an interface implementation against further replacement.
+
+An abstract class that restates a requirement uses `abstract override func`.
+An interface that refines an inherited requirement still uses plain `func`:
+interface members do not accept modifiers. Inherited class implementations need
+no redundant redeclaration, including when the base class did not itself name
+the interface. This requirement applies equally to source-free dependencies.
+
+Migration: add `override` to existing locally declared interface implementations.
+There is no new `impl` keyword.
 
 A concrete class must satisfy every requirement from every direct, inherited,
 and transitive interface. An abstract class may carry unresolved interface

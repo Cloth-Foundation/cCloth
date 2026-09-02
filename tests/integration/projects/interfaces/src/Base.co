@@ -5,11 +5,11 @@ class is Scored {
     self.value = value;
   }
 
-  func Name(): string {
+  override func Name(): string {
     return "Base";
   }
 
-  func Score(): int32 {
+  override func Score(): int32 {
     return value;
   }
 }

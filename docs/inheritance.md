@@ -175,8 +175,8 @@ compatible implementation runs.
 
 Every public instance function is virtual. Private functions and static
 functions are never virtual. A public function that has the same name and
-canonical parameter types as an inherited virtual function must be written
-with `override`:
+canonical parameter types as a base-class virtual function or an interface
+contract must be written with `override`:
 
 ```cloth
 class : Human {
@@ -188,7 +188,7 @@ class : Human {
 
 The return type must either match exactly or be a covariant managed-reference
 type assignable to the inherited return type. Omitting `override` on a matching
-signature is an error, and using it when no inherited target exists is an
+signature is an error, and using it when no class or interface target exists is an
 error. A different parameter signature is an overload and receives a new
 virtual slot. Capitalization still governs visibility, so private lowercase
 functions cannot override or be overridden.
@@ -196,9 +196,11 @@ functions cannot override or be overridden.
 Each root class assigns slots to its public instance functions in declaration
 order. A derived class begins with its base table, replaces a matched override
 in place, and appends new public instance functions in declaration order. The
-compiler records the immediate overridden symbol and the stable slot on every
-override. Type descriptors carry the resulting implementation table and slot
-count.
+compiler records the stable slot and, when replacing a class implementation,
+the immediate overridden symbol. An interface-only override introduces a slot
+without a replaced-class symbol. An inherited implementation needs no redundant
+declaration when a derived class adds an interface. Type descriptors carry the
+resulting implementation table and slot count.
 
 An instance call loads the object's most-derived descriptor, loads its virtual
 table, and invokes the selected slot with the unchanged receiver pointer. Thus
@@ -313,7 +315,7 @@ sealed class : Human {
 `abstract sealed class` is rejected because an abstract class requires a
 subclass to complete its contract while a sealed class forbids that subclass.
 
-`final` closes one inherited virtual slot and therefore must be paired with
+`final` closes a virtual slot and therefore must be paired with
 `override`:
 
 ```cloth
@@ -325,7 +327,8 @@ class : Human {
 ```
 
 The modifiers may appear in either order. The implementation retains the
-inherited slot and participates in ordinary virtual dispatch, but no descendant
+inherited slot (or introduces a sealed interface-implementation slot) and
+participates in ordinary virtual dispatch, but no descendant
 may replace it. A descendant may still call the implementation through
 `super.Describe()`. A new `final func` and an `abstract final override func`
 are invalid. These rules add no object-header, descriptor, or virtual-table

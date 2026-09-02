@@ -62,16 +62,17 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 21 | Fixed-width integer operators and host-independent byte-order operations |
 | 25 | Named value enums with public cases, scalar lowering, and separate-compilation support |
 | 26 | Inline value structs with precise tracing, aggregate calls, and source-free package support |
+| 26.5.1 | Explicit interface implementations using the existing `override` keyword |
 
-Stage 26 is the current completed language baseline. Coordinated toolchain Stage
+Stage 26.5.1 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
 exit audits. Build-responsiveness Stage 24 is also complete.
 
 Stage 26 is complete for value structs, including its approved source contract,
 frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
 and coordinated 26.4 exit audit. Native execution and source-free
-packages use artifact format 3, compiler ABI 4, and runtime ABI 2. No later stage
-is activated by this completion.
+packages use artifact format 3, compiler ABI 4, and runtime ABI 2. The explicit
+interface-override follow-up is complete; no further stage is activated.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -365,9 +366,41 @@ Exit criteria:
   signatures, native behavior, and deterministic package artifacts; and
 - development, sanitizer, native/shared-tool, and Rust quality gates pass.
 
+## Stage 26.5.1: Explicit interface overrides
+
+Status: **complete — approved and verified 2026-09-02**
+
+The [exit audit](docs/testing.md#stage-2651-explicit-interface-overrides) records
+122/122 development and sanitizer CTests, all Rust gates, and VS Code support
+checks with both compiler configurations.
+
+Prerequisite: the completed Stage 26.4 audit. This is a focused contract follow-up,
+not an expansion of struct semantics. Use the existing `override` keyword;
+do not introduce `impl`.
+
+Locally declared public instance functions that match an inherited class or
+interface signature must use `override`, including abstract class declarations
+that restate a requirement. A marker with neither contract is invalid. One
+marker may satisfy several interfaces and a class override together. Inherited
+implementations need no redeclaration, and interface declarations remain plain
+`func`. Preserve return covariance, visibility, final sealing, and base-only
+`super` behavior. Interface-only overrides introduce ordinary virtual slots;
+their optional replaced-class-member identity remains absent.
+
+Deliverables: semantic enforcement and precise diagnostics; source-free metadata
+validation; migrated fixtures and regression coverage; updated owning contracts;
+VS Code modifier/snippet support and tests. Existing artifact fields and physical
+calling conventions suffice: no artifact/compiler/runtime revision is planned.
+Exact compiler identity already prevents reuse across compiler builds.
+
+Non-goals: new keywords, interface default bodies, explicit interface-qualified
+implementations, struct conformance, editor scaffold redesign, or other backlog
+features. Exit requires development/sanitizer, native/shared-tool, Rust, and
+VS Code support checks plus synchronized compiler/Shuttle ledgers.
+
 ## Beyond Stage 26
 
-No later stage number is assigned. Completing structs does not schedule the rest
+No stage beyond 26.5.1 is assigned. Completing this work does not schedule the rest
 of the backlog or freeze the Cloth 1.0 release scope.
 
 The following candidates remain recorded without priority or order:

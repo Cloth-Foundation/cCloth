@@ -854,7 +854,8 @@ void virtual_override_contract(TestContext& test) {
               "accidental override was accepted");
   test.expect(invalid.has_diagnostic("inherited function returns 'string'"),
               "incompatible override return type was accepted");
-  test.expect(invalid.has_diagnostic("does not override an inherited function"),
+  test.expect(invalid.has_diagnostic(
+                  "does not override an inherited class or interface function"),
               "override without a target was accepted");
   test.expect(invalid.has_diagnostic(
                   "static function 'Utility' cannot be declared override"),
@@ -1281,8 +1282,8 @@ void interface_conformance_contract(TestContext& test) {
             "interface : Named { func Render(int32 width): string; }\n");
   valid.add("Widget.co",
             "class is Renderable {\n"
-            "  func Name(): string { return \"widget\"; }\n"
-            "  func Render(int32 width): string { return Name(); }\n"
+            "  override func Name(): string { return \"widget\"; }\n"
+            "  override func Render(int32 width): string { return Name(); }\n"
             "}\n");
   valid.add("Use.co",
             "func Upcast(Widget value): Renderable { return value; }\n"
@@ -1297,8 +1298,8 @@ void interface_conformance_contract(TestContext& test) {
   valid.add("AbstractWidget.co", "abstract class is Renderable {}\n");
   valid.add("ConcreteWidget.co",
             "class : AbstractWidget {\n"
-            "  func Name(): string { return \"concrete\"; }\n"
-            "  func Render(int32 width): string { return Name(); }\n"
+            "  override func Name(): string { return \"concrete\"; }\n"
+            "  override func Render(int32 width): string { return Name(); }\n"
             "}\n");
   valid.analyze();
 
@@ -1328,13 +1329,13 @@ void interface_conformance_contract(TestContext& test) {
   AnalyzedCompilation invalid;
   invalid.add("Renderable.co",
               "interface { func Render(): string; func Reset(); }\n");
-  invalid.add(
-      "Missing.co",
-      "class is Renderable { func Render(): string { return \"x\"; } }\n");
+  invalid.add("Missing.co",
+              "class is Renderable { override func Render(): string { return "
+              "\"x\"; } }\n");
   invalid.add("Wrong.co",
               "class is Renderable {\n"
-              "  func Render(): object { return \"x\"; }\n"
-              "  func Reset() {}\n"
+              "  override func Render(): object { return \"x\"; }\n"
+              "  override func Reset() {}\n"
               "}\n");
   invalid.add("CycleA.co", "interface : CycleB { func A(); }\n");
   invalid.add("CycleB.co", "interface : CycleA { func B(); }\n");
