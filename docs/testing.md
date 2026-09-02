@@ -273,3 +273,38 @@ the Rust 1.85 baseline, Rust formatting and Clippy with warnings denied, C++
 formatting, and both repositories' whitespace checks pass. The Stage 24.2
 responsiveness baseline and Stage 24.3 unchanged-build coverage remain intact.
 Stage 24 is complete.
+
+## Stage 25 enum exit audit
+
+Verified on Windows on 2026-09-02 with the GNU development compiler and the
+Clang/MSVC-library ASan/UBSan compiler:
+
+- all 95 CTest entries pass in each configuration, including 20 real-compiler
+  protocol tests and nine native Shuttle/`clothc` tests;
+- enum tests cover always-public case spellings, case-sensitive names, nominal
+  package identity and source order, private type access, overloads, required
+  initialization and early returns, static constants, fields, arrays, iteration,
+  interface calls, and exactly-once output/meta evaluation;
+- the parser accepts exactly 65,536 cases and diagnoses the next case, while
+  malformed bodies and unsupported operations fail deterministically;
+- HIR/MIR/ABI corruption tests reject invalid enum literals, numeric operations,
+  missing initialization, and reference representation; imported-view and byte
+  codec tests reject wrong tags/owners, duplicate and keyword names, empty case
+  sets, forged private-case metadata, invalid static values, and GC metadata;
+- format-2 artifacts round-trip, preserve cases with dependency sources removed,
+  invalidate consumers after case edits while reusing independent packages, and
+  produce byte-identical one-job/four-job package artifacts with native behavior
+  equal to whole-project compilation; and
+- all 43 ordinary Shuttle tests, Rust formatting, Clippy with warnings denied,
+  Rust 1.85 checking, C++ formatting/warnings-as-errors, and both repositories'
+  whitespace checks pass.
+
+Repeatable gates are `cmake --build --preset dev`, `ctest --preset dev`,
+`cmake --build --preset sanitize`, `ctest --preset sanitize`, and the standalone
+Rust commands in `shuttle/docs/testing.md`. Native enum fixtures reuse the
+existing integration runner; no additional launch scripts are introduced.
+
+Stage 25 is complete. Artifact format 2 and compiler ABI 3 require rebuilding
+older packages; runtime ABI 1 and process protocol 2 are unchanged. Attached
+constant data, runtime payload variants, structs, matching, reflection, and
+nullable enum values remain deliberate backlog work.

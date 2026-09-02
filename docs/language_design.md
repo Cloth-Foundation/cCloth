@@ -31,6 +31,9 @@ Stage 18 adds `interface { ... }` as the first alternate file kind. The file
 stem remains its only type name. Interfaces carry public function contracts but
 no fields, constructors, or object layout.
 
+`enum { ... }` selects a named value enum. Its cases form a closed set; the file
+stem remains the type name. See [enums](enums.md) for the implemented contract.
+
 Constructor declarations use a class-derived name whose capitalization carries
 visibility:
 
@@ -130,6 +133,10 @@ referenced from other file classes through same-package lookup or imports.
 Private declarations are visible only within their defining file class and its
 nested scopes.
 
+Enum cases are the explicit exception: all are public, including lowercase and
+underscore-prefixed names. Enum types retain filename-based visibility, and
+case names remain case-sensitive. Public cases never expose a private type.
+
 ```text
 // User.co defines the public class User.
 string Name;                       // Public field.
@@ -186,8 +193,9 @@ instance, including `self` for explicit member access.
 
 ## Members and meta queries
 
-`.` performs ordinary declared-member lookup. Those names obey capitalization,
-visibility, overload, receiver, and mutability rules. `expression::name`
+`.` performs ordinary declared-member lookup, including `EnumType.Case`.
+Those names obey their declaration's visibility, overload, receiver, and
+mutability rules; enum cases are always public. `expression::name`
 performs a language-defined meta query based on the expression's semantic type.
 Meta queries are not declarations: their lower-camel-case names have no
 visibility, cannot be shadowed or overloaded, and cannot be called or assigned.
@@ -198,7 +206,8 @@ contract.
 The initial meta set is `array::length` plus `string::length`,
 `string::byteLength`, and `string::isEmpty`, where `array` and `string` stand
 for value expressions of those types. Every managed reference also exposes
-`::typeName`; arrays report the stable erased name `array`. Package and import paths also use `::`,
+`::typeName`; enum values expose their qualified nominal type name, without
+boxing. Arrays report the stable erased name `array`. Package and import paths also use `::`,
 but only in declaration syntax; expression postfix `::` is unambiguously a meta
 query.
 
@@ -245,8 +254,9 @@ name. Calling it through an object is invalid. An instance function may be
 called unqualified only where an implicit receiver exists or explicitly
 through an object; calling it through a file-class name is invalid.
 
-Stage 12.2 static fields use the intentionally narrow form
-`static final T Name = literal;`, where `T` is a scalar primitive. They have
+Static fields use `static final T Name = value;`, where `T` is a scalar
+primitive initialized by a literal or an enum initialized by a direct case.
+They have
 separate constant storage, do not occupy object layout, and are accessed
 unqualified or through their file class. Dynamic static initialization,
 mutable static storage, and reference-valued static fields are deferred until
@@ -256,7 +266,7 @@ initialization order and collector roots have explicit contracts.
 
 `?` qualifies the reference immediately to its left. This keeps array
 nullability explicit: `T?[]` has nullable elements, `T[]?` is a nullable array,
-and `T?[]?` permits both. Primitive and void types cannot be nullable.
+and `T?[]?` permits both. Primitive, enum, and void types cannot be nullable.
 
 Nullable values cannot be used for ordinary member access, indexing, or
 iteration until they are narrowed. Every non-null reference field is

@@ -100,7 +100,9 @@ std::string describe_character(char character) {
   return output.str();
 }
 
-TokenKind identifier_kind(std::string_view lexeme) noexcept {
+}  // namespace
+
+TokenKind identifier_token_kind(std::string_view lexeme) noexcept {
   for (const auto& [keyword, kind] : kKeywords) {
     if (lexeme == keyword) {
       return kind;
@@ -108,8 +110,6 @@ TokenKind identifier_kind(std::string_view lexeme) noexcept {
   }
   return TokenKind::kIdentifier;
 }
-
-}  // namespace
 
 Lexer::Lexer(const SourceFile& source, DiagnosticEngine& diagnostics) noexcept
     : source_(source), diagnostics_(diagnostics), input_(source.contents()) {}
@@ -340,7 +340,7 @@ Token Lexer::scan_identifier(std::size_t start, SourceLocation location) {
     advance();
   }
   const auto lexeme = input_.substr(start, current_ - start);
-  return Token{identifier_kind(lexeme), lexeme,
+  return Token{identifier_token_kind(lexeme), lexeme,
                SourceRange{location, current_location()}};
 }
 

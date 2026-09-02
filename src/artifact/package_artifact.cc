@@ -352,11 +352,15 @@ std::string_view visibility_text(Visibility value) {
 }
 
 std::string_view file_kind_name(FileTypeKind value) {
-  return value == FileTypeKind::kClass ? "class" : "interface";
+  return value == FileTypeKind::kEnum    ? "enum"
+         : value == FileTypeKind::kClass ? "class"
+                                         : "interface";
 }
 
 std::string_view nominal_kind_name(NominalKind value) {
-  return value == NominalKind::kClass ? "class" : "interface";
+  return value == NominalKind::kEnum    ? "enum"
+         : value == NominalKind::kClass ? "class"
+                                        : "interface";
 }
 
 std::string_view abi_type_kind_name(AbiTypeKind value) {
@@ -510,6 +514,14 @@ JsonValue encode_interface_implementation(
 }
 
 JsonValue encode_file_declaration(const ImportedFile& file) {
+  JsonValue::Array cases;
+  for (const ImportedEnumCase& item : file.enum_cases) {
+    cases.push_back(JsonValue{
+        JsonValue::Object{{"id", json_identity(item.identity)},
+                          {"location", encode_location(item.location)},
+                          {"name", json_string(item.name)},
+                          {"tag", json_integer(item.tag)}}});
+  }
   JsonValue::Array conformances;
   for (const ImportedInterfaceImplementation& implementation :
        file.interface_implementations) {
@@ -523,6 +535,7 @@ JsonValue encode_file_declaration(const ImportedFile& file) {
       {"conformance", JsonValue{std::move(conformances)}},
       {"direct_interfaces",
        json_string_array(file.direct_interface_identities, true)},
+      {"enum_cases", JsonValue{std::move(cases)}},
       {"id", json_identity(file.identity)},
       {"interface_functions",
        json_string_array(file.interface_function_identities, true)},
@@ -553,6 +566,10 @@ std::string fixed_hex(std::uint64_t value, std::size_t width) {
 
 std::optional<JsonValue> encode_literal(const ImportedLiteral& literal,
                                         TypeKind type) {
+  if (literal.kind == LiteralKind::kEnum && type == TypeKind::kEnum) {
+    return JsonValue{JsonValue::Object{{"kind", json_string("enum")},
+                                       {"value", json_string(literal.lexeme)}}};
+  }
   if (literal.kind == LiteralKind::kBoolean && type == TypeKind::kBool) {
     if (literal.lexeme == "true") {
       return JsonValue{JsonValue::Object{{"kind", json_string("boolean")},
@@ -1223,8 +1240,8 @@ std::optional<TypeKind> parse_type_kind(std::string_view value) {
       TypeKind::kInt64,     TypeKind::kUint8,     TypeKind::kUint16,
       TypeKind::kUint32,    TypeKind::kUint64,    TypeKind::kFloat32,
       TypeKind::kFloat64,   TypeKind::kString,    TypeKind::kObject,
-      TypeKind::kFileClass, TypeKind::kInterface, TypeKind::kArray,
-      TypeKind::kNullable};
+      TypeKind::kFileClass, TypeKind::kInterface, TypeKind::kEnum,
+      TypeKind::kArray,     TypeKind::kNullable};
   const auto kind = std::ranges::find_if(kinds, [&](TypeKind candidate) {
     return type_kind_name(candidate) == value;
   });
@@ -1289,14 +1306,16 @@ std::optional<std::vector<ImportedType>> MetadataDecoder::decode_types(
           text(nominal_fields->at("source_package"), "types.nominal");
       if (nominal_kind == nullptr || name == nullptr || !package ||
           source_package == nullptr ||
-          (*nominal_kind != "class" && *nominal_kind != "interface")) {
+          (*nominal_kind != "class" && *nominal_kind != "interface" &&
+           *nominal_kind != "enum")) {
         issue("types.nominal", "nominal type enum is invalid");
         return std::nullopt;
       }
       nominal =
           NominalIdentity{std::move(*package), *source_package, *name,
-                          *nominal_kind == "class" ? NominalKind::kClass
-                                                   : NominalKind::kInterface};
+                          *nominal_kind == "enum"    ? NominalKind::kEnum
+                          : *nominal_kind == "class" ? NominalKind::kClass
+                                                     : NominalKind::kInterface};
     }
     result.push_back(ImportedType{std::move(*id), *kind, *display,
                                   std::move(*element), std::move(nominal),
@@ -1315,6 +1334,7 @@ std::optional<Visibility> parse_visibility(std::string_view value) {
 std::optional<FileTypeKind> parse_file_kind(std::string_view value) {
   if (value == "class") return FileTypeKind::kClass;
   if (value == "interface") return FileTypeKind::kInterface;
+  if (value == "enum") return FileTypeKind::kEnum;
   return std::nullopt;
 }
 
@@ -1387,6 +1407,14 @@ std::optional<ImportedLiteral> MetadataDecoder::decode_literal(
   if (fields == nullptr) return std::nullopt;
   const std::string* kind = text(fields->at("kind"), "static_value");
   if (kind == nullptr) return std::nullopt;
+  if (*kind == "enum" && type == TypeKind::kEnum) {
+    const auto tag = integer(fields->at("value"), "enum constant");
+    if (!tag || *tag >= kMaxEnumCases) {
+      issue("static_value", "enum tag is out of range");
+      return std::nullopt;
+    }
+    return ImportedLiteral{LiteralKind::kEnum, std::to_string(*tag)};
+  }
   if (*kind == "boolean" && type == TypeKind::kBool) {
     const auto decoded = boolean(fields->at("value"), "static_value");
     if (!decoded) return std::nullopt;
@@ -1469,9 +1497,9 @@ std::optional<ImportedFile> MetadataDecoder::decode_file_declaration(
   const auto* fields = object(
       value,
       {"abstract", "abstract_functions", "base", "conformance",
-       "direct_interfaces", "id", "interface_functions", "interface_id",
-       "interfaces", "kind", "location", "member_order", "name", "record",
-       "sealed", "source_package", "virtual_functions", "visibility"},
+       "direct_interfaces", "enum_cases", "id", "interface_functions",
+       "interface_id", "interfaces", "kind", "location", "member_order", "name",
+       "record", "sealed", "source_package", "virtual_functions", "visibility"},
       kRecord);
   if (fields == nullptr) return std::nullopt;
   const auto abstract = boolean(fields->at("abstract"), kRecord);
@@ -1530,9 +1558,35 @@ std::optional<ImportedFile> MetadataDecoder::decode_file_declaration(
         std::move(*interface_identity), std::move(*functions)});
   }
 
-  const NominalKind nominal_kind = *kind == FileTypeKind::kClass
-                                       ? NominalKind::kClass
-                                       : NominalKind::kInterface;
+  const JsonValue::Array* case_values =
+      array(fields->at("enum_cases"), kRecord);
+  if (case_values == nullptr || case_values->size() > kMaxEnumCases) {
+    issue(std::string{kRecord},
+          "invalid enum case list or case limit exceeded");
+    return std::nullopt;
+  }
+  std::vector<ImportedEnumCase> enum_cases;
+  for (const JsonValue& item : *case_values) {
+    const auto* entry =
+        object(item, {"id", "location", "name", "tag"}, kRecord);
+    if (entry == nullptr) return std::nullopt;
+    auto case_id = identity(entry->at("id"), kRecord);
+    auto case_location = decode_location(entry->at("location"), kRecord);
+    const auto* case_name = text(entry->at("name"), kRecord);
+    auto tag = integer(entry->at("tag"), kRecord);
+    if (!case_id || !case_location || case_name == nullptr || !tag ||
+        *tag >= kMaxEnumCases) {
+      issue(std::string{kRecord}, "invalid enum case record");
+      return std::nullopt;
+    }
+    enum_cases.push_back(ImportedEnumCase{std::move(*case_id), *case_name,
+                                          static_cast<std::uint32_t>(*tag),
+                                          std::move(*case_location)});
+  }
+  const NominalKind nominal_kind =
+      *kind == FileTypeKind::kEnum    ? NominalKind::kEnum
+      : *kind == FileTypeKind::kClass ? NominalKind::kClass
+                                      : NominalKind::kInterface;
   const NominalIdentity nominal{package, *source_package, *name, nominal_kind};
   ImportedTypeDescriptor descriptor{AbiHeapObjectKind::kFileClass,
                                     {},
@@ -1563,7 +1617,8 @@ std::optional<ImportedFile> MetadataDecoder::decode_file_declaration(
       std::move(*abstract_functions),
       std::move(*interface_functions),
       std::move(conformances),
-      ImportedClassAbi{0, 0, 1, {}, std::move(descriptor), {}, {}}};
+      ImportedClassAbi{0, 0, 1, {}, std::move(descriptor), {}, {}},
+      std::move(enum_cases)};
 }
 
 std::optional<ImportedMember> MetadataDecoder::decode_member_declaration(

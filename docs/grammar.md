@@ -38,7 +38,14 @@ compilation_unit
 
 explicit_file_type
     = explicit_file_class
-    | explicit_interface ;
+    | explicit_interface
+    | explicit_enum ;
+
+explicit_enum
+    = "enum" "{" enum_case { "," enum_case } [ "," ] "}" ;
+
+enum_case
+    = identifier ;
 
 explicit_file_class
     = { file_class_modifier } "class" [ ":" named_type ]
@@ -121,11 +128,11 @@ named_type
 ```
 
 At file scope, `class` opens the optional envelope for the implicit file class,
-and `interface` changes that file identity into an interface. The file name is
+while `interface` and `enum` select their respective file kinds. The file name is
 never repeated. Inside an envelope or after an unwrapped member, `class` and
-`interface` are nested-type declaration starters. `struct` and `enum` are also
-reserved for future type declarations. These nested forms are diagnosed as
-unsupported.
+`interface` are nested-type declaration starters. Nested enums and `struct`
+declarations are also diagnosed as unsupported. An enum envelope accepts only
+its ordered cases; it has no modifiers, base, conformance, fields, or functions.
 
 `void` is accepted only as a function return type. An omitted function return
 type defaults to `void`. Fields, parameters, locals, arrays, and iteration
@@ -414,7 +421,11 @@ The declaration pass enforces these rules separately from the grammar:
   initializer naming its direct base. Root constructors cannot include one.
 - Base-initializer arguments use ordinary constructor overload selection and
   cannot access `self`, instance fields, or unqualified instance functions.
-- Declaration visibility is inferred from the first ASCII character.
+- Declaration visibility is inferred from the first ASCII character, except
+  enum cases, which are always public. The enum type retains filename visibility.
+- Enums contain 1 to 65,536 distinct, case-sensitive identifiers. Case selection
+  uses `Type.Case`. Enum locals require initializers; enum fields require
+  initialization on every constructor exit. See [enums](enums.md).
 - Private constructors are callable only inside their owning file class. A
   derived constructor cannot select a private base constructor.
 - Constructor overload identity ignores the public or private constructor
@@ -424,7 +435,8 @@ The declaration pass enforces these rules separately from the grammar:
 - Import paths are identifier sequences rather than string literals.
 - Array types are one-dimensional; repeated `[]` suffixes are rejected.
 - `?` may qualify a reference type or an array reference independently from
-  its element type. Nullable primitives and `void?` are rejected semantically.
+  its element type. Nullable primitives, enums, and `void?` are rejected
+  semantically; nullable enum arrays remain valid references.
 - A `for` iteration declaration uses either `var` inference or an explicit
   element type.
 - A `var` local requires an initializer. A final local also requires an
@@ -446,7 +458,8 @@ The declaration pass enforces these rules separately from the grammar:
 - `value is T` requires a non-null runtime-checkable target. `value as T?`
   requires a nullable target and yields `null` when the runtime type differs.
 - A static field must also be final, must have an initializer, and currently
-  accepts only a scalar literal initializer.
+  accepts only a scalar literal or direct enum case initializer, optionally
+  parenthesized.
 - `Main` must be declared `static`.
 
 Type checking, assignment-target validation, return checking, and overload

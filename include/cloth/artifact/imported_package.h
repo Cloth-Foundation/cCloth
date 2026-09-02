@@ -181,6 +181,16 @@ struct ImportedClassAbi {
                          const ImportedClassAbi&) = default;
 };
 
+struct ImportedEnumCase {
+  std::string identity;
+  std::string name;
+  std::uint32_t tag;
+  ImportedSourceLocation location;
+
+  friend bool operator==(const ImportedEnumCase&,
+                         const ImportedEnumCase&) = default;
+};
+
 struct ImportedFile {
   NominalIdentity nominal_identity;
   std::string identity;
@@ -201,6 +211,7 @@ struct ImportedFile {
   std::vector<std::string> interface_function_identities;
   std::vector<ImportedInterfaceImplementation> interface_implementations;
   ImportedClassAbi abi;
+  std::vector<ImportedEnumCase> enum_cases{};
 
   friend bool operator==(const ImportedFile&, const ImportedFile&) = default;
 };

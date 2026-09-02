@@ -79,13 +79,25 @@ derived constructor invokes the selected accessible base initializer first;
 the MIR field marker then invokes only the derived class's local field helpers
 in declaration order before its body continues.
 
-Class descriptors use their ABI-2 canonical external symbols rather than local
+Class descriptors use their ABI-3 canonical external symbols rather than local
 file indices. The internal package selector emits only the selected package's
 definitions and declares dependency descriptors and accessible members. It
 rejects entry-wrapper generation in package modules. This currently consumes
 verified whole-project representations; artifact-based input loading and the
 public compile/link protocol are still pending. See
 [canonical identity](canonical_identity.md).
+
+## Enum lowering
+
+Verified enum values lower to `i32`, preserving nominal checks in HIR/MIR.
+Fields, arrays, copies, equality, and calls use the ordinary scalar path.
+Each used enum output type receives a module-private case-name table and print
+helper, derived from source or verified imported declarations. The helper
+checks the unsigned tag against the case count before indexing, trapping with
+`llvm.trap` on an invalid value. It uses existing string-literal and print
+runtime entries. No enum allocation, GC roots, external name-table symbols,
+or runtime-ABI change is needed. Enum `::typeName` uses its static nominal name
+after evaluating the operand exactly once.
 
 ## Runtime boundary
 

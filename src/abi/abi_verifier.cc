@@ -103,6 +103,17 @@ class AbiVerifier {
     if (file.member_order != expected.member_order) {
       report(range, "member order does not match MIR");
     }
+    if (file.kind == FileTypeKind::kEnum) {
+      if (file.base_file || file.layout.size != 0 ||
+          file.layout.header_size != 0 || file.layout.alignment != 1 ||
+          !file.layout.fields.empty() || !file.static_fields.empty() ||
+          !file.functions.empty() || !file.constructors.empty() ||
+          !file.member_order.empty() ||
+          !file.type_descriptor.mangled_name.empty()) {
+        report(range, "enum ABI contains class storage or members");
+      }
+      return;
+    }
     if (file.kind == FileTypeKind::kInterface) {
       if (file.base_file || !file.layout.fields.empty() ||
           !file.static_fields.empty() || !file.constructors.empty() ||

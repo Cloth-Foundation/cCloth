@@ -1,5 +1,10 @@
 # Cloth package artifact schema, version 1
 
+Historical frozen schema. Current compilers require
+[version 2](artifact_schema_v2.md); version-1 artifacts must be rebuilt. The
+original byte fixture below is retained as the version-1 record, not the
+current writer's output.
+
 This document freezes the implemented Stage 23.2 `.cpa` byte and metadata
 schema. The design rationale and compatibility policy remain in the approved
 [artifact proposal](proposals/stage_23_artifacts.md). This file owns exact field

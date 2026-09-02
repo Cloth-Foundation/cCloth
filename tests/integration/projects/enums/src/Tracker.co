@@ -1,0 +1,13 @@
+class is Source {
+  int32 Count;
+  Status state;
+  static final Status Initial = (Status.Ready);
+
+  Tracker() { state = Status.Ready; }
+
+  func Next(): Status {
+    Count++;
+    state = Status.running;
+    return state;
+  }
+}

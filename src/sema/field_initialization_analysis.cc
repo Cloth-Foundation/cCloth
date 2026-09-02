@@ -24,7 +24,7 @@ struct AssignmentCount {
 struct TrackedField {
   SymbolId symbol;
   bool is_final;
-  bool is_non_null_reference;
+  bool requires_initialization;
 };
 
 struct FlowState {
@@ -63,12 +63,12 @@ class FieldInitializationAnalyzer {
         continue;
       }
       const SymbolId symbol = semantics_.file(file_id_).fields[index];
-      const bool is_non_null = is_non_null_reference(symbol);
-      if (!field.is_final && !is_non_null) {
+      const bool requires_value = requires_initialization(symbol);
+      if (!field.is_final && !requires_value) {
         continue;
       }
       tracked_fields_.push_back(
-          TrackedField{symbol, field.is_final, is_non_null});
+          TrackedField{symbol, field.is_final, requires_value});
       const unsigned int initialized =
           include_declaration_initializers && field.initializer ? 1U : 0U;
       flow.assignments.push_back(AssignmentCount{initialized, initialized});
@@ -115,8 +115,9 @@ class FieldInitializationAnalyzer {
                                             std::string{field.name} +
                                             "' requires an initializer or a "
                                             "constructor");
-      } else if (is_non_null_reference(symbol)) {
-        diagnostics_.error(field.range, "non-null field '" +
+      } else if (requires_initialization(symbol)) {
+        diagnostics_.error(field.range, std::string{field_qualifier(symbol)} +
+                                            " field '" +
                                             std::string{field.name} +
                                             "' requires an initializer or a "
                                             "constructor");
@@ -316,7 +317,7 @@ class FieldInitializationAnalyzer {
         const TrackedField& tracked = tracked_fields_[*field];
         if (tracked.is_final || assignments[*field].minimum == 0) {
           const std::string_view qualifier =
-              tracked.is_final ? "final" : "non-null";
+              tracked.is_final ? "final" : field_qualifier(tracked.symbol);
           diagnostics_.error(expression.range,
                              std::string{qualifier} + " field '" +
                                  semantics_.symbol(tracked.symbol).name +
@@ -411,7 +412,8 @@ class FieldInitializationAnalyzer {
       return;
     }
     const TrackedField& tracked = tracked_fields_[*field];
-    const std::string_view qualifier = tracked.is_final ? "final" : "non-null";
+    const std::string_view qualifier =
+        tracked.is_final ? "final" : field_qualifier(tracked.symbol);
     diagnostics_.error(expression_range(id),
                        std::string{qualifier} + " field '" +
                            semantics_.symbol(tracked.symbol).name +
@@ -425,13 +427,15 @@ class FieldInitializationAnalyzer {
       return;
     }
     const std::optional<std::size_t> field =
-        first_uninitialized_non_null_field(assignments);
+        first_uninitialized_required_field(assignments);
     if (!field) {
       return;
     }
     diagnostics_.error(
         expression_range(id),
-        "cannot use 'self' before non-null field '" +
+        "cannot use 'self' before " +
+            std::string{field_qualifier(tracked_fields_[*field].symbol)} +
+            " field '" +
             semantics_.symbol(tracked_fields_[*field].symbol).name +
             "' is initialized");
   }
@@ -449,22 +453,23 @@ class FieldInitializationAnalyzer {
       return;
     }
     const std::optional<std::size_t> field =
-        first_uninitialized_non_null_field(assignments);
+        first_uninitialized_required_field(assignments);
     if (!field) {
       return;
     }
     diagnostics_.error(
         expression_range(callee),
-        "instance function '" + symbol.name +
-            "' cannot be called before non-null field '" +
+        "instance function '" + symbol.name + "' cannot be called before " +
+            std::string{field_qualifier(tracked_fields_[*field].symbol)} +
+            " field '" +
             semantics_.symbol(tracked_fields_[*field].symbol).name +
             "' is initialized");
   }
 
-  std::optional<std::size_t> first_uninitialized_non_null_field(
+  std::optional<std::size_t> first_uninitialized_required_field(
       const std::vector<AssignmentCount>& assignments) const {
     for (std::size_t index = 0; index < assignments.size(); ++index) {
-      if (tracked_fields_[index].is_non_null_reference &&
+      if (tracked_fields_[index].requires_initialization &&
           assignments[index].minimum == 0) {
         return index;
       }
@@ -537,10 +542,18 @@ class FieldInitializationAnalyzer {
     return false;
   }
 
-  bool is_non_null_reference(SymbolId symbol) const {
+  std::string_view field_qualifier(SymbolId symbol) const {
+    return semantics_.type(semantics_.symbol(symbol).type).kind ==
+                   TypeKind::kEnum
+               ? "enum"
+               : "non-null";
+  }
+
+  bool requires_initialization(SymbolId symbol) const {
     const TypeKind kind = semantics_.type(semantics_.symbol(symbol).type).kind;
-    return kind == TypeKind::kString || kind == TypeKind::kObject ||
-           kind == TypeKind::kFileClass || kind == TypeKind::kArray;
+    return kind == TypeKind::kEnum || kind == TypeKind::kString ||
+           kind == TypeKind::kObject || kind == TypeKind::kFileClass ||
+           kind == TypeKind::kArray;
   }
 
   void require_initialized(const std::vector<AssignmentCount>& assignments,
@@ -549,7 +562,7 @@ class FieldInitializationAnalyzer {
       if (assignments[index].minimum == 0) {
         const TrackedField& field = tracked_fields_[index];
         const std::string_view qualifier =
-            field.is_final ? "final" : "non-null";
+            field.is_final ? "final" : field_qualifier(field.symbol);
         diagnostics_.error(range, "constructor exits before " +
                                       std::string{qualifier} + " field '" +
                                       semantics_.symbol(field.symbol).name +

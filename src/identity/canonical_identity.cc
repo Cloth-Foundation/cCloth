@@ -36,6 +36,8 @@ std::string_view member_tag(CanonicalMemberKind kind) {
       return "instance-field";
     case CanonicalMemberKind::kDescriptor:
       return "descriptor";
+    case CanonicalMemberKind::kEnumCase:
+      return "enum-case";
   }
   return "invalid";
 }
@@ -76,8 +78,10 @@ std::string canonical_nominal_identity(const NominalIdentity& identity) {
     }
   }
   append_component(result, identity.name);
-  append_component(
-      result, identity.kind == NominalKind::kClass ? "class" : "interface");
+  append_component(result, identity.kind == NominalKind::kEnum ? "enum"
+                           : identity.kind == NominalKind::kClass
+                               ? "class"
+                               : "interface");
   return result;
 }
 
@@ -109,7 +113,7 @@ std::string canonical_member_identity(
 
 std::string mangle_canonical_identity(std::string_view identity) {
   constexpr std::string_view kHex = "0123456789abcdef";
-  std::string result = "_C2";
+  std::string result = "_C3";
   for (const char character : identity) {
     const auto byte = static_cast<unsigned char>(character);
     result.push_back(kHex[byte >> 4U]);

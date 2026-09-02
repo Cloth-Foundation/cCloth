@@ -5,6 +5,7 @@
 #include "cloth/sema/semantic_model.h"
 
 #include <array>
+#include <charconv>
 #include <utility>
 
 namespace cloth {
@@ -240,6 +241,8 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
       return "array";
     case TypeKind::kNullable:
       return "nullable reference";
+    case TypeKind::kEnum:
+      return "enum";
   }
   return "unknown";
 }
@@ -262,8 +265,39 @@ std::string_view symbol_kind_name(SymbolKind kind) noexcept {
       return "self";
     case SymbolKind::kInterface:
       return "interface";
+    case SymbolKind::kEnum:
+      return "enum";
+    case SymbolKind::kEnumCase:
+      return "enum case";
   }
   return "unknown";
+}
+
+std::optional<std::uint32_t> enum_constant_tag(std::string_view text,
+                                               TypeId type,
+                                               const SemanticModel& semantics) {
+  if (type.value >= semantics.types().size() || text.empty() ||
+      (text.size() > 1 && text.front() == '0'))
+    return std::nullopt;
+  const SemanticType& value = semantics.type(type);
+  if (value.kind != TypeKind::kEnum || !value.file ||
+      value.file->value >= semantics.files().size())
+    return std::nullopt;
+  std::uint32_t tag = 0;
+  const auto [end, error] =
+      std::from_chars(text.data(), text.data() + text.size(), tag);
+  const FileSemantics& file = semantics.file(*value.file);
+  if (error != std::errc{} || end != text.data() + text.size() ||
+      tag >= file.enum_cases.size() || file.kind != FileTypeKind::kEnum)
+    return std::nullopt;
+  const SymbolId symbol_id = file.enum_cases[tag];
+  if (symbol_id.value >= semantics.symbols().size()) return std::nullopt;
+  const SemanticSymbol& symbol = semantics.symbol(symbol_id);
+  if (symbol.kind != SymbolKind::kEnumCase || symbol.type != type ||
+      symbol.file != value.file || symbol.enum_tag != tag ||
+      symbol.visibility != Visibility::kPublic)
+    return std::nullopt;
+  return tag;
 }
 
 }  // namespace cloth

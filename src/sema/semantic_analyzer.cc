@@ -188,7 +188,8 @@ class SemanticAnalyzer {
       const std::optional<TypeId> existing_type = model_.find_type(syntax.name);
       if (existing_type &&
           model_.type(*existing_type).kind != TypeKind::kFileClass &&
-          model_.type(*existing_type).kind != TypeKind::kInterface) {
+          model_.type(*existing_type).kind != TypeKind::kInterface &&
+          model_.type(*existing_type).kind != TypeKind::kEnum) {
         diagnostics_.error(
             point_range(syntax.range.begin),
             "file class name '" + syntax.name + "' conflicts with a core type");
@@ -197,15 +198,17 @@ class SemanticAnalyzer {
 
       TypeId type = model_.error_type();
       if (identity_valid) {
-        const TypeKind type_kind = syntax.kind == FileTypeKind::kInterface
-                                       ? TypeKind::kInterface
-                                       : TypeKind::kFileClass;
+        const TypeKind type_kind =
+            syntax.kind == FileTypeKind::kEnum        ? TypeKind::kEnum
+            : syntax.kind == FileTypeKind::kInterface ? TypeKind::kInterface
+                                                      : TypeKind::kFileClass;
         type = model_.add_type(
             SemanticType{type_kind, syntax.qualified_name, file_id});
       }
       const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
-          syntax.kind == FileTypeKind::kInterface ? SymbolKind::kInterface
-                                                  : SymbolKind::kFileClass,
+          syntax.kind == FileTypeKind::kEnum        ? SymbolKind::kEnum
+          : syntax.kind == FileTypeKind::kInterface ? SymbolKind::kInterface
+                                                    : SymbolKind::kFileClass,
           syntax.qualified_name,
           type,
           {},
@@ -242,8 +245,9 @@ class SemanticAnalyzer {
       file.identity = NominalIdentity{
           PackageIdentity{syntax.owning_package, syntax.owning_package_version},
           syntax.package_name, syntax.name,
-          syntax.kind == FileTypeKind::kInterface ? NominalKind::kInterface
-                                                  : NominalKind::kClass};
+          syntax.kind == FileTypeKind::kEnum        ? NominalKind::kEnum
+          : syntax.kind == FileTypeKind::kInterface ? NominalKind::kInterface
+                                                    : NominalKind::kClass};
       file.member_order = syntax.member_order;
       if (syntax.kind == FileTypeKind::kInterface) {
         file.interface_id = canonical_interface_id(file.identity);
@@ -255,6 +259,12 @@ class SemanticAnalyzer {
         file.is_valid = false;
       }
       static_cast<void>(model_.add_file(std::move(file)));
+      if (syntax.kind == FileTypeKind::kEnum && identity_valid) {
+        register_enum_output(type);
+        for (const EnumCaseDecl& enum_case : syntax.enum_cases) {
+          register_enum_case(file_id, enum_case.name, enum_case.range);
+        }
+      }
     }
     visible_files_.resize(files_.size());
   }
@@ -283,9 +293,10 @@ class SemanticAnalyzer {
           continue;
         }
         const FileId file_id{model_.files().size()};
-        const TypeKind type_kind = imported.kind == FileTypeKind::kInterface
-                                       ? TypeKind::kInterface
-                                       : TypeKind::kFileClass;
+        const TypeKind type_kind =
+            imported.kind == FileTypeKind::kEnum        ? TypeKind::kEnum
+            : imported.kind == FileTypeKind::kInterface ? TypeKind::kInterface
+                                                        : TypeKind::kFileClass;
         const std::string qualified_name =
             qualified_file_name(imported.nominal_identity.package.name,
                                 imported.nominal_identity.source_package,
@@ -294,8 +305,10 @@ class SemanticAnalyzer {
             model_.add_type(SemanticType{type_kind, qualified_name, file_id});
         const SourceRange range = imported_range(imported.location);
         const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
-            imported.kind == FileTypeKind::kInterface ? SymbolKind::kInterface
-                                                      : SymbolKind::kFileClass,
+            imported.kind == FileTypeKind::kEnum ? SymbolKind::kEnum
+            : imported.kind == FileTypeKind::kInterface
+                ? SymbolKind::kInterface
+                : SymbolKind::kFileClass,
             qualified_name,
             type,
             {},
@@ -317,6 +330,13 @@ class SemanticAnalyzer {
         file.interface_id = imported.interface_id;
         file.identity = imported.nominal_identity;
         static_cast<void>(model_.add_file(std::move(file)));
+        if (imported.kind == FileTypeKind::kEnum) {
+          register_enum_output(type);
+          for (const ImportedEnumCase& enum_case : imported.enum_cases) {
+            register_enum_case(file_id, enum_case.name,
+                               imported_range(enum_case.location));
+          }
+        }
         imported_file_ids_.emplace(imported.identity, file_id);
         imported_type_ids_.emplace(imported.identity, type);
       }
@@ -395,6 +415,15 @@ class SemanticAnalyzer {
             continue;
           }
           std::vector<TypeId> parameter_types;
+          if (imported.static_value &&
+              (model_.type(type->second).kind == TypeKind::kEnum ||
+               imported.static_value->kind == LiteralKind::kEnum) &&
+              (imported.static_value->kind != LiteralKind::kEnum ||
+               !enum_constant_tag(imported.static_value->lexeme, type->second,
+                                  model_))) {
+            report_invalid(imported.identity);
+            continue;
+          }
           std::vector<SymbolId> parameter_symbols;
           bool parameters_valid = true;
           for (const ImportedParameter& parameter : imported.parameters) {
@@ -644,7 +673,8 @@ class SemanticAnalyzer {
                          SourceRange range) {
     if (const std::optional<TypeId> core = model_.find_type(name);
         core && model_.type(*core).kind != TypeKind::kFileClass &&
-        model_.type(*core).kind != TypeKind::kInterface) {
+        model_.type(*core).kind != TypeKind::kInterface &&
+        model_.type(*core).kind != TypeKind::kEnum) {
       diagnostics_.error(range, "import name '" + std::string{name} +
                                     "' conflicts with a core type");
       model_.mutable_file(current_file).is_valid = false;
@@ -826,6 +856,30 @@ class SemanticAnalyzer {
         file.base_file.reset();
       }
     }
+  }
+
+  void register_enum_output(TypeId type) {
+    model_.add_intrinsic("print", {type}, IntrinsicKind::kPrintEnum);
+    model_.add_intrinsic("println", {type}, IntrinsicKind::kPrintEnum);
+  }
+
+  void register_enum_case(FileId file, std::string_view name,
+                          SourceRange range) {
+    const TypeId type = model_.file(file).type;
+    const auto tag =
+        static_cast<std::uint32_t>(model_.file(file).enum_cases.size());
+    SemanticSymbol symbol{SymbolKind::kEnumCase,
+                          std::string{name},
+                          type,
+                          {},
+                          Visibility::kPublic,
+                          file,
+                          range};
+    symbol.enum_tag = tag;
+    symbol.is_final = true;
+    symbol.is_static = true;
+    const SymbolId id = model_.add_symbol(std::move(symbol));
+    model_.mutable_file(file).enum_cases.push_back(id);
   }
 
   void register_members() {
@@ -1316,7 +1370,8 @@ class SemanticAnalyzer {
                       bool allow_void = false) {
     if (const std::optional<TypeId> core = model_.find_type(syntax.name);
         core && model_.type(*core).kind != TypeKind::kFileClass &&
-        model_.type(*core).kind != TypeKind::kInterface) {
+        model_.type(*core).kind != TypeKind::kInterface &&
+        model_.type(*core).kind != TypeKind::kEnum) {
       if (*core == model_.void_type()) {
         if (syntax.is_array) {
           diagnostics_.error(syntax.range,
@@ -1443,10 +1498,6 @@ class SemanticAnalyzer {
         diagnostics_.error(field.range, "static field '" +
                                             std::string{field.name} +
                                             "' requires an initializer");
-      } else if (!is_static_scalar_initializer(*field.initializer) ||
-                 !is_static_scalar_type(model_.symbol(symbol).type)) {
-        diagnostics_.error(expression_range(*field.initializer),
-                           "static field initializer must be a scalar literal");
       }
     }
     if (!field.initializer) {
@@ -1456,6 +1507,12 @@ class SemanticAnalyzer {
     const TypeId field_type = model_.symbol(symbol).type;
     const ExpressionState value =
         analyze_expression(*field.initializer, field_type);
+    if (field.is_static && (!is_static_scalar_initializer(*field.initializer) ||
+                            !is_static_scalar_type(field_type))) {
+      diagnostics_.error(
+          expression_range(*field.initializer),
+          "static field initializer must be a scalar literal or enum case");
+    }
     check_value(value, files_[current_file_.value]
                            ->storage.expression(*field.initializer)
                            .range);
@@ -1762,6 +1819,12 @@ class SemanticAnalyzer {
                                std::string{local->name} + "' from null");
       } else if (initializer->type != model_.void_type()) {
         type = initializer->type;
+      }
+      if (!initializer && !local->is_final &&
+          model_.type(type).kind == TypeKind::kEnum) {
+        diagnostics_.error(statement.range, "enum local '" +
+                                                std::string{local->name} +
+                                                "' requires an initializer");
       }
       if (local->is_final && !initializer) {
         diagnostics_.error(statement.range, "final local '" +
@@ -2200,6 +2263,9 @@ class SemanticAnalyzer {
         return ExpressionState{model_.bool_type(), ValueCategory::kValue};
       case LiteralKind::kNull:
         return ExpressionState{model_.null_type(), ValueCategory::kValue};
+      case LiteralKind::kEnum:
+        diagnostics_.error(range, "enum values must name a declared case");
+        return ExpressionState{model_.error_type()};
     }
     return ExpressionState{model_.error_type()};
   }
@@ -3007,6 +3073,22 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     const SemanticType& object_type = model_.type(object.type);
+    if (object_type.kind == TypeKind::kEnum && object_type.file) {
+      if (object.category != ValueCategory::kType) {
+        diagnostics_.error(range,
+                           "enum cases must be accessed through their type");
+        return ExpressionState{model_.error_type()};
+      }
+      for (const SymbolId id : model_.file(*object_type.file).enum_cases) {
+        if (model_.symbol(id).name == member.member) {
+          return ExpressionState{object.type, ValueCategory::kValue, id};
+        }
+      }
+      diagnostics_.error(range, "enum '" + object_type.name +
+                                    "' has no case '" +
+                                    std::string{member.member} + "'");
+      return ExpressionState{model_.error_type()};
+    }
     if (object_type.kind == TypeKind::kNullable) {
       diagnostics_.error(range, "nullable type '" + object_type.name +
                                     "' has no members without narrowing");
@@ -3106,7 +3188,8 @@ class SemanticAnalyzer {
                                     "' has no meta queries without narrowing");
       return ExpressionState{model_.error_type()};
     }
-    if (meta.meta == "typeName" && is_reference(object.type)) {
+    if (meta.meta == "typeName" &&
+        (is_reference(object.type) || object_type.kind == TypeKind::kEnum)) {
       return ExpressionState{model_.string_type(), ValueCategory::kValue};
     }
     if (is_integer(object.type) &&
@@ -3625,6 +3708,10 @@ class SemanticAnalyzer {
             std::get_if<NumericConversionExpression>(&expression.data)) {
       return is_numeric_literal_expression(conversion->value);
     }
+    const auto symbol =
+        model_.file(current_file_).expressions.at(id.value).symbol;
+    if (symbol && model_.symbol(*symbol).kind == SymbolKind::kEnumCase)
+      return true;
     const auto* literal = std::get_if<LiteralExpression>(&expression.data);
     return literal != nullptr && literal->kind != LiteralKind::kString &&
            literal->kind != LiteralKind::kNull;
@@ -3638,7 +3725,7 @@ class SemanticAnalyzer {
            kind == TypeKind::kInt64 || kind == TypeKind::kUint8 ||
            kind == TypeKind::kUint16 || kind == TypeKind::kUint32 ||
            kind == TypeKind::kUint64 || kind == TypeKind::kFloat32 ||
-           kind == TypeKind::kFloat64;
+           kind == TypeKind::kFloat64 || kind == TypeKind::kEnum;
   }
 
   ExpressionState record_expression(ExpressionId id, ExpressionState state) {

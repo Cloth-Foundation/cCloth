@@ -12,6 +12,7 @@ The core scope provides `print(T)` and `println(T)` for these types:
 - `byte`, every fixed-width signed and unsigned integer, and their aliases
 - `float32`, `float64`, and the `float` alias
 - `object` and the `null` literal; file classes and arrays widen to `object`
+- each enum type, without boxing
 
 `print(value)` writes only the value. `println(value)` uses the same
 representation and then writes one line-feed byte. `println()` writes one
@@ -29,6 +30,7 @@ Values have these deterministic representations:
 - finite floats: the locale-independent shortest round-trippable decimal
 - infinities and NaN: `inf`, `-inf`, and `nan`
 - file-class objects: `<qualified.TypeName>`
+- enum values: `qualified.TypeName.CaseName`
 - arrays passed as `object`: `<Array>`
 - the untyped `null` literal: `null`
 
@@ -36,6 +38,15 @@ A nullable reference must be narrowed before it can be passed to a non-null
 typed output overload. Invalid Unicode scalar values trap. Windows native
 output is placed in binary mode so the line-feed contract is byte-identical
 across supported hosts.
+
+## Enum output
+
+`print` and `println` accept any enum and print `qualified.Type.Case`, preserving
+the declared case spelling. Import aliases do not change it. Enum values are
+not boxed. `value::typeName` returns the qualified nominal enum name, evaluating
+the value once even when that name is statically known. Lowering uses private
+bounds-checked name tables; an invalid tag traps instead of indexing outside
+the table. See [enums](enums.md).
 
 ## Object metadata
 

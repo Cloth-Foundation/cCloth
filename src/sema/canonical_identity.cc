@@ -13,7 +13,7 @@ std::string canonical_type_identity(TypeId type, const SemanticModel& semantics,
                                     TypeIdentityMode mode) {
   const SemanticType& value = semantics.type(type);
   if (value.kind == TypeKind::kFileClass ||
-      value.kind == TypeKind::kInterface) {
+      value.kind == TypeKind::kInterface || value.kind == TypeKind::kEnum) {
     return canonical_nominal_identity(semantics.file(*value.file).identity);
   }
   if (value.kind == TypeKind::kArray || value.kind == TypeKind::kNullable) {

@@ -58,6 +58,16 @@ erases at the LLVM boundary.
 change field layout, parameter types, return types, overload identity, or
 mangled names.
 
+## Enum values
+
+Enums lower to the target's unsigned 32-bit scalar representation: four-byte
+storage, target `uint32` alignment, and scalar parameters/results. They are not
+managed references and add no GC reference offsets to fields or array elements.
+The array reference remains managed. The shared file-layout record is empty
+for an enum and does not describe its scalar storage; that belongs to the type
+record. No enum heap descriptor or constructor entry is emitted. The complete
+contract is in [enums](enums.md).
+
 ## File-class objects
 
 Every file-class object begins with two opaque, reference-sized runtime words.
@@ -88,7 +98,7 @@ layout, so a derived table covers inherited and local references.
 See [garbage_collection.md](garbage_collection.md) for the Stage 13.1 contract.
 
 Static fields are not object fields. Stage 12.2 records them in a separate ABI
-table and emits their literal value as constant global storage. Their ABI-2
+table and emits their literal value as constant global storage. Their ABI-3
 name includes the canonical owner and field name. Static field linkage is
 still determined by capitalization.
 
@@ -151,7 +161,7 @@ convention so LLVM and non-Cloth tooling have a stable interoperability point.
 
 ## Mangling
 
-ABI revision 2 uses `_C2` followed by hexadecimal canonical symbol identity.
+ABI revision 3 uses `_C3` followed by hexadecimal canonical symbol identity.
 Identity includes the exact manifest package version (or a distinct standalone
 owner), source namespace, file kind/stem, member kind/name, and overload parameter
 types. Return types are omitted because Cloth does not overload on a return

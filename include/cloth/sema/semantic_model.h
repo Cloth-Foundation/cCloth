@@ -79,6 +79,7 @@ enum class TypeKind {
   kInterface,
   kArray,
   kNullable,
+  kEnum,
 };
 
 struct SemanticType {
@@ -97,6 +98,8 @@ enum class SymbolKind {
   kLocal,
   kSelf,
   kInterface,
+  kEnum,
+  kEnumCase,
 };
 
 enum class IntrinsicKind {
@@ -116,6 +119,7 @@ enum class IntrinsicKind {
   kPrintFloat64,
   kPrintObject,
   kPrintNewline,
+  kPrintEnum,
 };
 
 struct SemanticSymbol {
@@ -136,6 +140,7 @@ struct SemanticSymbol {
   bool is_abstract{false};
   std::optional<std::size_t> virtual_slot{};
   std::optional<SymbolId> overridden_symbol{};
+  std::optional<std::uint32_t> enum_tag{};
 };
 
 enum class ValueCategory {
@@ -189,6 +194,7 @@ struct FileSemantics {
   std::optional<std::uint64_t> interface_id{};
   NominalIdentity identity{};
   std::vector<MemberReference> member_order{};
+  std::vector<SymbolId> enum_cases{};
 };
 
 class SemanticModel {
@@ -247,6 +253,8 @@ class SemanticModel {
 
 [[nodiscard]] std::string_view type_kind_name(TypeKind kind) noexcept;
 [[nodiscard]] std::string_view symbol_kind_name(SymbolKind kind) noexcept;
+[[nodiscard]] std::optional<std::uint32_t> enum_constant_tag(
+    std::string_view text, TypeId type, const SemanticModel& semantics);
 
 }  // namespace cloth
 

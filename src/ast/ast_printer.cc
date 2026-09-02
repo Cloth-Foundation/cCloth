@@ -47,8 +47,9 @@ void print_validity(bool is_valid, std::ostream& output) {
 }  // namespace
 
 void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
-  output << (file_class.kind == FileTypeKind::kInterface ? "Interface "
-                                                         : "FileClass ")
+  output << (file_class.kind == FileTypeKind::kEnum        ? "Enum "
+             : file_class.kind == FileTypeKind::kInterface ? "Interface "
+                                                           : "FileClass ")
          << file_class.qualified_name;
   if (file_class.base_class) {
     output << " : ";
@@ -94,6 +95,9 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
     output << '\n';
   }
 
+  for (const EnumCaseDecl& enum_case : file_class.enum_cases) {
+    output << "|- Case " << enum_case.name << " [public]\n";
+  }
   for (const MemberReference member : file_class.member_order) {
     output << "|- ";
     switch (member.kind) {

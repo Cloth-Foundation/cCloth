@@ -39,6 +39,11 @@ class MirVerifier {
   }
 
  private:
+  bool is_enum_type(std::optional<TypeId> type) const {
+    return type && type->value < semantics_.types().size() &&
+           semantics_.type(*type).kind == TypeKind::kEnum;
+  }
+
   void verify_file(const MirFileClass& file, std::size_t file_index) {
     current_file_ = file.file;
     const SourceRange range = symbol_range(file.symbol);
@@ -325,6 +330,11 @@ class MirVerifier {
       verify_symbol_type(load->symbol, instruction.type, instruction.range);
       if (load->symbol.value < semantics_.symbols().size()) {
         const SemanticSymbol& symbol = semantics_.symbol(load->symbol);
+        if (symbol.kind == SymbolKind::kEnumCase ||
+            symbol.kind == SymbolKind::kEnum) {
+          report(instruction.range,
+                 "enum declaration was lowered as a storage load");
+        }
         if (symbol.kind == SymbolKind::kField && !symbol.is_static) {
           report(instruction.range,
                  "instance field was lowered as a symbol load");
@@ -341,6 +351,13 @@ class MirVerifier {
             *declaration->initializer,
             symbol_type(declaration->symbol, semantics_.error_type()),
             value_types, instruction.range);
+      } else {
+        const TypeId type =
+            symbol_type(declaration->symbol, semantics_.error_type());
+        if (type.value < semantics_.types().size() &&
+            semantics_.type(type).kind == TypeKind::kEnum) {
+          report(instruction.range, "enum local has no initializer");
+        }
       }
     } else if (const auto* store =
                    std::get_if<MirStoreSymbolInstruction>(&instruction.data)) {
@@ -504,6 +521,10 @@ class MirVerifier {
       }
     } else if (const auto* unary =
                    std::get_if<MirUnaryInstruction>(&instruction.data)) {
+      const auto operand_type = known_value_type(unary->operand, value_types);
+      if (is_enum_type(operand_type) || is_enum_type(instruction.type)) {
+        report(instruction.range, "enum value used by a unary operation");
+      }
       verify_value(unary->operand, value_types, instruction.range);
       require_result(instruction);
       if (unary->operation == TokenKind::kTilde) {
@@ -525,6 +546,15 @@ class MirVerifier {
           known_value_type(binary->left, value_types);
       const std::optional<TypeId> right_type =
           known_value_type(binary->right, value_types);
+      if ((is_enum_type(left_type) || is_enum_type(right_type) ||
+           is_enum_type(instruction.type)) &&
+          (left_type != right_type ||
+           instruction.type != semantics_.bool_type() ||
+           (binary->operation != TokenKind::kEqualEqual &&
+            binary->operation != TokenKind::kBangEqual))) {
+        report(instruction.range,
+               "enum binary operation must compare the same nominal type");
+      }
       const bool is_bitwise = binary->operation == TokenKind::kAmpersand ||
                               binary->operation == TokenKind::kPipe ||
                               binary->operation == TokenKind::kCaret;
@@ -602,6 +632,10 @@ class MirVerifier {
                    std::get_if<MirTypeTestInstruction>(&instruction.data)) {
       verify_value(test->value, value_types, instruction.range);
       verify_type(test->target, instruction.range);
+      if (is_enum_type(known_value_type(test->value, value_types)) ||
+          is_enum_type(test->target)) {
+        report(instruction.range, "enum value used by a reference type test");
+      }
       require_result(instruction);
       if (instruction.type != semantics_.bool_type()) {
         report(instruction.range, "type test does not have type bool");
@@ -610,6 +644,10 @@ class MirVerifier {
                    std::get_if<MirCheckedCastInstruction>(&instruction.data)) {
       verify_value(cast->value, value_types, instruction.range);
       verify_type(cast->target, instruction.range);
+      if (is_enum_type(known_value_type(cast->value, value_types)) ||
+          is_enum_type(cast->target)) {
+        report(instruction.range, "enum value used by a reference cast");
+      }
       require_result(instruction);
       if (instruction.type.value < semantics_.types().size()) {
         const SemanticType& result = semantics_.type(instruction.type);
@@ -788,9 +826,16 @@ class MirVerifier {
         verify_value_type(incoming.value, instruction.type, value_types,
                           instruction.range);
       }
-    } else if (std::holds_alternative<MirLiteralInstruction>(
-                   instruction.data)) {
+    } else if (const auto* literal =
+                   std::get_if<MirLiteralInstruction>(&instruction.data)) {
       require_result(instruction);
+      if ((literal->kind == LiteralKind::kEnum ||
+           (instruction.type.value < semantics_.types().size() &&
+            semantics_.type(instruction.type).kind == TypeKind::kEnum)) &&
+          (literal->kind != LiteralKind::kEnum ||
+           !enum_constant_tag(literal->lexeme, instruction.type, semantics_))) {
+        report(instruction.range, "invalid nominal enum constant");
+      }
     }
   }
 

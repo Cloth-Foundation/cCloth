@@ -189,7 +189,14 @@ class Lowerer {
                                      expression(assignment->value)};
     } else if (const auto* member =
                    std::get_if<MemberAccessExpression>(&syntax.data)) {
-      data = HirMemberExpression{expression(member->object), semantic.symbol};
+      if (semantic.symbol &&
+          semantics_.symbol(*semantic.symbol).kind == SymbolKind::kEnumCase) {
+        data = HirLiteralExpression{
+            LiteralKind::kEnum,
+            std::to_string(*semantics_.symbol(*semantic.symbol).enum_tag)};
+      } else {
+        data = HirMemberExpression{expression(member->object), semantic.symbol};
+      }
     } else if (const auto* meta =
                    std::get_if<MetaAccessExpression>(&syntax.data)) {
       const TypeId object_type = semantics_.file(current_file_)

@@ -45,9 +45,33 @@ class HirVerifier {
         report(expression.range,
                "void expression is not a call or grouped void call");
       }
-      if (const auto* symbol =
-              std::get_if<HirSymbolExpression>(&expression.data)) {
+      if (const auto* literal =
+              std::get_if<HirLiteralExpression>(&expression.data)) {
+        if ((literal->kind == LiteralKind::kEnum ||
+             (expression.type.value < semantics_.types().size() &&
+              semantics_.type(expression.type).kind == TypeKind::kEnum)) &&
+            (literal->kind != LiteralKind::kEnum ||
+             !enum_constant_tag(literal->lexeme, expression.type,
+                                semantics_))) {
+          report(expression.range, "invalid nominal enum constant");
+        }
+      } else if (const auto* symbol =
+                     std::get_if<HirSymbolExpression>(&expression.data)) {
         verify_symbol(symbol->symbol, expression.range);
+        if (symbol->symbol.value < semantics_.symbols().size()) {
+          const SemanticSymbol& declaration = semantics_.symbol(symbol->symbol);
+          const bool is_storage = declaration.kind == SymbolKind::kField ||
+                                  declaration.kind == SymbolKind::kParameter ||
+                                  declaration.kind == SymbolKind::kLocal;
+          if (declaration.kind == SymbolKind::kEnumCase ||
+              (is_storage &&
+               (is_enum_type(expression.type) ||
+                is_enum_type(declaration.type)) &&
+               expression.type != declaration.type)) {
+            report(expression.range,
+                   "enum symbol does not retain nominal identity");
+          }
+        }
       } else if (const auto* type =
                      std::get_if<HirTypeExpression>(&expression.data)) {
         verify_type(type->type, expression.range);
@@ -60,21 +84,48 @@ class HirVerifier {
       } else if (const auto* unary =
                      std::get_if<HirUnaryExpression>(&expression.data)) {
         verify_expression(unary->operand, expression.range);
+        if (is_enum_expression(unary->operand) ||
+            is_enum_type(expression.type)) {
+          report(expression.range, "enum value used by a unary operation");
+        }
       } else if (const auto* update =
                      std::get_if<HirUpdateExpression>(&expression.data)) {
         verify_expression(update->operand, expression.range);
+        if (is_enum_expression(update->operand) ||
+            is_enum_type(expression.type)) {
+          report(expression.range, "enum value used by an update operation");
+        }
       } else if (const auto* binary =
                      std::get_if<HirBinaryExpression>(&expression.data)) {
         verify_expression(binary->left, expression.range);
         verify_expression(binary->right, expression.range);
+        if (is_enum_type(expression.type) || is_enum_expression(binary->left) ||
+            is_enum_expression(binary->right)) {
+          if (binary->left.value >= expressions.size() ||
+              binary->right.value >= expressions.size() ||
+              expressions[binary->left.value].type !=
+                  expressions[binary->right.value].type ||
+              expression.type != semantics_.bool_type() ||
+              (binary->operation != TokenKind::kEqualEqual &&
+               binary->operation != TokenKind::kBangEqual)) {
+            report(expression.range,
+                   "enum binary operation must compare the same nominal type");
+          }
+        }
       } else if (const auto* test =
                      std::get_if<HirTypeTestExpression>(&expression.data)) {
         verify_expression(test->value, expression.range);
         verify_type(test->target, expression.range);
+        if (is_enum_expression(test->value) || is_enum_type(test->target)) {
+          report(expression.range, "enum value used by a reference type test");
+        }
       } else if (const auto* cast =
                      std::get_if<HirCheckedCastExpression>(&expression.data)) {
         verify_expression(cast->value, expression.range);
         verify_type(cast->target, expression.range);
+        if (is_enum_expression(cast->value) || is_enum_type(cast->target)) {
+          report(expression.range, "enum value used by a reference cast");
+        }
       } else if (const auto* conversion =
                      std::get_if<HirNumericConversionExpression>(
                          &expression.data)) {
@@ -91,6 +142,18 @@ class HirVerifier {
                      std::get_if<HirAssignmentExpression>(&expression.data)) {
         verify_expression(assignment->target, expression.range);
         verify_expression(assignment->value, expression.range);
+        if (is_enum_type(expression.type) ||
+            is_enum_expression(assignment->target) ||
+            is_enum_expression(assignment->value)) {
+          if (assignment->target.value >= expressions.size() ||
+              assignment->value.value >= expressions.size() ||
+              expressions[assignment->target.value].type != expression.type ||
+              expressions[assignment->value.value].type != expression.type ||
+              assignment->operation != TokenKind::kEqual) {
+            report(expression.range,
+                   "enum assignment must preserve nominal identity");
+          }
+        }
       } else if (const auto* member =
                      std::get_if<HirMemberExpression>(&expression.data)) {
         verify_expression(member->object, expression.range);
@@ -181,6 +244,17 @@ class HirVerifier {
         verify_expression(grouped->expression, expression.range);
       }
     }
+  }
+
+  bool is_enum_type(TypeId type) const {
+    return type.value < semantics_.types().size() &&
+           semantics_.type(type).kind == TypeKind::kEnum;
+  }
+
+  bool is_enum_expression(HirExpressionId id) const {
+    if (id.value >= hir_.storage.expressions().size()) return false;
+    const TypeId type = hir_.storage.expression(id).type;
+    return is_enum_type(type);
   }
 
   bool is_valid_void_expression(const HirExpression& expression) const {

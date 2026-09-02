@@ -60,8 +60,9 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 19 | Classical `for`, compound assignment, and prefix/postfix numeric updates |
 | 20 | Contextual literals, lossless numeric widening, overload-directed literals, and checked explicit numeric conversions |
 | 21 | Fixed-width integer operators and host-independent byte-order operations |
+| 25 | Named value enums with public cases, scalar lowering, and separate-compilation support |
 
-Stage 21 is the current completed language baseline. Coordinated toolchain Stage
+Stage 25 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
 exit audits. Build-responsiveness Stage 24 is also complete.
 
@@ -239,21 +240,71 @@ Exit criteria:
 The build-output, reuse, and parallel-scheduling contracts are owned by
 Shuttle's Stage 24 documents.
 
-## Beyond Stage 24
+## Stage 25: Named value enums
 
-No later stage number is assigned yet. The remaining backlog must be reviewed
-against a credible Cloth 1.0 release before Stage 25 is chartered. That
-review—not ad hoc implementation—will choose and scope the next stage.
+Status: **complete**
 
-The following post-Stage-24 candidates are recorded without priority or order:
+Enums were selected for Stage 25 on 2026-09-02. The
+[25.1 enum contract](docs/proposals/stage_25_enums.md), with always-public cases
+and attached constant data deferred, received design approval and implementation
+authorization on 2026-09-02.
+
+Implementation and the coordinated exit audit completed on 2026-09-02. The
+source contract is [enums](docs/enums.md), the current persistence contract is
+[artifact schema v2](docs/artifact_schema_v2.md), and verification is recorded
+in [the Stage 25 audit](docs/testing.md#stage-25-enum-exit-audit).
+
+Objective: represent closed sets of named values with nominal type safety,
+deterministic behavior, and equivalent whole-project and separate compilation.
+
+Prerequisites: the Stage 21 language baseline and completed Stages 22–24.
+
+Deliverables:
+
+1. Approve the implicit enum file kind, case syntax with always-public cases,
+   file-type visibility, value and initialization rules, permitted operations,
+   printing, representation, and artifact compatibility policy.
+2. Implement enum declarations, case resolution, nominal typing, initialization
+   checks, and diagnostics through parser/AST, semantic analysis, and typed HIR.
+3. Preserve enum identity through verified MIR, ABI layout, LLVM lowering,
+   typed output, canonical identities, and compiler-owned package artifacts.
+4. Verify arrays, fields, calls, imports, and cross-package execution, including
+   artifact-only dependencies and whole-project/separate-build equivalence.
+
+Non-goals:
+
+- payload-bearing variants, enum methods, constructors, or inheritance;
+- user-selected discriminants, underlying types, numeric casts, or flags;
+- nested enums, structs, nullable value types, or boxing;
+- `switch`, pattern matching, exhaustive-case analysis, or general reflection;
+- remote dependencies, Shuttle manifest changes, or optimizer work.
+
+Exit criteria:
+
+- all Stage 25 items in `TODO.md` are complete;
+- grammar and owning semantic, output, ABI, identity, and artifact contracts
+  describe the approved behavior;
+- invalid source, malformed enum IR, and malformed or incompatible artifacts
+  fail deterministically without manufacturing invalid enum values;
+- enums preserve their nominal identity across fields, arrays, overloads, and
+  package boundaries without becoming managed class instances;
+- direct and separately compiled programs produce equivalent results, and
+  supported single-job/parallel builds retain deterministic artifacts; and
+- development, sanitizer, affected cross-tool, and native suites pass.
+
+## Beyond Stage 25
+
+No later stage number is assigned. Selecting enums does not schedule the rest
+of the backlog or freeze the Cloth 1.0 release scope.
+
+The following candidates remain recorded without priority or order:
 
 - wrapping and saturating conversions as explicit primitive meta operations;
 - optional numeric literal suffixes;
-- a general constant-folding optimizer stage;
-- enums as an implicit file kind; and
+- a general constant-folding optimizer stage; and
 - structs as an implicit file kind.
 
-This candidate list assumes Stages 21–24 and their prerequisites are complete.
+These candidates follow completion of Stage 25 and their own prerequisites.
 Each candidate still requires its own stage charter, dependency review,
 non-goals, approved language or optimizer contract, concrete `TODO.md` items,
 and explicit implementation go-ahead. Inclusion here does not activate or

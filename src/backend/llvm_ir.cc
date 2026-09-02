@@ -71,6 +71,16 @@ std::optional<std::string> lower_scalar_literal(
     const MirLiteralInstruction& literal, const AbiTypeLayout& type,
     TypeKind semantic_kind) {
   switch (literal.kind) {
+    case LiteralKind::kEnum: {
+      std::uint32_t tag = 0;
+      const auto [end, error] =
+          std::from_chars(literal.lexeme.data(),
+                          literal.lexeme.data() + literal.lexeme.size(), tag);
+      if (semantic_kind != TypeKind::kEnum || error != std::errc{} ||
+          end != literal.lexeme.data() + literal.lexeme.size())
+        return std::nullopt;
+      return std::to_string(tag);
+    }
     case LiteralKind::kInteger: {
       std::uint64_t parsed = 0;
       const char* const begin = literal.lexeme.data();
@@ -530,14 +540,56 @@ class ModuleEmitter {
            << "declare void @cloth_rt_print_bool(i8)\n"
            << "declare void @cloth_rt_print_object(ptr)\n"
            << "declare void @cloth_rt_print_newline()\n\n";
+    output << "declare void @llvm.trap()\n\n";
     for (const std::string& global : globals_) {
       output << global << '\n';
     }
     if (!globals_.empty()) {
       output << '\n';
     }
-    output << definitions_.str();
+    output << enum_helpers_.str() << definitions_.str();
     return LlvmIrModule{output.str()};
+  }
+
+  std::string enum_printer(TypeId type) {
+    const std::string name = "@.cloth.enum.print." + std::to_string(type.value);
+    if (std::ranges::find(enum_printers_, type) != enum_printers_.end())
+      return name;
+    enum_printers_.push_back(type);
+    const SemanticType& enum_type = semantics_.type(type);
+    const FileSemantics& file = semantics_.file(*enum_type.file);
+    const std::string table =
+        "@.cloth.enum.names." + std::to_string(type.value);
+    const std::string table_type =
+        "[" + std::to_string(file.enum_cases.size()) + " x { ptr, i64 }]";
+    std::ostringstream entries;
+    entries << table << " = private constant " << table_type << " [";
+    for (std::size_t index = 0; index < file.enum_cases.size(); ++index) {
+      if (index != 0) entries << ", ";
+      const std::string display =
+          enum_type.name + "." + semantics_.symbol(file.enum_cases[index]).name;
+      const std::string bytes = add_string_literal(display);
+      entries << "{ ptr, i64 } { ptr " << bytes << ", i64 " << display.size()
+              << " }";
+    }
+    entries << "]";
+    globals_.push_back(entries.str());
+    enum_helpers_
+        << "define internal void " << name << "(i32 %tag) {\nentry:\n"
+        << "  %valid = icmp ult i32 %tag, " << file.enum_cases.size() << "\n"
+        << "  br i1 %valid, label %read, label %invalid\ninvalid:\n"
+        << "  call void @llvm.trap()\n  unreachable\nread:\n"
+        << "  %index = zext i32 %tag to i64\n"
+        << "  %record = getelementptr " << table_type << ", ptr " << table
+        << ", i64 0, i64 %index\n"
+        << "  %bytes = load ptr, ptr %record\n"
+        << "  %lengthptr = getelementptr { ptr, i64 }, ptr %record, i32 0, i32 "
+           "1\n"
+        << "  %length = load i64, ptr %lengthptr\n"
+        << "  %text = call ptr @cloth_rt_string_literal(ptr %bytes, i64 "
+           "%length)\n"
+        << "  call void @cloth_rt_print(ptr %text)\n  ret void\n}\n\n";
+    return name;
   }
 
   [[nodiscard]] const SemanticModel& semantics() const noexcept {
@@ -1006,6 +1058,8 @@ class ModuleEmitter {
   std::ostringstream definitions_;
   std::vector<std::string> globals_;
   std::vector<std::string> type_descriptor_globals_;
+  std::ostringstream enum_helpers_;
+  std::vector<TypeId> enum_printers_;
   bool is_valid_{true};
 };
 
@@ -1642,6 +1696,15 @@ void BodyEmitter::emit_literal(const MirInstruction& instruction,
                                std::ostringstream& output) {
   std::string lowered;
   switch (literal.kind) {
+    case LiteralKind::kEnum:
+      if (!enum_constant_tag(literal.lexeme, instruction.type,
+                             module_.semantics())) {
+        module_.report(instruction.range,
+                       "invalid enum constant reached LLVM lowering");
+        return;
+      }
+      lowered = literal.lexeme;
+      break;
     case LiteralKind::kInteger:
     case LiteralKind::kFloat:
     case LiteralKind::kCharacter:
@@ -1811,6 +1874,14 @@ void BodyEmitter::emit_string_meta(const MirInstruction& instruction,
 void BodyEmitter::emit_object_meta(const MirInstruction& instruction,
                                    const MirObjectMetaInstruction& meta,
                                    std::ostringstream& output) {
+  const SemanticType& type = module_.semantics().type(value_type(meta.object));
+  if (type.kind == TypeKind::kEnum) {
+    const std::string bytes = module_.add_string_literal(type.name);
+    output << "  " << result_name(instruction)
+           << " = call ptr @cloth_rt_string_literal(ptr " << bytes << ", i64 "
+           << type.name.size() << ")\n";
+    return;
+  }
   output << "  " << result_name(instruction)
          << " = call ptr @cloth_rt_object_type_name(ptr " << value(meta.object)
          << ")\n";
@@ -2333,6 +2404,11 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     }
     const std::string argument = value(call.arguments[0]);
     switch (symbol.intrinsic) {
+      case IntrinsicKind::kPrintEnum:
+        output << "  call void "
+               << module_.enum_printer(symbol.parameter_types[0]) << "(i32 "
+               << argument << ")\n";
+        break;
       case IntrinsicKind::kPrintString:
         output << "  call void @cloth_rt_print(ptr " << argument << ")\n";
         break;

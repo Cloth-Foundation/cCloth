@@ -56,6 +56,7 @@ ParseResult Parser::parse() {
                      declarations.interfaces,
                      diagnostics_}
           .run();
+  file_class.enum_cases = std::move(declarations.enum_cases);
   file_class.is_valid = file_class.is_valid && declarations.is_valid;
   const bool is_valid = file_class.is_valid && !diagnostics_.has_errors();
   return ParseResult{std::move(file_class), std::move(declarations.symbols),

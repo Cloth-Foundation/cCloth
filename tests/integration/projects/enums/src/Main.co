@@ -1,0 +1,22 @@
+static func Pick(Status value): int32 { return 1; }
+static func Pick(Other value): int32 { return 2; }
+
+static func Main() {
+  Status current = Tracker.Initial;
+  println(current);
+  current = Status.running;
+  println(current == Status.running);
+  println(current != Status._Done);
+  Status[] values = [Status.Ready, Status.running, Status._Done];
+  for (var item in values) { println(item); }
+  values[0] = Status._Done;
+  println(values[0]);
+  Tracker tracker = Tracker();
+  println(tracker.Next()::typeName);
+  println(tracker.Count);
+  Source source = tracker;
+  println(source.Next());
+  println(tracker.Count);
+  println(Pick(Status.Ready));
+  println(Pick(Other.Ready));
+}

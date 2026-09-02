@@ -94,8 +94,9 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
                        std::ostream& output) {
   for (const MirFileClass& file : mir.files) {
     const FileSemantics& file_semantics = semantics.file(file.file);
-    output << (file_semantics.kind == FileTypeKind::kInterface ? "Interface "
-                                                               : "FileClass ")
+    output << (file_semantics.kind == FileTypeKind::kEnum        ? "Enum "
+               : file_semantics.kind == FileTypeKind::kInterface ? "Interface "
+                                                                 : "FileClass ")
            << semantics.symbol(file.symbol).name;
     if (file.base_file) {
       output << " : "
@@ -111,6 +112,10 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
       output << " [interfaces " << file_semantics.interfaces.size() << ']';
     }
     output << '\n';
+    for (const SymbolId case_id : file_semantics.enum_cases) {
+      const SemanticSymbol& item = semantics.symbol(case_id);
+      output << "|- Case " << item.name << " [tag " << *item.enum_tag << "]\n";
+    }
     for (const MemberReference& member : file.member_order) {
       switch (member.kind) {
         case DeclarationKind::kField: {

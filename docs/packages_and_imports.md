@@ -83,6 +83,12 @@ An explicit import takes precedence over a wildcard. Two wildcard imports that
 provide the same local class name are ambiguous unless an explicit import or
 alias resolves that name. Imports are file-scoped and never re-exported.
 
+Enums participate in the same type lookup and import rules as classes and
+interfaces. Every case of an accessible enum is public regardless of spelling.
+An alias changes the lookup name, not nominal identity or printed names;
+wildcards import types, never bare cases. Source-free artifact consumers retain
+the complete ordered case set. See [enums](enums.md).
+
 ## Shuttle dependency boundary
 
 A Shuttle dependency alias becomes the first component of an import. Given a

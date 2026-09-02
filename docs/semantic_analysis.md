@@ -1,4 +1,4 @@
-# Cloth semantic analysis through Stage 19
+# Cloth semantic analysis
 
 Semantic analysis binds parsed syntax across a closed compilation graph, checks
 the implemented language rules, and lowers valid and recovered syntax to a
@@ -71,6 +71,7 @@ The core type table contains:
 - `object`, the universal non-null managed-reference type
 - `void`, plus internal error and null types
 - one named reference type for each valid file class or interface
+- one nominal value type for each enum, with always-public case constants
 - one canonical array reference type for each used element type
 - one canonical nullable wrapper for each used nullable reference type
 
@@ -88,7 +89,14 @@ integer results, non-finite floating-to-integer values, and finite
 `float64`-to-`float32` overflow trap rather than wrap.
 References are non-null by default. `T?` is a distinct nullable
 wrapper, `T` widens to `T?`, and `null` is assignable only to `T?`. Nullable
-qualifiers are invalid on primitive and void types.
+qualifiers are invalid on primitive, enum, and void types.
+
+Enum identities and all cases are registered before checking executable bodies.
+`Type.Case` produces a nominal constant, not a field load. Assignment, overloads,
+and equality retain exact enum identity; numeric and reference conversions are
+rejected. Enum locals require initializers, and enum fields join required
+constructor initialization. Static enum constants directly name a case.
+The [enum contract](enums.md) defines public cases, output, and deferrals.
 
 File-class, interface, string, and array references widen to `object`, and those nullable
 forms widen to `object?`. The conversion is not available to primitives and
@@ -185,7 +193,9 @@ wildcard imports, and the core scope. Parameters and locals may be shadowed by
 nested blocks but may not be redeclared in the same scope. `self` is an
 intrinsic immutable reference to the current file-class instance.
 
-Capitalization-based visibility is enforced for both named types and members.
+Capitalization-based visibility is enforced for named types and ordinary
+members. Enum cases are always public regardless of spelling; access still
+requires a visible enum type.
 Private declarations remain accessible inside their defining file class.
 Imports are file-scoped and non-transitive. Explicit aliases disambiguate
 otherwise conflicting file-class names. Wildcards expose only public direct

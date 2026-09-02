@@ -8,6 +8,7 @@
 #include "cloth/sema/visibility.h"
 
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace cloth {
@@ -49,7 +50,8 @@ bool looks_like_file_type_declaration(std::span<const Token> tokens,
   }
   return index < tokens.size() &&
          (tokens[index].kind == TokenKind::kKwClass ||
-          tokens[index].kind == TokenKind::kKwInterface);
+          tokens[index].kind == TokenKind::kKwInterface ||
+          tokens[index].kind == TokenKind::kKwEnum);
 }
 
 bool looks_like_function_declaration(std::span<const Token> tokens,
@@ -175,7 +177,8 @@ DeclarationPassResult DeclarationPass::run() {
                                class_is_sealed_,
                                file_type_kind_,
                                std::move(interfaces_),
-                               is_valid_};
+                               is_valid_,
+                               std::move(enum_cases_)};
 }
 
 bool DeclarationPass::at_end() const noexcept {
@@ -225,8 +228,12 @@ std::optional<TypeSyntax> DeclarationPass::parse_type() {
   bool is_array = false;
   while (match(TokenKind::kLeftBracket)) {
     if (is_array) {
-      diagnostics_.error(tokens_[current_ - 1].range,
-                         "multidimensional array types are not supported");
+      diagnostics_.error(
+          tokens_[current_ - 1].range,
+          "multidimensional array types are not supported");  // TODO: Support
+                                                              // multidimensional
+                                                              // array types in
+                                                              // the future.
       is_valid_ = false;
     }
     is_array = true;
@@ -723,18 +730,21 @@ void DeclarationPass::parse_file_type_declaration() {
     present = true;
   }
   const bool is_interface = match(TokenKind::kKwInterface);
-  if (!is_interface && !match(TokenKind::kKwClass)) {
+  const bool is_enum = !is_interface && match(TokenKind::kKwEnum);
+  if (!is_interface && !is_enum && !match(TokenKind::kKwClass)) {
     diagnostics_.error(current().range,
                        "expected 'class' or 'interface' after file type "
                        "modifiers");
     is_valid_ = false;
     return;
   }
-  file_type_kind_ =
-      is_interface ? FileTypeKind::kInterface : FileTypeKind::kClass;
-  if (is_interface && (class_is_abstract_ || class_is_sealed_)) {
-    diagnostics_.error(tokens_[current_ - 1].range,
-                       "interfaces cannot be declared abstract or sealed");
+  file_type_kind_ = is_enum        ? FileTypeKind::kEnum
+                    : is_interface ? FileTypeKind::kInterface
+                                   : FileTypeKind::kClass;
+  if ((is_interface || is_enum) && (class_is_abstract_ || class_is_sealed_)) {
+    diagnostics_.error(
+        tokens_[current_ - 1].range,
+        "interfaces and enums cannot be declared abstract or sealed");
     is_valid_ = false;
   }
 
@@ -749,7 +759,7 @@ void DeclarationPass::parse_file_type_declaration() {
 
   if (is_interface && match(TokenKind::kColon)) {
     parse_interface_list(interfaces_, "interface inheritance clause");
-  } else if (!is_interface && match(TokenKind::kColon)) {
+  } else if (!is_interface && !is_enum && match(TokenKind::kColon)) {
     if (current().kind == TokenKind::kIdentifier) {
       const Token& base = advance();
       base_class_ = TypeSyntax{base.lexeme, false, base.range};
@@ -759,17 +769,66 @@ void DeclarationPass::parse_file_type_declaration() {
       is_valid_ = false;
     }
   }
-  if (!is_interface && match(TokenKind::kKwIs)) {
+  if (!is_interface && !is_enum && match(TokenKind::kKwIs)) {
     parse_interface_list(interfaces_, "class conformance clause");
   }
 
   if (match(TokenKind::kLeftBrace)) {
     class_body_started_ = true;
+    if (is_enum) {
+      parse_enum_cases();
+    }
     return;
   }
   diagnostics_.error(current().range,
                      "expected '{' after file type declaration");
   is_valid_ = false;
+}
+
+void DeclarationPass::parse_enum_cases() {
+  std::unordered_map<std::string_view, SourceRange> names;
+  while (!at_end() && current().kind != TokenKind::kRightBrace) {
+    if (current().kind == TokenKind::kIdentifier) {
+      const Token& name = advance();
+      if (const auto [previous, inserted] =
+              names.emplace(name.lexeme, name.range);
+          !inserted) {
+        diagnostics_.error(name.range, "duplicate enum case '" +
+                                           std::string{name.lexeme} + "'");
+        diagnostics_.note(previous->second, "previous case is here");
+        is_valid_ = false;
+      } else if (enum_cases_.size() == kMaxEnumCases) {
+        diagnostics_.error(name.range, "enum exceeds the 65536-case limit");
+        is_valid_ = false;
+      } else {
+        enum_cases_.push_back(EnumCaseDecl{name.lexeme, name.range});
+      }
+      if (current().kind == TokenKind::kRightBrace ||
+          match(TokenKind::kComma)) {
+        continue;
+      }
+      diagnostics_.error(current().range,
+                         "expected ',' or '}' after enum case");
+    } else {
+      diagnostics_.error(current().range, "expected an enum case name");
+    }
+    is_valid_ = false;
+    std::size_t braces = 0;
+    while (!at_end()) {
+      if (braces == 0 && (current().kind == TokenKind::kComma ||
+                          current().kind == TokenKind::kRightBrace)) {
+        break;
+      }
+      if (current().kind == TokenKind::kLeftBrace) ++braces;
+      if (current().kind == TokenKind::kRightBrace && braces != 0) --braces;
+      advance();
+    }
+    match(TokenKind::kComma);
+  }
+  if (enum_cases_.empty()) {
+    diagnostics_.error(current().range, "enum must declare at least one case");
+    is_valid_ = false;
+  }
 }
 
 void DeclarationPass::parse_interface_list(std::vector<TypeSyntax>& interfaces,

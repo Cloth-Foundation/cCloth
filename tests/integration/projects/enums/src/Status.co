@@ -1,0 +1,5 @@
+enum {
+  Ready,
+  running,
+  _Done,
+}

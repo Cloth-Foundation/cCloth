@@ -57,6 +57,13 @@ if(CLOTH_LLVM_OPT_EXECUTABLE)
 endif()
 
 if(CLOTH_LLVM_LLC_EXECUTABLE)
+    cloth_add_native_output_test(enums
+        OUTPUT "cloth enums"
+        SOURCE ${CLOTH_INTEGRATION_PROJECTS}/enums/src/Main.co
+        SOURCE_ROOT ${CLOTH_INTEGRATION_PROJECTS}/enums/src
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/enums.txt
+        EXACT
+    )
     cloth_native_executable_path(hello_executable "cloth hello")
     add_test(
         NAME cloth_cli_build_hello

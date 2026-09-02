@@ -44,6 +44,7 @@ struct DeclarationPassResult {
   FileTypeKind file_type_kind{FileTypeKind::kClass};
   std::vector<TypeSyntax> interfaces;
   bool is_valid{true};
+  std::vector<EnumCaseDecl> enum_cases{};
 };
 
 class DeclarationPass {
@@ -71,6 +72,7 @@ class DeclarationPass {
   void parse_constructor();
   void parse_import();
   void parse_file_type_declaration();
+  void parse_enum_cases();
   void parse_interface_list(std::vector<TypeSyntax>& interfaces,
                             std::string_view context);
   void skip_deferred_nested_type();
@@ -98,6 +100,7 @@ class DeclarationPass {
   bool class_body_started_{false};
   bool class_body_closed_{false};
   bool is_valid_{true};
+  std::vector<EnumCaseDecl> enum_cases_;
 };
 
 }  // namespace cloth

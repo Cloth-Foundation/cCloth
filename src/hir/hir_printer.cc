@@ -32,8 +32,9 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
   for (const HirFileClass& file : hir.files) {
     const SemanticSymbol& class_symbol = semantics.symbol(file.symbol);
     const FileSemantics& file_semantics = semantics.file(file.file);
-    output << (file_semantics.kind == FileTypeKind::kInterface ? "Interface "
-                                                               : "FileClass ")
+    output << (file_semantics.kind == FileTypeKind::kEnum        ? "Enum "
+               : file_semantics.kind == FileTypeKind::kInterface ? "Interface "
+                                                                 : "FileClass ")
            << class_symbol.name << " : "
            << semantics.type(class_symbol.type).name << " ["
            << visibility_name(class_symbol.visibility);
@@ -51,6 +52,9 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
       output << ", interfaces " << file_semantics.interfaces.size();
     }
     output << "]\n";
+    for (const SymbolId case_id : file_semantics.enum_cases) {
+      output << "|- Case " << semantics.symbol(case_id).name << " [public]\n";
+    }
     for (const MemberReference& reference : file.member_order) {
       switch (reference.kind) {
         case DeclarationKind::kField: {

@@ -22,6 +22,11 @@ exit audit. Stage 24 is complete under the responsive-build charter in
 `ROADMAP.md`. The ownership boundary remains recorded in
 `docs/shuttle_and_compiler.md`.
 
+Stage 25 is complete for named value enums. Its
+[25.1 contract](docs/proposals/stage_25_enums.md) and implementation start were
+approved on 2026-09-02, followed by the coordinated exit audit in `docs/testing.md`.
+Attached constant data and runtime payloads remain deferred. No later stage is active.
+
 ## Scheduled work
 
 ### Stage 21: Integer binary representation and byte order
@@ -112,6 +117,32 @@ exit audit. Stage 24 is complete under the responsive-build charter in
 - [x] Complete the Stage 24 development, sanitizer, Rust, cross-tool, native,
   cold-build, and unchanged-build exit audit.
 
+### Stage 25: Named value enums
+
+- [x] **25.1 — Enum contract.** Approve the implicit file kind, case syntax,
+  always-public cases, file-type visibility and imports, nominal value semantics,
+  initialization, equality and conversion policy, typed output and meta queries,
+  representation, artifact compatibility, diagnostics, and deliberate non-goals.
+  The approved contract is in [the enum proposal](docs/proposals/stage_25_enums.md).
+- [x] **25.2 — Declarations and type checking.** Implement the approved syntax
+  in the two-pass parser and AST; register enum types and cases before bodies;
+  bind qualified cases with public access independent of spelling; enforce
+  nominal assignments, overloads, initialization, type visibility, and invalid
+  operations; preserve identity in typed HIR. Add parser, semantic, flow, HIR,
+  and invalid-program coverage.
+- [x] **25.3 — Lowering and package integration.** Implement verified enum
+  constants and operations in MIR, scalar ABI storage/calls/arrays, LLVM and
+  typed output, canonical identities, and bounded imported artifact records.
+  Freeze the reviewed format/ABI revisions and record fixtures before changing
+  serialization. Verify malformed values, type confusion, metadata ownership,
+  compatibility rejection, and non-reference GC layout.
+- [x] **25.4 — Equivalence and exit audit.** Test fields, constructors, static
+  constants, parameters, returns, overloads, arrays and iteration, imports,
+  output, and dependencies with unavailable sources. Compare direct and
+  separately compiled execution, serial and parallel artifacts, and Shuttle
+  reuse/invalidation after enum changes. Update owning contracts and run the
+  development, sanitizer, affected cross-tool, and native suites.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -119,9 +150,15 @@ active stage without first updating `ROADMAP.md`.
 
 ### Language and object model
 
-- Define enums as an implicit file kind. A future stage must freeze case syntax,
-  discriminants and payload policy, representation, construction, equality,
-  visibility, imports, and control-flow integration before implementation.
+- Define immutable per-case constant data separately from per-value payloads.
+  Struct-valued case data depends on approved struct and constant-initialization
+  contracts; enum identity/equality must remain independent of attached data.
+- Evaluate payload-bearing enums, enum members and conformance, explicit
+  discriminants/underlying types, checked numeric conversion, and flags only
+  under future contracts. These are not implied by Stage 25's named-value model.
+- Design case enumeration and enum reflection separately from Stage 25's typed
+  printing and `::typeName` contract; do not expose internal tags as a stable
+  serialization format.
 - Define structs as an implicit file kind. A future stage must freeze value
   semantics, layout, copying, construction, methods, conformance and inheritance
   rules, managed-reference fields, equality, visibility, imports, and ABI
@@ -141,6 +178,8 @@ active stage without first updating `ROADMAP.md`.
 
 ### Expressions, numeric operations, and control flow
 
+- Design `switch` or pattern matching, including exhaustiveness and evolution
+  of closed case sets, before adding enum-specific control-flow syntax.
 - Add wrapping and saturating conversions as explicit primitive meta operations
   without changing the checked `NumericType(value)` contract. Their exact
   spelling, signedness behavior, and integer/floating scope remain subject to a

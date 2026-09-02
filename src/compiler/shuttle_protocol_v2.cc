@@ -450,9 +450,9 @@ std::expected<ShuttleV2Request, std::string> prepare_shuttle_v2_request(
 }
 
 std::string shuttle_capabilities_json(const ArtifactDigest& compiler_id) {
-  return "{\"schema\":1,\"protocols\":[1,2],\"artifact_formats\":[1],"
-         "\"compiler_id\":\"" +
-         artifact_digest_hex(compiler_id) +
+  return "{\"schema\":1,\"protocols\":[1,2],\"artifact_formats\":[" +
+         std::to_string(kPackageArtifactFormatVersion) +
+         "],\"compiler_id\":\"" + artifact_digest_hex(compiler_id) +
          "\",\"operations\":[\"compile\",\"inspect\",\"link\",\"reuse\"],"
          "\"interface_targets\":[\"x86_64\",\"wasm32\"],"
          "\"object_targets\":[\"x86_64\"]}";
@@ -461,7 +461,8 @@ std::string shuttle_capabilities_json(const ArtifactDigest& compiler_id) {
 std::string shuttle_artifact_receipt_json(const PackageArtifact& artifact,
                                           const ArtifactDigest& artifact_id) {
   std::string result =
-      "{\"schema\":1,\"artifact_format\":1,\"artifact_id\":\"" +
+      "{\"schema\":1,\"artifact_format\":" +
+      std::to_string(kPackageArtifactFormatVersion) + ",\"artifact_id\":\"" +
       artifact_digest_hex(artifact_id) + "\",\"kind\":\"" +
       (artifact.kind == PackageArtifactKind::kObject ? "object" : "interface") +
       "\",\"package\":{\"name\":\"" + artifact.imported.package.name +

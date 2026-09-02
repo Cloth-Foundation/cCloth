@@ -15,6 +15,8 @@ The view retains the information a source-free consumer needs:
 - capitalization-derived visibility, modifiers, declaration order, parameter
   types, base-constructor selection, virtual slots, overrides, abstract
   contracts, interfaces, and conformance maps;
+- complete ordered enum cases with canonical owners, names, tags, locations,
+  and public access independent of capitalization;
 - package-relative declaration locations and typed static scalar literals;
 - target type and class layouts, including inherited fields, reference offsets,
   descriptor ancestry, virtual tables, and interface dispatch tables; and
@@ -49,9 +51,16 @@ exclusion, inheritance, interfaces, constructor initialization, relocation and
 source-order independence, lifetime independence, and representative corrupted
 relationships.
 
-The version-1 `.cpa` reader/writer consumes and reconstructs this view. Its exact
+Enums have scalar type layouts and empty shared class-layout records, never
+heap reference maps. Enum-valued static constants retain their nominal type
+and tag. Verification rejects empty/oversized or duplicate case sets, keyword
+names, wrong owners, noncontiguous tags, numeric/reference confusion, and
+invalid constants. External enum constant tags are checked against the loaded
+dependency declaration before consumer analysis.
+
+The version-2 `.cpa` reader/writer consumes and reconstructs this view. Its exact
 record schema, bounded canonical encoding, integrity checks, compatibility gate,
 and malformed-input policy are documented in
-[artifact schema v1](artifact_schema_v1.md). Stage 23.3 connects artifact
+[artifact schema v2](artifact_schema_v2.md). Stage 23.3 connects artifact
 dependency closure and direct-alias import visibility without reopening
 dependency source files.

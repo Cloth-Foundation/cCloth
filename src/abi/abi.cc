@@ -81,6 +81,7 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
       return make_type_layout(type, AbiTypeKind::kInteger, 16, 2, 2);
     case TypeKind::kInt32:
     case TypeKind::kUint32:
+    case TypeKind::kEnum:
       return make_type_layout(type, AbiTypeKind::kInteger, 32, 4, 4);
     case TypeKind::kInt64:
     case TypeKind::kUint64:
@@ -105,6 +106,9 @@ AbiClassLayout lower_class_layout(const MirFileClass& file,
                                   const std::vector<AbiTypeLayout>& types,
                                   const TargetDataLayout& target,
                                   const AbiClassLayout* base_layout) {
+  if (semantics.file(file.file).kind == FileTypeKind::kEnum) {
+    return AbiClassLayout{0, 0, 1, {}};
+  }
   const std::uint64_t header_size =
       multiply_size(target.pointer.size, target.object_header_words);
   std::uint64_t offset =

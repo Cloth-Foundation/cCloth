@@ -9,7 +9,7 @@ serialization. Owned imported declaration/ABI views are documented in
 ## Identity inputs
 
 `FileSemantics::identity` owns the manifest package name and exact version,
-source-package components, file stem, and class/interface kind. The source-loading
+source-package components, file stem, and class/interface/enum kind. The source-loading
 path carries the version from Shuttle's validated request through syntax to
 semantics. Invalid owning package identities and two versions of the same owning
 package are diagnosed. Standalone compilation has a distinct owner domain with
@@ -20,7 +20,7 @@ filesystem enumeration order do not participate in canonical identity. Source
 names and `::typeName` remain unchanged; version-qualified identity is not a new
 source namespace or display spelling.
 
-## ABI revision 2 encoding
+## ABI revision 3 encoding
 
 `component(bytes)` is an unsigned little-endian 64-bit byte length followed by
 the exact bytes. A list is an unsigned little-endian 64-bit element count
@@ -34,7 +34,7 @@ Nominal identity is this ordered sequence:
 3. package name and exact version, each encoded as a component;
 4. the source-package component list, each segment encoded separately;
 5. the file stem as a component; and
-6. `component("class")` or `component("interface")`.
+6. `component("class")`, `component("interface")`, or `component("enum")`.
 
 Primitive identity is `component("primitive")` followed by a component
 containing the canonical primitive name. `int`, `uint`, and `float` resolve to
@@ -57,16 +57,17 @@ The exact member domain tags are:
 | Static field | `static-field` |
 | Instance field | `instance-field` |
 | Class descriptor | `descriptor` |
+| Enum case | `enum-case` |
 
-Fields and descriptors have empty parameter lists. A descriptor has an empty
+Fields, descriptors, and enum cases have empty parameter lists. A descriptor has an empty
 member name. Return types and modifiers are checked signature information, not
 overload discriminators. Constructor source spelling is preserved independently
 of the owner identity.
 
-Native Cloth symbols are `_C2` followed by lowercase hexadecimal encoded member
+Native Cloth symbols are `_C3` followed by lowercase hexadecimal encoded member
 identity bytes. The encoding is injective and never truncates names to a hash.
-It replaces `_C1` callable/static names and module-index descriptor names on
-both direct and protocol-v1 paths. There is no promise of ABI compatibility with
+Revision 3 adds enum nominal and case domains and replaces ABI-2 symbol names.
+All direct and protocol paths use the same encoding. There is no ABI compatibility with
 previous compiler builds. Internal field-initializer helper names remain
 module-local implementation details, not persistent ABI symbols.
 
@@ -106,7 +107,13 @@ package requests with entry-wrapper options are rejected.
 The backend partition and imported-view extractor consume a verified
 semantic/MIR/ABI graph whose dependency declarations may come from verified
 imported views. The extracted view is detached and source-free, and the
-version-1 `.cpa` reader/writer preserves it. Protocol-v2 commands and dependency
+version-2 `.cpa` reader/writer preserves it. Protocol-v2 commands and dependency
 closure loading are connected, and Stage 23.4 verifies their equivalence with
 whole-project compilation. The runtime descriptor representation, GC root
 frames, object layout, and native entry behavior remain unchanged.
+
+Enum case identities include their owner and case spelling, not their ordinal.
+Tags and case order remain validated declaration metadata and affect artifact
+digests. Output tables/helpers are private to each consuming LLVM module;
+enums introduce no externally linked heap descriptor or case symbol. See
+[artifact schema v2](artifact_schema_v2.md).

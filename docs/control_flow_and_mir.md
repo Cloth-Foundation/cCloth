@@ -165,6 +165,21 @@ parameter, binding, and temporary without scanning native stack bytes. Stage
 13.2 uses that information to construct precise shadow-stack frames; root-frame
 operations do not appear in target-independent MIR.
 
+## Enum values
+
+Enum locals require declaration initializers. The constructor field analysis
+also tracks enum fields as required initialization, including reads, instance
+calls, `self` escape, branches, and early returns. It never substitutes the
+first case for a missing initializer.
+
+HIR and MIR use typed enum literals carrying a canonical decimal tag. The
+nominal type determines the case owner; verifiers reject out-of-range tags,
+integer/enum literal confusion, and numeric operators on enum operands.
+Equality requires matching nominal types and produces `bool`. Copies, call
+arguments/results, and array operations retain that type through lowering.
+Enum meta queries retain their evaluated operand even though the type name is
+statically known. See [enums](enums.md).
+
 ## Deferred boundaries
 
 Stage 3.0 does not define object size or alignment, calling

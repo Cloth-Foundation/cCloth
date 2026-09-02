@@ -53,6 +53,7 @@ enum class LiteralKind {
   kCharacter,
   kBoolean,
   kNull,
+  kEnum,
 };
 
 struct InvalidExpression {};
@@ -336,6 +337,14 @@ struct ImportDecl {
 enum class FileTypeKind {
   kClass,
   kInterface,
+  kEnum,
+};
+
+inline constexpr std::size_t kMaxEnumCases = 65536;
+
+struct EnumCaseDecl {
+  std::string_view name;
+  SourceRange range;
 };
 
 struct FileClassDecl {
@@ -360,6 +369,7 @@ struct FileClassDecl {
   std::vector<TypeSyntax> interfaces{};
   std::string owning_package{};
   std::string owning_package_version{};
+  std::vector<EnumCaseDecl> enum_cases{};
 };
 
 [[nodiscard]] std::string_view declaration_kind_name(

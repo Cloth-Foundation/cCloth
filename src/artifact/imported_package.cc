@@ -8,6 +8,7 @@
 #include "cloth/sema/canonical_identity.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -39,7 +40,8 @@ class IssueCollector {
 };
 
 bool is_nominal(TypeKind kind) {
-  return kind == TypeKind::kFileClass || kind == TypeKind::kInterface;
+  return kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
+         kind == TypeKind::kEnum;
 }
 
 bool is_structural(TypeKind kind) {
@@ -118,6 +120,8 @@ CanonicalMemberKind canonical_member_kind(const SemanticSymbol& symbol) {
     case SymbolKind::kLocal:
     case SymbolKind::kSelf:
     case SymbolKind::kInterface:
+    case SymbolKind::kEnum:
+    case SymbolKind::kEnumCase:
       break;
   }
   return CanonicalMemberKind::kFunction;
@@ -136,6 +140,8 @@ ImportedMemberKind imported_member_kind(SymbolKind kind) {
     case SymbolKind::kLocal:
     case SymbolKind::kSelf:
     case SymbolKind::kInterface:
+    case SymbolKind::kEnum:
+    case SymbolKind::kEnumCase:
       break;
   }
   return ImportedMemberKind::kFunction;
@@ -525,6 +531,7 @@ AbiTypeLayout expected_type_layout(const ImportedType& type,
       return make(AbiTypeKind::kInteger, 16, 2, 2);
     case TypeKind::kInt32:
     case TypeKind::kUint32:
+    case TypeKind::kEnum:
       return make(AbiTypeKind::kInteger, 32, 4, 4);
     case TypeKind::kInt64:
     case TypeKind::kUint64:
@@ -548,9 +555,10 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
       issues.add(record, "nominal type record is malformed");
       return;
     }
-    const NominalKind expected_kind = type.kind == TypeKind::kInterface
-                                          ? NominalKind::kInterface
-                                          : NominalKind::kClass;
+    const NominalKind expected_kind =
+        type.kind == TypeKind::kEnum        ? NominalKind::kEnum
+        : type.kind == TypeKind::kInterface ? NominalKind::kInterface
+                                            : NominalKind::kClass;
     if (type.nominal_identity->kind != expected_kind) {
       issues.add(record, "semantic and nominal kinds disagree");
     }
@@ -1033,6 +1041,13 @@ ImportedPackageResult build_imported_package_view(
         symbol_identities(semantic_file.abstract_functions, semantics),
         symbol_identities(semantic_file.interface_functions, semantics),
         std::move(implementations), import_class_abi(*abi_file, semantics)});
+    for (const SymbolId case_id : semantic_file.enum_cases) {
+      const SemanticSymbol& item = semantics.symbol(case_id);
+      view.files.back().enum_cases.push_back(ImportedEnumCase{
+          canonical_member_identity(semantic_file.identity,
+                                    CanonicalMemberKind::kEnumCase, item.name),
+          item.name, *item.enum_tag, import_location(item, path)});
+    }
   }
   std::ranges::sort(view.files, {}, &ImportedFile::identity);
 
@@ -1076,13 +1091,20 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
   }
   for (const ImportedType& type : view.types) {
     verify_type(type, view.target, type_identities, issues);
+    if (type.kind == TypeKind::kNullable && type.element_identity) {
+      const auto element = types.find(*type.element_identity);
+      if (element != types.end() && element->second->kind == TypeKind::kEnum) {
+        issues.add("type", "nullable enum value types are not supported");
+      }
+    }
   }
 
   for (const ImportedFile& file : view.files) {
     const std::string record = "file " + file.logical_path;
-    const NominalKind expected_nominal = file.kind == FileTypeKind::kInterface
-                                             ? NominalKind::kInterface
-                                             : NominalKind::kClass;
+    const NominalKind expected_nominal =
+        file.kind == FileTypeKind::kEnum        ? NominalKind::kEnum
+        : file.kind == FileTypeKind::kInterface ? NominalKind::kInterface
+                                                : NominalKind::kClass;
     if (!valid_nominal_identity(file.nominal_identity) ||
         file.nominal_identity.package != view.package ||
         file.nominal_identity.kind != expected_nominal ||
@@ -1097,9 +1119,10 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
     }
     const auto own_type = types.find(file.identity);
     if (own_type == types.end() ||
-        own_type->second->kind != (file.kind == FileTypeKind::kInterface
-                                       ? TypeKind::kInterface
-                                       : TypeKind::kFileClass)) {
+        own_type->second->kind !=
+            (file.kind == FileTypeKind::kEnum        ? TypeKind::kEnum
+             : file.kind == FileTypeKind::kInterface ? TypeKind::kInterface
+                                                     : TypeKind::kFileClass)) {
       issues.add(record, "owning nominal type is absent or has the wrong kind");
     }
     if (file.kind == FileTypeKind::kInterface) {
@@ -1121,6 +1144,24 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
     for (const ImportedMember& member : file.members) {
       members.emplace(member.identity, &member);
       verify_member(file, member, type_identities, types, issues);
+      const auto type = types.find(member.type_identity);
+      if (member.static_value && type != types.end() &&
+          (member.static_value->kind == LiteralKind::kEnum ||
+           type->second->kind == TypeKind::kEnum)) {
+        const std::string& text = member.static_value->lexeme;
+        std::uint32_t tag = 0;
+        const auto [end, error] =
+            std::from_chars(text.data(), text.data() + text.size(), tag);
+        const auto owner = std::ranges::find(view.files, member.type_identity,
+                                             &ImportedFile::identity);
+        if (member.static_value->kind != LiteralKind::kEnum ||
+            type->second->kind != TypeKind::kEnum || text.empty() ||
+            (text.size() > 1 && text.front() == '0') || error != std::errc{} ||
+            end != text.data() + text.size() || tag >= kMaxEnumCases ||
+            (owner != view.files.end() && tag >= owner->enum_cases.size())) {
+          issues.add(record, "static enum constant has an invalid type or tag");
+        }
+      }
     }
     std::set<std::string> ordered;
     for (const std::string& member : file.member_order) {
@@ -1153,7 +1194,54 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
         issues.add(record, "interface closure is absent or has the wrong kind");
       }
     }
-    verify_class_abi(file, members, types, issues);
+    if (file.kind == FileTypeKind::kEnum) {
+      const auto& descriptor = file.abi.descriptor;
+      if (file.enum_cases.empty() || file.enum_cases.size() > kMaxEnumCases ||
+          !file.members.empty() || file.is_abstract || file.is_sealed ||
+          file.base_identity || !file.direct_interface_identities.empty() ||
+          !file.interface_identities.empty() ||
+          !file.virtual_function_identities.empty() ||
+          !file.abstract_function_identities.empty() ||
+          !file.interface_function_identities.empty() ||
+          !file.interface_implementations.empty() ||
+          file.abi.header_size != 0 || file.abi.size != 0 ||
+          file.abi.alignment != 1 || !file.abi.fields.empty() ||
+          !file.abi.static_fields.empty() || !file.abi.callables.empty() ||
+          descriptor.kind != AbiHeapObjectKind::kFileClass ||
+          !descriptor.mangled_name.empty() || descriptor.parent_identity ||
+          descriptor.size != 0 || descriptor.alignment != 1 ||
+          !descriptor.reference_offsets.empty() ||
+          !descriptor.virtual_function_identities.empty() ||
+          !descriptor.interfaces.empty() ||
+          descriptor.identity !=
+              canonical_member_identity(file.nominal_identity,
+                                        CanonicalMemberKind::kDescriptor, "") ||
+          descriptor.display_name !=
+              nominal_display_name(file.nominal_identity)) {
+        issues.add(record,
+                   "enum declaration or scalar ABI metadata is invalid");
+      }
+      std::set<std::string> names;
+      for (std::size_t index = 0; index < file.enum_cases.size(); ++index) {
+        const ImportedEnumCase& item = file.enum_cases[index];
+        if (!is_valid_identifier(item.name) ||
+            identifier_token_kind(item.name) != TokenKind::kIdentifier ||
+            !names.insert(item.name).second || item.tag != index ||
+            item.identity != canonical_member_identity(
+                                 file.nominal_identity,
+                                 CanonicalMemberKind::kEnumCase, item.name) ||
+            item.location.path != file.logical_path ||
+            item.location.line == 0 || item.location.column == 0) {
+          issues.add(
+              record,
+              "enum case identity, name, tag, order, or location is invalid");
+        }
+      }
+    } else {
+      if (!file.enum_cases.empty())
+        issues.add(record, "non-enum file contains enum cases");
+      verify_class_abi(file, members, types, issues);
+    }
   }
   return issues.take();
 }

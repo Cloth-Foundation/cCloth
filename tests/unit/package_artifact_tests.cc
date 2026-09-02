@@ -191,14 +191,17 @@ void canonical_interface_round_trip(TestContext& test) {
                   metadata.contains("\"value\":\"3fc00000\"") &&
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
-  test.expect(metadata.size() == 12112 &&
-                  cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-                      "5921bce3bef9122c57381570ba663a9f"
-                      "949897372c07c7636dfbc5ee319a3d75" &&
-                  cloth::artifact_digest_hex(encoded.artifact->digest) ==
-                      "3afbfd5f1da151e3126c2f8d3c2bfada"
-                      "3365348e5d2225e67e8e47d4fd4b8bd3",
-              "canonical version-1 schema byte fixture changed");
+  test.expect(
+      metadata.size() == 12128 &&
+          cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
+              "78b12fcaeda3b73c64528ab9957d87fcdcc"
+              "dc606bab6915cffec247dd049e554" &&
+          cloth::artifact_digest_hex(encoded.artifact->digest) ==
+              "f3904b9738d4fe9023c5fd7cbc39907cbd"
+              "66cdd8a81f31ace0a57a3ca0ed329c",
+      "canonical version-2 fixture: size=" + std::to_string(metadata.size()) +
+          " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
+          " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
 }
 
 void object_round_trip_and_compatibility(TestContext& test) {
@@ -263,7 +266,7 @@ void envelope_and_integrity_failures(TestContext& test) {
                   cloth::ArtifactIssueCode::kMalformedEnvelope,
                   "bad magic was accepted");
   broken = encoded.artifact->bytes;
-  broken[8] = 2;
+  broken[8] = 1;
   expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
                   "unsupported format version was accepted");
   broken = encoded.artifact->bytes;
@@ -318,8 +321,8 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
   changed.insert(changed.size() - 1, ",\"types\":[]");
   expect_rejected(std::move(changed), "duplicate metadata field was accepted");
   changed = original;
-  changed.replace(changed.find("\"compiler_abi\":\"2\""), 18,
-                  "\"compiler_abi\":2");
+  changed.replace(changed.find("\"compiler_abi\":\"3\""), 18,
+                  "\"compiler_abi\":3");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");
@@ -365,6 +368,50 @@ void writer_rejects_invalid_models(TestContext& test) {
               "object artifact without native compatibility was written");
 }
 
+void enum_metadata_failures(TestContext& test) {
+  constexpr std::string_view source = "enum { Ready, ready, _Done }";
+  cloth::Compilation compilation;
+  compilation.add_package_source(
+      cloth::SourceFile::from_memory("Status.co", std::string{source}),
+      "sample", "", "1.0.0");
+  cloth::DiagnosticEngine diagnostics;
+  const auto result = compilation.analyze(diagnostics);
+  test.expect(result.is_valid, "enum metadata fixture did not compile");
+  if (!result.is_valid) return;
+  const auto imported = cloth::build_imported_package_view(
+      {"sample", "1.0.0"}, result.semantics, result.mir, result.abi);
+  test.expect(imported.is_valid(), "enum metadata fixture did not export");
+  if (!imported.view) return;
+  const cloth::PackageArtifact artifact{
+      cloth::PackageArtifactKind::kInterface,
+      {cloth::kCompilerAbiVersion, cloth::kRuntimeAbiVersion,
+       cloth::sha256("enum-schema-fixture"), result.abi.target, std::nullopt},
+      {{"Status.co", cloth::sha256(source)}},
+      {},
+      *imported.view,
+      {},
+      {}};
+  const auto encoded = cloth::write_package_artifact(artifact);
+  test.expect(encoded.is_valid(), "enum metadata fixture did not encode");
+  if (!encoded.artifact) return;
+  const std::string original = metadata_text(encoded.artifact->bytes);
+  const auto tag = original.find("\"tag\":\"0\"}");
+  test.expect(tag != std::string::npos, "enum case schema lost its tag record");
+  if (tag == std::string::npos) return;
+  for (const std::string replacement :
+       {"\"tag\":\"3\"}", "\"tag\":\"65536\"}", "\"tag\":\"00\"}",
+        "\"tag\":\"-1\"}", "\"tag\":\"0\",\"visibility\":\"private\"}"}) {
+    std::string changed = original;
+    changed.replace(tag, std::string_view{"\"tag\":\"0\"}"}.size(),
+                    replacement);
+    const auto bytes =
+        replace_metadata(encoded.artifact->bytes, std::move(changed));
+    const auto decoded = cloth::read_package_artifact(bytes);
+    test.expect(!decoded.is_valid() && !decoded.issues.empty(),
+                "accepted malformed enum case schema: " + replacement);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -377,6 +424,7 @@ int main() {
       {"metadata canonicality and reference failures",
        metadata_canonicality_and_reference_failures},
       {"writer rejects invalid models", writer_rejects_invalid_models},
+      {"enum metadata failures", enum_metadata_failures},
   };
   return cloth::test::run_tests(tests);
 }

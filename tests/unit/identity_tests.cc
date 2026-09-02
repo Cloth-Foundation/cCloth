@@ -110,18 +110,18 @@ void fixed_encoding_vectors(TestContext& test) {
   test.expect(
       cloth::mangle_canonical_identity(
           cloth::canonical_primitive_identity("int32")) ==
-          "_C209000000000000007072696d69746976650500000000000000696e743332",
+          "_C309000000000000007072696d69746976650500000000000000696e743332",
       "primitive identity does not match the ABI-2 byte fixture");
   test.expect(
       cloth::mangle_canonical_identity(
           cloth::canonical_nominal_identity({{}, "", "A"})) ==
-          "_C2"
+          "_C3"
           "07000000000000006e6f6d696e616c0a000000000000007374616e64616c6f6e65"
           "000000000000000000000000000000000000000000000000010000000000000041"
           "0500000000000000636c617373",
       "standalone nominal identity does not match its byte fixture");
   test.expect(cloth::mangle_canonical_identity(std::string_view{"\0\xff", 2}) ==
-                  "_C200ff",
+                  "_C300ff",
               "mangling depends on signed char or terminates at NUL");
   const cloth::NominalIdentity interface{{"models", "1.2.3+local"},
                                          "geometry",

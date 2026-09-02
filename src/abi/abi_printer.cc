@@ -75,6 +75,14 @@ void print_abi_summary(const AbiModule& abi, const SemanticModel& semantics,
          << abi.target.pointer.alignment << "]\n";
   for (const AbiFileClass& file : abi.files) {
     const SemanticSymbol& class_symbol = semantics.symbol(file.symbol);
+    if (file.kind == FileTypeKind::kEnum) {
+      const AbiTypeLayout& type = abi.types.at(class_symbol.type.value);
+      output << "Enum " << class_symbol.name << " [scalar uint32, size "
+             << type.storage.size << ", align " << type.storage.alignment
+             << ", references none, cases "
+             << semantics.file(file.file).enum_cases.size() << "]\n";
+      continue;
+    }
     if (file.kind == FileTypeKind::kInterface) {
       const FileSemantics& interface_file = semantics.file(file.file);
       output << "Interface " << class_symbol.name << " [id "

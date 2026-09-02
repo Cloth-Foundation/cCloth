@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 cloth_add_unit_test(cloth_abi_tests abi_tests.cc)
+cloth_add_unit_test(cloth_enum_tests enum_tests.cc)
 cloth_add_unit_test(cloth_backend_tests backend_tests.cc)
 cloth_add_unit_test(cloth_identity_tests identity_tests.cc)
 cloth_add_unit_test(cloth_imported_package_tests imported_package_tests.cc)

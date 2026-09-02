@@ -129,6 +129,9 @@ struct Token {
 
 [[nodiscard]] std::string_view token_kind_name(TokenKind kind) noexcept;
 
+// Classifies an already validated identifier spelling, including keywords.
+[[nodiscard]] TokenKind identifier_token_kind(std::string_view lexeme) noexcept;
+
 }  // namespace cloth
 
 #endif  // CLOTH_LEXER_TOKEN_H_
