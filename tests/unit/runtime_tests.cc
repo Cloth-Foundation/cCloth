@@ -17,6 +17,10 @@ namespace {
 using cloth::test::TestContext;
 
 constexpr int kInterfaceFunctionSentinel = 0;
+constexpr ClothArrayElementLayout kByteElement{1, 1, nullptr, 0};
+constexpr std::uint64_t kPointerOffsets[]{0};
+constexpr ClothArrayElementLayout kPointerElement{sizeof(void*), alignof(void*),
+                                                  kPointerOffsets, 1};
 
 struct TestNode {
   const ClothTypeDescriptor* type;
@@ -25,6 +29,45 @@ struct TestNode {
   void* second;
 };
 
+struct InlineValue {
+  std::uint32_t tag;
+  void* first;
+  std::uint32_t count;
+  void* second;
+};
+
+int invalid_array_layout(std::string_view scenario) {
+  std::uint64_t offsets[]{0, sizeof(void*)};
+  ClothArrayElementLayout layout{2 * sizeof(void*), alignof(void*), offsets, 2};
+  if (scenario == "null") {
+    static_cast<void>(cloth_rt_array_alloc(1, nullptr));
+  } else {
+    if (scenario == "zero") layout.size = 0;
+    if (scenario == "alignment") layout.alignment = 3;
+    if (scenario == "stride") --layout.size;
+    if (scenario == "table") layout.reference_offsets = nullptr;
+    if (scenario == "count") layout.reference_count = 3;
+    if (scenario == "offset") offsets[1] = layout.size;
+    if (scenario == "unaligned") offsets[1] = 1;
+    if (scenario == "duplicate") offsets[1] = 0;
+    if (scenario == "unsorted") {
+      offsets[0] = sizeof(void*);
+      offsets[1] = 0;
+    }
+    if (scenario == "reference_alignment") layout.alignment = 1;
+    if (scenario == "overflow") {
+      layout.size = UINT64_MAX - 7;
+      layout.reference_offsets = nullptr;
+      layout.reference_count = 0;
+    }
+    const int length = scenario == "negative"   ? -1
+                       : scenario == "overflow" ? 2
+                                                : 1;
+    static_cast<void>(cloth_rt_array_alloc(length, &layout));
+  }
+  return 0;  // The harness requires a runtime failure, not just any exit.
+}
+
 void store_reference(void* object, std::size_t offset, void* reference) {
   std::memcpy(static_cast<std::byte*>(object) + offset, &reference,
               sizeof(reference));
@@ -32,7 +75,8 @@ void store_reference(void* object, std::size_t offset, void* reference) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc == 2) return invalid_array_layout(argv[1]);
   TestContext test{"runtime"};
   void* first = nullptr;
   void* second = nullptr;
@@ -61,7 +105,7 @@ int main() {
                   outer.root_count == 0,
               "outer GC root frame was not cleared");
 
-  void* integer_bytes = cloth_rt_array_alloc(13, 1, 1, 0);
+  void* integer_bytes = cloth_rt_array_alloc(13, &kByteElement);
   cloth_rt_integer_write(integer_bytes, 1, UINT64_C(0x89ABCDEF), 4, 0);
   cloth_rt_integer_write(integer_bytes, 5, UINT64_C(0x0123456789ABCDEF), 8, 1);
   test.expect(
@@ -208,7 +252,7 @@ int main() {
   void* array_root = nullptr;
   void** array_roots[]{&array_root};
   cloth_rt_gc_push_frame(&array_frame, array_roots, 1);
-  array_root = cloth_rt_array_alloc(1, sizeof(void*), alignof(void*), 1);
+  array_root = cloth_rt_array_alloc(1, &kPointerElement);
   void* array_node = cloth_rt_alloc(&node_type);
   std::memcpy(cloth_rt_array_element(array_root, 0), &array_node,
               sizeof(array_node));
@@ -222,6 +266,52 @@ int main() {
   test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
               "sweeping did not reclaim a cross-kind object cycle");
   cloth_rt_gc_pop_frame(&array_frame);
+
+  constexpr std::uint64_t kInlineOffsets[]{offsetof(InlineValue, first),
+                                           offsetof(InlineValue, second)};
+  const ClothArrayElementLayout inline_layout{
+      sizeof(InlineValue), alignof(InlineValue), kInlineOffsets, 2};
+  InlineValue local{7, nullptr, 9, nullptr};
+  void* aggregate_array = nullptr;
+  void** aggregate_roots[]{&aggregate_array, &local.first, &local.second};
+  ClothGcRootFrame aggregate_frame{};
+  cloth_rt_gc_push_frame(&aggregate_frame, aggregate_roots, 3);
+  local.first = cloth_rt_alloc(&node_type);
+  local.second = cloth_rt_string_literal("alive", 5);
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 2,
+              "interior reference slots in an inline value were not roots");
+  aggregate_array = cloth_rt_array_alloc(2, &inline_layout);
+  InlineValue zeroed{};
+  std::memcpy(&zeroed, cloth_rt_array_element(aggregate_array, 1),
+              sizeof(zeroed));
+  test.expect(zeroed.tag == 0 && zeroed.count == 0 && zeroed.first == nullptr &&
+                  zeroed.second == nullptr,
+              "aggregate array payload was not zeroed");
+  std::memcpy(cloth_rt_array_element(aggregate_array, 0), &local,
+              sizeof(local));
+  std::memcpy(cloth_rt_array_element(aggregate_array, 1), &local,
+              sizeof(local));
+  local.first = nullptr;
+  local.second = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 3,
+              "aggregate array did not trace every contained reference");
+  std::memcpy(cloth_rt_array_element(aggregate_array, 0), &zeroed,
+              sizeof(zeroed));
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 3,
+              "aggregate array did not trace references in later elements");
+  std::memcpy(cloth_rt_array_element(aggregate_array, 1), &zeroed,
+              sizeof(zeroed));
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 1,
+              "aggregate array retained overwritten references");
+  aggregate_array = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "aggregate array storage was not reclaimed");
+  cloth_rt_gc_pop_frame(&aggregate_frame);
 
   ClothGcRootFrame object_frame{};
   void* meta_node = nullptr;
@@ -241,7 +331,7 @@ int main() {
   meta_node = cloth_rt_alloc(&node_type);
   constexpr std::string_view kMetaString = "value";
   meta_string = cloth_rt_string_literal(kMetaString.data(), kMetaString.size());
-  meta_array = cloth_rt_array_alloc(1, sizeof(void*), alignof(void*), 1);
+  meta_array = cloth_rt_array_alloc(1, &kPointerElement);
   node_name = cloth_rt_object_type_name(meta_node);
   string_name = cloth_rt_object_type_name(meta_string);
   array_name = cloth_rt_object_type_name(meta_array);

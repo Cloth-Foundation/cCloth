@@ -32,7 +32,8 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
   for (const HirFileClass& file : hir.files) {
     const SemanticSymbol& class_symbol = semantics.symbol(file.symbol);
     const FileSemantics& file_semantics = semantics.file(file.file);
-    output << (file_semantics.kind == FileTypeKind::kEnum        ? "Enum "
+    output << (file_semantics.kind == FileTypeKind::kStruct      ? "Struct "
+               : file_semantics.kind == FileTypeKind::kEnum      ? "Enum "
                : file_semantics.kind == FileTypeKind::kInterface ? "Interface "
                                                                  : "FileClass ")
            << class_symbol.name << " : "
@@ -80,6 +81,10 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
                  << visibility_name(symbol.visibility);
           if (symbol.is_static) {
             output << ", static";
+          }
+          if (file.functions.at(reference.index).struct_receiver ==
+              StructReceiverMode::kReadOnlyValue) {
+            output << ", read-only value receiver";
           }
           if (symbol.is_override) {
             output << ", override";

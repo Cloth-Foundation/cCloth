@@ -243,6 +243,8 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
       return "nullable reference";
     case TypeKind::kEnum:
       return "enum";
+    case TypeKind::kStruct:
+      return "struct";
   }
   return "unknown";
 }
@@ -267,6 +269,8 @@ std::string_view symbol_kind_name(SymbolKind kind) noexcept {
       return "interface";
     case SymbolKind::kEnum:
       return "enum";
+    case SymbolKind::kStruct:
+      return "struct";
     case SymbolKind::kEnumCase:
       return "enum case";
   }

@@ -171,9 +171,9 @@ void retains_inheritance_interfaces_and_abi(TestContext& test) {
   if (derived == nullptr) return;
   test.expect(
       derived->abi.fields.size() == 1 &&
-          derived->abi.descriptor.parent_identity == derived->base_identity &&
-          derived->abi.descriptor.interfaces.size() == 1 &&
-          derived->abi.descriptor.reference_offsets.empty(),
+          derived->abi.descriptor->parent_identity == derived->base_identity &&
+          derived->abi.descriptor->interfaces.size() == 1 &&
+          derived->abi.descriptor->reference_offsets.empty(),
       "flattened layout or descriptor dispatch metadata was lost");
   const cloth::ImportedMember* constructor = find_member(*derived, "Derived");
   const auto callable = std::ranges::find_if(
@@ -194,11 +194,11 @@ void retains_inheritance_interfaces_and_abi(TestContext& test) {
       "constructor selection or initializer ABI was lost");
 
   auto broken_dispatch = *imported.view;
-  ++broken_dispatch.files[0].abi.descriptor.interfaces[0].interface_id;
+  ++broken_dispatch.files[0].abi.descriptor->interfaces[0].interface_id;
   test.expect(!cloth::verify_imported_package_view(broken_dispatch).empty(),
               "corrupt interface dispatch ID was accepted");
   auto broken_parent = *imported.view;
-  broken_parent.files[0].abi.descriptor.parent_identity.reset();
+  broken_parent.files[0].abi.descriptor->parent_identity.reset();
   test.expect(!cloth::verify_imported_package_view(broken_parent).empty(),
               "corrupt descriptor ancestry was accepted");
 }
@@ -245,7 +245,7 @@ void deterministic_and_corruption_checked(TestContext& test) {
     test.expect(!cloth::verify_imported_package_view(broken).empty(), message);
   };
   auto broken = *left.view;
-  broken.files[0].abi.descriptor.mangled_name.clear();
+  broken.files[0].abi.descriptor->mangled_name.clear();
   expect_rejected(std::move(broken), "corrupt descriptor name was accepted");
   broken = *left.view;
   broken.files[0].members[0].identity.push_back('x');

@@ -49,6 +49,7 @@ namespace {
 struct OutputOptions {
   bool protocol_mode{false};
   bool emit_llvm{false};
+  bool check_only{false};
   std::optional<std::filesystem::path> llvm_output;
   std::optional<std::filesystem::path> native_output;
   std::optional<std::string> entry_file;
@@ -259,6 +260,14 @@ bool write_llvm_module(const cloth::LlvmIrModule& module,
 
 int compile(cloth::Compilation& compilation, const OutputOptions& options) {
   cloth::DiagnosticEngine diagnostics;
+  if (options.check_only) {
+    const cloth::FrontendResult result =
+        compilation.analyze_frontend(diagnostics);
+    print_diagnostics(diagnostics);
+    if (!result.is_valid) return 1;
+    cloth::print_hir_summary(result.hir, result.semantics, std::cout);
+    return 0;
+  }
   const cloth::CompilationResult result = compilation.analyze(diagnostics);
 
   if (result.is_valid && options.entry_file && !options.native_output) {
@@ -389,6 +398,14 @@ int run_direct(std::span<const std::filesystem::path> arguments) {
 
   for (const std::filesystem::path& argument : arguments) {
     const std::optional<std::string> text = ascii_argument(argument);
+    if (text == "--check") {
+      if (options.check_only) {
+        std::cerr << "clothc: error: --check was specified more than once\n";
+        return 2;
+      }
+      options.check_only = true;
+      continue;
+    }
     if (text && text->starts_with("--target=")) {
       if (target_was_set) {
         std::cerr << "clothc: error: target was specified more than once\n";
@@ -468,6 +485,10 @@ int run_direct(std::span<const std::filesystem::path> arguments) {
                  "exclusive\n";
     return 2;
   }
+  if (options.check_only && (options.emit_llvm || options.native_output)) {
+    std::cerr << "clothc: error: --check cannot be combined with code output\n";
+    return 2;
+  }
   if (options.native_output && target.target_name != "x86_64-unknown-unknown") {
     std::cerr << "clothc: error: native executable output currently supports "
                  "only --target=x86_64\n";
@@ -503,9 +524,10 @@ int run_direct(std::span<const std::filesystem::path> arguments) {
 int cloth_main(std::span<const std::filesystem::path> arguments,
                const std::filesystem::path& compiler_executable) {
   if (arguments.empty()) {
-    std::cerr << "usage: clothc [--source-root=<path>] "
-                 "[--target=x86_64|wasm32] "
-                 "[--emit-llvm[=<path>] | --build=<path>] <source.co>...\n";
+    std::cerr
+        << "usage: clothc [--source-root=<path>] "
+           "[--target=x86_64|wasm32] "
+           "[--check | --emit-llvm[=<path>] | --build=<path>] <source.co>...\n";
     return 2;
   }
   if (arguments.size() == 1 &&

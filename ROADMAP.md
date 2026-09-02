@@ -66,6 +66,12 @@ Stage 25 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
 exit audits. Build-responsiveness Stage 24 is also complete.
 
+Stage 26 is active for value structs. The approved source contract, frontend,
+and [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md)
+are complete through 26.3. Native execution and source-free packages are
+supported with artifact format 3, compiler ABI 4, and runtime ABI 2. Stage 26.4
+remains the coordinated equivalence and exit audit.
+
 ## Stage 21: Integer binary representation and byte order
 
 Status: **complete**
@@ -292,9 +298,74 @@ Exit criteria:
   supported single-job/parallel builds retain deterministic artifacts; and
 - development, sanitizer, affected cross-tool, and native suites pass.
 
-## Beyond Stage 25
+## Stage 26: Value structs
 
-No later stage number is assigned. Selecting enums does not schedule the rest
+Status: **active — 26.1 through 26.3 complete; 26.4 exit audit pending**
+
+The [26.1 struct contract](docs/proposals/stage_26_structs.md), including read-only
+value receivers, and the implementation start were approved on 2026-09-02.
+Stage 26.3 was requested on 2026-09-02. Its
+[concrete ABI/schema proposal](docs/proposals/stage_26_aggregate_abi.md) now
+specifies inline layout, copy/result passing, GC maps, bounded validation, and
+the coordinated artifact-3/compiler-4/runtime-2 transition. The contract and
+implementation were approved on 2026-09-02. Implementation is complete, with
+full-artifact golden hashes separate from the design-only review vectors.
+
+The [struct implementation](docs/structs.md) covers frontend checking, aggregate
+MIR/ABI/LLVM lowering, precise tracing, and source-free artifacts. All 121
+development and 121 sanitizer CTests pass, including native and shared Shuttle
+tests. The [26.3 checkpoint](docs/testing.md#stage-263-aggregate-implementation-checkpoint)
+records verification; struct-specific serial/parallel equivalence and layout
+invalidation remain part of the 26.4 exit audit.
+
+Objective: introduce nominal aggregate values with explicit initialization,
+predictable copying and mutation, precise tracing of contained references,
+and equivalent whole-project and separate compilation.
+
+Prerequisites: completed Stage 25, including its compiler/Shuttle exit audit.
+
+Deliverables:
+
+1. Approve file-based `struct { ... }`, visibility, constructors, copying,
+   final/mutation boundaries, receiver semantics, equality, output, and non-goals.
+2. Implement declarations, type and initialization checks, inline-layout cycle
+   diagnostics, storage-location semantics, and typed HIR.
+3. Freeze and implement aggregate MIR, target layout, callable ABI, LLVM
+   lowering, class/array/local GC integration, and package metadata. Review
+   exact format/compiler/runtime revisions and schema fixtures before changing
+   compatibility. Keep Shuttle's process and manifest protocols unchanged.
+4. Prove native execution, source-free imports, aggregate calls, forced-GC
+   safety, serial/parallel artifact equivalence, and dependent invalidation;
+   update owning contracts and complete the coordinated exit audit.
+
+Non-goals under the approved source scope:
+
+- inheritance, interface conformance, virtual dispatch, or `super` for structs;
+- receiver-mutating instance functions, reference returns, and user copy/move
+  hooks; an alternate receiver policy requires explicit contract revision;
+- nullable value types, boxing, nested type declarations, or generics;
+- enum-attached metadata, runtime payload variants, and pattern matching;
+- aggregate static constants, dynamic static initialization, and general
+  constant folding;
+- custom equality/hashing, field reflection, deep cloning, or custom formatting;
+- packed/native-memory representations, cross-language FFI, and raw pointers;
+- moving/concurrent collection, remote dependencies, or new native targets.
+
+Exit criteria:
+
+- every Stage 26 item in `TODO.md` and the coordinated Shuttle ledger is complete;
+- source behavior follows the approved copy, initialization, final, receiver,
+  and equality contract without hidden aliasing or discarded writes;
+- aggregate fields, arrays, parameters, returns, and live temporaries retain
+  valid managed references across safepoints;
+- invalid source and corrupted aggregate IR/layout/artifacts fail deterministically;
+- direct and separate builds preserve nominal identities, physical call
+  signatures, native behavior, and deterministic package artifacts; and
+- development, sanitizer, native/shared-tool, and Rust quality gates pass.
+
+## Beyond Stage 26
+
+No later stage number is assigned. Planning structs does not schedule the rest
 of the backlog or freeze the Cloth 1.0 release scope.
 
 The following candidates remain recorded without priority or order:
@@ -302,9 +373,9 @@ The following candidates remain recorded without priority or order:
 - wrapping and saturating conversions as explicit primitive meta operations;
 - optional numeric literal suffixes;
 - a general constant-folding optimizer stage; and
-- structs as an implicit file kind.
+- immutable per-case enum metadata, after its constant-data prerequisites.
 
-These candidates follow completion of Stage 25 and their own prerequisites.
+These candidates follow completion of Stage 26 and their own prerequisites.
 Each candidate still requires its own stage charter, dependency review,
 non-goals, approved language or optimizer contract, concrete `TODO.md` items,
 and explicit implementation go-ahead. Inclusion here does not activate or

@@ -48,6 +48,13 @@ the value once even when that name is statically known. Lowering uses private
 bounds-checked name tables; an invalid tag traps instead of indexing outside
 the table. See [enums](enums.md).
 
+## Struct output checking
+
+The frontend accepts `print`/`println` on structs without boxing and resolves
+`value::typeName`. The approved output is `<qualified.TypeName>`; execution is
+pending aggregate lowering. See the [struct contract](structs.md). No runtime
+entry or descriptor is introduced by frontend checking.
+
 ## Object metadata
 
 The first file-class header word points to an opaque runtime type descriptor.

@@ -16,7 +16,10 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <unordered_set>
 #include <variant>
+#include <vector>
 
 namespace cloth {
 namespace {
@@ -32,14 +35,370 @@ class HirVerifier {
     verify_statements();
     verify_blocks();
     verify_files();
+    if (is_valid_ &&
+        std::ranges::any_of(semantics_.types(), [](const SemanticType& type) {
+          return type.kind == TypeKind::kStruct;
+        })) {
+      verify_struct_contexts();
+    }
     return is_valid_;
   }
 
  private:
+  bool is_struct(TypeId type) const {
+    return type.value < semantics_.types().size() &&
+           semantics_.type(type).kind == TypeKind::kStruct;
+  }
+
+  void verify_value_binding(TypeId expected, TypeId actual, SourceRange range) {
+    if ((is_struct(expected) || is_struct(actual)) && expected != actual) {
+      report(range, "struct value binding lost nominal identity");
+    }
+  }
+
+  ValueCategory struct_field_category(const SemanticSymbol& field,
+                                      ValueCategory receiver) const {
+    if (field.is_final && is_struct(field.type)) {
+      return ValueCategory::kReadOnlyLocation;
+    }
+    if (!field.is_static && field.file &&
+        semantics_.file(*field.file).kind == FileTypeKind::kStruct) {
+      return receiver == ValueCategory::kMutableLocation ||
+                     receiver == ValueCategory::kReadOnlyLocation
+                 ? receiver
+                 : ValueCategory::kValue;
+    }
+    return ValueCategory::kMutableLocation;
+  }
+
+  const HirExpression& ungroup(HirExpressionId id) const {
+    // Malformed cyclic groups must not hang verification.
+    for (std::size_t count = 0; count < hir_.storage.expressions().size();
+         ++count) {
+      const auto* grouped =
+          std::get_if<HirGroupedExpression>(&hir_.storage.expression(id).data);
+      if (!grouped) break;
+      id = grouped->expression;
+    }
+    return hir_.storage.expression(id);
+  }
+
+  void verify_struct_write(HirExpressionId id, FileId file, bool constructor,
+                           bool direct_assignment, SourceRange range) {
+    const HirExpression& target = ungroup(id);
+    std::optional<SymbolId> symbol;
+    bool is_self_field = false;
+    if (const auto* name = std::get_if<HirSymbolExpression>(&target.data)) {
+      symbol = name->symbol;
+      is_self_field = semantics_.symbol(*symbol).kind == SymbolKind::kField;
+    } else if (const auto* member =
+                   std::get_if<HirMemberExpression>(&target.data)) {
+      symbol = member->member;
+      if (const auto* receiver =
+              std::get_if<HirSymbolExpression>(&ungroup(member->object).data)) {
+        is_self_field = receiver->symbol == semantics_.file(file).self_symbol;
+      }
+    }
+    const bool initializes_final = symbol && constructor && direct_assignment &&
+                                   is_self_field &&
+                                   semantics_.symbol(*symbol).file == file &&
+                                   semantics_.symbol(*symbol).is_final &&
+                                   !semantics_.symbol(*symbol).is_static;
+    if (target.category != ValueCategory::kMutableLocation &&
+        !initializes_final) {
+      report(range, "write does not target a writable storage path");
+    }
+    if (symbol &&
+        (semantics_.symbol(*symbol).kind == SymbolKind::kSelf ||
+         (semantics_.symbol(*symbol).is_final && !initializes_final))) {
+      report(range, "write replaces self or a final value");
+    }
+  }
+
+  void verify_struct_expression(const HirExpression& expression, FileId file,
+                                bool constructor) {
+    const bool struct_owner =
+        semantics_.file(file).kind == FileTypeKind::kStruct;
+    const ValueCategory receiver = !struct_owner ? ValueCategory::kValue
+                                   : constructor
+                                       ? ValueCategory::kMutableLocation
+                                       : ValueCategory::kReadOnlyLocation;
+    std::optional<ValueCategory> expected_category;
+    const auto& data = expression.data;
+    if (const auto* name = std::get_if<HirSymbolExpression>(&data)) {
+      const SemanticSymbol& symbol = semantics_.symbol(name->symbol);
+      if (symbol.kind == SymbolKind::kSelf) {
+        expected_category = receiver;
+        if (name->symbol != semantics_.file(file).self_symbol) {
+          report(expression.range, "self belongs to another file");
+        }
+      } else if (symbol.kind == SymbolKind::kField) {
+        expected_category = struct_field_category(symbol, receiver);
+      } else if (symbol.kind == SymbolKind::kLocal ||
+                 symbol.kind == SymbolKind::kParameter) {
+        expected_category = symbol.is_final && is_struct(symbol.type)
+                                ? ValueCategory::kReadOnlyLocation
+                                : ValueCategory::kMutableLocation;
+      }
+      if (expected_category)
+        verify_value_binding(symbol.type, expression.type, expression.range);
+    } else if (const auto* member = std::get_if<HirMemberExpression>(&data)) {
+      const HirExpression& object = hir_.storage.expression(member->object);
+      if (member->member) {
+        const auto& symbol = semantics_.symbol(*member->member);
+        if (symbol.kind == SymbolKind::kField) {
+          expected_category = struct_field_category(symbol, object.category);
+          verify_value_binding(symbol.type, expression.type, expression.range);
+          if (is_struct(object.type) &&
+              symbol.file != semantics_.type(object.type).file) {
+            report(expression.range,
+                   "struct field belongs to another nominal type");
+          }
+        }
+      }
+    } else if (const auto* grouped = std::get_if<HirGroupedExpression>(&data)) {
+      const auto& inner = hir_.storage.expression(grouped->expression);
+      expected_category = inner.category;
+      verify_value_binding(inner.type, expression.type, expression.range);
+    } else if (const auto* index = std::get_if<HirIndexExpression>(&data)) {
+      expected_category = ValueCategory::kMutableLocation;
+      const auto& array =
+          semantics_.type(hir_.storage.expression(index->object).type);
+      if (array.element_type)
+        verify_value_binding(*array.element_type, expression.type,
+                             expression.range);
+    } else if (const auto* assignment =
+                   std::get_if<HirAssignmentExpression>(&data)) {
+      expected_category = ValueCategory::kValue;
+      verify_struct_write(assignment->target, file, constructor,
+                          assignment->operation == TokenKind::kEqual,
+                          expression.range);
+      const auto target = hir_.storage.expression(assignment->target).type;
+      const auto value = hir_.storage.expression(assignment->value).type;
+      verify_value_binding(target, value, expression.range);
+      verify_value_binding(target, expression.type, expression.range);
+      if (is_struct(target) && assignment->operation != TokenKind::kEqual) {
+        report(expression.range,
+               "compound assignment cannot operate on a struct");
+      }
+    } else if (const auto* update = std::get_if<HirUpdateExpression>(&data)) {
+      expected_category = ValueCategory::kValue;
+      verify_struct_write(update->operand, file, constructor, false,
+                          expression.range);
+      if (is_struct(hir_.storage.expression(update->operand).type)) {
+        report(expression.range, "numeric update cannot operate on a struct");
+      }
+    } else if (const auto* call = std::get_if<HirCallExpression>(&data)) {
+      expected_category = ValueCategory::kValue;
+      if (call->callable) {
+        const auto& symbol = semantics_.symbol(*call->callable);
+        if (call->struct_receiver != struct_receiver_mode(symbol, semantics_) ||
+            (call->struct_receiver != StructReceiverMode::kNone &&
+             (call->is_base_qualified || call->interface_dispatch ||
+              symbol.virtual_slot))) {
+          report(expression.range, "struct call has an invalid receiver mode");
+        }
+        if (call->struct_receiver == StructReceiverMode::kReadOnlyValue &&
+            symbol.file) {
+          const auto& callee = ungroup(call->callee);
+          if (const auto* member =
+                  std::get_if<HirMemberExpression>(&callee.data)) {
+            if (hir_.storage.expression(member->object).type !=
+                semantics_.file(*symbol.file).type) {
+              report(expression.range,
+                     "struct call has the wrong receiver type");
+            }
+          } else if (!std::holds_alternative<HirSymbolExpression>(
+                         callee.data) ||
+                     symbol.file != file) {
+            report(expression.range, "struct call has no instance receiver");
+          }
+        }
+        verify_value_binding(symbol.type, expression.type, expression.range);
+        if (call->arguments.size() != symbol.parameter_types.size()) {
+          report(expression.range,
+                 "call argument count does not match declaration");
+        } else {
+          for (std::size_t index = 0; index < call->arguments.size(); ++index) {
+            verify_value_binding(
+                symbol.parameter_types[index],
+                hir_.storage.expression(call->arguments[index]).type,
+                expression.range);
+          }
+        }
+      }
+    } else if (const auto* binary = std::get_if<HirBinaryExpression>(&data)) {
+      const TypeId left = hir_.storage.expression(binary->left).type;
+      const TypeId right = hir_.storage.expression(binary->right).type;
+      if ((is_struct(left) || is_struct(right)) &&
+          (left != right || expression.type != semantics_.bool_type() ||
+           (binary->operation != TokenKind::kEqualEqual &&
+            binary->operation != TokenKind::kBangEqual))) {
+        report(expression.range,
+               "struct binary operation must compare the same nominal type");
+      }
+    } else if (const auto* array =
+                   std::get_if<HirArrayLiteralExpression>(&data)) {
+      const auto& type = semantics_.type(expression.type);
+      if (type.kind != TypeKind::kArray ||
+          type.element_type != array->element_type) {
+        report(expression.range, "array literal lost its element type");
+      }
+      for (const auto element : array->elements) {
+        verify_value_binding(array->element_type,
+                             hir_.storage.expression(element).type,
+                             expression.range);
+      }
+    }
+    if (expected_category && expression.category != *expected_category) {
+      report(expression.range, "expression lost its value/storage category");
+    }
+  }
+
+  // Traverse each declaration with its receiver context. Visited IDs bound work
+  // even for malformed cyclic graphs; no source-controlled native recursion.
+  void verify_struct_contexts() {
+    using Node = std::variant<HirExpressionId, HirStatementId, HirBlockId>;
+    for (const HirFileClass& file : hir_.files) {
+      const auto check = [&](Node root, const SemanticSymbol* callable) {
+        const bool constructor =
+            callable && callable->kind == SymbolKind::kConstructor;
+        std::vector<Node> pending{root};
+        std::unordered_set<std::size_t> seen;
+        const auto enqueue = [&](const auto& id) {
+          using Id = std::decay_t<decltype(id)>;
+          if constexpr (std::is_same_v<Id, HirExpressionId> ||
+                        std::is_same_v<Id, HirStatementId> ||
+                        std::is_same_v<Id, HirBlockId>) {
+            pending.emplace_back(id);
+          }
+        };
+        while (!pending.empty()) {
+          const Node next = pending.back();
+          pending.pop_back();
+          const auto key =
+              std::visit([](auto id) { return id.value * 3; }, next) +
+              next.index();
+          if (!seen.insert(key).second) continue;
+          if (const auto* block = std::get_if<HirBlockId>(&next)) {
+            for (auto statement : hir_.storage.block(*block).statements)
+              enqueue(statement);
+            continue;
+          }
+          const auto children = [&](const auto& node) {
+            if constexpr (requires { node.object; }) enqueue(node.object);
+            if constexpr (requires { node.operand; }) enqueue(node.operand);
+            if constexpr (requires { node.left; }) enqueue(node.left);
+            if constexpr (requires { node.right; }) enqueue(node.right);
+            if constexpr (requires { node.target; }) enqueue(node.target);
+            if constexpr (requires { node.callee; }) enqueue(node.callee);
+            if constexpr (requires { node.nullable; }) enqueue(node.nullable);
+            if constexpr (requires { node.fallback; }) enqueue(node.fallback);
+            if constexpr (requires { node.array; }) enqueue(node.array);
+            if constexpr (requires { node.string; }) enqueue(node.string);
+            if constexpr (requires { node.expression; })
+              enqueue(node.expression);
+            if constexpr (requires { node.index; }) enqueue(node.index);
+            if constexpr (requires { node.arguments; })
+              for (auto id : node.arguments) enqueue(id);
+            if constexpr (requires { node.elements; })
+              for (auto id : node.elements) enqueue(id);
+            if constexpr (requires { node.updates; })
+              for (auto id : node.updates) enqueue(id);
+            if constexpr (requires { node.body; }) enqueue(node.body);
+            if constexpr (requires { node.block; }) enqueue(node.block);
+            if constexpr (requires { node.iterable; }) enqueue(node.iterable);
+            if constexpr (requires { node.then_block; })
+              enqueue(node.then_block);
+            if constexpr (requires { node.else_block; })
+              if (node.else_block) enqueue(*node.else_block);
+            if constexpr (requires { node.initializer; })
+              if (node.initializer) enqueue(*node.initializer);
+            if constexpr (requires { node.condition; }) {
+              if constexpr (std::is_same_v<
+                                std::decay_t<decltype(node.condition)>,
+                                HirExpressionId>) {
+                enqueue(node.condition);
+              } else if (node.condition)
+                enqueue(*node.condition);
+            }
+            if constexpr (requires { node.value; }) {
+              if constexpr (std::is_same_v<std::decay_t<decltype(node.value)>,
+                                           HirExpressionId>) {
+                enqueue(node.value);
+              } else if (node.value)
+                enqueue(*node.value);
+            }
+          };
+          if (const auto* id = std::get_if<HirExpressionId>(&next)) {
+            const auto& expression = hir_.storage.expression(*id);
+            verify_struct_expression(expression, file.file, constructor);
+            std::visit(children, expression.data);
+          } else {
+            const auto& statement =
+                hir_.storage.statement(std::get<HirStatementId>(next));
+            if (const auto* local =
+                    std::get_if<HirLocalStatement>(&statement.data);
+                local && local->symbol) {
+              const auto type = semantics_.symbol(*local->symbol).type;
+              if (local->initializer) {
+                verify_value_binding(
+                    type, hir_.storage.expression(*local->initializer).type,
+                    statement.range);
+              } else if (is_struct(type))
+                report(statement.range, "struct local has no initializer");
+            }
+            if (const auto* returned =
+                    std::get_if<HirReturnStatement>(&statement.data);
+                returned && returned->value && callable && !constructor) {
+              verify_value_binding(
+                  callable->type,
+                  hir_.storage.expression(*returned->value).type,
+                  statement.range);
+            }
+            std::visit(children, statement.data);
+          }
+        }
+      };
+      for (const auto& field : file.fields) {
+        if (field.initializer) {
+          verify_value_binding(semantics_.symbol(field.symbol).type,
+                               hir_.storage.expression(*field.initializer).type,
+                               semantics_.symbol(field.symbol).range);
+          check(*field.initializer, nullptr);
+        }
+      }
+      for (const auto& function : file.functions)
+        check(function.body, &semantics_.symbol(function.symbol));
+      for (const auto& constructor : file.constructors)
+        check(constructor.body, &semantics_.symbol(constructor.symbol));
+    }
+  }
+
   void verify_expressions() {
     const auto expressions = hir_.storage.expressions();
     for (const HirExpression& expression : expressions) {
       verify_type(expression.type, expression.range);
+      if ((expression.category == ValueCategory::kMutableLocation ||
+           expression.category == ValueCategory::kReadOnlyLocation) &&
+          !(std::holds_alternative<HirSymbolExpression>(expression.data) ||
+            std::holds_alternative<HirMemberExpression>(expression.data) ||
+            std::holds_alternative<HirIndexExpression>(expression.data) ||
+            std::holds_alternative<HirGroupedExpression>(expression.data))) {
+        report(expression.range, "storage category has no location path");
+      }
+      if (is_struct(expression.type) &&
+          !(std::holds_alternative<HirSymbolExpression>(expression.data) ||
+            std::holds_alternative<HirTypeExpression>(expression.data) ||
+            std::holds_alternative<HirMemberExpression>(expression.data) ||
+            std::holds_alternative<HirIndexExpression>(expression.data) ||
+            std::holds_alternative<HirGroupedExpression>(expression.data) ||
+            std::holds_alternative<HirCallExpression>(expression.data) ||
+            std::holds_alternative<HirAssignmentExpression>(expression.data) ||
+            std::holds_alternative<HirInvalidExpression>(expression.data))) {
+        report(expression.range,
+               "struct value has no aggregate representation");
+      }
       if (expression.type == semantics_.void_type() &&
           !is_valid_void_expression(expression)) {
         report(expression.range,
@@ -84,6 +443,10 @@ class HirVerifier {
       } else if (const auto* unary =
                      std::get_if<HirUnaryExpression>(&expression.data)) {
         verify_expression(unary->operand, expression.range);
+        if (const auto type = expression_type(unary->operand);
+            type && is_struct(*type)) {
+          report(expression.range, "struct used by a unary operation");
+        }
         if (is_enum_expression(unary->operand) ||
             is_enum_type(expression.type)) {
           report(expression.range, "enum value used by a unary operation");
@@ -116,6 +479,11 @@ class HirVerifier {
                      std::get_if<HirTypeTestExpression>(&expression.data)) {
         verify_expression(test->value, expression.range);
         verify_type(test->target, expression.range);
+        if (is_struct(test->target) ||
+            (expression_type(test->value) &&
+             is_struct(*expression_type(test->value)))) {
+          report(expression.range, "struct used by a reference type test");
+        }
         if (is_enum_expression(test->value) || is_enum_type(test->target)) {
           report(expression.range, "enum value used by a reference type test");
         }
@@ -123,6 +491,11 @@ class HirVerifier {
                      std::get_if<HirCheckedCastExpression>(&expression.data)) {
         verify_expression(cast->value, expression.range);
         verify_type(cast->target, expression.range);
+        if (is_struct(cast->target) ||
+            (expression_type(cast->value) &&
+             is_struct(*expression_type(cast->value)))) {
+          report(expression.range, "struct used by a reference cast");
+        }
         if (is_enum_expression(cast->value) || is_enum_type(cast->target)) {
           report(expression.range, "enum value used by a reference cast");
         }
@@ -419,6 +792,12 @@ class HirVerifier {
 
   void verify_callable(const HirCallable& callable, SourceRange range) {
     verify_symbol(callable.symbol, range);
+    if (callable.symbol.value < semantics_.symbols().size() &&
+        callable.struct_receiver !=
+            struct_receiver_mode(semantics_.symbol(callable.symbol),
+                                 semantics_)) {
+      report(range, "callable has an invalid struct receiver mode");
+    }
     if (callable.initializer) {
       verify_symbol(callable.initializer->constructor, range);
       for (const HirExpressionId argument : callable.initializer->arguments) {

@@ -110,7 +110,7 @@ cloth::PackageArtifact make_artifact(
   std::vector<cloth::ArtifactSymbol> symbols;
   const cloth::ImportedFile& file = imported.view->files[0];
   symbols.push_back(cloth::ArtifactSymbol{
-      file.abi.descriptor.mangled_name, file.abi.descriptor.identity,
+      file.abi.descriptor->mangled_name, file.abi.descriptor->identity,
       cloth::ArtifactSymbolRole::kDefinition,
       cloth::ArtifactSymbolKind::kDescriptor, "descriptor:file_class"});
   for (const cloth::ImportedStaticFieldAbi& field : file.abi.static_fields) {
@@ -125,8 +125,9 @@ cloth::PackageArtifact make_artifact(
         callable.mangled_name, callable.member_identity,
         cloth::ArtifactSymbolRole::kDefinition,
         cloth::ArtifactSymbolKind::kCallable,
-        "c:" +
-            cloth::mangle_canonical_identity(callable.return_type_identity)});
+        cloth::imported_callable_signature(
+            callable.return_mode, callable.receiver_mode,
+            callable.return_type_identity, callable.parameters)});
   }
   if (kind == cloth::PackageArtifactKind::kObject) {
     symbols.push_back(cloth::ArtifactSymbol{
@@ -192,14 +193,14 @@ void canonical_interface_round_trip(TestContext& test) {
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
   test.expect(
-      metadata.size() == 12128 &&
+      metadata.size() == 12288 &&
           cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-              "78b12fcaeda3b73c64528ab9957d87fcdcc"
-              "dc606bab6915cffec247dd049e554" &&
+              "22560baef8517f607064e20963034209d22"
+              "abc9277e1728b27c985fa3846c504" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "f3904b9738d4fe9023c5fd7cbc39907cbd"
-              "66cdd8a81f31ace0a57a3ca0ed329c",
-      "canonical version-2 fixture: size=" + std::to_string(metadata.size()) +
+              "8fb4fab3cce5aad2e18efeb038572418d0"
+              "f5c9481ea12257c9f518b6efaac3ec",
+      "canonical version-3 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
 }
@@ -270,6 +271,10 @@ void envelope_and_integrity_failures(TestContext& test) {
   expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
                   "unsupported format version was accepted");
   broken = encoded.artifact->bytes;
+  broken[8] = 2;
+  expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
+                  "pre-aggregate format version was accepted");
+  broken = encoded.artifact->bytes;
   broken[12] = 1;
   expect_rejected(std::move(broken),
                   cloth::ArtifactIssueCode::kMalformedEnvelope,
@@ -321,8 +326,8 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
   changed.insert(changed.size() - 1, ",\"types\":[]");
   expect_rejected(std::move(changed), "duplicate metadata field was accepted");
   changed = original;
-  changed.replace(changed.find("\"compiler_abi\":\"3\""), 18,
-                  "\"compiler_abi\":3");
+  changed.replace(changed.find("\"compiler_abi\":\"4\""), 18,
+                  "\"compiler_abi\":4");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");
@@ -358,7 +363,7 @@ void writer_rejects_invalid_models(TestContext& test) {
   test.expect(!cloth::write_package_artifact(artifact).is_valid(),
               "artifact with a corrupt Cloth symbol name was written");
   artifact = make_artifact();
-  artifact.imported.files[0].abi.descriptor.parent_identity =
+  artifact.imported.files[0].abi.descriptor->parent_identity =
       artifact.imported.files[0].identity;
   test.expect(!cloth::write_package_artifact(artifact).is_valid(),
               "artifact with corrupt ABI ancestry was written");

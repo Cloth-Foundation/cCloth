@@ -41,7 +41,7 @@ struct ClothArray {
   void* data;
   std::size_t length;
   std::size_t element_size;
-  bool contains_references;
+  const ClothArrayElementLayout* element;
 };
 
 struct ClothAllocation {
@@ -420,16 +420,20 @@ void mark_reachable_objects() noexcept {
         break;
       case ClothHeapObjectKind::kArray: {
         const auto& array = *static_cast<const ClothArray*>(allocation->object);
-        if (!array.contains_references) {
+        if (array.element->reference_count == 0) {
           break;
         }
         for (std::size_t index = 0; index < array.length; ++index) {
-          void* reference = nullptr;
-          std::memcpy(&reference,
-                      static_cast<const std::byte*>(array.data) +
-                          index * array.element_size,
-                      sizeof(reference));
-          enqueue_reference(reference, worklist);
+          for (std::uint64_t slot = 0; slot < array.element->reference_count;
+               ++slot) {
+            void* reference = nullptr;
+            std::memcpy(&reference,
+                        static_cast<const std::byte*>(array.data) +
+                            index * array.element_size +
+                            array.element->reference_offsets[slot],
+                        sizeof(reference));
+            enqueue_reference(reference, worklist);
+          }
         }
         break;
       }
@@ -571,7 +575,7 @@ const ClothArray& require_byte_array(const void* value) noexcept {
   }
   const auto& array = *static_cast<const ClothArray*>(value);
   if (array.header.type != &kArrayTypeDescriptor || array.element_size != 1 ||
-      array.contains_references) {
+      array.element->reference_count != 0) {
     runtime_failure("invalid byte array");
   }
   return array;
@@ -919,29 +923,46 @@ extern "C" const void* cloth_rt_interface_function(
 }
 
 extern "C" void* cloth_rt_array_alloc(
-    std::int32_t length, std::uint64_t element_size,
-    std::uint64_t element_alignment,
-    std::uint8_t contains_references) noexcept {
+    std::int32_t length, const ClothArrayElementLayout* element) noexcept {
   if (length < 0) {
     runtime_failure("array length is negative");
   }
+  if (element == nullptr) {
+    runtime_failure("array element metadata is null");
+  }
+  const std::uint64_t element_size = element->size;
+  const std::uint64_t element_alignment = element->alignment;
   if (element_size == 0) {
     runtime_failure("array element size is zero");
   }
-  if (!is_power_of_two(element_alignment)) {
+  if (!is_power_of_two(element_alignment) ||
+      element_size % element_alignment != 0) {
     runtime_failure("invalid array element alignment");
   }
-  if (contains_references > 1) {
+  const std::size_t native_element_size =
+      native_size(element_size, "array element is too large");
+  static_cast<void>(
+      native_size(element_alignment, "array alignment is too large"));
+  static_cast<void>(native_size(element->reference_count,
+                                "array reference count is too large"));
+  if ((element->reference_count == 0) !=
+          (element->reference_offsets == nullptr) ||
+      element->reference_count > element_size / sizeof(void*)) {
     runtime_failure("invalid array reference metadata");
   }
-  if (contains_references != 0 &&
-      (element_size != sizeof(void*) || element_alignment < alignof(void*))) {
+  if (element->reference_count != 0 && element_alignment < alignof(void*)) {
     runtime_failure("invalid reference array element layout");
+  }
+  for (std::uint64_t index = 0; index < element->reference_count; ++index) {
+    const std::uint64_t offset = element->reference_offsets[index];
+    if (offset % alignof(void*) != 0 || offset > element_size ||
+        sizeof(void*) > element_size - offset ||
+        (index != 0 && element->reference_offsets[index - 1] >= offset)) {
+      runtime_failure("invalid array reference offset");
+    }
   }
 
   const std::size_t native_length = static_cast<std::size_t>(length);
-  const std::size_t native_element_size =
-      native_size(element_size, "array element is too large");
   if (native_length >
       std::numeric_limits<std::size_t>::max() / native_element_size) {
     runtime_failure("array allocation is too large");
@@ -962,7 +983,7 @@ extern "C" void* cloth_rt_array_alloc(
                                  "array payload allocation failed");
   array->length = native_length;
   array->element_size = native_element_size;
-  array->contains_references = contains_references != 0;
+  array->element = element;
   register_allocation(&array->header, managed_size);
   return array;
 }

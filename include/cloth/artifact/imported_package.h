@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,7 @@ struct ImportedType {
   AbiTypeKind abi_kind;
   std::uint32_t bit_width;
   SizeAlignment storage;
+  std::vector<std::uint64_t> reference_offsets;
 
   friend bool operator==(const ImportedType&, const ImportedType&) = default;
 };
@@ -145,6 +147,7 @@ struct ImportedStaticFieldAbi {
 struct ImportedAbiParameter {
   AbiParameterKind kind;
   std::string type_identity;
+  AbiPassingMode passing = AbiPassingMode::kDirect;
 
   friend bool operator==(const ImportedAbiParameter&,
                          const ImportedAbiParameter&) = default;
@@ -163,6 +166,10 @@ struct ImportedCallableAbi {
   std::vector<ImportedAbiParameter> initializer_parameters;
   std::string return_type_identity;
   std::vector<ImportedAbiParameter> parameters;
+  AbiReturnMode return_mode = AbiReturnMode::kDirect;
+  AbiReceiverMode receiver_mode = AbiReceiverMode::kNone;
+  AbiReturnMode initializer_return_mode = AbiReturnMode::kVoid;
+  AbiReceiverMode initializer_receiver_mode = AbiReceiverMode::kNone;
 
   friend bool operator==(const ImportedCallableAbi&,
                          const ImportedCallableAbi&) = default;
@@ -173,7 +180,7 @@ struct ImportedClassAbi {
   std::uint64_t size;
   std::uint64_t alignment;
   std::vector<ImportedFieldLayout> fields;
-  ImportedTypeDescriptor descriptor;
+  std::optional<ImportedTypeDescriptor> descriptor;
   std::vector<ImportedStaticFieldAbi> static_fields;
   std::vector<ImportedCallableAbi> callables;
 
@@ -251,6 +258,16 @@ struct ImportedPackageResult {
 
 [[nodiscard]] std::vector<ImportedPackageIssue> verify_imported_package_view(
     const ImportedPackageView& view);
+
+// Checks dependency-owned type claims and reconstructs layouts before
+// source-free declarations may enter semantic analysis or a native link.
+[[nodiscard]] std::vector<ImportedPackageIssue> verify_imported_package_closure(
+    std::span<const ImportedPackageView* const> packages);
+
+[[nodiscard]] std::string imported_callable_signature(
+    AbiReturnMode return_mode, AbiReceiverMode receiver_mode,
+    std::string_view return_type,
+    std::span<const ImportedAbiParameter> parameters);
 
 }  // namespace cloth
 

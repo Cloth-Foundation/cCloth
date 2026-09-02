@@ -115,12 +115,17 @@ struct HirNullAssertExpression {
   HirExpressionId operand;
 };
 
+// Struct receivers are value snapshots at ordinary calls, captured before
+// explicit arguments. Construction instead writes an incomplete result value.
+enum class StructReceiverMode { kNone, kReadOnlyValue, kConstruction };
+
 struct HirCallExpression {
   HirExpressionId callee;
   std::optional<SymbolId> callable;
   std::vector<HirExpressionId> arguments;
   bool is_base_qualified{false};
   std::optional<FileId> interface_dispatch{};
+  StructReceiverMode struct_receiver{StructReceiverMode::kNone};
 };
 
 struct HirArrayLiteralExpression {
@@ -182,6 +187,9 @@ struct HirExpression {
   TypeId type;
   SourceRange range;
   HirExpressionData data;
+  // Reading a struct location as a value copies it. Member/index nodes retain
+  // the location path for writes; value results never provide writable storage.
+  ValueCategory category{ValueCategory::kValue};
 };
 
 struct HirInvalidStatement {};
@@ -285,6 +293,7 @@ struct HirCallable {
   SymbolId symbol;
   std::optional<HirConstructorInitializer> initializer;
   HirBlockId body;
+  StructReceiverMode struct_receiver{StructReceiverMode::kNone};
 };
 
 struct HirFileClass {
@@ -305,6 +314,9 @@ struct HirModule {
 [[nodiscard]] HirModule lower_to_hir(
     std::span<const FileClassDecl* const> files,
     const SemanticModel& semantics);
+
+[[nodiscard]] StructReceiverMode struct_receiver_mode(
+    const SemanticSymbol& callable, const SemanticModel& semantics);
 
 }  // namespace cloth
 

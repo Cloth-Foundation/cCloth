@@ -453,7 +453,7 @@ void interface_dispatch(TestContext& test) {
   const auto interface_id =
       sources.result->semantics.file({0}).interface_id.value_or(0);
   const cloth::AbiTypeDescriptor& widget =
-      sources.result->abi.files[1].type_descriptor;
+      sources.result->abi.files[1].type_descriptor.value();
   test.expect(widget.interfaces.size() == 1 &&
                   widget.interfaces[0].interface_id == interface_id &&
                   widget.interfaces[0].functions.size() == 1,
@@ -489,12 +489,17 @@ void arrays(TestContext& test) {
   sources.compile();
 
   test.expect(sources.llvm.has_value(), "array module failed to emit");
-  test.expect(sources.contains(
-                  "call ptr @cloth_rt_array_alloc(i32 3, i64 4, i64 4, i8 0)"),
-              "array allocation lost its element layout");
-  test.expect(sources.contains(
-                  "call ptr @cloth_rt_array_alloc(i32 1, i64 8, i64 8, i8 1)"),
-              "reference array allocation lost collector metadata");
+  test.expect(
+      sources.contains(
+          "call ptr @cloth_rt_array_alloc(i32 3, ptr @.cloth.array.element.") &&
+          sources.contains("{ i64 4, i64 4, ptr null, i64 0 }"),
+      "array allocation lost its element layout");
+  test.expect(
+      sources.contains(
+          "call ptr @cloth_rt_array_alloc(i32 1, ptr @.cloth.array.element.") &&
+          sources.contains(
+              ".refs = private unnamed_addr constant [1 x i64] [i64 0]"),
+      "reference array allocation lost collector metadata");
   test.expect(sources.contains("call ptr @cloth_rt_array_element(ptr ") &&
                   sources.contains("call i32 @cloth_rt_array_length(ptr "),
               "checked array access runtime calls are missing");

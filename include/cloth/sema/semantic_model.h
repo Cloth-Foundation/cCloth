@@ -80,6 +80,7 @@ enum class TypeKind {
   kArray,
   kNullable,
   kEnum,
+  kStruct,
 };
 
 struct SemanticType {
@@ -100,6 +101,7 @@ enum class SymbolKind {
   kInterface,
   kEnum,
   kEnumCase,
+  kStruct,
 };
 
 enum class IntrinsicKind {
@@ -120,6 +122,7 @@ enum class IntrinsicKind {
   kPrintObject,
   kPrintNewline,
   kPrintEnum,
+  kPrintStruct,
 };
 
 struct SemanticSymbol {
@@ -147,6 +150,7 @@ enum class ValueCategory {
   kInvalid,
   kValue,
   kMutableLocation,
+  kReadOnlyLocation,
   kCallable,
   kType,
   kSuper,

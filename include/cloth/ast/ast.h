@@ -338,6 +338,7 @@ enum class FileTypeKind {
   kClass,
   kInterface,
   kEnum,
+  kStruct,
 };
 
 inline constexpr std::size_t kMaxEnumCases = 65536;

@@ -39,7 +39,11 @@ compilation_unit
 explicit_file_type
     = explicit_file_class
     | explicit_interface
-    | explicit_enum ;
+    | explicit_enum
+    | explicit_struct ;
+
+explicit_struct
+    = "struct" "{" { member_declaration } "}" ;
 
 explicit_enum
     = "enum" "{" enum_case { "," enum_case } [ "," ] "}" ;
@@ -426,6 +430,11 @@ The declaration pass enforces these rules separately from the grammar:
 - Enums contain 1 to 65,536 distinct, case-sensitive identifiers. Case selection
   uses `Type.Case`. Enum locals require initializers; enum fields require
   initialization on every constructor exit. See [enums](enums.md).
+- Struct envelopes use filename identity and ordinary member visibility. All
+  instance fields and struct locals require initialization. Struct methods have
+  read-only value receivers; constructors initialize writable fields. Inheritance,
+  conformance, abstract/override/final functions, and base initializers are invalid.
+  See [structs](structs.md) for initialization, copy, and receiver rules.
 - Private constructors are callable only inside their owning file class. A
   derived constructor cannot select a private base constructor.
 - Constructor overload identity ignores the public or private constructor
@@ -435,7 +444,7 @@ The declaration pass enforces these rules separately from the grammar:
 - Import paths are identifier sequences rather than string literals.
 - Array types are one-dimensional; repeated `[]` suffixes are rejected.
 - `?` may qualify a reference type or an array reference independently from
-  its element type. Nullable primitives, enums, and `void?` are rejected
+  its element type. Nullable primitives, enums, structs, and `void?` are rejected
   semantically; nullable enum arrays remain valid references.
 - A `for` iteration declaration uses either `var` inference or an explicit
   element type.

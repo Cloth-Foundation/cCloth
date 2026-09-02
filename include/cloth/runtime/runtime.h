@@ -43,6 +43,15 @@ struct ClothGcRootFrame {
   std::uint64_t root_count;
 };
 
+// Immutable compiler-emitted, program-lifetime metadata for one array element.
+// References identify complete pointer slots within the padded element stride.
+struct ClothArrayElementLayout {
+  std::uint64_t size;
+  std::uint64_t alignment;
+  const std::uint64_t* reference_offsets;
+  std::uint64_t reference_count;
+};
+
 extern "C" {
 
 [[nodiscard]] void* cloth_rt_alloc(const ClothTypeDescriptor* type) noexcept;
@@ -75,8 +84,7 @@ void cloth_rt_gc_collect() noexcept;
     const void* value, std::uint64_t interface_id,
     std::uint64_t function_slot) noexcept;
 [[nodiscard]] void* cloth_rt_array_alloc(
-    std::int32_t length, std::uint64_t element_size,
-    std::uint64_t element_alignment, std::uint8_t contains_references) noexcept;
+    std::int32_t length, const ClothArrayElementLayout* element) noexcept;
 [[nodiscard]] std::int32_t cloth_rt_array_length(const void* array) noexcept;
 [[nodiscard]] void* cloth_rt_array_element(void* array,
                                            std::int32_t index) noexcept;

@@ -91,9 +91,9 @@ Array objects own a separately aligned,
 zero-initialized payload. Their managed byte count includes both the header and
 the logical payload size.
 
-The compiler currently emits all discovered source files into one LLVM module.
-Separate compilation will require descriptor coalescing or runtime registration
-before descriptor addresses can remain canonical across module boundaries.
+Each class descriptor has one canonical definition in its owning package;
+separately compiled consumers reference that definition. Artifact validation
+preserves exact layout and dispatch metadata across this boundary.
 
 ## Precise root frames
 
@@ -192,3 +192,23 @@ non-generational, and only runs at explicit safepoints. Liveness is conservative
 at the MIR root-slot level; it does not reuse slots or change the shadow-stack
 ABI. Finalizers, weak references, concurrent tracing, generational policies,
 and moving collection remain outside Stage 13.
+
+
+## Inline aggregates
+
+Structs add no heap header or allocation. Their flattened value maps identify
+managed-reference slots inside inline data. Class descriptors include embedded
+struct slots; runtime ABI 2 arrays reference immutable element layouts and scan
+those offsets in each element.
+
+The backend zeroes owned aggregate buffers before registering their contained
+slots. Live locals, mutable argument copies, read-only receiver snapshots, SSA
+temporaries, caller result buffers, and incomplete construction storage retain
+precise roots. A return copies into the already-rooted caller buffer before pop.
+Captured class/array storage owners remain roots through RHS calls and allocation.
+Dead aggregate roots are cleared only after the last value or storage-path use.
+
+Aggregate phi edges first copy every incoming value to scratch buffers, then
+assign every destination. No safepoint occurs between those copies, so scratch
+buffers need no additional roots. Tests force collection before each allocation,
+including inside a loop that swaps two aggregate phis alongside a scalar phi.

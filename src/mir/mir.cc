@@ -25,6 +25,7 @@ struct LoweredLocation {
   TypeId type;
   bool is_member{false};
   bool is_array_element{false};
+  std::optional<MirStoragePath> path{};
 };
 
 struct LoopTargets {
@@ -904,6 +905,14 @@ class BodyBuilder {
         return emit_value(expression.type, expression.range,
                           MirLoadSymbolInstruction{symbol_expression.symbol});
       }
+      if (semantics_.file(file_).kind == FileTypeKind::kStruct) {
+        return emit_value(expression.type, expression.range,
+                          MirLoadStorageInstruction{
+                              MirStoragePath{semantics_.file(file_).self_symbol,
+                                             std::nullopt,
+                                             std::nullopt,
+                                             {symbol_expression.symbol}}});
+      }
       const MirValueId self = emit_self(expression.range);
       return emit_value(
           expression.type, expression.range,
@@ -934,6 +943,15 @@ class BodyBuilder {
         return emit_value(expression.type, expression.range,
                           MirLoadSymbolInstruction{*member.member});
       }
+    }
+    const HirExpression& receiver = hir_.storage.expression(member.object);
+    if (member.member &&
+        semantics_.type(receiver.type).kind == TypeKind::kStruct &&
+        receiver.category != ValueCategory::kValue) {
+      MirStoragePath path = storage_path(lower_location(member.object));
+      path.fields.push_back(*member.member);
+      return emit_value(expression.type, expression.range,
+                        MirLoadStorageInstruction{std::move(path)});
     }
     const MirValueId object = require_value(
         lower_expression(member.object),
@@ -1000,7 +1018,21 @@ class BodyBuilder {
     return update.is_postfix ? previous : updated;
   }
 
+  static MirStoragePath storage_path(const LoweredLocation& location) {
+    if (location.path) return *location.path;
+    if (location.is_member) {
+      return {std::nullopt, location.object, std::nullopt,
+              location.symbol ? std::vector<SymbolId>{*location.symbol}
+                              : std::vector<SymbolId>{}};
+    }
+    return {location.symbol, location.object, location.index, {}};
+  }
+
   MirValueId load_location(const LoweredLocation& location, SourceRange range) {
+    if (location.path) {
+      return emit_value(location.type, range,
+                        MirLoadStorageInstruction{*location.path});
+    }
     if (location.is_array_element && location.object && location.index) {
       return emit_value(
           location.type, range,
@@ -1020,6 +1052,10 @@ class BodyBuilder {
 
   void store_location(const LoweredLocation& location, MirValueId value,
                       SourceRange range) {
+    if (location.path) {
+      emit_void(range, MirStoreStorageInstruction{*location.path, value});
+      return;
+    }
     if (location.is_array_element && location.object && location.index) {
       emit_void(range, MirArrayStoreInstruction{*location.object,
                                                 *location.index, value});
@@ -1084,6 +1120,19 @@ class BodyBuilder {
                                  false,
                                  false};
         }
+        if (semantics_.file(file_).kind == FileTypeKind::kStruct) {
+          return LoweredLocation{
+              std::nullopt,
+              std::nullopt,
+              std::nullopt,
+              symbol.type,
+              false,
+              false,
+              MirStoragePath{semantics_.file(file_).self_symbol,
+                             std::nullopt,
+                             std::nullopt,
+                             {symbol_expression->symbol}}};
+        }
         return LoweredLocation{symbol_expression->symbol,
                                emit_self(expression.range),
                                std::nullopt,
@@ -1092,7 +1141,8 @@ class BodyBuilder {
                                false};
       }
       if (symbol.kind == SymbolKind::kParameter ||
-          symbol.kind == SymbolKind::kLocal) {
+          symbol.kind == SymbolKind::kLocal ||
+          symbol.kind == SymbolKind::kSelf) {
         return LoweredLocation{symbol_expression->symbol,
                                std::nullopt,
                                std::nullopt,
@@ -1109,6 +1159,15 @@ class BodyBuilder {
           return LoweredLocation{member->member, std::nullopt, std::nullopt,
                                  symbol.type,    false,        false};
         }
+      }
+      if (member->member &&
+          semantics_.type(hir_.storage.expression(member->object).type).kind ==
+              TypeKind::kStruct) {
+        MirStoragePath path = storage_path(lower_location(member->object));
+        path.fields.push_back(*member->member);
+        return LoweredLocation{std::nullopt,    std::nullopt, std::nullopt,
+                               expression.type, false,        false,
+                               std::move(path)};
       }
       const MirValueId object = require_value(
           lower_expression(member->object),
@@ -1174,6 +1233,11 @@ class BodyBuilder {
       static_cast<void>(lower_expression(call.callee));
     }
 
+    if (call.struct_receiver == StructReceiverMode::kReadOnlyValue &&
+        !receiver) {
+      receiver = emit_self(expression.range);
+      receiver_is_self = true;
+    }
     std::vector<MirValueId> arguments;
     arguments.reserve(call.arguments.size());
     for (std::size_t index = 0; index < call.arguments.size(); ++index) {
@@ -1219,7 +1283,8 @@ class BodyBuilder {
                                    receiver,
                                    std::move(arguments),
                                    call.interface_dispatch,
-                                   interface_slot};
+                                   interface_slot,
+                                   call.struct_receiver};
     if (expression.type == semantics_.void_type()) {
       emit_void(expression.range, std::move(instruction));
       return std::nullopt;
@@ -1347,8 +1412,8 @@ MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,
       : symbol.kind == SymbolKind::kConstructor
           ? builder.lower_constructor(callable.initializer, callable.body)
           : builder.lower_callable(callable.body);
-  return MirCallable{callable.symbol, symbol.parameter_symbols,
-                     std::move(body)};
+  return MirCallable{callable.symbol, symbol.parameter_symbols, std::move(body),
+                     callable.struct_receiver};
 }
 
 }  // namespace

@@ -51,7 +51,8 @@ bool looks_like_file_type_declaration(std::span<const Token> tokens,
   return index < tokens.size() &&
          (tokens[index].kind == TokenKind::kKwClass ||
           tokens[index].kind == TokenKind::kKwInterface ||
-          tokens[index].kind == TokenKind::kKwEnum);
+          tokens[index].kind == TokenKind::kKwEnum ||
+          tokens[index].kind == TokenKind::kKwStruct);
 }
 
 bool looks_like_function_declaration(std::span<const Token> tokens,
@@ -731,20 +732,24 @@ void DeclarationPass::parse_file_type_declaration() {
   }
   const bool is_interface = match(TokenKind::kKwInterface);
   const bool is_enum = !is_interface && match(TokenKind::kKwEnum);
-  if (!is_interface && !is_enum && !match(TokenKind::kKwClass)) {
+  const bool is_struct =
+      !is_interface && !is_enum && match(TokenKind::kKwStruct);
+  if (!is_interface && !is_enum && !is_struct && !match(TokenKind::kKwClass)) {
     diagnostics_.error(current().range,
                        "expected 'class' or 'interface' after file type "
                        "modifiers");
     is_valid_ = false;
     return;
   }
-  file_type_kind_ = is_enum        ? FileTypeKind::kEnum
+  file_type_kind_ = is_struct      ? FileTypeKind::kStruct
+                    : is_enum      ? FileTypeKind::kEnum
                     : is_interface ? FileTypeKind::kInterface
                                    : FileTypeKind::kClass;
-  if ((is_interface || is_enum) && (class_is_abstract_ || class_is_sealed_)) {
+  if ((is_interface || is_enum || is_struct) &&
+      (class_is_abstract_ || class_is_sealed_)) {
     diagnostics_.error(
         tokens_[current_ - 1].range,
-        "interfaces and enums cannot be declared abstract or sealed");
+        "interfaces, enums, and structs cannot be declared abstract or sealed");
     is_valid_ = false;
   }
 

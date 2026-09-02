@@ -375,11 +375,11 @@ void artifact_round_trip(TestContext& test) {
   test.expect(!cloth::verify_imported_package_view(broken).empty(),
               "accepted duplicate imported enum case");
   broken = *imported.view;
-  broken.files[0].abi.descriptor.kind = cloth::AbiHeapObjectKind::kArray;
+  broken.files[0].abi.descriptor->kind = cloth::AbiHeapObjectKind::kArray;
   test.expect(!cloth::verify_imported_package_view(broken).empty(),
               "accepted enum heap descriptor confusion");
   broken = *imported.view;
-  broken.files[0].abi.descriptor.reference_offsets = {0};
+  broken.files[0].abi.descriptor->reference_offsets = {0};
   test.expect(!cloth::verify_imported_package_view(broken).empty(),
               "accepted enum GC reference slot");
   cloth::Compilation consumer;

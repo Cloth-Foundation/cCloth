@@ -4,6 +4,7 @@
 
 #include "cloth/abi/abi.h"
 
+#include "cloth/abi/aggregate_limits.h"
 #include "cloth/mir/mir.h"
 #include "cloth/sema/canonical_identity.h"
 #include "cloth/sema/semantic_model.h"
@@ -13,42 +14,85 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
+#include <queue>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace cloth {
+
+std::string_view abi_passing_mode_name(AbiPassingMode mode) {
+  switch (mode) {
+    case AbiPassingMode::kDirect:
+      return "direct";
+    case AbiPassingMode::kValuePointer:
+      return "value_pointer";
+    case AbiPassingMode::kResultPointer:
+      return "result_pointer";
+  }
+  return "invalid";
+}
+
+std::string_view abi_return_mode_name(AbiReturnMode mode) {
+  switch (mode) {
+    case AbiReturnMode::kVoid:
+      return "void";
+    case AbiReturnMode::kDirect:
+      return "direct";
+    case AbiReturnMode::kIndirect:
+      return "indirect";
+  }
+  return "invalid";
+}
+
+std::string_view abi_receiver_mode_name(AbiReceiverMode mode) {
+  switch (mode) {
+    case AbiReceiverMode::kNone:
+      return "none";
+    case AbiReceiverMode::kReference:
+      return "reference";
+    case AbiReceiverMode::kReadOnlyValue:
+      return "readonly_value";
+    case AbiReceiverMode::kConstruction:
+      return "construction";
+  }
+  return "invalid";
+}
+
 namespace {
 
-std::uint64_t add_size(std::uint64_t left, std::uint64_t right) noexcept {
+std::optional<std::uint64_t> checked_add(std::uint64_t left,
+                                         std::uint64_t right) {
   if (left > std::numeric_limits<std::uint64_t>::max() - right) {
-    return std::numeric_limits<std::uint64_t>::max();
+    return std::nullopt;
   }
   return left + right;
 }
 
-std::uint64_t multiply_size(std::uint64_t left, std::uint64_t right) noexcept {
-  if (left != 0 && right > std::numeric_limits<std::uint64_t>::max() / left) {
-    return std::numeric_limits<std::uint64_t>::max();
-  }
-  return left * right;
+std::optional<std::uint64_t> checked_align(std::uint64_t value,
+                                           std::uint64_t alignment) {
+  if (!is_power_of_two(alignment)) return std::nullopt;
+  const auto padded = checked_add(value, alignment - 1);
+  if (!padded) return std::nullopt;
+  return *padded & ~(alignment - 1);
 }
 
 std::uint32_t pointer_bit_width(const TargetDataLayout& target) noexcept {
-  const std::uint64_t bits = multiply_size(target.pointer.size, 8);
-  if (bits > std::numeric_limits<std::uint32_t>::max()) {
-    return std::numeric_limits<std::uint32_t>::max();
-  }
-  return static_cast<std::uint32_t>(bits);
+  // The target is validated before lowering types.
+  return static_cast<std::uint32_t>(target.pointer.size * 8);
 }
 
 AbiTypeLayout make_type_layout(TypeId type, AbiTypeKind kind,
                                std::uint32_t bit_width, std::uint64_t size,
                                std::uint64_t alignment) {
-  return AbiTypeLayout{type, kind, bit_width, SizeAlignment{size, alignment}};
+  return AbiTypeLayout{type, kind, bit_width, SizeAlignment{size, alignment},
+                       kind == AbiTypeKind::kReference
+                           ? std::vector<std::uint64_t>{0}
+                           : std::vector<std::uint64_t>{}};
 }
 
 AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
@@ -56,6 +100,8 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
   switch (semantic_type.kind) {
     case TypeKind::kError:
       return make_type_layout(type, AbiTypeKind::kInvalid, 0, 0, 1);
+    case TypeKind::kStruct:
+      return make_type_layout(type, AbiTypeKind::kAggregate, 0, 0, 1);
     case TypeKind::kVoid:
       return make_type_layout(type, AbiTypeKind::kVoid, 0, 0, 1);
     case TypeKind::kNull:
@@ -101,54 +147,95 @@ AbiLinkage lower_linkage(Visibility visibility) noexcept {
                                            : AbiLinkage::kInternal;
 }
 
-AbiClassLayout lower_class_layout(const MirFileClass& file,
-                                  const SemanticModel& semantics,
-                                  const std::vector<AbiTypeLayout>& types,
-                                  const TargetDataLayout& target,
-                                  const AbiClassLayout* base_layout) {
-  if (semantics.file(file.file).kind == FileTypeKind::kEnum) {
-    return AbiClassLayout{0, 0, 1, {}};
+struct FileLayout {
+  AbiClassLayout storage;
+  std::vector<std::uint64_t> references;
+  std::size_t depth;
+};
+
+std::optional<FileLayout> lower_file_layout(
+    const MirFileClass& file, const SemanticModel& semantics,
+    const std::vector<AbiTypeLayout>& types, const TargetDataLayout& target,
+    const std::vector<std::optional<FileLayout>>& layouts,
+    DiagnosticEngine& diagnostics) {
+  const FileSemantics& semantic = semantics.file(file.file);
+  const auto fail = [&](std::string message) -> std::optional<FileLayout> {
+    diagnostics.error(semantics.symbol(file.symbol).range, std::move(message));
+    return std::nullopt;
+  };
+  if (semantic.kind == FileTypeKind::kEnum) {
+    return FileLayout{AbiClassLayout{0, 0, 1, {}}, {}, 0};
   }
-  const std::uint64_t header_size =
-      multiply_size(target.pointer.size, target.object_header_words);
-  std::uint64_t offset =
-      base_layout == nullptr ? header_size : base_layout->size;
-  std::uint64_t class_alignment =
-      target.pointer.alignment == 0 ? 1 : target.pointer.alignment;
+  const bool aggregate = semantic.kind == FileTypeKind::kStruct;
+  const std::uint64_t header =
+      aggregate ? 0 : target.pointer.size * target.object_header_words;
+  std::uint64_t offset = header;
+  std::uint64_t alignment = aggregate ? 1 : target.pointer.alignment;
+  std::size_t depth = aggregate ? 1 : 0;
   std::vector<AbiFieldLayout> fields;
-  if (base_layout != nullptr) {
-    class_alignment = std::max(class_alignment, base_layout->alignment);
-    fields = base_layout->fields;
+  std::vector<std::uint64_t> references;
+  if (file.base_file) {
+    const auto& base = *layouts.at(file.base_file->value);
+    offset = base.storage.size;
+    alignment = std::max(alignment, base.storage.alignment);
+    fields = base.storage.fields;
+    references = base.references;
   }
-  fields.reserve(fields.size() + file.fields.size());
+  std::size_t instance_count = 0;
   for (const MirField& field : file.fields) {
     const SemanticSymbol& symbol = semantics.symbol(field.symbol);
-    if (symbol.is_static) {
-      continue;
+    if (symbol.is_static) continue;
+    if (aggregate && ++instance_count > kMaxStructFields) {
+      return fail("struct exceeds the instance-field limit of 65536");
     }
-    const TypeId type = symbol.type;
-    const AbiTypeLayout& type_layout = types.at(type.value);
-    class_alignment = std::max(class_alignment, type_layout.storage.alignment);
-    offset = align_to(offset, type_layout.storage.alignment);
-    fields.push_back(AbiFieldLayout{field.symbol, type, offset});
-    offset = add_size(offset, type_layout.storage.size);
+    const AbiTypeLayout& type = types.at(symbol.type.value);
+    if (type.kind == AbiTypeKind::kInvalid || type.kind == AbiTypeKind::kVoid ||
+        type.storage.size == 0 || !is_power_of_two(type.storage.alignment)) {
+      return fail("field has no valid ABI storage layout");
+    }
+    const auto aligned = checked_align(offset, type.storage.alignment);
+    if (!aligned) return fail("field alignment overflows the target layout");
+    const auto end = checked_add(*aligned, type.storage.size);
+    if (!end) return fail("field size overflows the target layout");
+    alignment = std::max(alignment, type.storage.alignment);
+    fields.push_back(AbiFieldLayout{field.symbol, symbol.type, *aligned});
+    if (type.reference_offsets.size() >
+        kMaxLayoutReferences - references.size()) {
+      return fail("layout exceeds the reference-slot limit of 65536");
+    }
+    for (const std::uint64_t reference : type.reference_offsets) {
+      const auto shifted = checked_add(*aligned, reference);
+      if (!shifted || reference > type.storage.size ||
+          target.pointer.size > type.storage.size - reference ||
+          *shifted % target.pointer.alignment != 0) {
+        return fail("field has an invalid reference-slot layout");
+      }
+      references.push_back(*shifted);
+    }
+    offset = *end;
+    if (aggregate && type.kind == AbiTypeKind::kAggregate) {
+      const auto owner = semantics.type(symbol.type).file;
+      depth = std::max(depth, layouts.at(owner->value)->depth + 1);
+      if (depth > kMaxStructDepth) {
+        return fail("struct exceeds the inline nesting limit of 128");
+      }
+    }
   }
-  return AbiClassLayout{header_size, align_to(offset, class_alignment),
-                        class_alignment, std::move(fields)};
+  const auto size = checked_align(
+      aggregate ? std::max(offset, std::uint64_t{1}) : offset, alignment);
+  if (!size) return fail("padded size overflows the target layout");
+  if (aggregate && *size > kMaxStructSize) {
+    return fail("struct exceeds the padded-size limit of 1048576 bytes");
+  }
+  return FileLayout{AbiClassLayout{header, *size, alignment, std::move(fields)},
+                    std::move(references), depth};
 }
 
-AbiTypeDescriptor lower_type_descriptor(const AbiClassLayout& layout,
-                                        const SemanticSymbol& class_symbol,
-                                        const std::vector<AbiTypeLayout>& types,
-                                        std::optional<FileId> parent_file,
-                                        const FileSemantics& file,
-                                        const SemanticModel& semantics) {
-  std::vector<std::uint64_t> reference_offsets;
-  for (const AbiFieldLayout& field : layout.fields) {
-    if (types.at(field.type.value).kind == AbiTypeKind::kReference) {
-      reference_offsets.push_back(field.offset);
-    }
-  }
+AbiTypeDescriptor lower_type_descriptor(
+    const AbiClassLayout& layout, const SemanticSymbol& class_symbol,
+    std::vector<std::uint64_t> reference_offsets,
+    std::optional<FileId> parent_file, const FileSemantics& file,
+    const SemanticModel& semantics) {
   std::vector<AbiTypeDescriptor::InterfaceDispatch> interfaces;
   interfaces.reserve(file.interface_implementations.size());
   for (const InterfaceImplementation& implementation :
@@ -180,35 +267,52 @@ AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
                            const FileSemantics& file,
                            const SemanticModel& semantics) {
   const SemanticSymbol& symbol = semantics.symbol(callable.symbol);
+  const bool constructor = kind == AbiCallableKind::kConstructor;
+  const bool struct_owner = file.kind == FileTypeKind::kStruct;
+  const TypeId return_type = constructor ? file.type : symbol.type;
+  const TypeKind result_kind = semantics.type(return_type).kind;
+  const AbiReturnMode return_mode =
+      result_kind == TypeKind::kStruct ? AbiReturnMode::kIndirect
+      : result_kind == TypeKind::kVoid ? AbiReturnMode::kVoid
+                                       : AbiReturnMode::kDirect;
+  AbiReceiverMode receiver_mode = AbiReceiverMode::kNone;
   std::vector<AbiParameter> parameters;
-  parameters.reserve(
-      callable.parameters.size() +
-      (kind == AbiCallableKind::kFunction && !symbol.is_static ? 1U : 0U));
-  if (kind == AbiCallableKind::kFunction && !symbol.is_static) {
-    parameters.push_back(AbiParameter{AbiParameterKind::kReceiver,
-                                      file.self_symbol,
-                                      semantics.symbol(file.symbol).type});
+  parameters.reserve(callable.parameters.size() + 2);
+  if (return_mode == AbiReturnMode::kIndirect) {
+    parameters.push_back({AbiParameterKind::kResult, std::nullopt, return_type,
+                          AbiPassingMode::kResultPointer});
+  }
+  if (constructor && struct_owner) {
+    receiver_mode = AbiReceiverMode::kConstruction;
+  } else if (!constructor && !symbol.is_static) {
+    receiver_mode = struct_owner ? AbiReceiverMode::kReadOnlyValue
+                                 : AbiReceiverMode::kReference;
+    parameters.push_back({AbiParameterKind::kReceiver, file.self_symbol,
+                          file.type,
+                          struct_owner ? AbiPassingMode::kValuePointer
+                                       : AbiPassingMode::kDirect});
   }
   for (const SymbolId parameter : callable.parameters) {
-    parameters.push_back(AbiParameter{AbiParameterKind::kExplicit, parameter,
-                                      semantics.symbol(parameter).type});
+    const TypeId type = semantics.symbol(parameter).type;
+    parameters.push_back({AbiParameterKind::kExplicit, parameter, type,
+                          semantics.type(type).kind == TypeKind::kStruct
+                              ? AbiPassingMode::kValuePointer
+                              : AbiPassingMode::kDirect});
   }
-  const TypeId return_type = kind == AbiCallableKind::kConstructor
-                                 ? semantics.symbol(file.symbol).type
-                                 : symbol.type;
-  return AbiCallable{callable.symbol,
-                     kind,
-                     lower_linkage(symbol.visibility),
-                     AbiCallingConvention::kC,
-                     mangle_abi_symbol(symbol, semantics),
-                     kind == AbiCallableKind::kConstructor
-                         ? mangle_abi_constructor_initializer(symbol, semantics)
-                         : std::string{},
-                     return_type,
-                     std::move(parameters),
-                     kind == AbiCallableKind::kConstructor
-                         ? lower_linkage(symbol.visibility)
-                         : AbiLinkage::kInternal};
+  const bool initializer = constructor && !struct_owner;
+  return AbiCallable{
+      callable.symbol,
+      kind,
+      lower_linkage(symbol.visibility),
+      AbiCallingConvention::kC,
+      mangle_abi_symbol(symbol, semantics),
+      initializer ? mangle_abi_constructor_initializer(symbol, semantics)
+                  : std::string{},
+      return_type,
+      std::move(parameters),
+      initializer ? lower_linkage(symbol.visibility) : AbiLinkage::kInternal,
+      return_mode,
+      receiver_mode};
 }
 
 }  // namespace
@@ -234,8 +338,19 @@ std::string mangle_abi_constructor_initializer(const SemanticSymbol& symbol,
       symbol, semantics, CanonicalMemberKind::kConstructorInitializer));
 }
 
-AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
-                       TargetDataLayout target) {
+std::optional<AbiModule> lower_to_abi(const MirModule& mir,
+                                      const SemanticModel& semantics,
+                                      TargetDataLayout target,
+                                      DiagnosticEngine& diagnostics) {
+  const auto fail = [&](std::string message) -> std::optional<AbiModule> {
+    diagnostics.error(point_range(SourceLocation{"<abi>", 0, 1, 1}),
+                      std::move(message));
+    return std::nullopt;
+  };
+  if (!is_valid_data_layout(target) ||
+      target.pointer.size % target.pointer.alignment != 0) {
+    return fail("target data layout is invalid");
+  }
   AbiModule abi{std::move(target), {}, {}};
   abi.types.reserve(semantics.types().size());
   for (std::size_t index = 0; index < semantics.types().size(); ++index) {
@@ -243,54 +358,83 @@ AbiModule lower_to_abi(const MirModule& mir, const SemanticModel& semantics,
     abi.types.push_back(lower_type(type, semantics.type(type), abi.target));
   }
 
-  std::vector<std::optional<AbiClassLayout>> layouts(mir.files.size());
-  std::size_t remaining_layouts = mir.files.size();
-  while (remaining_layouts != 0) {
-    bool made_progress = false;
-    for (const MirFileClass& mir_file : mir.files) {
-      if (mir_file.file.value >= layouts.size() ||
-          layouts[mir_file.file.value]) {
-        continue;
-      }
-      const AbiClassLayout* base_layout = nullptr;
-      if (mir_file.base_file) {
-        if (mir_file.base_file->value >= layouts.size() ||
-            *mir_file.base_file == mir_file.file) {
-          continue;
-        }
-        const std::optional<AbiClassLayout>& candidate =
-            layouts[mir_file.base_file->value];
-        if (!candidate) {
-          continue;
-        }
-        base_layout = &*candidate;
-      }
-      layouts[mir_file.file.value] = lower_class_layout(
-          mir_file, semantics, abi.types, abi.target, base_layout);
-      --remaining_layouts;
-      made_progress = true;
+  // Kahn traversal avoids host recursion and repeatedly rescanning long chains.
+  std::vector<std::vector<std::size_t>> dependents(mir.files.size());
+  std::vector<std::size_t> pending(mir.files.size(), 0);
+  std::priority_queue<std::size_t, std::vector<std::size_t>, std::greater<>>
+      ready;
+  for (std::size_t index = 0; index < mir.files.size(); ++index) {
+    const MirFileClass& file = mir.files[index];
+    if (file.file != FileId{index} || index >= semantics.files().size()) {
+      return fail("file identity is invalid during ABI lowering");
     }
-    if (!made_progress) {
-      // Invalid hierarchies are rejected before ABI lowering. Keep this
-      // boundary total if a malformed MIR module reaches it regardless.
-      for (const MirFileClass& mir_file : mir.files) {
-        if (mir_file.file.value < layouts.size() &&
-            !layouts[mir_file.file.value]) {
-          layouts[mir_file.file.value] = lower_class_layout(
-              mir_file, semantics, abi.types, abi.target, nullptr);
-          --remaining_layouts;
-        }
+    std::vector<std::size_t> dependencies;
+    if (file.base_file) dependencies.push_back(file.base_file->value);
+    for (const MirField& field : file.fields) {
+      const SemanticSymbol& symbol = semantics.symbol(field.symbol);
+      if (symbol.is_static) continue;
+      const SemanticType& type = semantics.type(symbol.type);
+      if (type.kind == TypeKind::kStruct) {
+        if (!type.file) return fail("struct field has no nominal owner");
+        dependencies.push_back(type.file->value);
       }
     }
+    std::ranges::sort(dependencies);
+    dependencies.erase(std::unique(dependencies.begin(), dependencies.end()),
+                       dependencies.end());
+    pending[index] = dependencies.size();
+    for (const std::size_t dependency : dependencies) {
+      if (dependency >= mir.files.size()) {
+        return fail("layout dependency has no file declaration");
+      }
+      dependents[dependency].push_back(index);
+    }
+    if (dependencies.empty()) ready.push(index);
+  }
+  std::vector<std::optional<FileLayout>> layouts(mir.files.size());
+  std::size_t completed = 0;
+  std::size_t map_entries = 0;
+  while (!ready.empty()) {
+    const std::size_t index = ready.top();
+    ready.pop();
+    const MirFileClass& file = mir.files[index];
+    auto layout = lower_file_layout(file, semantics, abi.types, abi.target,
+                                    layouts, diagnostics);
+    if (!layout) return std::nullopt;
+    if (layout->references.size() > kMaxAggregateMapEntries - map_entries) {
+      diagnostics.error(
+          semantics.symbol(file.symbol).range,
+          "compilation exceeds the aggregate reference-map limit");
+      return std::nullopt;
+    }
+    map_entries += layout->references.size();
+    if (semantics.file(file.file).kind == FileTypeKind::kStruct) {
+      AbiTypeLayout& type = abi.types.at(semantics.file(file.file).type.value);
+      type.storage = {layout->storage.size, layout->storage.alignment};
+      type.reference_offsets = layout->references;
+    }
+    layouts[index] = std::move(layout);
+    ++completed;
+    for (const std::size_t dependent : dependents[index]) {
+      if (--pending[dependent] == 0) ready.push(dependent);
+    }
+  }
+  if (completed != mir.files.size()) {
+    return fail("inline layout dependency cycle");
   }
 
   abi.files.reserve(mir.files.size());
   for (const MirFileClass& mir_file : mir.files) {
     const FileSemantics& semantic_file = semantics.file(mir_file.file);
-    AbiClassLayout layout = std::move(*layouts.at(mir_file.file.value));
-    AbiTypeDescriptor type_descriptor = lower_type_descriptor(
-        layout, semantics.symbol(mir_file.symbol), abi.types,
-        mir_file.base_file, semantic_file, semantics);
+    FileLayout& computed = *layouts.at(mir_file.file.value);
+    AbiClassLayout layout = std::move(computed.storage);
+    std::optional<AbiTypeDescriptor> type_descriptor;
+    if (semantic_file.kind != FileTypeKind::kStruct) {
+      type_descriptor =
+          lower_type_descriptor(layout, semantics.symbol(mir_file.symbol),
+                                std::move(computed.references),
+                                mir_file.base_file, semantic_file, semantics);
+    }
     AbiFileClass file{mir_file.file,
                       mir_file.symbol,
                       mir_file.base_file,

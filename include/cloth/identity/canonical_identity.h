@@ -12,7 +12,7 @@
 
 namespace cloth {
 
-inline constexpr std::uint32_t kCompilerAbiVersion = 3;
+inline constexpr std::uint32_t kCompilerAbiVersion = 4;
 
 struct PackageIdentity {
   // Both fields are empty only for the distinct standalone compilation domain.
@@ -23,7 +23,7 @@ struct PackageIdentity {
                          const PackageIdentity&) = default;
 };
 
-enum class NominalKind { kClass, kInterface, kEnum };
+enum class NominalKind { kClass, kInterface, kEnum, kStruct };
 
 struct NominalIdentity {
   PackageIdentity package;

@@ -4,6 +4,8 @@
 
 cloth_add_unit_test(cloth_abi_tests abi_tests.cc)
 cloth_add_unit_test(cloth_enum_tests enum_tests.cc)
+cloth_add_unit_test(cloth_struct_tests struct_tests.cc)
+cloth_add_unit_test(cloth_aggregate_tests aggregate_tests.cc)
 cloth_add_unit_test(cloth_backend_tests backend_tests.cc)
 cloth_add_unit_test(cloth_identity_tests identity_tests.cc)
 cloth_add_unit_test(cloth_imported_package_tests imported_package_tests.cc)
@@ -25,5 +27,14 @@ target_include_directories(cloth_runtime_tests PRIVATE
 )
 cloth_enable_warnings(cloth_runtime_tests)
 add_test(NAME cloth_runtime_tests COMMAND cloth_runtime_tests)
+foreach(scenario IN ITEMS null zero alignment stride table count offset
+                          unaligned duplicate unsorted reference_alignment overflow negative)
+    add_test(NAME cloth_runtime_array_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=array"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
 
 cloth_finalize_tests(LABEL unit)

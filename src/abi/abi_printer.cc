@@ -49,13 +49,17 @@ void print_callable(const AbiCallable& callable, const SemanticModel& semantics,
       output << ", ";
     }
     const AbiParameter& parameter = callable.parameters[index];
+    if (parameter.kind == AbiParameterKind::kResult) {
+      output << "result:";
+    }
     if (parameter.kind == AbiParameterKind::kReceiver) {
       output << "receiver:";
     }
     output << semantics.type(parameter.type).name;
+    if (parameter.passing != AbiPassingMode::kDirect) output << "*";
   }
   output << ") -> " << semantics.type(callable.return_type).name << '\n';
-  if (callable.kind == AbiCallableKind::kConstructor) {
+  if (!callable.initializer_mangled_name.empty()) {
     output << "|  |- InitializerABI " << callable.initializer_mangled_name
            << "(receiver";
     for (const AbiParameter& parameter : callable.parameters) {
@@ -95,38 +99,45 @@ void print_abi_summary(const AbiModule& abi, const SemanticModel& semantics,
       }
       continue;
     }
-    output << "FileClass " << class_symbol.name;
+    output << (file.kind == FileTypeKind::kStruct ? "Struct " : "FileClass ")
+           << class_symbol.name;
     if (file.base_file) {
       output << " : "
              << semantics.symbol(semantics.file(*file.base_file).symbol).name;
     }
-    if (!file.type_descriptor.interfaces.empty()) {
+    if (file.type_descriptor && !file.type_descriptor->interfaces.empty()) {
       output << " is ";
       for (std::size_t index = 0;
-           index < file.type_descriptor.interfaces.size(); ++index) {
+           index < file.type_descriptor->interfaces.size(); ++index) {
         if (index != 0) {
           output << ", ";
         }
         const FileId interface_file =
-            file.type_descriptor.interfaces[index].interface_file;
+            file.type_descriptor->interfaces[index].interface_file;
         output << semantics.symbol(semantics.file(interface_file).symbol).name;
       }
     }
     output << " [size " << file.layout.size << ", align "
            << file.layout.alignment << ", header " << file.layout.header_size
            << ", references ";
-    if (file.type_descriptor.reference_offsets.empty()) {
+    const auto& references =
+        file.kind == FileTypeKind::kStruct
+            ? abi.types.at(class_symbol.type.value).reference_offsets
+            : file.type_descriptor->reference_offsets;
+    if (references.empty()) {
       output << "none";
     } else {
-      for (std::size_t index = 0;
-           index < file.type_descriptor.reference_offsets.size(); ++index) {
+      for (std::size_t index = 0; index < references.size(); ++index) {
         if (index != 0) {
           output << ',';
         }
-        output << file.type_descriptor.reference_offsets[index];
+        output << references[index];
       }
     }
-    output << ", virtuals " << file.type_descriptor.virtual_functions.size()
+    output << ", virtuals "
+           << (file.type_descriptor
+                   ? file.type_descriptor->virtual_functions.size()
+                   : 0)
            << (semantics.file(file.file).is_abstract ? ", abstract" : "")
            << (semantics.file(file.file).is_sealed ? ", sealed" : "") << "]\n";
     for (const MemberReference& member : file.member_order) {

@@ -1,0 +1,89 @@
+import Point;
+import Data;
+import Empty;
+import Holder;
+import Label;
+import Measure;
+import Maybe;
+import Packet;
+import Phi;
+import Projector;
+import Transform;
+
+static func Change(Packet value): Packet {
+  value.First.Code = 99;
+  value.Object.Text = "shared";
+  return value;
+}
+
+static func Replace(Holder holder): uint32 {
+  holder.Value = Packet("new");
+  return 5;
+}
+
+static func ReplaceElement(Packet[] values): uint32 {
+  values[0] = Packet("changed");
+  return 5;
+}
+
+static func Captured(Packet value, uint32 ignored): uint32 {
+  return value.First.Code;
+}
+
+static func Main() {
+  var point = Point(1, 2);
+  final Point fixed = point.Moved(3, 4);
+  Point[] values = [point, fixed];
+  values[0].X++;
+  for (var value in values) {
+    println(value);
+    println(value::typeName);
+  }
+  println(point == fixed);
+  println(Data(100).GetCountTo());
+  println(Empty() == Empty());
+  var measurement = Measure(0.0 / 0.0);
+  println(measurement == measurement);
+
+  Transform transform = Projector();
+  println(transform.Apply(point).X);
+  println(point.X);
+
+  var original = Packet("live");
+  var copy = Change(original);
+  println(original.First.Code);
+  println(copy.First.Code);
+  println(original.Object.Text);
+  println(copy.Links[0].Text);
+  println(original.CopyAgain() == original);
+  println(Label("same") == Label("same"));
+
+  var holder = Holder();
+  println(holder.Value.First.Text);
+  holder.Value.First.Code += Replace(holder);
+  println(holder.Value.First.Text);
+  println(holder.Value.First.Code);
+  println(holder.Value.Observe(Replace(holder)));
+  println(holder.Value.First.Code);
+
+  Packet[] packets = [original, copy];
+  packets[0].First.Code += ReplaceElement(packets);
+  println(packets[0].First.Text);
+  println(packets[0].First.Code);
+  // Keep the captured old array alive after replacing the source binding.
+  packets[0].First.Code = (packets = [Packet("replacement")])[0].First.Code;
+  for (var item in packets) { item.First.Code = 123; }
+  println(packets[0].First.Code);
+  println(original.First.Text);
+  println(copy.Last);
+  println(Phi.Swap(Packet("left"), Packet("right"), 3).First.Text);
+  println(Phi.Swap(Packet("left"), Packet("right"), 2).First.Text);
+  println(Maybe(null) == Maybe(null));
+  println(Maybe(null) == Maybe("text"));
+  println(Maybe("same") == Maybe("same"));
+  holder.Value.First.Code = 33;
+  println(Captured(holder.Value, Replace(holder)));
+  int32 index = 0;
+  packets[index++].First.Code++;
+  println(index);
+}

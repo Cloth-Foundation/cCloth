@@ -63,6 +63,25 @@ struct MirStoreMemberInstruction {
   MirValueId value;
 };
 
+// A compiler-only storage recipe, never a Cloth value or escaping pointer.
+// Exactly one root is present. An index selects an element of an object root;
+// subsequent fields project through inline struct storage only.
+struct MirStoragePath {
+  std::optional<SymbolId> symbol;
+  std::optional<MirValueId> object;
+  std::optional<MirValueId> index;
+  std::vector<SymbolId> fields;
+};
+
+struct MirLoadStorageInstruction {
+  MirStoragePath path;
+};
+
+struct MirStoreStorageInstruction {
+  MirStoragePath path;
+  MirValueId value;
+};
+
 struct MirArrayLiteralInstruction {
   TypeId element_type;
   std::vector<MirValueId> elements;
@@ -171,6 +190,7 @@ struct MirCallInstruction {
   std::vector<MirValueId> arguments;
   std::optional<FileId> interface_file{};
   std::optional<std::size_t> interface_slot{};
+  StructReceiverMode struct_receiver{StructReceiverMode::kNone};
 };
 
 struct MirInitializeFieldsInstruction {};
@@ -188,6 +208,7 @@ using MirInstructionData = std::variant<
     MirInvalidInstruction, MirLiteralInstruction, MirLoadSymbolInstruction,
     MirDeclareLocalInstruction, MirStoreSymbolInstruction,
     MirLoadMemberInstruction, MirStoreMemberInstruction,
+    MirLoadStorageInstruction, MirStoreStorageInstruction,
     MirArrayLiteralInstruction, MirArrayLoadInstruction,
     MirArrayStoreInstruction, MirArrayLengthInstruction,
     MirStringMetaInstruction, MirObjectMetaInstruction,
@@ -250,6 +271,7 @@ struct MirCallable {
   SymbolId symbol;
   std::vector<SymbolId> parameters;
   MirBody body;
+  StructReceiverMode struct_receiver{StructReceiverMode::kNone};
 };
 
 struct MirFileClass {

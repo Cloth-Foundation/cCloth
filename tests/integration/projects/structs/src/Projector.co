@@ -1,0 +1,11 @@
+import Point;
+import Transform;
+
+class is Transform {
+  Projector() {}
+
+  func Apply(Point value): Point {
+    value.X += 5;
+    return value;
+  }
+}

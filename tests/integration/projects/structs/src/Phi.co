@@ -1,0 +1,8 @@
+static func Swap(Packet first, Packet second, int32 times): Packet {
+  for (int32 i = 0; i < times; i++) {
+    var temporary = first;
+    first = second;
+    second = temporary;
+  }
+  return first;
+}

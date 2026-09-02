@@ -1,0 +1,20 @@
+import Box;
+import Label;
+
+struct {
+  Label First;
+  string Last;
+  Box Object;
+  Box[] Links;
+
+  Packet(string text) {
+    First = Label(text);
+    Last = text + "!";
+    Object = Box(text + "?");
+    Links = [Object];
+  }
+
+  func Observe(uint32 ignored): uint32 { return First.Code; }
+  func Copy(): Packet { return self; }
+  func CopyAgain(): Packet { return Copy(); }
+}

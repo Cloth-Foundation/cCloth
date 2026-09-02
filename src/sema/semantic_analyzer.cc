@@ -153,6 +153,7 @@ class SemanticAnalyzer {
     register_imports();
     register_type_relationships();
     register_members();
+    validate_struct_layout_cycles();
     validate_interface_contracts();
     validate_overrides();
     validate_interface_conformance();
@@ -189,7 +190,8 @@ class SemanticAnalyzer {
       if (existing_type &&
           model_.type(*existing_type).kind != TypeKind::kFileClass &&
           model_.type(*existing_type).kind != TypeKind::kInterface &&
-          model_.type(*existing_type).kind != TypeKind::kEnum) {
+          model_.type(*existing_type).kind != TypeKind::kEnum &&
+          model_.type(*existing_type).kind != TypeKind::kStruct) {
         diagnostics_.error(
             point_range(syntax.range.begin),
             "file class name '" + syntax.name + "' conflicts with a core type");
@@ -199,14 +201,16 @@ class SemanticAnalyzer {
       TypeId type = model_.error_type();
       if (identity_valid) {
         const TypeKind type_kind =
-            syntax.kind == FileTypeKind::kEnum        ? TypeKind::kEnum
+            syntax.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
+            : syntax.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
             : syntax.kind == FileTypeKind::kInterface ? TypeKind::kInterface
                                                       : TypeKind::kFileClass;
         type = model_.add_type(
             SemanticType{type_kind, syntax.qualified_name, file_id});
       }
       const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
-          syntax.kind == FileTypeKind::kEnum        ? SymbolKind::kEnum
+          syntax.kind == FileTypeKind::kStruct      ? SymbolKind::kStruct
+          : syntax.kind == FileTypeKind::kEnum      ? SymbolKind::kEnum
           : syntax.kind == FileTypeKind::kInterface ? SymbolKind::kInterface
                                                     : SymbolKind::kFileClass,
           syntax.qualified_name,
@@ -245,7 +249,8 @@ class SemanticAnalyzer {
       file.identity = NominalIdentity{
           PackageIdentity{syntax.owning_package, syntax.owning_package_version},
           syntax.package_name, syntax.name,
-          syntax.kind == FileTypeKind::kEnum        ? NominalKind::kEnum
+          syntax.kind == FileTypeKind::kStruct      ? NominalKind::kStruct
+          : syntax.kind == FileTypeKind::kEnum      ? NominalKind::kEnum
           : syntax.kind == FileTypeKind::kInterface ? NominalKind::kInterface
                                                     : NominalKind::kClass};
       file.member_order = syntax.member_order;
@@ -259,6 +264,10 @@ class SemanticAnalyzer {
         file.is_valid = false;
       }
       static_cast<void>(model_.add_file(std::move(file)));
+      if (syntax.kind == FileTypeKind::kStruct && identity_valid) {
+        model_.add_intrinsic("print", {type}, IntrinsicKind::kPrintStruct);
+        model_.add_intrinsic("println", {type}, IntrinsicKind::kPrintStruct);
+      }
       if (syntax.kind == FileTypeKind::kEnum && identity_valid) {
         register_enum_output(type);
         for (const EnumCaseDecl& enum_case : syntax.enum_cases) {
@@ -294,7 +303,8 @@ class SemanticAnalyzer {
         }
         const FileId file_id{model_.files().size()};
         const TypeKind type_kind =
-            imported.kind == FileTypeKind::kEnum        ? TypeKind::kEnum
+            imported.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
+            : imported.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
             : imported.kind == FileTypeKind::kInterface ? TypeKind::kInterface
                                                         : TypeKind::kFileClass;
         const std::string qualified_name =
@@ -305,7 +315,8 @@ class SemanticAnalyzer {
             model_.add_type(SemanticType{type_kind, qualified_name, file_id});
         const SourceRange range = imported_range(imported.location);
         const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
-            imported.kind == FileTypeKind::kEnum ? SymbolKind::kEnum
+            imported.kind == FileTypeKind::kStruct ? SymbolKind::kStruct
+            : imported.kind == FileTypeKind::kEnum ? SymbolKind::kEnum
             : imported.kind == FileTypeKind::kInterface
                 ? SymbolKind::kInterface
                 : SymbolKind::kFileClass,
@@ -330,6 +341,10 @@ class SemanticAnalyzer {
         file.interface_id = imported.interface_id;
         file.identity = imported.nominal_identity;
         static_cast<void>(model_.add_file(std::move(file)));
+        if (imported.kind == FileTypeKind::kStruct) {
+          model_.add_intrinsic("print", {type}, IntrinsicKind::kPrintStruct);
+          model_.add_intrinsic("println", {type}, IntrinsicKind::kPrintStruct);
+        }
         if (imported.kind == FileTypeKind::kEnum) {
           register_enum_output(type);
           for (const ImportedEnumCase& enum_case : imported.enum_cases) {
@@ -674,7 +689,8 @@ class SemanticAnalyzer {
     if (const std::optional<TypeId> core = model_.find_type(name);
         core && model_.type(*core).kind != TypeKind::kFileClass &&
         model_.type(*core).kind != TypeKind::kInterface &&
-        model_.type(*core).kind != TypeKind::kEnum) {
+        model_.type(*core).kind != TypeKind::kEnum &&
+        model_.type(*core).kind != TypeKind::kStruct) {
       diagnostics_.error(range, "import name '" + std::string{name} +
                                     "' conflicts with a core type");
       model_.mutable_file(current_file).is_valid = false;
@@ -712,7 +728,7 @@ class SemanticAnalyzer {
           const SemanticType& base = model_.type(base_type);
           if (syntax.kind != FileTypeKind::kClass) {
             diagnostics_.error(syntax.base_class->range,
-                               "interfaces cannot inherit a class");
+                               "only classes can inherit a class");
             model_.mutable_file(file_id).is_valid = false;
           } else if (base.kind != TypeKind::kFileClass || !base.file) {
             diagnostics_.error(
@@ -740,6 +756,12 @@ class SemanticAnalyzer {
       }
 
       for (const TypeSyntax& interface_syntax : syntax.interfaces) {
+        if (syntax.kind == FileTypeKind::kStruct) {
+          diagnostics_.error(interface_syntax.range,
+                             "structs cannot implement interfaces");
+          model_.mutable_file(file_id).is_valid = false;
+          continue;
+        }
         const TypeId type = resolve_type(interface_syntax, file_id);
         if (type == model_.error_type()) {
           continue;
@@ -904,6 +926,63 @@ class SemanticAnalyzer {
     }
   }
 
+  // Only inline struct fields add layout dependencies. Iterative DFS keeps
+  // source-controlled nesting off the compiler's native call stack.
+  void validate_struct_layout_cycles() {
+    struct Frame {
+      FileId file;
+      std::size_t next_field{0};
+      std::optional<SymbolId> incoming{};
+    };
+    std::vector<unsigned char> state(model_.files().size(), 0);
+    std::vector<Frame> path;
+    for (std::size_t index = 0; index < model_.files().size(); ++index) {
+      if (state[index] != 0 ||
+          model_.file(FileId{index}).kind != FileTypeKind::kStruct) {
+        continue;
+      }
+      path.push_back(Frame{FileId{index}});
+      state[index] = 1;
+      while (!path.empty()) {
+        Frame& frame = path.back();
+        const FileSemantics& file = model_.file(frame.file);
+        if (frame.next_field == file.fields.size()) {
+          state[frame.file.value] = 2;
+          path.pop_back();
+          continue;
+        }
+        const SymbolId field_id = file.fields[frame.next_field++];
+        const SemanticSymbol& field = model_.symbol(field_id);
+        const SemanticType& type = model_.type(field.type);
+        if (field.is_static || type.kind != TypeKind::kStruct || !type.file) {
+          continue;
+        }
+        if (state[type.file->value] == 0) {
+          state[type.file->value] = 1;
+          path.push_back(Frame{*type.file, 0, field_id});
+        } else if (state[type.file->value] == 1) {
+          const auto start = std::ranges::find(path, *type.file, &Frame::file);
+          std::string cycle;
+          for (auto current = start; current != path.end(); ++current) {
+            const SymbolId edge =
+                current + 1 == path.end() ? field_id : *(current + 1)->incoming;
+            const SemanticSymbol& member = model_.symbol(edge);
+            cycle += model_.type(model_.file(current->file).type).name + "." +
+                     member.name + " -> ";
+            model_.mutable_file(current->file).is_valid = false;
+          }
+          cycle += type.name;
+          diagnostics_.error(field.range,
+                             "inline struct layout cycle: " + cycle);
+          for (auto current = start + 1; current != path.end(); ++current) {
+            diagnostics_.note(model_.symbol(*current->incoming).range,
+                              "embedded field participates in this cycle");
+          }
+        }
+      }
+    }
+  }
+
   void register_field(FileId file_id, std::size_t index) {
     const FieldDecl& field = files_[file_id.value]->fields.at(index);
     const TypeId type = resolve_type(field.type, file_id);
@@ -944,6 +1023,14 @@ class SemanticAnalyzer {
     model_.mutable_symbol(symbol).is_override = function.is_override;
     model_.mutable_symbol(symbol).is_abstract = function.is_abstract;
     model_.mutable_symbol(symbol).is_final = function.is_final;
+    if (files_[file_id.value]->kind == FileTypeKind::kStruct &&
+        (function.is_abstract || function.is_override || function.is_final)) {
+      diagnostics_.error(
+          function.range,
+          "struct functions cannot be abstract, override, or final");
+      model_.mutable_symbol(symbol).is_valid = false;
+      model_.mutable_file(file_id).is_valid = false;
+    }
     if (function.is_final && !function.is_override) {
       diagnostics_.error(function.range,
                          "final function '" + std::string{function.name} +
@@ -982,7 +1069,8 @@ class SemanticAnalyzer {
         model_.mutable_file(file_id).is_valid = false;
       }
     }
-    if (files_[file_id.value]->kind == FileTypeKind::kClass &&
+    if ((files_[file_id.value]->kind == FileTypeKind::kClass ||
+         files_[file_id.value]->kind == FileTypeKind::kStruct) &&
         function.name == "Main" && !function.is_static) {
       diagnostics_.error(function.range,
                          "entry point 'Main' must be declared static");
@@ -1115,7 +1203,7 @@ class SemanticAnalyzer {
           continue;
         }
         const FileId file_id{index};
-        if (model_.file(file_id).kind == FileTypeKind::kInterface) {
+        if (model_.file(file_id).kind != FileTypeKind::kClass) {
           complete[index] = true;
           --remaining;
           made_progress = true;
@@ -1371,7 +1459,8 @@ class SemanticAnalyzer {
     if (const std::optional<TypeId> core = model_.find_type(syntax.name);
         core && model_.type(*core).kind != TypeKind::kFileClass &&
         model_.type(*core).kind != TypeKind::kInterface &&
-        model_.type(*core).kind != TypeKind::kEnum) {
+        model_.type(*core).kind != TypeKind::kEnum &&
+        model_.type(*core).kind != TypeKind::kStruct) {
       if (*core == model_.void_type()) {
         if (syntax.is_array) {
           diagnostics_.error(syntax.range,
@@ -1821,10 +1910,12 @@ class SemanticAnalyzer {
         type = initializer->type;
       }
       if (!initializer && !local->is_final &&
-          model_.type(type).kind == TypeKind::kEnum) {
-        diagnostics_.error(statement.range, "enum local '" +
-                                                std::string{local->name} +
-                                                "' requires an initializer");
+          (model_.type(type).kind == TypeKind::kEnum ||
+           model_.type(type).kind == TypeKind::kStruct)) {
+        diagnostics_.error(statement.range,
+                           std::string{type_kind_name(model_.type(type).kind)} +
+                               " local '" + std::string{local->name} +
+                               "' requires an initializer");
       }
       if (local->is_final && !initializer) {
         diagnostics_.error(statement.range, "final local '" +
@@ -2121,9 +2212,13 @@ class SemanticAnalyzer {
             range, "cannot use 'self' in a base constructor initializer");
         return ExpressionState{model_.error_type()};
       }
-      const ValueCategory category = symbol.kind == SymbolKind::kSelf
-                                         ? ValueCategory::kValue
-                                         : ValueCategory::kMutableLocation;
+      ValueCategory category = ValueCategory::kMutableLocation;
+      if (symbol.kind == SymbolKind::kSelf) {
+        category = self_category();
+      } else if (symbol.is_final &&
+                 model_.type(symbol.type).kind == TypeKind::kStruct) {
+        category = ValueCategory::kReadOnlyLocation;
+      }
       return ExpressionState{
           narrowed_type(*local).value_or(symbol.type), category, *local, {}};
     }
@@ -2143,8 +2238,10 @@ class SemanticAnalyzer {
                                         "' is unavailable in a static context");
           return ExpressionState{model_.error_type()};
         }
-        return ExpressionState{
-            first.type, ValueCategory::kMutableLocation, members.front(), {}};
+        return ExpressionState{first.type,
+                               field_category(first, self_category()),
+                               members.front(),
+                               {}};
       }
       return ExpressionState{model_.error_type(),
                              ValueCategory::kCallable,
@@ -2716,9 +2813,17 @@ class SemanticAnalyzer {
         assignment.value,
         is_shift_assignment ? std::nullopt : std::optional{target.type});
     if (target.type != model_.error_type() &&
-        target.category != ValueCategory::kMutableLocation) {
+        target.category != ValueCategory::kMutableLocation &&
+        !(target.symbol && assignment.operation == TokenKind::kEqual &&
+          can_initialize_final_field(assignment.target, *target.symbol))) {
       diagnostics_.error(expression_range(assignment.target),
                          "assignment target is not mutable");
+    }
+    if (target.symbol &&
+        model_.symbol(*target.symbol).kind == SymbolKind::kSelf) {
+      diagnostics_.error(
+          expression_range(assignment.target),
+          "cannot replace 'self'; initialize its fields instead");
     }
     if (target.symbol && model_.symbol(*target.symbol).is_final &&
         (assignment.operation != TokenKind::kEqual ||
@@ -3039,6 +3144,33 @@ class SemanticAnalyzer {
     }
   }
 
+  ValueCategory self_category() const {
+    if (model_.file(current_file_).kind != FileTypeKind::kStruct) {
+      return ValueCategory::kValue;
+    }
+    return current_callable_kind_ == SymbolKind::kConstructor
+               ? ValueCategory::kMutableLocation
+               : ValueCategory::kReadOnlyLocation;
+  }
+
+  ValueCategory field_category(const SemanticSymbol& field,
+                               ValueCategory receiver) const {
+    // A final aggregate is read-only even within a constructor: only direct
+    // whole-field initialization is allowed, not writes through its subfields.
+    if (field.is_final && model_.type(field.type).kind == TypeKind::kStruct) {
+      return ValueCategory::kReadOnlyLocation;
+    }
+    if (!field.is_static && field.file &&
+        model_.file(*field.file).kind == FileTypeKind::kStruct) {
+      return receiver == ValueCategory::kMutableLocation ||
+                     receiver == ValueCategory::kReadOnlyLocation
+                 ? receiver
+                 : ValueCategory::kValue;
+    }
+    // A managed reference breaks the inline read-only path.
+    return ValueCategory::kMutableLocation;
+  }
+
   bool can_initialize_final_field(ExpressionId target, SymbolId symbol) const {
     const SemanticSymbol& target_symbol = model_.symbol(symbol);
     return current_callable_kind_ == SymbolKind::kConstructor &&
@@ -3122,7 +3254,8 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     if ((object_type.kind != TypeKind::kFileClass &&
-         object_type.kind != TypeKind::kInterface) ||
+         object_type.kind != TypeKind::kInterface &&
+         object_type.kind != TypeKind::kStruct) ||
         !object_type.file) {
       diagnostics_.error(
           range, "type '" + object_type.name + "' has no Cloth members");
@@ -3163,8 +3296,10 @@ class SemanticAnalyzer {
                            "field '" + first.name + "' requires an instance");
         return ExpressionState{model_.error_type()};
       }
-      return ExpressionState{
-          first.type, ValueCategory::kMutableLocation, members.front(), {}};
+      return ExpressionState{first.type,
+                             field_category(first, object.category),
+                             members.front(),
+                             {}};
     }
     ExpressionState state{
         model_.error_type(), ValueCategory::kCallable, {}, std::move(members)};
@@ -3189,7 +3324,8 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     if (meta.meta == "typeName" &&
-        (is_reference(object.type) || object_type.kind == TypeKind::kEnum)) {
+        (is_reference(object.type) || object_type.kind == TypeKind::kEnum ||
+         object_type.kind == TypeKind::kStruct)) {
       return ExpressionState{model_.string_type(), ValueCategory::kValue};
     }
     if (is_integer(object.type) &&
@@ -3417,7 +3553,9 @@ class SemanticAnalyzer {
     std::vector<SymbolId> candidates = callee.candidates;
     if (callee.category == ValueCategory::kType) {
       const SemanticType& type = model_.type(callee.type);
-      if (type.kind == TypeKind::kFileClass && type.file) {
+      if ((type.kind == TypeKind::kFileClass ||
+           type.kind == TypeKind::kStruct) &&
+          type.file) {
         const FileSemantics& target = model_.file(*type.file);
         if (target.is_abstract) {
           diagnostics_.error(range, "abstract file class '" + type.name +

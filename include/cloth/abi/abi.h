@@ -6,6 +6,7 @@
 #define CLOTH_ABI_ABI_H_
 
 #include "cloth/ast/ast.h"
+#include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/mir/mir.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/target/data_layout.h"
@@ -13,6 +14,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cloth {
@@ -23,6 +25,7 @@ enum class AbiTypeKind {
   kInteger,
   kFloat,
   kReference,
+  kAggregate,
 };
 
 struct AbiTypeLayout {
@@ -30,6 +33,7 @@ struct AbiTypeLayout {
   AbiTypeKind kind;
   std::uint32_t bit_width;
   SizeAlignment storage;
+  std::vector<std::uint64_t> reference_offsets{};
 
   friend bool operator==(const AbiTypeLayout&, const AbiTypeLayout&) = default;
 };
@@ -107,14 +111,24 @@ enum class AbiCallingConvention {
 };
 
 enum class AbiParameterKind {
+  kResult,
   kReceiver,
   kExplicit,
 };
 
+enum class AbiPassingMode { kDirect, kValuePointer, kResultPointer };
+enum class AbiReturnMode { kVoid, kDirect, kIndirect };
+enum class AbiReceiverMode { kNone, kReference, kReadOnlyValue, kConstruction };
+
+[[nodiscard]] std::string_view abi_passing_mode_name(AbiPassingMode mode);
+[[nodiscard]] std::string_view abi_return_mode_name(AbiReturnMode mode);
+[[nodiscard]] std::string_view abi_receiver_mode_name(AbiReceiverMode mode);
+
 struct AbiParameter {
   AbiParameterKind kind;
-  SymbolId symbol;
+  std::optional<SymbolId> symbol;
   TypeId type;
+  AbiPassingMode passing{AbiPassingMode::kDirect};
 
   friend bool operator==(const AbiParameter&, const AbiParameter&) = default;
 };
@@ -129,6 +143,8 @@ struct AbiCallable {
   TypeId return_type;
   std::vector<AbiParameter> parameters;
   AbiLinkage initializer_linkage{AbiLinkage::kInternal};
+  AbiReturnMode return_mode{AbiReturnMode::kDirect};
+  AbiReceiverMode receiver_mode{AbiReceiverMode::kNone};
 
   friend bool operator==(const AbiCallable&, const AbiCallable&) = default;
 };
@@ -138,7 +154,7 @@ struct AbiFileClass {
   SymbolId symbol;
   std::optional<FileId> base_file;
   AbiClassLayout layout;
-  AbiTypeDescriptor type_descriptor;
+  std::optional<AbiTypeDescriptor> type_descriptor;
   std::vector<AbiStaticField> static_fields;
   std::vector<AbiCallable> functions;
   std::vector<AbiCallable> constructors;
@@ -156,9 +172,9 @@ struct AbiModule {
   friend bool operator==(const AbiModule&, const AbiModule&) = default;
 };
 
-[[nodiscard]] AbiModule lower_to_abi(const MirModule& mir,
-                                     const SemanticModel& semantics,
-                                     TargetDataLayout target);
+[[nodiscard]] std::optional<AbiModule> lower_to_abi(
+    const MirModule& mir, const SemanticModel& semantics,
+    TargetDataLayout target, DiagnosticEngine& diagnostics);
 
 [[nodiscard]] std::string mangle_abi_symbol(const SemanticSymbol& symbol,
                                             const SemanticModel& semantics);

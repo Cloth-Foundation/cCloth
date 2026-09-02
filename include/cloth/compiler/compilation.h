@@ -33,6 +33,13 @@ struct CompilationDependency {
   std::string target;
 };
 
+struct FrontendResult {
+  SemanticModel semantics;
+  HirModule hir;
+  ControlFlowAnalysis control_flow;
+  bool is_valid;
+};
+
 struct CompilationResult {
   SemanticModel semantics;
   HirModule hir;
@@ -57,9 +64,10 @@ class Compilation {
                           std::string package_version);
   void add_imported_package(ImportedPackageView package);
   // Source ranges in the result refer to source storage owned here.
+  [[nodiscard]] FrontendResult analyze_frontend(DiagnosticEngine& diagnostics);
   [[nodiscard]] CompilationResult analyze(DiagnosticEngine& diagnostics);
 
-  // Token and syntax access is available after analyze().
+  // Token and syntax access is available after either analysis entry point.
   [[nodiscard]] std::size_t source_count() const noexcept;
   [[nodiscard]] const SourceFile& source(std::size_t index) const;
   [[nodiscard]] std::span<const Token> tokens(std::size_t index) const;

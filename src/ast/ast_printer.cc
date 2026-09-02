@@ -47,7 +47,8 @@ void print_validity(bool is_valid, std::ostream& output) {
 }  // namespace
 
 void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
-  output << (file_class.kind == FileTypeKind::kEnum        ? "Enum "
+  output << (file_class.kind == FileTypeKind::kStruct      ? "Struct "
+             : file_class.kind == FileTypeKind::kEnum      ? "Enum "
              : file_class.kind == FileTypeKind::kInterface ? "Interface "
                                                            : "FileClass ")
          << file_class.qualified_name;

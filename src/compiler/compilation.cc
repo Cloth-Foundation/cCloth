@@ -390,7 +390,18 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
   }
 }
 
-CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
+FrontendResult Compilation::analyze_frontend(DiagnosticEngine& diagnostics) {
+  std::vector<const ImportedPackageView*> imported_views;
+  for (const auto& package : imported_packages_)
+    imported_views.push_back(&package);
+  const auto import_issues = verify_imported_package_closure(imported_views);
+  if (!import_issues.empty()) {
+    for (const auto& issue : import_issues) {
+      diagnostics.error(SourceLocation{"<artifact>", 0, 1, 1},
+                        issue.record + ": " + issue.message);
+    }
+    return FrontendResult{SemanticModel{}, {}, {}, false};
+  }
   prepare_source_graph(diagnostics);
 
   std::vector<const FileClassDecl*> files;
@@ -402,20 +413,41 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
   SemanticAnalysisResult semantic_result =
       analyze_semantics(files, diagnostics, imported_packages_);
   HirModule hir = lower_to_hir(files, semantic_result.model);
-  const bool hir_is_valid = verify_hir(hir, semantic_result.model, diagnostics);
+  const bool contains_structs = std::ranges::any_of(
+      semantic_result.model.files(), [](const FileSemantics& file) {
+        return file.kind == FileTypeKind::kStruct;
+      });
+  const bool hir_is_valid = (semantic_result.is_valid || !contains_structs) &&
+                            verify_hir(hir, semantic_result.model, diagnostics);
   ControlFlowAnalysis control_flow;
+  if (hir_is_valid) {
+    control_flow =
+        analyze_control_flow(hir, semantic_result.model, diagnostics);
+  }
+  const bool is_valid =
+      semantic_result.is_valid && hir_is_valid && !diagnostics.has_errors();
+  return FrontendResult{std::move(semantic_result.model), std::move(hir),
+                        std::move(control_flow), is_valid};
+}
+
+CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
+  FrontendResult frontend = analyze_frontend(diagnostics);
   MirModule mir;
   AbiModule abi{target_, {}, {}};
   bool mir_is_valid = false;
   bool abi_is_valid = false;
-  if (hir_is_valid) {
-    control_flow =
-        analyze_control_flow(hir, semantic_result.model, diagnostics);
-    mir = lower_to_mir(hir, semantic_result.model);
+  const bool has_structs = std::ranges::any_of(
+      frontend.semantics.files(), [](const FileSemantics& file) {
+        return file.kind == FileTypeKind::kStruct;
+      });
+  if (frontend.is_valid ||
+      (!has_structs &&
+       verify_hir(frontend.hir, frontend.semantics, diagnostics))) {
+    mir = lower_to_mir(frontend.hir, frontend.semantics);
     for (std::size_t index = mir.files.size();
-         index < semantic_result.model.files().size(); ++index) {
+         index < frontend.semantics.files().size(); ++index) {
       const FileId file_id{index};
-      const FileSemantics& semantic_file = semantic_result.model.file(file_id);
+      const FileSemantics& semantic_file = frontend.semantics.file(file_id);
       MirFileClass imported{file_id,
                             semantic_file.symbol,
                             semantic_file.base_file,
@@ -432,28 +464,37 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
                                      std::vector<MirCallable>& output) {
         output.reserve(symbols.size());
         for (const SymbolId symbol : symbols) {
-          const SemanticSymbol& semantic = semantic_result.model.symbol(symbol);
-          output.push_back(
-              MirCallable{symbol, semantic.parameter_symbols,
-                          MirBody{semantic.range, MirBlockId{0}, {}, 0}});
+          const SemanticSymbol& semantic = frontend.semantics.symbol(symbol);
+          output.push_back(MirCallable{
+              symbol, semantic.parameter_symbols,
+              MirBody{semantic.range, MirBlockId{0}, {}, 0},
+              semantic_file.kind != FileTypeKind::kStruct
+                  ? StructReceiverMode::kNone
+              : semantic.kind == SymbolKind::kConstructor
+                  ? StructReceiverMode::kConstruction
+              : semantic.is_static ? StructReceiverMode::kNone
+                                   : StructReceiverMode::kReadOnlyValue});
         }
       };
       add_callables(semantic_file.functions, imported.functions);
       add_callables(semantic_file.constructors, imported.constructors);
       mir.files.push_back(std::move(imported));
     }
-    mir_is_valid = verify_mir(mir, semantic_result.model, diagnostics);
+    mir_is_valid = verify_mir(mir, frontend.semantics, diagnostics);
     if (mir_is_valid) {
-      abi = lower_to_abi(mir, semantic_result.model, target_);
-      abi_is_valid = verify_abi(abi, mir, semantic_result.model, diagnostics);
+      auto lowered =
+          lower_to_abi(mir, frontend.semantics, target_, diagnostics);
+      if (lowered) {
+        abi = std::move(*lowered);
+        abi_is_valid = verify_abi(abi, mir, frontend.semantics, diagnostics);
+      }
     }
   }
-  const bool is_valid = !diagnostics.has_errors() && hir_is_valid &&
-                        mir_is_valid && abi_is_valid &&
-                        semantic_result.is_valid;
-  return CompilationResult{std::move(semantic_result.model),
-                           std::move(hir),
-                           std::move(control_flow),
+  const bool is_valid = !diagnostics.has_errors() && frontend.is_valid &&
+                        mir_is_valid && abi_is_valid;
+  return CompilationResult{std::move(frontend.semantics),
+                           std::move(frontend.hir),
+                           std::move(frontend.control_flow),
                            std::move(mir),
                            std::move(abi),
                            is_valid};

@@ -41,8 +41,9 @@ opaque to generated code.
 ## Control flow and expressions
 
 Each MIR basic block becomes one LLVM basic block. Jumps, branches, returns,
-and unreachable terminators lower directly. MIR phi values remain LLVM phi
-instructions, preserving `&&` and `||` short-circuit behavior.
+and unreachable terminators lower directly. Scalar MIR phi values remain LLVM phi
+instructions, preserving `&&` and `||` short-circuit behavior. Aggregate phis use
+two-phase copies on split incoming edges to preserve simultaneous assignment.
 
 Integer operations select signed or unsigned division, remainder, and
 comparison from the semantic operand type. Floating-point operations use LLVM
@@ -60,7 +61,7 @@ zero.
 Instance functions receive the Stage 4 receiver slot followed by explicit
 parameters. Instance calls pass their receiver, and unqualified instance calls
 forward the current receiver. Static functions and allocating constructor calls
-have no receiver argument; constructors return the allocated object reference.
+have no receiver argument; class constructors return the allocated object reference.
 The constructor initializer instead receives the existing object as
 its leading `self` argument and returns `void`.
 
@@ -71,7 +72,7 @@ Each field initializer becomes an internal LLVM helper taking the new object as
 its receiver. An allocating constructor entry allocates the verified
 most-derived class size, installs that class's descriptor, executes the
 constructor MIR, and returns the object. Its LLVM linkage follows the
-constructor declaration's capitalization. Every constructor also has an
+constructor declaration's capitalization. Every class constructor also has an
 initializer entry that executes the same MIR on an incoming `self` without
 allocating. Accessible constructor initializers have external linkage for base
 calls across packages; private constructor initializers remain internal. A
@@ -79,12 +80,11 @@ derived constructor invokes the selected accessible base initializer first;
 the MIR field marker then invokes only the derived class's local field helpers
 in declaration order before its body continues.
 
-Class descriptors use their ABI-3 canonical external symbols rather than local
+Class descriptors use their ABI-4 canonical external symbols rather than local
 file indices. The internal package selector emits only the selected package's
 definitions and declares dependency descriptors and accessible members. It
-rejects entry-wrapper generation in package modules. This currently consumes
-verified whole-project representations; artifact-based input loading and the
-public compile/link protocol are still pending. See
+rejects entry-wrapper generation in package modules. This consumes verified source and/or source-free artifact declarations through
+the shared compile/link protocol. See
 [canonical identity](canonical_identity.md).
 
 ## Enum lowering
@@ -229,3 +229,21 @@ Stage 5.0 itself does not define optimization pipelines, debug information, or
 exception handling. Stage 13 defines the collector safepoint and root-liveness
 contract. Stage 6.0 supplies the runtime definitions and external native
 object/link pipeline described in [native_runtime.md](native_runtime.md).
+
+
+## Aggregate lowering
+
+A struct SSA value is represented internally by an independently owned aligned
+byte buffer, not a managed object pointer. Copies use overlap-safe LLVM memory
+operations; equality compares declared fields, never padding bytes or buffer
+addresses. Private fields participate, strings compare by contents, other
+references by identity, and NaN remains non-reflexive.
+
+Physical parameters and results follow [ABI 4](data_layout_and_abi.md). Buffers
+and their contained reference slots follow the precise-root contract. Struct
+printing emits `<qualified.TypeName>` without boxing; type-name meta queries
+retain that identity. Both evaluate the operand once.
+
+Array allocation references immutable `{ i64, i64, ptr, i64 }` element metadata,
+with target-aligned size and flattened reference offsets. Native execution is
+x86-64; emitted aggregate LLVM is also verified for wasm32.

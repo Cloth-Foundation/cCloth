@@ -43,9 +43,11 @@ addresses; generated code never reads an array header directly.
 ## Runtime and collection
 
 Each managed array records its element size, length, aligned payload address,
-and whether elements are references. Primitive payloads are not scanned.
-Reference arrays use pointer-sized, pointer-aligned elements that the collector
-traces individually. Sweeping releases both the managed array header and its
+and immutable element-layout metadata with exact contained-reference offsets.
+Primitive/enum payloads have empty maps; reference elements have `[0]`; structs
+have flattened maps. The collector scans every listed slot in every element.
+Struct element reads and iteration bindings are independent value copies, while
+indexed field writes target the original element through a captured storage path. Sweeping releases both the managed array header and its
 owned payload. This policy requires no change to Cloth source or MIR semantics.
 
 ## Deferred work

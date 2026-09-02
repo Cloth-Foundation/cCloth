@@ -84,6 +84,10 @@ void print_callable(const MirCallable& callable, const SemanticModel& semantics,
   if (symbol.is_final) {
     output << " [final]";
   }
+  if (callable.struct_receiver == StructReceiverMode::kReadOnlyValue)
+    output << " [read-only value receiver]";
+  if (callable.struct_receiver == StructReceiverMode::kConstruction)
+    output << " [construction receiver]";
   output << '\n';
   print_body(callable.body, output);
 }
@@ -95,6 +99,7 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
   for (const MirFileClass& file : mir.files) {
     const FileSemantics& file_semantics = semantics.file(file.file);
     output << (file_semantics.kind == FileTypeKind::kEnum        ? "Enum "
+               : file_semantics.kind == FileTypeKind::kStruct    ? "Struct "
                : file_semantics.kind == FileTypeKind::kInterface ? "Interface "
                                                                  : "FileClass ")
            << semantics.symbol(file.symbol).name;

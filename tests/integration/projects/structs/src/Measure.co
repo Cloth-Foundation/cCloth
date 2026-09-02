@@ -1,0 +1,5 @@
+struct {
+  float64 value;
+
+  Measure(float64 number) { value = number; }
+}

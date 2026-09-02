@@ -4,6 +4,10 @@ Stage 12.1 adds `final` as a single-assignment declaration contract. It does
 not make an object or array immutable; it prevents the declared binding from
 being assigned again.
 
+For a [struct value](structs.md), final also protects its inline fields. Read-only
+propagation stops at a class or array reference, preserving the existing mutable
+referent contract. These rules are preserved through native aggregate lowering.
+
 ## Supported declarations
 
 `final` may modify fields, parameters, locals, and `for` iteration bindings:

@@ -5,6 +5,7 @@
 #include "cloth/backend/llvm_ir.h"
 
 #include "cloth/abi/abi.h"
+#include "cloth/abi/aggregate_limits.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/identity/package_identity.h"
 #include "cloth/lexer/literal.h"
@@ -184,6 +185,20 @@ const MirInstruction* returned_instruction(const MirBody& body) {
 std::vector<MirValueId> instruction_value_uses(
     const MirInstruction& instruction) {
   std::vector<MirValueId> uses;
+  const MirStoragePath* path = nullptr;
+  if (const auto* load =
+          std::get_if<MirLoadStorageInstruction>(&instruction.data))
+    path = &load->path;
+  if (const auto* store =
+          std::get_if<MirStoreStorageInstruction>(&instruction.data)) {
+    path = &store->path;
+    uses.push_back(store->value);
+  }
+  if (path != nullptr) {
+    if (path->object) uses.push_back(*path->object);
+    if (path->index) uses.push_back(*path->index);
+    return uses;
+  }
   if (const auto* declaration =
           std::get_if<MirDeclareLocalInstruction>(&instruction.data)) {
     if (declaration->initializer) {
@@ -261,6 +276,19 @@ std::vector<MirValueId> instruction_value_uses(
   return uses;
 }
 
+std::optional<SymbolId> storage_symbol_use(const MirInstruction& instruction) {
+  if (const auto* load =
+          std::get_if<MirLoadSymbolInstruction>(&instruction.data))
+    return load->symbol;
+  if (const auto* load =
+          std::get_if<MirLoadStorageInstruction>(&instruction.data))
+    return load->path.symbol;
+  if (const auto* store =
+          std::get_if<MirStoreStorageInstruction>(&instruction.data))
+    return store->path.symbol;
+  return std::nullopt;
+}
+
 std::vector<MirValueId> terminator_value_uses(const MirTerminator& terminator) {
   if (const auto* branch = std::get_if<MirBranchTerminator>(&terminator.data)) {
     return {branch->condition};
@@ -319,6 +347,25 @@ class BodyEmitter {
   void prepare_values();
   void collect_storage();
   void collect_gc_roots();
+  bool validate_aggregate_frame();
+  bool has_struct_receiver() const;
+  bool is_managed_constructor() const;
+  bool is_aggregate_parameter(SymbolId symbol) const;
+  void copy_value(TypeId type, std::string_view destination,
+                  std::string_view source, std::ostringstream& output) const;
+  void zero_root(TypeId type, std::string_view address,
+                 std::ostringstream& output) const;
+  void load_value(const MirInstruction& instruction, std::string_view address,
+                  std::ostringstream& output);
+  void store_value(TypeId type, std::string_view address, MirValueId value,
+                   std::ostringstream& output);
+  std::string storage_address(const MirStoragePath& path,
+                              std::ostringstream& output);
+  bool has_aggregate_phi(std::size_t block) const;
+  std::string edge_label(std::size_t predecessor, std::size_t successor) const;
+  void emit_phi_edges(std::ostringstream& output);
+  std::string call_argument(const MirInstruction& instruction,
+                            std::size_t index) const;
   void analyze_gc_liveness();
   void emit_prologue(std::ostringstream& output);
   void emit_gc_value_root(const MirInstruction& instruction,
@@ -433,6 +480,15 @@ class BodyEmitter {
   std::vector<std::vector<GcLiveSet>> gc_live_after_instructions_;
   std::size_t gc_value_root_count_{0};
   std::size_t address_count_{0};
+  std::size_t current_block_{0};
+  struct ArgumentSlot {
+    const MirInstruction* call;
+    std::size_t index;
+    TypeId type;
+    std::string name;
+  };
+  std::vector<ArgumentSlot> argument_slots_;
+  std::vector<MirValueId> aggregate_phis_;
 };
 
 class ModuleEmitter {
@@ -471,7 +527,7 @@ class ModuleEmitter {
     for (const AbiFileClass& file : abi_.files) {
       if (file.kind == FileTypeKind::kClass) {
         if (owns(file)) {
-          add_type_descriptor(file.file, file.type_descriptor);
+          add_type_descriptor(file.file, *file.type_descriptor);
         } else {
           globals_.push_back(type_descriptor_global_name(file.file) +
                              " = external constant { i64, ptr, ptr, i64, i64, "
@@ -480,7 +536,8 @@ class ModuleEmitter {
       }
     }
     for (std::size_t index = 0; index < mir_.files.size(); ++index) {
-      if (abi_.files[index].kind == FileTypeKind::kClass) {
+      if (abi_.files[index].kind == FileTypeKind::kClass ||
+          abi_.files[index].kind == FileTypeKind::kStruct) {
         if (owns(abi_.files[index])) {
           emit_file(mir_.files[index], abi_.files[index]);
         } else {
@@ -500,6 +557,8 @@ class ModuleEmitter {
            << "source_filename = \"cloth\"\n"
            << "target datalayout = \"" << abi_.target.llvm_data_layout << "\"\n"
            << "target triple = \"" << abi_.target.target_name << "\"\n\n"
+           << "declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1)\n"
+           << "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n"
            << "declare ptr @cloth_rt_alloc(ptr)\n"
            << "declare void @cloth_rt_gc_push_frame(ptr, ptr, i64)\n"
            << "declare void @cloth_rt_gc_pop_frame(ptr)\n"
@@ -514,7 +573,7 @@ class ModuleEmitter {
            << "declare i8 @cloth_rt_object_is_type(ptr, ptr)\n"
            << "declare i8 @cloth_rt_object_is_interface(ptr, i64)\n"
            << "declare ptr @cloth_rt_interface_function(ptr, i64, i64)\n"
-           << "declare ptr @cloth_rt_array_alloc(i32, i64, i64, i8)\n"
+           << "declare ptr @cloth_rt_array_alloc(i32, ptr)\n"
            << "declare i32 @cloth_rt_array_length(ptr)\n"
            << "declare ptr @cloth_rt_array_element(ptr, i32)\n"
            << "declare void @cloth_rt_integer_write(ptr, i32, i64, i8, i8)\n"
@@ -547,8 +606,66 @@ class ModuleEmitter {
     if (!globals_.empty()) {
       output << '\n';
     }
-    output << enum_helpers_.str() << definitions_.str();
+    output << enum_helpers_.str() << aggregate_helpers_.str()
+           << definitions_.str();
     return LlvmIrModule{output.str()};
+  }
+
+  std::string aggregate_comparer(TypeId type) {
+    const auto name = "@.cloth.struct.equal." + std::to_string(type.value);
+    if (std::ranges::find(aggregate_comparers_, type) !=
+        aggregate_comparers_.end())
+      return name;
+    aggregate_comparers_.push_back(type);
+    const auto& fields =
+        abi_.files.at(semantics_.type(type).file->value).layout.fields;
+    std::ostringstream body;
+    body << "define internal i1 " << name
+         << "(ptr %left, ptr %right) {\nentry:\n";
+    for (std::size_t index = 0; index < fields.size(); ++index) {
+      const auto& field = fields[index];
+      const auto suffix = std::to_string(index);
+      body << "  %l" << suffix << " = getelementptr i8, ptr %left, i64 "
+           << field.offset << '\n'
+           << "  %r" << suffix << " = getelementptr i8, ptr %right, i64 "
+           << field.offset << '\n';
+      if (is_aggregate(field.type)) {
+        body << "  %equal" << suffix << " = call i1 "
+             << aggregate_comparer(field.type) << "(ptr %l" << suffix
+             << ", ptr %r" << suffix << ")\n";
+      } else {
+        const auto llvm = llvm_type(field.type);
+        body << "  %lv" << suffix << " = load " << llvm << ", ptr %l" << suffix
+             << ", align " << alignment(field.type) << '\n'
+             << "  %rv" << suffix << " = load " << llvm << ", ptr %r" << suffix
+             << ", align " << alignment(field.type) << '\n';
+        const auto& declared = semantics_.type(field.type);
+        const auto kind =
+            declared.kind == TypeKind::kNullable && declared.element_type
+                ? semantics_.type(*declared.element_type).kind
+                : declared.kind;
+        if (kind == TypeKind::kString) {
+          body << "  %raw" << suffix
+               << " = call i8 @cloth_rt_string_equal(ptr %lv" << suffix
+               << ", ptr %rv" << suffix << ")\n"
+               << "  %equal" << suffix << " = icmp ne i8 %raw" << suffix
+               << ", 0\n";
+        } else {
+          body << "  %equal" << suffix
+               << (kind == TypeKind::kFloat32 || kind == TypeKind::kFloat64
+                       ? " = fcmp oeq "
+                       : " = icmp eq ")
+               << llvm << " %lv" << suffix << ", %rv" << suffix << '\n';
+        }
+      }
+      body << "  br i1 %equal" << suffix << ", label %next" << suffix
+           << ", label %unequal\nnext" << suffix << ":\n";
+    }
+    body << "  ret i1 true\n";
+    if (!fields.empty()) body << "unequal:\n  ret i1 false\n";
+    body << "}\n\n";
+    aggregate_helpers_ << body.str();
+    return name;
   }
 
   std::string enum_printer(TypeId type) {
@@ -615,6 +732,7 @@ class ModuleEmitter {
         return "i" + std::to_string(layout.bit_width);
       case AbiTypeKind::kFloat:
         return layout.bit_width == 32 ? "float" : "double";
+      case AbiTypeKind::kAggregate:
       case AbiTypeKind::kReference:
         return "ptr";
     }
@@ -684,6 +802,58 @@ class ModuleEmitter {
       }
     }
     return nullptr;
+  }
+
+  bool is_aggregate(TypeId type) const {
+    return type.value < abi_.types.size() &&
+           abi_.types[type.value].kind == AbiTypeKind::kAggregate;
+  }
+
+  bool has_references(TypeId type) const {
+    return type.value < abi_.types.size() &&
+           !abi_.types[type.value].reference_offsets.empty();
+  }
+
+  std::string storage_type(TypeId type) const {
+    return is_aggregate(type)
+               ? "[" + std::to_string(abi_.types.at(type.value).storage.size) +
+                     " x i8]"
+               : llvm_type(type);
+  }
+
+  std::string return_type(TypeId type) const {
+    return is_aggregate(type) ? "void" : llvm_type(type);
+  }
+
+  std::string array_element_layout(TypeId type) {
+    const std::string name =
+        "@.cloth.array.element." + std::to_string(type.value);
+    if (std::ranges::find(array_layouts_, type) != array_layouts_.end())
+      return name;
+    array_layouts_.push_back(type);
+    const AbiTypeLayout& layout = abi_.types.at(type.value);
+    const auto& offsets = layout.reference_offsets;
+    std::string references = "null";
+    if (!offsets.empty()) {
+      references = name + ".refs";
+      std::ostringstream map;
+      map << references << " = private unnamed_addr constant ["
+          << offsets.size() << " x i64] [";
+      for (std::size_t index = 0; index < offsets.size(); ++index) {
+        if (index != 0) map << ", ";
+        map << "i64 " << offsets[index];
+      }
+      map << ']';
+      globals_.push_back(map.str());
+    }
+    std::ostringstream metadata;
+    metadata << name
+             << " = private unnamed_addr constant { i64, i64, ptr, i64 } "
+             << "{ i64 " << layout.storage.size << ", i64 "
+             << layout.storage.alignment << ", ptr " << references << ", i64 "
+             << offsets.size() << " }";
+    globals_.push_back(metadata.str());
+    return name;
   }
 
   std::string add_string_literal(std::string value) {
@@ -825,7 +995,8 @@ class ModuleEmitter {
   }
 
   std::string type_descriptor_global_name(FileId file) const {
-    return "@" + abi_.files.at(file.value).type_descriptor.mangled_name;
+    const auto& descriptor = abi_.files.at(file.value).type_descriptor;
+    return descriptor ? "@" + descriptor->mangled_name : std::string{};
   }
 
   void report(SourceRange range, std::string message) {
@@ -843,7 +1014,7 @@ class ModuleEmitter {
     if (callable.linkage != AbiLinkage::kExternal) {
       return;
     }
-    definitions_ << "declare " << llvm_type(callable.return_type) << " @"
+    definitions_ << "declare " << return_type(callable.return_type) << " @"
                  << callable.mangled_name << '(';
     for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
       if (index != 0) {
@@ -951,8 +1122,11 @@ class ModuleEmitter {
     const SemanticSymbol& field_symbol = semantics_.symbol(field->symbol);
     const std::string name =
         field_initializer_name(class_symbol.name, field_symbol.name);
-    definitions_ << "define internal " << llvm_type(field->type) << " @" << name
-                 << "(ptr %receiver) {\n"
+    definitions_ << "define internal " << return_type(field->type) << " @"
+                 << name
+                 << (is_aggregate(field->type)
+                         ? "(ptr %result, ptr %receiver) {\n"
+                         : "(ptr %receiver) {\n")
                  << BodyEmitter{*this,       body,  file,  field->type,
                                 "%receiver", false, false, nullptr}
                         .emit()
@@ -970,7 +1144,7 @@ class ModuleEmitter {
                  << "(ptr %self";
     for (const AbiParameter& parameter : callable.parameters) {
       definitions_ << ", " << llvm_type(parameter.type) << " %arg"
-                   << parameter.symbol.value;
+                   << parameter.symbol->value;
     }
     definitions_ << ") {\n"
                  << BodyEmitter{*this,   mir_callable.body,
@@ -983,7 +1157,7 @@ class ModuleEmitter {
 
   void emit_callable(const AbiFileClass& file, const MirCallable& mir_callable,
                      const AbiCallable& callable) {
-    if (callable.kind == AbiCallableKind::kConstructor) {
+    if (!callable.initializer_mangled_name.empty()) {
       emit_constructor_initializer(file, mir_callable, callable);
     }
     if (callable.linkage == AbiLinkage::kInternal) {
@@ -991,7 +1165,7 @@ class ModuleEmitter {
     } else {
       definitions_ << "define ";
     }
-    definitions_ << llvm_type(callable.return_type) << " @"
+    definitions_ << return_type(callable.return_type) << " @"
                  << callable.mangled_name << '(';
     for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
       if (index != 0) {
@@ -999,26 +1173,31 @@ class ModuleEmitter {
       }
       const AbiParameter& parameter = callable.parameters[index];
       definitions_ << llvm_type(parameter.type) << ' ';
-      if (parameter.kind == AbiParameterKind::kReceiver) {
+      if (parameter.kind == AbiParameterKind::kResult) {
+        definitions_ << "%result";
+      } else if (parameter.kind == AbiParameterKind::kReceiver) {
         definitions_ << "%receiver";
       } else {
-        definitions_ << "%arg" << parameter.symbol.value;
+        definitions_ << "%arg" << parameter.symbol->value;
       }
     }
     definitions_ << ") {\n";
     const bool is_constructor = callable.kind == AbiCallableKind::kConstructor;
     const bool has_receiver =
-        !callable.parameters.empty() &&
-        callable.parameters.front().kind == AbiParameterKind::kReceiver;
+        callable.receiver_mode == AbiReceiverMode::kReference ||
+        callable.receiver_mode == AbiReceiverMode::kReadOnlyValue;
     definitions_ << BodyEmitter{*this,
                                 mir_callable.body,
                                 file,
                                 callable.return_type,
                                 is_constructor
-                                    ? "%self"
+                                    ? (file.kind == FileTypeKind::kStruct
+                                           ? "%result"
+                                           : "%self")
                                     : (has_receiver ? "%receiver" : "undef"),
                                 is_constructor,
-                                is_constructor,
+                                is_constructor &&
+                                    file.kind != FileTypeKind::kStruct,
                                 &callable}
                         .emit()
                  << "}\n\n";
@@ -1059,7 +1238,10 @@ class ModuleEmitter {
   std::vector<std::string> globals_;
   std::vector<std::string> type_descriptor_globals_;
   std::ostringstream enum_helpers_;
+  std::ostringstream aggregate_helpers_;
+  std::vector<TypeId> aggregate_comparers_;
   std::vector<TypeId> enum_printers_;
+  std::vector<TypeId> array_layouts_;
   bool is_valid_{true};
 };
 
@@ -1085,9 +1267,11 @@ BodyEmitter::BodyEmitter(ModuleEmitter& module, const MirBody& body,
 }
 
 std::string BodyEmitter::emit() {
+  if (!validate_aggregate_frame()) return {};
   std::ostringstream output;
   for (std::size_t block_index = 0; block_index < body_.blocks.size();
        ++block_index) {
+    current_block_ = block_index;
     const MirBasicBlock& block = body_.blocks[block_index];
     output << "bb" << block_index << ":\n";
     for (const MirInstruction& instruction : block.instructions) {
@@ -1115,6 +1299,7 @@ std::string BodyEmitter::emit() {
     }
     emit_terminator(block.terminator, block.is_reachable, output);
   }
+  emit_phi_edges(output);
   return output.str();
 }
 
@@ -1129,16 +1314,34 @@ void BodyEmitter::prepare_values() {
         }
         values_[index] = "%v" + std::to_string(index);
         value_types_[index] = instruction.type;
+        if (module_.is_aggregate(instruction.type) &&
+            std::holds_alternative<MirPhiInstruction>(instruction.data))
+          aggregate_phis_.push_back(*instruction.result);
       }
     }
   }
 }
 
 void BodyEmitter::collect_storage() {
+  for (const auto& block : body_.blocks) {
+    for (const auto& instruction : block.instructions) {
+      const auto* call = std::get_if<MirCallInstruction>(&instruction.data);
+      if (!call || module_.semantics().symbol(call->callable).intrinsic !=
+                       IntrinsicKind::kNone)
+        continue;
+      for (std::size_t index = 0; index < call->arguments.size(); ++index) {
+        const TypeId type = value_type(call->arguments[index]);
+        if (module_.is_aggregate(type))
+          argument_slots_.push_back(
+              {&instruction, index, type,
+               "%call.arg." + std::to_string(argument_slots_.size())});
+      }
+    }
+  }
   if (callable_ != nullptr) {
     for (const AbiParameter& parameter : callable_->parameters) {
       if (parameter.kind == AbiParameterKind::kExplicit) {
-        storage_symbols_.push_back(parameter.symbol);
+        storage_symbols_.push_back(*parameter.symbol);
       }
     }
   }
@@ -1158,7 +1361,7 @@ void BodyEmitter::collect_storage() {
 void BodyEmitter::collect_gc_roots() {
   const SemanticModel& semantics = module_.semantics();
   for (const SymbolId symbol : storage_symbols_) {
-    if (module_.is_reference(semantics.symbol(symbol).type)) {
+    if (module_.has_references(semantics.symbol(symbol).type)) {
       gc_symbol_roots_.push_back(symbol);
     }
   }
@@ -1172,9 +1375,11 @@ void BodyEmitter::collect_gc_roots() {
       if (instruction.result &&
           instruction.result->value < gc_value_roots_.size() &&
           !gc_value_roots_[instruction.result->value] &&
-          module_.is_reference(instruction.type)) {
+          module_.has_references(instruction.type)) {
         gc_value_roots_[instruction.result->value] = true;
-        ++gc_value_root_count_;
+        gc_value_root_count_ += module_.abi()
+                                    .types.at(instruction.type.value)
+                                    .reference_offsets.size();
       }
     }
   }
@@ -1231,11 +1436,10 @@ void BodyEmitter::analyze_gc_liveness() {
           }
         }
       }
-      if (const auto* load =
-              std::get_if<MirLoadSymbolInstruction>(&instruction.data);
-          load != nullptr && has_gc_symbol_root(load->symbol) &&
-          !block_definitions[block_index].symbols[load->symbol.value]) {
-        block_uses[block_index].symbols[load->symbol.value] = true;
+      if (const auto symbol = storage_symbol_use(instruction);
+          symbol && has_gc_symbol_root(*symbol) &&
+          !block_definitions[block_index].symbols[symbol->value]) {
+        block_uses[block_index].symbols[symbol->value] = true;
       }
       if (const auto* declaration =
               std::get_if<MirDeclareLocalInstruction>(&instruction.data);
@@ -1349,11 +1553,8 @@ void BodyEmitter::analyze_gc_liveness() {
                  store != nullptr && has_gc_symbol_root(store->symbol)) {
         live.symbols[store->symbol.value] = false;
       }
-      if (const auto* load =
-              std::get_if<MirLoadSymbolInstruction>(&instruction.data);
-          load != nullptr) {
-        add_symbol(live, load->symbol);
-      }
+      if (const auto symbol = storage_symbol_use(instruction))
+        add_symbol(live, *symbol);
     }
 
     std::size_t phi_count = 0;
@@ -1368,86 +1569,237 @@ void BodyEmitter::analyze_gc_liveness() {
   }
 }
 
-void BodyEmitter::emit_prologue(std::ostringstream& output) {
-  const SemanticModel& semantics = module_.semantics();
-  const std::uint64_t pointer_alignment = module_.pointer_alignment();
-  for (const SymbolId symbol : storage_symbols_) {
-    const TypeId type = semantics.symbol(symbol).type;
-    output << "  " << symbol_address(symbol) << " = alloca "
-           << module_.llvm_type(type) << ", align " << module_.alignment(type)
-           << '\n';
+bool BodyEmitter::has_struct_receiver() const {
+  return file_.kind == FileTypeKind::kStruct && receiver_ != "undef";
+}
+
+bool BodyEmitter::is_managed_constructor() const {
+  return is_constructor_ && file_.kind == FileTypeKind::kClass;
+}
+
+bool BodyEmitter::is_aggregate_parameter(SymbolId symbol) const {
+  return callable_ != nullptr &&
+         std::ranges::any_of(
+             callable_->parameters, [&](const AbiParameter& parameter) {
+               return parameter.kind == AbiParameterKind::kExplicit &&
+                      parameter.symbol == symbol &&
+                      module_.is_aggregate(parameter.type);
+             });
+}
+
+bool BodyEmitter::validate_aggregate_frame() {
+  std::uint64_t total = 0;
+  const auto add = [&](std::uint64_t bytes) {
+    if (bytes > kMaxAggregateFrameSize - total) return false;
+    total += bytes;
+    return true;
+  };
+  const auto storage = [&](TypeId type) {
+    return !module_.is_aggregate(type) ||
+           add(module_.abi().types.at(type.value).storage.size);
+  };
+  bool valid = true;
+  for (const TypeId type : value_types_) valid = valid && storage(type);
+  for (const SymbolId symbol : storage_symbols_)
+    if (!is_aggregate_parameter(symbol))
+      valid = valid && storage(module_.semantics().symbol(symbol).type);
+  for (const auto& slot : argument_slots_) valid = valid && storage(slot.type);
+  for (const MirValueId id : aggregate_phis_)
+    valid = valid && storage(value_type(id));
+  // All aggregate root addresses count, including externally supplied
+  // parameters.
+  const auto count = [&](TypeId type) {
+    if (!valid || !module_.is_aggregate(type)) return;
+    const auto references =
+        module_.abi().types.at(type.value).reference_offsets.size();
+    const auto pointer_size = module_.abi().target.pointer.size;
+    valid = references <= kMaxAggregateFrameSize / pointer_size &&
+            add(references * pointer_size);
+  };
+  for (std::size_t index = 0; index < gc_value_roots_.size(); ++index)
+    if (gc_value_roots_[index]) count(value_type(MirValueId{index}));
+  for (const SymbolId symbol : gc_symbol_roots_)
+    count(module_.semantics().symbol(symbol).type);
+  for (const auto& slot : argument_slots_) count(slot.type);
+  if (has_struct_receiver()) count(module_.semantics().file(file_.file).type);
+  if (!valid)
+    module_.report(body_.range,
+                   "aggregate frame exceeds the 262144-byte limit");
+  return valid;
+}
+
+void BodyEmitter::copy_value(TypeId type, std::string_view destination,
+                             std::string_view source,
+                             std::ostringstream& output) const {
+  output << "  call void @llvm.memmove.p0.p0.i64(ptr align "
+         << module_.alignment(type) << ' ' << destination << ", ptr align "
+         << module_.alignment(type) << ' ' << source << ", i64 "
+         << module_.abi().types.at(type.value).storage.size << ", i1 false)\n";
+}
+
+void BodyEmitter::zero_root(TypeId type, std::string_view address,
+                            std::ostringstream& output) const {
+  if (module_.is_aggregate(type)) {
+    output << "  call void @llvm.memset.p0.i64(ptr align "
+           << module_.alignment(type) << ' ' << address << ", i8 0, i64 "
+           << module_.abi().types.at(type.value).storage.size
+           << ", i1 false)\n";
+  } else {
+    output << "  store ptr null, ptr " << address << ", align "
+           << module_.pointer_alignment() << '\n';
   }
-  for (std::size_t index = 0; index < gc_value_roots_.size(); ++index) {
-    if (gc_value_roots_[index]) {
-      output << "  " << gc_value_address(MirValueId{index})
-             << " = alloca ptr, align " << pointer_alignment << '\n';
+}
+
+void BodyEmitter::load_value(const MirInstruction& instruction,
+                             std::string_view address,
+                             std::ostringstream& output) {
+  if (module_.is_aggregate(instruction.type)) {
+    copy_value(instruction.type, result_name(instruction), address, output);
+  } else {
+    output << "  " << result_name(instruction) << " = load "
+           << module_.llvm_type(instruction.type) << ", ptr " << address
+           << ", align " << module_.alignment(instruction.type) << '\n';
+  }
+}
+
+void BodyEmitter::store_value(TypeId type, std::string_view address,
+                              MirValueId stored, std::ostringstream& output) {
+  if (module_.is_aggregate(type))
+    copy_value(type, address, value(stored), output);
+  else
+    output << "  store " << module_.llvm_type(type) << ' ' << value(stored)
+           << ", ptr " << address << ", align " << module_.alignment(type)
+           << '\n';
+}
+
+std::string BodyEmitter::storage_address(const MirStoragePath& path,
+                                         std::ostringstream& output) {
+  std::string address;
+  if (path.symbol) {
+    address = symbol_address(*path.symbol);
+  } else if (path.index) {
+    address = next_address();
+    output << "  " << address << " = call ptr @cloth_rt_array_element(ptr "
+           << value(*path.object) << ", i32 " << value(*path.index) << ")\n";
+  } else {
+    address = value(*path.object);
+    output << "  call void @cloth_rt_require_receiver(ptr " << address << ")\n";
+  }
+  for (const SymbolId field_id : path.fields) {
+    const auto* field = module_.find_field(field_id);
+    if (!field) {
+      module_.report(body_.range, "storage projection has no ABI field");
+      return "undef";
+    }
+    const auto next = next_address();
+    output << "  " << next << " = getelementptr i8, ptr " << address << ", i64 "
+           << field->offset << '\n';
+    address = next;
+  }
+  return address;
+}
+
+std::string BodyEmitter::call_argument(const MirInstruction& instruction,
+                                       std::size_t index) const {
+  for (const auto& slot : argument_slots_)
+    if (slot.call == &instruction && slot.index == index) return slot.name;
+  return {};
+}
+
+void BodyEmitter::emit_prologue(std::ostringstream& output) {
+  const auto& semantics = module_.semantics();
+  const auto pointer_alignment = module_.pointer_alignment();
+  const auto allocate = [&](TypeId type, const std::string& address) {
+    output << "  " << address << " = alloca " << module_.storage_type(type)
+           << ", align " << module_.alignment(type) << '\n';
+    if (module_.is_aggregate(type)) zero_root(type, address, output);
+  };
+  for (const SymbolId symbol : storage_symbols_) {
+    if (!is_aggregate_parameter(symbol))
+      allocate(semantics.symbol(symbol).type, symbol_address(symbol));
+  }
+  for (std::size_t index = 0; index < value_types_.size(); ++index) {
+    const MirValueId id{index};
+    if (module_.is_aggregate(value_type(id))) {
+      allocate(value_type(id), value(id));
+    } else if (gc_value_roots_[index]) {
+      output << "  " << gc_value_address(id) << " = alloca ptr, align "
+             << pointer_alignment << '\n';
+      zero_root(value_type(id), gc_value_address(id), output);
     }
   }
-  if (has_receiver_root()) {
+  for (const auto& slot : argument_slots_) allocate(slot.type, slot.name);
+  for (const MirValueId id : aggregate_phis_)
+    allocate(value_type(id), "%phi.copy." + std::to_string(id.value));
+  if (has_receiver_root())
     output << "  %gc.receiver = alloca ptr, align " << pointer_alignment
            << '\n';
-  }
-  if (is_constructor_) {
+  if (is_managed_constructor())
     output << "  %gc.self = alloca ptr, align " << pointer_alignment << '\n';
+
+  for (const SymbolId symbol : gc_symbol_roots_) {
+    if (!module_.is_aggregate(semantics.symbol(symbol).type))
+      zero_root(semantics.symbol(symbol).type, symbol_address(symbol), output);
   }
-  const std::size_t root_count = gc_root_count();
+  if (callable_ != nullptr) {
+    for (const auto& parameter : callable_->parameters) {
+      if (parameter.kind == AbiParameterKind::kExplicit &&
+          !module_.is_aggregate(parameter.type)) {
+        output << "  store " << module_.llvm_type(parameter.type) << ' '
+               << argument_name(*parameter.symbol) << ", ptr "
+               << symbol_address(*parameter.symbol) << ", align "
+               << module_.alignment(parameter.type) << '\n';
+      }
+    }
+  }
+  if (has_receiver_root())
+    output << "  store ptr " << receiver_ << ", ptr %gc.receiver, align "
+           << pointer_alignment << '\n';
+  if (is_managed_constructor())
+    output << "  store ptr " << (allocates_constructor_ ? "null" : receiver_)
+           << ", ptr %gc.self, align " << pointer_alignment << '\n';
+
+  const auto root_count = gc_root_count();
   if (root_count != 0) {
     output << "  %gc.frame = alloca { ptr, ptr, i64 }, align "
            << module_.gc_frame_alignment() << '\n'
            << "  %gc.roots = alloca [" << root_count << " x ptr], align "
            << pointer_alignment << '\n';
-  }
-
-  for (const SymbolId symbol : gc_symbol_roots_) {
-    output << "  store ptr null, ptr " << symbol_address(symbol) << ", align "
-           << pointer_alignment << '\n';
-  }
-  for (std::size_t index = 0; index < gc_value_roots_.size(); ++index) {
-    if (gc_value_roots_[index]) {
-      output << "  store ptr null, ptr " << gc_value_address(MirValueId{index})
-             << ", align " << pointer_alignment << '\n';
-    }
-  }
-  if (is_constructor_) {
-    output << "  store ptr " << (allocates_constructor_ ? "null" : receiver_)
-           << ", ptr %gc.self, align " << pointer_alignment << '\n';
-  }
-  if (callable_ != nullptr) {
-    for (const AbiParameter& parameter : callable_->parameters) {
-      if (parameter.kind == AbiParameterKind::kExplicit) {
-        output << "  store " << module_.llvm_type(parameter.type) << ' '
-               << argument_name(parameter.symbol) << ", ptr "
-               << symbol_address(parameter.symbol) << ", align "
-               << module_.alignment(parameter.type) << '\n';
+    std::vector<std::string> roots;
+    roots.reserve(root_count);
+    const auto append = [&](TypeId type, const std::string& address) {
+      for (const auto offset :
+           module_.abi().types.at(type.value).reference_offsets) {
+        const std::string slot = next_address();
+        output << "  " << slot << " = getelementptr i8, ptr " << address
+               << ", i64 " << offset << '\n';
+        roots.push_back(slot);
       }
-    }
-  }
-  if (has_receiver_root()) {
-    output << "  store ptr " << receiver_ << ", ptr %gc.receiver, align "
-           << pointer_alignment << '\n';
-  }
-  if (root_count != 0) {
-    std::vector<std::string> root_slots;
-    root_slots.reserve(root_count);
-    if (has_receiver_root()) {
-      root_slots.emplace_back("%gc.receiver");
-    }
-    if (is_constructor_) {
-      root_slots.emplace_back("%gc.self");
-    }
+    };
+    if (has_receiver_root()) roots.emplace_back("%gc.receiver");
+    if (is_managed_constructor()) roots.emplace_back("%gc.self");
+    if (has_struct_receiver())
+      append(semantics.file(file_.file).type, receiver_);
     for (const SymbolId symbol : gc_symbol_roots_) {
-      root_slots.push_back(symbol_address(symbol));
+      if (module_.is_aggregate(semantics.symbol(symbol).type))
+        append(semantics.symbol(symbol).type, symbol_address(symbol));
+      else
+        roots.push_back(symbol_address(symbol));
     }
     for (std::size_t index = 0; index < gc_value_roots_.size(); ++index) {
-      if (gc_value_roots_[index]) {
-        root_slots.push_back(gc_value_address(MirValueId{index}));
-      }
+      if (!gc_value_roots_[index]) continue;
+      const MirValueId id{index};
+      if (module_.is_aggregate(value_type(id)))
+        append(value_type(id), value(id));
+      else
+        roots.push_back(gc_value_address(id));
     }
-    for (std::size_t index = 0; index < root_slots.size(); ++index) {
+    for (const auto& slot : argument_slots_) append(slot.type, slot.name);
+    for (std::size_t index = 0; index < roots.size(); ++index) {
       output << "  %gc.root." << index << " = getelementptr [" << root_count
              << " x ptr], ptr %gc.roots, i64 0, i64 " << index << '\n'
-             << "  store ptr " << root_slots[index] << ", ptr %gc.root."
-             << index << ", align " << pointer_alignment << '\n';
+             << "  store ptr " << roots[index] << ", ptr %gc.root." << index
+             << ", align " << pointer_alignment << '\n';
     }
     output << "  call void @cloth_rt_gc_push_frame(ptr %gc.frame, ptr "
               "%gc.roots, i64 "
@@ -1465,7 +1817,8 @@ void BodyEmitter::emit_gc_value_root(const MirInstruction& instruction,
                                      std::ostringstream& output) const {
   if (!instruction.result ||
       instruction.result->value >= gc_value_roots_.size() ||
-      !gc_value_roots_[instruction.result->value]) {
+      !gc_value_roots_[instruction.result->value] ||
+      module_.is_aggregate(instruction.type)) {
     return;
   }
   output << "  store ptr " << value(*instruction.result) << ", ptr "
@@ -1485,8 +1838,8 @@ void BodyEmitter::emit_gc_block_entry_clears(std::size_t block,
   if (block == body_.entry.value && callable_ != nullptr) {
     for (const AbiParameter& parameter : callable_->parameters) {
       if (parameter.kind == AbiParameterKind::kExplicit &&
-          has_gc_symbol_root(parameter.symbol)) {
-        candidates.symbols[parameter.symbol.value] = true;
+          has_gc_symbol_root(*parameter.symbol)) {
+        candidates.symbols[parameter.symbol->value] = true;
       }
     }
   }
@@ -1508,17 +1861,16 @@ void BodyEmitter::emit_gc_block_entry_clears(std::size_t block,
       }
     }
   }
-  const std::uint64_t alignment = module_.pointer_alignment();
   for (const SymbolId symbol : gc_symbol_roots_) {
     if (candidates.symbols[symbol.value] && !live.symbols[symbol.value]) {
-      output << "  store ptr null, ptr " << symbol_address(symbol) << ", align "
-             << alignment << '\n';
+      zero_root(module_.semantics().symbol(symbol).type, symbol_address(symbol),
+                output);
     }
   }
   for (std::size_t index = 0; index < gc_value_roots_.size(); ++index) {
     if (candidates.values[index] && !live.values[index]) {
-      output << "  store ptr null, ptr " << gc_value_address(MirValueId{index})
-             << ", align " << alignment << '\n';
+      zero_root(value_type(MirValueId{index}),
+                gc_value_address(MirValueId{index}), output);
     }
   }
 }
@@ -1547,15 +1899,14 @@ void BodyEmitter::emit_gc_dead_roots(std::size_t block,
     request_value_clear(*instruction.result);
   }
 
-  const std::uint64_t alignment = module_.pointer_alignment();
   for (std::size_t index = 0; index < clear_values.size(); ++index) {
     if (clear_values[index]) {
-      output << "  store ptr null, ptr " << gc_value_address(MirValueId{index})
-             << ", align " << alignment << '\n';
+      zero_root(value_type(MirValueId{index}),
+                gc_value_address(MirValueId{index}), output);
     }
   }
 
-  std::optional<SymbolId> touched_symbol;
+  std::optional<SymbolId> touched_symbol = storage_symbol_use(instruction);
   if (const auto* load =
           std::get_if<MirLoadSymbolInstruction>(&instruction.data)) {
     touched_symbol = load->symbol;
@@ -1568,8 +1919,8 @@ void BodyEmitter::emit_gc_dead_roots(std::size_t block,
   }
   if (touched_symbol && has_gc_symbol_root(*touched_symbol) &&
       !live.symbols[touched_symbol->value]) {
-    output << "  store ptr null, ptr " << symbol_address(*touched_symbol)
-           << ", align " << alignment << '\n';
+    zero_root(module_.semantics().symbol(*touched_symbol).type,
+              symbol_address(*touched_symbol), output);
   }
 }
 
@@ -1596,20 +1947,35 @@ void BodyEmitter::emit_field_initializers(std::ostringstream& output) {
     }
     const std::string value_name = "%init" + std::to_string(index);
     const std::string address = "%init.addr" + std::to_string(index);
-    output << "  " << value_name << " = call " << module_.llvm_type(field.type)
-           << " @" << initializer << "(ptr %self)\n"
-           << "  " << address << " = getelementptr i8, ptr %self, i64 "
-           << field.offset << '\n'
-           << "  store " << module_.llvm_type(field.type) << ' ' << value_name
-           << ", ptr " << address << ", align " << module_.alignment(field.type)
-           << '\n';
+    output << "  " << address << " = getelementptr i8, ptr " << receiver_
+           << ", i64 " << field.offset << '\n';
+    if (module_.is_aggregate(field.type)) {
+      // This internal helper initializes an unpublished field. Its containing
+      // object/result is already rooted; no source-visible value aliases it.
+      output << "  call void @" << initializer << "(ptr " << address << ", ptr "
+             << receiver_ << ")\n";
+    } else {
+      output << "  " << value_name << " = call "
+             << module_.llvm_type(field.type) << " @" << initializer << "(ptr "
+             << receiver_ << ")\n"
+             << "  store " << module_.llvm_type(field.type) << ' ' << value_name
+             << ", ptr " << address << ", align "
+             << module_.alignment(field.type) << '\n';
+    }
   }
 }
 
 void BodyEmitter::emit_instruction(const MirInstruction& instruction,
                                    std::ostringstream& output) {
-  if (const auto* literal =
-          std::get_if<MirLiteralInstruction>(&instruction.data)) {
+  if (const auto* load =
+          std::get_if<MirLoadStorageInstruction>(&instruction.data)) {
+    load_value(instruction, storage_address(load->path, output), output);
+  } else if (const auto* store =
+                 std::get_if<MirStoreStorageInstruction>(&instruction.data)) {
+    store_value(value_type(store->value), storage_address(store->path, output),
+                store->value, output);
+  } else if (const auto* literal =
+                 std::get_if<MirLiteralInstruction>(&instruction.data)) {
     emit_literal(instruction, *literal, output);
   } else if (const auto* load =
                  std::get_if<MirLoadSymbolInstruction>(&instruction.data)) {
@@ -1618,17 +1984,13 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
                  std::get_if<MirDeclareLocalInstruction>(&instruction.data)) {
     if (declaration->initializer) {
       const TypeId type = module_.semantics().symbol(declaration->symbol).type;
-      output << "  store " << module_.llvm_type(type) << ' '
-             << value(*declaration->initializer) << ", ptr "
-             << symbol_address(declaration->symbol) << ", align "
-             << module_.alignment(type) << '\n';
+      store_value(type, symbol_address(declaration->symbol),
+                  *declaration->initializer, output);
     }
   } else if (const auto* store =
                  std::get_if<MirStoreSymbolInstruction>(&instruction.data)) {
     const TypeId type = module_.semantics().symbol(store->symbol).type;
-    output << "  store " << module_.llvm_type(type) << ' '
-           << value(store->value) << ", ptr " << symbol_address(store->symbol)
-           << ", align " << module_.alignment(type) << '\n';
+    store_value(type, symbol_address(store->symbol), store->value, output);
   } else if (const auto* load =
                  std::get_if<MirLoadMemberInstruction>(&instruction.data)) {
     emit_member_load(instruction, *load, output);
@@ -1743,13 +2105,13 @@ void BodyEmitter::emit_load_symbol(const MirInstruction& instruction,
                                    std::ostringstream& output) {
   const SemanticModel& semantics = module_.semantics();
   if (load.symbol == semantics.file(file_.file).self_symbol) {
-    values_.at(instruction.result->value) = receiver_;
+    if (module_.is_aggregate(instruction.type))
+      copy_value(instruction.type, result_name(instruction), receiver_, output);
+    else
+      values_.at(instruction.result->value) = receiver_;
     return;
   }
-  const TypeId type = semantics.symbol(load.symbol).type;
-  output << "  " << result_name(instruction) << " = load "
-         << module_.llvm_type(type) << ", ptr " << symbol_address(load.symbol)
-         << ", align " << module_.alignment(type) << '\n';
+  load_value(instruction, symbol_address(load.symbol), output);
 }
 
 void BodyEmitter::emit_member_load(const MirInstruction& instruction,
@@ -1762,12 +2124,11 @@ void BodyEmitter::emit_member_load(const MirInstruction& instruction,
   }
   const std::string object = value(load.object);
   const std::string address = next_address();
-  output << "  call void @cloth_rt_require_receiver(ptr " << object << ")\n"
-         << "  " << address << " = getelementptr i8, ptr " << object << ", i64 "
-         << field->offset << '\n'
-         << "  " << result_name(instruction) << " = load "
-         << module_.llvm_type(field->type) << ", ptr " << address << ", align "
-         << module_.alignment(field->type) << '\n';
+  if (!module_.is_aggregate(value_type(load.object)))
+    output << "  call void @cloth_rt_require_receiver(ptr " << object << ")\n";
+  output << "  " << address << " = getelementptr i8, ptr " << object << ", i64 "
+         << field->offset << '\n';
+  load_value(instruction, address, output);
 }
 
 void BodyEmitter::emit_member_store(const MirInstruction& instruction,
@@ -1782,10 +2143,8 @@ void BodyEmitter::emit_member_store(const MirInstruction& instruction,
   const std::string address = next_address();
   output << "  call void @cloth_rt_require_receiver(ptr " << object << ")\n"
          << "  " << address << " = getelementptr i8, ptr " << object << ", i64 "
-         << field->offset << '\n'
-         << "  store " << module_.llvm_type(field->type) << ' '
-         << value(store.value) << ", ptr " << address << ", align "
-         << module_.alignment(field->type) << '\n';
+         << field->offset << '\n';
+  store_value(field->type, address, store.value, output);
 }
 
 void BodyEmitter::emit_array_literal(const MirInstruction& instruction,
@@ -1796,22 +2155,15 @@ void BodyEmitter::emit_array_literal(const MirInstruction& instruction,
     module_.report(instruction.range, "array literal has too many elements");
     return;
   }
-  const AbiTypeLayout& element =
-      module_.abi().types.at(array.element_type.value);
-  const std::uint8_t contains_references =
-      element.kind == AbiTypeKind::kReference ? 1 : 0;
   output << "  " << result_name(instruction)
          << " = call ptr @cloth_rt_array_alloc(i32 " << array.elements.size()
-         << ", i64 " << element.storage.size << ", i64 "
-         << element.storage.alignment << ", i8 "
-         << static_cast<unsigned int>(contains_references) << ")\n";
+         << ", ptr " << module_.array_element_layout(array.element_type)
+         << ")\n";
   for (std::size_t index = 0; index < array.elements.size(); ++index) {
     const std::string address = next_address();
     output << "  " << address << " = call ptr @cloth_rt_array_element(ptr "
-           << result_name(instruction) << ", i32 " << index << ")\n"
-           << "  store " << module_.llvm_type(array.element_type) << ' '
-           << value(array.elements[index]) << ", ptr " << address << ", align "
-           << element.storage.alignment << '\n';
+           << result_name(instruction) << ", i32 " << index << ")\n";
+    store_value(array.element_type, address, array.elements[index], output);
   }
 }
 
@@ -1820,10 +2172,8 @@ void BodyEmitter::emit_array_load(const MirInstruction& instruction,
                                   std::ostringstream& output) {
   const std::string address = next_address();
   output << "  " << address << " = call ptr @cloth_rt_array_element(ptr "
-         << value(load.array) << ", i32 " << value(load.index) << ")\n"
-         << "  " << result_name(instruction) << " = load "
-         << module_.llvm_type(instruction.type) << ", ptr " << address
-         << ", align " << module_.alignment(instruction.type) << '\n';
+         << value(load.array) << ", i32 " << value(load.index) << ")\n";
+  load_value(instruction, address, output);
 }
 
 void BodyEmitter::emit_array_store(const MirInstruction&,
@@ -1832,10 +2182,8 @@ void BodyEmitter::emit_array_store(const MirInstruction&,
   const TypeId type = value_type(store.value);
   const std::string address = next_address();
   output << "  " << address << " = call ptr @cloth_rt_array_element(ptr "
-         << value(store.array) << ", i32 " << value(store.index) << ")\n"
-         << "  store " << module_.llvm_type(type) << ' ' << value(store.value)
-         << ", ptr " << address << ", align " << module_.alignment(type)
-         << '\n';
+         << value(store.array) << ", i32 " << value(store.index) << ")\n";
+  store_value(type, address, store.value, output);
 }
 
 void BodyEmitter::emit_array_length(const MirInstruction& instruction,
@@ -1875,7 +2223,7 @@ void BodyEmitter::emit_object_meta(const MirInstruction& instruction,
                                    const MirObjectMetaInstruction& meta,
                                    std::ostringstream& output) {
   const SemanticType& type = module_.semantics().type(value_type(meta.object));
-  if (type.kind == TypeKind::kEnum) {
+  if (type.kind == TypeKind::kEnum || type.kind == TypeKind::kStruct) {
     const std::string bytes = module_.add_string_literal(type.name);
     output << "  " << result_name(instruction)
            << " = call ptr @cloth_rt_string_literal(ptr " << bytes << ", i64 "
@@ -1986,6 +2334,16 @@ void BodyEmitter::emit_binary(const MirInstruction& instruction,
            << "  " << result_name(instruction) << " = icmp "
            << (binary.operation == TokenKind::kEqualEqual ? "ne" : "eq")
            << " i8 " << equal << ", 0\n";
+    return;
+  }
+  if (kind == TypeKind::kStruct) {
+    const std::string equal = next_address();
+    output << "  " << equal << " = call i1 "
+           << module_.aggregate_comparer(operand_type) << "(ptr "
+           << value(binary.left) << ", ptr " << value(binary.right) << ")\n"
+           << "  " << result_name(instruction) << " = xor i1 " << equal << ", "
+           << (binary.operation == TokenKind::kBangEqual ? "true" : "false")
+           << '\n';
     return;
   }
   const bool is_float =
@@ -2404,6 +2762,17 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     }
     const std::string argument = value(call.arguments[0]);
     switch (symbol.intrinsic) {
+      case IntrinsicKind::kPrintStruct: {
+        const std::string display =
+            "<" + module_.semantics().type(symbol.parameter_types[0]).name +
+            ">";
+        const std::string bytes = module_.add_string_literal(display);
+        const std::string text = next_address();
+        output << "  " << text << " = call ptr @cloth_rt_string_literal(ptr "
+               << bytes << ", i64 " << display.size() << ")\n"
+               << "  call void @cloth_rt_print(ptr " << text << ")\n";
+        break;
+      }
       case IntrinsicKind::kPrintEnum:
         output << "  call void "
                << module_.enum_printer(symbol.parameter_types[0]) << "(i32 "
@@ -2472,6 +2841,22 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     module_.report(instruction.range, "call has no ABI declaration");
     return;
   }
+  std::vector<std::string> arguments;
+  for (std::size_t index = 0; index < call.arguments.size(); ++index) {
+    const TypeId type = value_type(call.arguments[index]);
+    if (module_.is_aggregate(type)) {
+      const auto slot = call_argument(instruction, index);
+      copy_value(type, slot, value(call.arguments[index]), output);
+      arguments.push_back(slot);
+    } else {
+      arguments.push_back(value(call.arguments[index]));
+    }
+  }
+  const auto clear_arguments = [&] {
+    for (std::size_t index = 0; index < call.arguments.size(); ++index)
+      if (module_.is_aggregate(value_type(call.arguments[index])))
+        zero_root(value_type(call.arguments[index]), arguments[index], output);
+  };
   if (call.kind == MirCallKind::kBaseConstructor) {
     if (callable->kind != AbiCallableKind::kConstructor ||
         callable->initializer_mangled_name.empty() || instruction.result) {
@@ -2483,19 +2868,19 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
            << receiver_;
     for (std::size_t index = 0; index < call.arguments.size(); ++index) {
       const TypeId type = callable->parameters.at(index).type;
-      output << ", " << module_.llvm_type(type) << ' '
-             << value(call.arguments[index]);
+      output << ", " << module_.llvm_type(type) << ' ' << arguments[index];
     }
     output << ")\n";
+    clear_arguments();
     return;
   }
   const bool has_receiver =
-      !callable->parameters.empty() &&
-      callable->parameters.front().kind == AbiParameterKind::kReceiver;
+      callable->receiver_mode == AbiReceiverMode::kReference ||
+      callable->receiver_mode == AbiReceiverMode::kReadOnlyValue;
   std::string receiver = receiver_;
   if (call.kind == MirCallKind::kClassQualified) {
     receiver = "null";
-  } else if (call.kind == MirCallKind::kInstance && call.receiver) {
+  } else if (call.receiver) {
     receiver = value(*call.receiver);
   }
   std::string target = "@" + callable->mangled_name;
@@ -2543,15 +2928,20 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
            << *call.interface_slot << ")\n";
     target = function;
   }
-  if (instruction.result) {
+  if (instruction.result && callable->return_mode != AbiReturnMode::kIndirect) {
     output << "  " << result_name(instruction) << " = ";
   } else {
     output << "  ";
   }
-  output << "call " << module_.llvm_type(callable->return_type) << ' ' << target
-         << '(';
+  output << "call " << module_.return_type(callable->return_type) << ' '
+         << target << '(';
   bool needs_comma = false;
+  if (callable->return_mode == AbiReturnMode::kIndirect) {
+    output << "ptr " << result_name(instruction);
+    needs_comma = true;
+  }
   if (has_receiver) {
+    if (needs_comma) output << ", ";
     output << "ptr " << receiver;
     needs_comma = true;
   }
@@ -2559,25 +2949,84 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     if (needs_comma) {
       output << ", ";
     }
-    const std::size_t abi_index = index + (has_receiver ? 1U : 0U);
-    const TypeId type = callable->parameters.at(abi_index).type;
-    output << module_.llvm_type(type) << ' ' << value(call.arguments[index]);
+    const TypeId type = symbol.parameter_types.at(index);
+    output << module_.llvm_type(type) << ' ' << arguments[index];
     needs_comma = true;
   }
   output << ")\n";
+  clear_arguments();
+}
+
+bool BodyEmitter::has_aggregate_phi(std::size_t block) const {
+  if (block >= body_.blocks.size()) return false;
+  return std::ranges::any_of(
+      body_.blocks[block].instructions, [&](const MirInstruction& instruction) {
+        return std::holds_alternative<MirPhiInstruction>(instruction.data) &&
+               module_.is_aggregate(instruction.type);
+      });
+}
+
+std::string BodyEmitter::edge_label(std::size_t predecessor,
+                                    std::size_t successor) const {
+  if (!has_aggregate_phi(successor)) return "bb" + std::to_string(successor);
+  return "edge." + std::to_string(predecessor) + "." +
+         std::to_string(successor);
+}
+
+void BodyEmitter::emit_phi_edges(std::ostringstream& output) {
+  for (std::size_t predecessor = 0; predecessor < body_.blocks.size();
+       ++predecessor) {
+    auto successors =
+        terminator_successors(body_.blocks[predecessor].terminator);
+    if (successors.size() == 2 && successors[0] == successors[1])
+      successors.pop_back();
+    for (const auto successor : successors) {
+      if (!has_aggregate_phi(successor.value)) continue;
+      output << "edge." << predecessor << "." << successor.value << ":\n";
+      // Two phases preserve simultaneous phi assignment, including loop swaps.
+      for (const auto& instruction :
+           body_.blocks[successor.value].instructions) {
+        const auto* phi = std::get_if<MirPhiInstruction>(&instruction.data);
+        if (!phi || !module_.is_aggregate(instruction.type)) continue;
+        for (const auto& incoming : phi->incoming) {
+          if (incoming.predecessor.value == predecessor)
+            copy_value(instruction.type,
+                       "%phi.copy." + std::to_string(instruction.result->value),
+                       value(incoming.value), output);
+        }
+      }
+      for (const auto& instruction :
+           body_.blocks[successor.value].instructions) {
+        if (!std::holds_alternative<MirPhiInstruction>(instruction.data) ||
+            !module_.is_aggregate(instruction.type))
+          continue;
+        const auto scratch =
+            "%phi.copy." + std::to_string(instruction.result->value);
+        copy_value(instruction.type, result_name(instruction), scratch, output);
+        zero_root(instruction.type, scratch, output);
+      }
+      output << "  br label %bb" << successor.value << '\n';
+    }
+  }
 }
 
 void BodyEmitter::emit_phi(const MirInstruction& instruction,
                            const MirPhiInstruction& phi,
                            std::ostringstream& output) {
+  if (module_.is_aggregate(instruction.type)) return;
   output << "  " << result_name(instruction) << " = phi "
          << module_.llvm_type(instruction.type) << ' ';
   for (std::size_t index = 0; index < phi.incoming.size(); ++index) {
     if (index != 0) {
       output << ", ";
     }
-    output << "[ " << value(phi.incoming[index].value) << ", %bb"
-           << phi.incoming[index].predecessor.value << " ]";
+    output << "[ " << value(phi.incoming[index].value) << ", %"
+           << (has_aggregate_phi(current_block_)
+                   ? edge_label(phi.incoming[index].predecessor.value,
+                                current_block_)
+                   : "bb" +
+                         std::to_string(phi.incoming[index].predecessor.value))
+           << " ]";
   }
   output << '\n';
 }
@@ -2586,19 +3035,26 @@ void BodyEmitter::emit_terminator(const MirTerminator& terminator,
                                   bool is_reachable,
                                   std::ostringstream& output) {
   if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator.data)) {
-    output << "  br label %bb" << jump->target.value << '\n';
+    output << "  br label %" << edge_label(current_block_, jump->target.value)
+           << '\n';
   } else if (const auto* branch =
                  std::get_if<MirBranchTerminator>(&terminator.data)) {
-    output << "  br i1 " << value(branch->condition) << ", label %bb"
-           << branch->then_block.value << ", label %bb"
-           << branch->else_block.value << '\n';
+    output << "  br i1 " << value(branch->condition) << ", label %"
+           << edge_label(current_block_, branch->then_block.value)
+           << ", label %"
+           << edge_label(current_block_, branch->else_block.value) << '\n';
   } else if (const auto* return_terminator =
                  std::get_if<MirReturnTerminator>(&terminator.data)) {
+    if (return_terminator->value && module_.is_aggregate(return_type_))
+      copy_value(return_type_, "%result", value(*return_terminator->value),
+                 output);
     if (is_reachable) {
       emit_gc_epilogue(output);
     }
     if (is_constructor_) {
       output << (allocates_constructor_ ? "  ret ptr %self\n" : "  ret void\n");
+    } else if (module_.is_aggregate(return_type_)) {
+      output << "  ret void\n";
     } else if (return_terminator->value) {
       output << "  ret " << module_.llvm_type(return_type_) << ' '
              << value(*return_terminator->value) << '\n';
@@ -2630,6 +3086,9 @@ std::string BodyEmitter::result_name(const MirInstruction& instruction) const {
 
 std::string BodyEmitter::symbol_address(SymbolId symbol) const {
   const SemanticSymbol& semantic_symbol = module_.semantics().symbol(symbol);
+  if (symbol == module_.semantics().file(file_.file).self_symbol)
+    return receiver_;
+  if (is_aggregate_parameter(symbol)) return argument_name(symbol);
   if (semantic_symbol.kind == SymbolKind::kField && semantic_symbol.is_static) {
     const AbiStaticField* field = module_.find_static_field(symbol);
     if (field != nullptr) {
@@ -2644,6 +3103,7 @@ std::string BodyEmitter::argument_name(SymbolId symbol) const {
 }
 
 std::string BodyEmitter::gc_value_address(MirValueId value) const {
+  if (module_.is_aggregate(value_type(value))) return this->value(value);
   return "%gc.v" + std::to_string(value.value);
 }
 
@@ -2667,12 +3127,23 @@ bool BodyEmitter::is_string_like(TypeId type) const noexcept {
 }
 
 bool BodyEmitter::has_receiver_root() const noexcept {
-  return !is_constructor_ && receiver_ != "undef";
+  return !is_constructor_ && !has_struct_receiver() && receiver_ != "undef";
 }
 
 std::size_t BodyEmitter::gc_root_count() const noexcept {
-  return gc_symbol_roots_.size() + gc_value_root_count_ +
-         (has_receiver_root() ? 1U : 0U) + (is_constructor_ ? 1U : 0U);
+  std::size_t count = gc_value_root_count_ + (has_receiver_root() ? 1U : 0U) +
+                      (is_managed_constructor() ? 1U : 0U);
+  for (const SymbolId symbol : gc_symbol_roots_)
+    count += module_.abi()
+                 .types.at(module_.semantics().symbol(symbol).type.value)
+                 .reference_offsets.size();
+  for (const auto& slot : argument_slots_)
+    count += module_.abi().types.at(slot.type.value).reference_offsets.size();
+  if (has_struct_receiver())
+    count += module_.abi()
+                 .types.at(module_.semantics().file(file_.file).type.value)
+                 .reference_offsets.size();
+  return count;
 }
 
 std::string BodyEmitter::next_address() {

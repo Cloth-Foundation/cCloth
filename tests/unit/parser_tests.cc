@@ -582,7 +582,8 @@ void unexpected_top_level_token(TestContext& test) {
 }
 
 void deferred_nested_type_recover(TestContext& test) {
-  const ParsedSource source{"Nested.co", "struct Inner {}\nint32 valid;\n"};
+  const ParsedSource source{"Nested.co",
+                            "class { struct Inner {}\nint32 valid;\n}"};
   test.expect(has_diagnostic(source, "nested type declarations are reserved"),
               "deferred nested type was not diagnosed explicitly");
   test.expect(has_member(source, "valid", cloth::DeclarationKind::kField),

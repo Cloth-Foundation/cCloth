@@ -7,7 +7,7 @@ typed, target-independent high-level intermediate representation (HIR).
 ## Compilation model
 
 Each source contributes one implicit file type, which defaults to a class and
-may be declared as an interface. The graph includes explicit entry files,
+may be declared as an interface, enum, or struct. The graph includes explicit entry files,
 imported files, and project package siblings. All file types are
 registered before member signatures are resolved, and all member signatures
 are registered before any initializer or body is checked. Forward references,
@@ -72,6 +72,7 @@ The core type table contains:
 - `void`, plus internal error and null types
 - one named reference type for each valid file class or interface
 - one nominal value type for each enum, with always-public case constants
+- one nominal aggregate type for each struct, with normal member visibility
 - one canonical array reference type for each used element type
 - one canonical nullable wrapper for each used nullable reference type
 
@@ -89,7 +90,7 @@ integer results, non-finite floating-to-integer values, and finite
 `float64`-to-`float32` overflow trap rather than wrap.
 References are non-null by default. `T?` is a distinct nullable
 wrapper, `T` widens to `T?`, and `null` is assignable only to `T?`. Nullable
-qualifiers are invalid on primitive, enum, and void types.
+qualifiers are invalid on primitive, enum, struct, and void types.
 
 Enum identities and all cases are registered before checking executable bodies.
 `Type.Case` produces a nominal constant, not a field load. Assignment, overloads,
@@ -97,6 +98,19 @@ and equality retain exact enum identity; numeric and reference conversions are
 rejected. Enum locals require initializers, and enum fields join required
 constructor initialization. Static enum constants directly name a case.
 The [enum contract](enums.md) defines public cases, output, and deferrals.
+
+Structs have exact nominal identity and no reference conversion. Field registration
+precedes iterative inline-layout cycle detection; bodies then check required
+initialization and storage-path mutability. Final inline values and read-only
+receivers propagate read-only locations until a managed reference boundary.
+Constructor initialization permits direct final-field assignment, not mutation of
+the final field's inline children. Struct methods never receive virtual slots.
+
+`Compilation::analyze_frontend` returns semantics, verified typed HIR, control-flow
+facts, and validity without MIR or ABI lowering. `clothc --check` exposes this path.
+The [struct contract](structs.md) owns value-copy and receiver invariants.
+Full compilation continues through verified aggregate MIR, ABI, and LLVM lowering;
+source-free package layouts are validated before semantic registration.
 
 File-class, interface, string, and array references widen to `object`, and those nullable
 forms widen to `object?`. The conversion is not available to primitives and
@@ -223,7 +237,7 @@ visible only while analyzing their owning file class. Constructors are not
 inherited. The selected public instance signature supplies a virtual slot, so a
 base-typed receiver invokes the most-derived compatible implementation.
 
-Every public instance function receives a virtual slot. A derived declaration
+Every public class instance function receives a virtual slot. A derived declaration
 with the same name and canonical parameter types must use `override` and
 replace the inherited implementation in that slot. Its return type may match
 exactly or be a managed-reference type assignable to the inherited return;

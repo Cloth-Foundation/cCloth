@@ -82,11 +82,11 @@ void class_field_layout(TestContext& test) {
                   layout.fields[2].offset == 32,
               "fields were not laid out in declaration order");
   test.expect(
-      file.type_descriptor.kind == cloth::AbiHeapObjectKind::kFileClass &&
-          file.type_descriptor.name == "Layout" &&
-          file.type_descriptor.size == layout.size &&
-          file.type_descriptor.alignment == layout.alignment &&
-          file.type_descriptor.reference_offsets ==
+      file.type_descriptor->kind == cloth::AbiHeapObjectKind::kFileClass &&
+          file.type_descriptor->name == "Layout" &&
+          file.type_descriptor->size == layout.size &&
+          file.type_descriptor->alignment == layout.alignment &&
+          file.type_descriptor->reference_offsets ==
               std::vector<std::uint64_t>{32},
       "file-class descriptor lost its identity or reference layout");
 }
@@ -120,14 +120,14 @@ void inherited_class_layout(TestContext& test) {
                   derived.layout.fields[3].offset == 40,
               "derived class did not preserve the complete base prefix");
   test.expect(
-      derived.type_descriptor.parent_file == cloth::FileId{1} &&
-          derived.type_descriptor.reference_offsets ==
+      derived.type_descriptor->parent_file == cloth::FileId{1} &&
+          derived.type_descriptor->reference_offsets ==
               std::vector<std::uint64_t>{16, 40} &&
-          !base.type_descriptor.parent_file,
+          !base.type_descriptor->parent_file,
       "derived descriptor lost its parent or inherited reference metadata");
 
   cloth::AbiModule broken = result.abi;
-  broken.files[0].type_descriptor.parent_file.reset();
+  broken.files[0].type_descriptor->parent_file.reset();
   cloth::DiagnosticEngine verifier_diagnostics;
   test.expect(!cloth::verify_abi(broken, result.mir, result.semantics,
                                  verifier_diagnostics),
@@ -156,8 +156,10 @@ void virtual_table_layout(TestContext& test) {
   const cloth::CompilationResult result = compilation.analyze(diagnostics);
 
   test.expect(result.is_valid, "valid virtual table failed ABI lowering");
-  const cloth::AbiTypeDescriptor& base = result.abi.files[0].type_descriptor;
-  const cloth::AbiTypeDescriptor& derived = result.abi.files[1].type_descriptor;
+  const cloth::AbiTypeDescriptor& base =
+      result.abi.files[0].type_descriptor.value();
+  const cloth::AbiTypeDescriptor& derived =
+      result.abi.files[1].type_descriptor.value();
   const cloth::FileSemantics& base_semantics =
       result.semantics.file(cloth::FileId{0});
   const cloth::FileSemantics& derived_semantics =
@@ -173,7 +175,7 @@ void virtual_table_layout(TestContext& test) {
               "derived virtual table did not replace and extend base slots");
 
   cloth::AbiModule broken = result.abi;
-  broken.files[1].type_descriptor.virtual_functions[0] =
+  broken.files[1].type_descriptor->virtual_functions[0] =
       base_semantics.functions[0];
   cloth::DiagnosticEngine verifier_diagnostics;
   test.expect(!cloth::verify_abi(broken, result.mir, result.semantics,
@@ -198,7 +200,7 @@ void wasm32_layout(TestContext& test) {
                   layout.fields[1].offset == 16 &&
                   layout.fields[2].offset == 24,
               "wasm32 class layout is wrong");
-  test.expect(abi.files[0].type_descriptor.reference_offsets ==
+  test.expect(abi.files[0].type_descriptor->reference_offsets ==
                   std::vector<std::uint64_t>{24},
               "wasm32 descriptor has the wrong reference offset");
 }
@@ -383,7 +385,7 @@ void verifier_rejects_layout_corruption(TestContext& test) {
               "ABI verifier reported the wrong layout invariant");
 
   broken = source.result->abi;
-  broken.files[0].type_descriptor.reference_offsets = {17};
+  broken.files[0].type_descriptor->reference_offsets = {17};
   cloth::DiagnosticEngine descriptor_diagnostics;
   test.expect(
       !cloth::verify_abi(broken, source.result->mir, source.result->semantics,

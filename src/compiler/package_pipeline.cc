@@ -401,22 +401,15 @@ std::expected<void, std::string> validate_closure(
   if (visited != loaded.size()) {
     return std::unexpected("artifact dependency closure contains a cycle");
   }
-  return {};
-}
-
-std::string callable_signature(const ImportedCallableAbi& callable) {
-  std::string result =
-      "c:" + mangle_canonical_identity(callable.return_type_identity) + "(";
-  for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
-    if (index != 0) result += ',';
-    result += callable.parameters[index].kind == AbiParameterKind::kReceiver
-                  ? "receiver:"
-                  : "explicit:";
-    result +=
-        mangle_canonical_identity(callable.parameters[index].type_identity);
+  std::vector<const ImportedPackageView*> views;
+  for (const auto& artifact : loaded)
+    views.push_back(&artifact.artifact.imported);
+  const auto issues = verify_imported_package_closure(views);
+  if (!issues.empty()) {
+    return std::unexpected(issues.front().record + ": " +
+                           issues.front().message);
   }
-  result += ')';
-  return result;
+  return {};
 }
 
 void add_owned_symbols(
@@ -427,10 +420,10 @@ void add_owned_symbols(
     for (const ImportedMember& member : file.members) {
       if (member.is_abstract) abstract.insert(member.identity);
     }
-    if (!file.abi.descriptor.mangled_name.empty()) {
-      out.emplace(file.abi.descriptor.mangled_name,
-                  ArtifactSymbol{file.abi.descriptor.mangled_name,
-                                 file.abi.descriptor.identity,
+    if (file.abi.descriptor && !file.abi.descriptor->mangled_name.empty()) {
+      out.emplace(file.abi.descriptor->mangled_name,
+                  ArtifactSymbol{file.abi.descriptor->mangled_name,
+                                 file.abi.descriptor->identity,
                                  ArtifactSymbolRole::kDefinition,
                                  ArtifactSymbolKind::kDescriptor,
                                  "descriptor:file_class"});
@@ -445,7 +438,9 @@ void add_owned_symbols(
               "global:" + mangle_canonical_identity(field.type_identity)});
     }
     for (const ImportedCallableAbi& callable : file.abi.callables) {
-      const std::string signature = callable_signature(callable);
+      const std::string signature = imported_callable_signature(
+          callable.return_mode, callable.receiver_mode,
+          callable.return_type_identity, callable.parameters);
       if (callable.linkage == AbiLinkage::kExternal &&
           !abstract.contains(callable.member_identity)) {
         out.emplace(
@@ -456,12 +451,17 @@ void add_owned_symbols(
       }
       if (callable.initializer_identity &&
           callable.initializer_linkage == AbiLinkage::kExternal) {
-        out.emplace(callable.initializer_mangled_name,
-                    ArtifactSymbol{callable.initializer_mangled_name,
-                                   *callable.initializer_identity,
-                                   ArtifactSymbolRole::kDefinition,
-                                   ArtifactSymbolKind::kConstructorInitializer,
-                                   "c:void(receiver," + signature + ")"});
+        out.emplace(
+            callable.initializer_mangled_name,
+            ArtifactSymbol{callable.initializer_mangled_name,
+                           *callable.initializer_identity,
+                           ArtifactSymbolRole::kDefinition,
+                           ArtifactSymbolKind::kConstructorInitializer,
+                           imported_callable_signature(
+                               callable.initializer_return_mode,
+                               callable.initializer_receiver_mode,
+                               *callable.initializer_return_type_identity,
+                               callable.initializer_parameters)});
       }
     }
   }
@@ -486,6 +486,11 @@ std::vector<ArtifactSymbol> artifact_symbols(
         ArtifactSymbol{"cloth_rt_alloc", std::nullopt,
                        ArtifactSymbolRole::kRequirement,
                        ArtifactSymbolKind::kRuntime, "c:ptr(ptr)"});
+    symbols.try_emplace(
+        "cloth_rt_array_alloc",
+        ArtifactSymbol{"cloth_rt_array_alloc", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:ptr(i32,ptr)"});
   }
   std::vector<ArtifactSymbol> result;
   result.reserve(symbols.size());

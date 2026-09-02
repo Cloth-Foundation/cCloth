@@ -543,6 +543,11 @@ class FieldInitializationAnalyzer {
   }
 
   std::string_view field_qualifier(SymbolId symbol) const {
+    if (file_.kind == FileTypeKind::kStruct ||
+        semantics_.type(semantics_.symbol(symbol).type).kind ==
+            TypeKind::kStruct) {
+      return "struct";
+    }
     return semantics_.type(semantics_.symbol(symbol).type).kind ==
                    TypeKind::kEnum
                ? "enum"
@@ -551,7 +556,8 @@ class FieldInitializationAnalyzer {
 
   bool requires_initialization(SymbolId symbol) const {
     const TypeKind kind = semantics_.type(semantics_.symbol(symbol).type).kind;
-    return kind == TypeKind::kEnum || kind == TypeKind::kString ||
+    return file_.kind == FileTypeKind::kStruct || kind == TypeKind::kStruct ||
+           kind == TypeKind::kEnum || kind == TypeKind::kString ||
            kind == TypeKind::kObject || kind == TypeKind::kFileClass ||
            kind == TypeKind::kArray;
   }

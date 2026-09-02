@@ -34,6 +34,11 @@ no fields, constructors, or object layout.
 `enum { ... }` selects a named value enum. Its cases form a closed set; the file
 stem remains the type name. See [enums](enums.md) for the implemented contract.
 
+`struct { ... }` selects a nominal aggregate value with explicit initialization
+and read-only instance receivers. Parsing, semantic checking, and typed HIR are
+available through `clothc --check`; native lowering and struct artifacts remain
+pending. See [structs](structs.md) for the value and storage contracts.
+
 Constructor declarations use a class-derived name whose capitalization carries
 visibility:
 
@@ -266,7 +271,7 @@ initialization order and collector roots have explicit contracts.
 
 `?` qualifies the reference immediately to its left. This keeps array
 nullability explicit: `T?[]` has nullable elements, `T[]?` is a nullable array,
-and `T?[]?` permits both. Primitive, enum, and void types cannot be nullable.
+and `T?[]?` permits both. Primitive, enum, struct, and void types cannot be nullable.
 
 Nullable values cannot be used for ordinary member access, indexing, or
 iteration until they are narrowed. Every non-null reference field is

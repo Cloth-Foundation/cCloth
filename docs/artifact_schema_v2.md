@@ -1,6 +1,7 @@
 # Cloth package artifact schema, version 2
 
-This is the current `.cpa` contract. It inherits every envelope, canonical JSON,
+This is the frozen pre-aggregate `.cpa` contract. Current writers/readers use
+[version 3](artifact_schema_v3.md). It inherits every envelope, canonical JSON,
 record, validation, and resource-limit rule in the frozen
 [version-1 schema](artifact_schema_v1.md), except for the explicit changes below.
 No other keys or encodings change. Version-1 artifacts are rejected, not

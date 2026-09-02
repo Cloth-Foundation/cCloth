@@ -25,7 +25,15 @@ exit audit. Stage 24 is complete under the responsive-build charter in
 Stage 25 is complete for named value enums. Its
 [25.1 contract](docs/proposals/stage_25_enums.md) and implementation start were
 approved on 2026-09-02, followed by the coordinated exit audit in `docs/testing.md`.
-Attached constant data and runtime payloads remain deferred. No later stage is active.
+Attached constant data and runtime payloads remain deferred.
+
+Stage 26 is active for value structs. The
+[26.1 source contract](docs/proposals/stage_26_structs.md), including read-only
+value receivers, and 26.2 implementation were approved on 2026-09-02.
+The frontend and [26.3 aggregate implementation](docs/proposals/stage_26_aggregate_abi.md)
+are complete, including native execution and source-free packages. Artifact
+format 3, compiler ABI 4, and runtime ABI 2 require rebuilding older packages.
+Stage 26.4 remains open for the coordinated equivalence and exit audit.
 
 ## Scheduled work
 
@@ -143,6 +151,61 @@ Attached constant data and runtime payloads remain deferred. No later stage is a
   reuse/invalidation after enum changes. Update owning contracts and run the
   development, sanitizer, affected cross-tool, and native suites.
 
+### Stage 26: Value structs
+
+- [x] **26.1 — Struct contract.** Approve implicit file identity and syntax,
+  constructor visibility, explicit initialization, nominal copying, writable
+  locations, final propagation, instance receiver policy, fieldwise equality,
+  typed output/meta queries, and deliberate non-goals.
+
+  - [x] Draft the source contract and identify aggregate ABI, GC, and package
+    prerequisites in [the struct proposal](docs/proposals/stage_26_structs.md).
+  - [x] Approve read-only value receivers and activate frontend implementation
+    on 2026-09-02. Keep in-place receiver mutation deferred.
+
+- [x] **26.2 — Frontend and value checking.** Add the struct envelope and
+  symbols to the two-pass parser; enforce ordinary capitalization visibility,
+  exact type identity, constructors, required field/local initialization,
+  read-only/writable locations, temporary mutation diagnostics, final paths,
+  permitted operations, and inline-layout cycle detection. Retain explicit
+  aggregate values and storage paths in typed HIR with negative verifier tests.
+  Completed on 2026-09-02 with 100/100 development and sanitizer CTests, including
+  the existing cross-tool/native suites. At that checkpoint, `--check` validated
+  without lowering and native/ABI/artifact support remained gated until 26.3.
+  See [structs](docs/structs.md)
+  and the [verification checkpoint](docs/testing.md#stage-262-struct-frontend-checkpoint).
+- [x] **26.3 — Aggregate lowering and package integration.** Preserve copy,
+  receiver, and result semantics through MIR, ABI, LLVM, GC, and artifacts.
+
+  - [x] Draft exact aggregate layouts, callable passing modes, array reference-
+    offset metadata, validation limits, ABI/schema revisions, and canonical
+    record/layout review vectors in [the 26.3 proposal](docs/proposals/stage_26_aggregate_abi.md).
+  - [x] Obtain approval and freeze that contract before implementing the
+    aggregate ABI/schema boundaries. Review vectors are not `.cpa` artifacts;
+    freeze full golden bytes/digests with the reviewed format-3 reader/writer.
+  - [x] Implement nested inline layouts, field/index mutation with evaluate-once
+    behavior, aggregate calls/results, equality, and typed output/meta queries.
+  - [x] Trace embedded references in classes/arrays and root live aggregate
+    locals, parameters, construction state, temporaries, and return paths.
+    Protect storage owners across safepoints; reject malformed root maps.
+  - [x] Preserve source-free declaration/layout/callable identity and validation;
+    coordinate version requirements and opaque receipts with Shuttle without
+    changing process protocol or manifest schema.
+
+  Completed on 2026-09-02 with 121/121 development and sanitizer CTests,
+  source-free native/wasm32 fixtures, full-artifact golden hashes for both target
+  layouts, and all ordinary Rust checks. See the
+  [implementation checkpoint](docs/testing.md#stage-263-aggregate-implementation-checkpoint).
+
+- [ ] **26.4 — Equivalence and exit audit.** Cover shallow copying, final and
+  reference boundaries, nested writes with side effects, constructor flow,
+  equality/NaN, arrays and iteration, overloads, class/interface calls carrying
+  struct values, output, imported private layouts, and forced-GC survival.
+  Verify malformed IR/ABI/artifacts, source-free dependencies, whole-project
+  versus separate execution, serial/parallel bytes, and layout-change
+  invalidation. Update owning documents and pass development, sanitizer,
+  native/shared-tool, and Rust gates before marking the stage complete.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -159,10 +222,11 @@ active stage without first updating `ROADMAP.md`.
 - Design case enumeration and enum reflection separately from Stage 25's typed
   printing and `::typeName` contract; do not expose internal tags as a stable
   serialization format.
-- Define structs as an implicit file kind. A future stage must freeze value
-  semantics, layout, copying, construction, methods, conformance and inheritance
-  rules, managed-reference fields, equality, visibility, imports, and ABI
-  behavior before implementation.
+- Struct foundations and native lowering are implemented through 26.3 above;
+  the Stage 26 exit audit remains open.
+  Mutating struct receivers, struct conformance/boxing, reference returns, and
+  user-defined copy/move hooks remain future contracts unless the approved
+  Stage 26 scope explicitly changes.
 - Implement nested type declarations. `class`, `struct`, and `enum` are
   reserved declaration starters and currently diagnosed as unsupported.
 - Add flow-sensitive smart casts after a successful `value is T` test.
@@ -234,6 +298,9 @@ active stage without first updating `ROADMAP.md`.
 - Define deterministic static initialization order and collector root
   registration before dynamic initializers, mutable static fields, or
   reference-valued static fields.
+- Define aggregate constant construction before struct-valued static constants
+  or struct-backed enum metadata; Stage 26 construction does not imply compile-
+  time execution or general constant folding.
 
 ### Packages, dependencies, and distribution
 

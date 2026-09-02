@@ -1,0 +1,3 @@
+string Text;
+
+Box(string text) { Text = text; }

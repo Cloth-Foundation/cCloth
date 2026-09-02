@@ -5,6 +5,19 @@ lowers executable definitions to a target-independent mid-level intermediate
 representation (MIR). MIR is the boundary between language semantics and future
 target layout, ABI, optimization, and code generation.
 
+[Struct values](structs.md) retain exact nominal types in MIR. Loads, argument
+evaluation, returns, and receiver evaluation capture independent values. Storage
+loads/stores carry a non-escaping recipe rooted in a local, parameter, construction
+self, captured object, or captured array/index, followed by inline field projections.
+Owner/index evaluation occurs before the RHS; a compound update reads its field
+after the RHS. Storage owners remain live across every intervening safepoint.
+
+MIR verification checks storage roots and projections, callable storage ownership,
+read-only/final boundaries, receiver modes, complete construction, and value types.
+Constructor dataflow rejects uninitialized reads/escapes and repeated final-field
+initialization. Phi nodes cover every unique predecessor at block entry; aggregate
+phis preserve simultaneous value assignment across loop edges.
+
 ## Verification
 
 The HIR verifier checks stable-handle bounds and relationships among files,

@@ -1,0 +1,11 @@
+struct {
+  byte tag;
+  string Text;
+  uint32 Code;
+
+  Label(string text) {
+    tag = 1;
+    Text = text;
+    Code = 7;
+  }
+}

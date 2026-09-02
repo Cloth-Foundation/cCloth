@@ -308,3 +308,71 @@ Stage 25 is complete. Artifact format 2 and compiler ABI 3 require rebuilding
 older packages; runtime ABI 1 and process protocol 2 are unchanged. Attached
 constant data, runtime payload variants, structs, matching, reflection, and
 nullable enum values remain deliberate backlog work.
+
+## Stage 26.2 struct frontend checkpoint
+
+Verified on Windows on 2026-09-02 with GNU development and Clang/MSVC-library
+ASan/UBSan builds. All **100 CTest entries pass in each configuration**, including
+the existing shared Shuttle protocol and native suites. C++ formatting,
+warnings-as-errors, and both repositories' whitespace checks pass.
+
+`cloth_struct_tests` covers nominal identity and source order, alias imports,
+constructor/member visibility, complete initialization and early exits, final
+inline paths, temporary mutation, read-only receivers, mutable reference
+boundaries, parameter/iteration bindings, class/interface signatures carrying
+structs, operation restrictions, and inline-layout cycles. Negative HIR checks
+cover nominal substitutions, location categories, receiver contracts, invalid
+equality operations, and scalar aggregate representation. At that checkpoint,
+native, ABI, and artifact paths were tested to reject struct compilation.
+
+The then-two-file `tests/integration/projects/structs` fixture exercised `--check`
+with both x86-64 and wasm32 selections; separate driver tests rejected native
+lowering and conflicting output options. No new testing launch script was needed.
+
+That checkpoint closed **26.2 only**, not Stage 26. Runtime copy/equality/output
+behavior, aggregate calls, GC safety, and source-free struct artifacts remained
+for 26.3/26.4. Artifact format 2, compiler ABI 3, runtime ABI 1, process protocol
+2, and manifest schema 1 were unchanged at that point.
+
+## Stage 26.3 aggregate implementation checkpoint
+
+Verified on Windows on 2026-09-02 with the GNU development compiler and the
+Clang/MSVC-library ASan/UBSan compiler:
+
+- all **121 CTest entries pass in each configuration**, including 21 real-compiler
+  Shuttle protocol tests and ten native Shuttle tests;
+- aggregate ABI tests cover x86-64 and wasm32 inline layout, flattened private
+  reference maps, physical receiver/parameter/result modes, empty values, and
+  limits on fields, nesting, value size, reference maps, and frame storage;
+- malformed MIR/ABI/imported metadata is rejected, including incomplete
+  construction, repeated final initialization, invalid storage roots, wrong
+  calling modes, false maps, inline cycles, and forged dependency layouts;
+- format-3 interface artifacts have frozen complete-byte lengths and SHA-256
+  hashes for both targets, with byte-identical re-encoding and source-free
+  private-layout consumption;
+- native fixtures cover the `Data(uint64)` constructor/getter, independent
+  copies, shallow managed references, nested mutation, exactly-once location
+  evaluation, readonly receiver and argument snapshots, fieldwise equality
+  including NaN and nullable strings, output/meta, and class/interface calls;
+- a test-only native harness inserts collection before allocation and exercises
+  loop-carried aggregate phi copies; constructor, local, argument, result, array,
+  and captured-owner references survive those safepoints;
+- runtime tests cover multi-reference array elements, interior root slots, and
+  malformed metadata/overflow traps through the existing program runner;
+- Shuttle builds native and wasm32 aggregate dependencies without reopening
+  their sources; separate native output matches whole-project output, and old
+  format-2 capabilities/receipts are rejected; and
+- all 43 ordinary Shuttle tests, Rust formatting, Clippy with warnings denied,
+  Rust 1.85 checking, C++ formatting/warnings-as-errors, and both repositories'
+  whitespace checks pass.
+
+Frontend/HIR checks remain in `cloth_struct_tests`; layout/package/MIR checks
+live in `cloth_aggregate_tests`. The native stress harness uses the existing
+integration runner and production verification/emission pipeline rather than
+adding a runtime GC-testing API or a new launch script.
+
+This closes **26.3 only**. Artifact format 3, compiler ABI 4 (`_C4`), and runtime
+ABI 2 require rebuilding older packages. Process protocol 2, receipt schema 1,
+and manifest schema 1 remain unchanged. Stage 26.4 owns the remaining coordinated
+exit audit, including struct-specific serial/parallel artifact equivalence and
+layout-change dependent invalidation.

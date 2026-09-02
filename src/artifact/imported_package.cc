@@ -4,6 +4,7 @@
 
 #include "cloth/artifact/imported_package.h"
 
+#include "cloth/abi/aggregate_limits.h"
 #include "cloth/identity/package_identity.h"
 #include "cloth/sema/canonical_identity.h"
 
@@ -41,7 +42,7 @@ class IssueCollector {
 
 bool is_nominal(TypeKind kind) {
   return kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
-         kind == TypeKind::kEnum;
+         kind == TypeKind::kEnum || kind == TypeKind::kStruct;
 }
 
 bool is_structural(TypeKind kind) {
@@ -122,6 +123,7 @@ CanonicalMemberKind canonical_member_kind(const SemanticSymbol& symbol) {
     case SymbolKind::kInterface:
     case SymbolKind::kEnum:
     case SymbolKind::kEnumCase:
+    case SymbolKind::kStruct:
       break;
   }
   return CanonicalMemberKind::kFunction;
@@ -142,6 +144,7 @@ ImportedMemberKind imported_member_kind(SymbolKind kind) {
     case SymbolKind::kInterface:
     case SymbolKind::kEnum:
     case SymbolKind::kEnumCase:
+    case SymbolKind::kStruct:
       break;
   }
   return ImportedMemberKind::kFunction;
@@ -292,12 +295,16 @@ ImportedCallableAbi import_callable(const AbiCallable& callable,
   parameters.reserve(callable.parameters.size());
   for (const AbiParameter& parameter : callable.parameters) {
     parameters.push_back(ImportedAbiParameter{
-        parameter.kind, canonical_type_identity(parameter.type, semantics)});
+        parameter.kind, canonical_type_identity(parameter.type, semantics),
+        parameter.passing});
   }
   std::optional<std::string> initializer_identity;
   std::optional<std::string> initializer_return_type;
   std::vector<ImportedAbiParameter> initializer_parameters;
-  if (callable.kind == AbiCallableKind::kConstructor) {
+  const bool class_constructor =
+      callable.kind == AbiCallableKind::kConstructor &&
+      semantics.file(*symbol.file).kind == FileTypeKind::kClass;
+  if (class_constructor) {
     initializer_identity = canonical_symbol_identity(
         symbol, semantics, CanonicalMemberKind::kConstructorInitializer);
     initializer_return_type =
@@ -320,7 +327,11 @@ ImportedCallableAbi import_callable(const AbiCallable& callable,
       std::move(initializer_return_type),
       std::move(initializer_parameters),
       canonical_type_identity(callable.return_type, semantics),
-      std::move(parameters)};
+      std::move(parameters),
+      callable.return_mode,
+      callable.receiver_mode,
+      AbiReturnMode::kVoid,
+      class_constructor ? AbiReceiverMode::kReference : AbiReceiverMode::kNone};
 }
 
 ImportedClassAbi import_class_abi(const AbiFileClass& file,
@@ -334,31 +345,34 @@ ImportedClassAbi import_class_abi(const AbiFileClass& file,
         canonical_type_identity(field.type, semantics), field.offset});
   }
 
-  std::vector<ImportedInterfaceDispatch> interfaces;
-  interfaces.reserve(file.type_descriptor.interfaces.size());
-  for (const AbiTypeDescriptor::InterfaceDispatch& interface_dispatch :
-       file.type_descriptor.interfaces) {
-    interfaces.push_back(ImportedInterfaceDispatch{
-        file_identity(interface_dispatch.interface_file, semantics),
-        interface_dispatch.interface_id,
-        symbol_identities(interface_dispatch.functions, semantics)});
-  }
+  std::optional<ImportedTypeDescriptor> descriptor;
+  if (file.type_descriptor) {
+    std::vector<ImportedInterfaceDispatch> interfaces;
+    interfaces.reserve(file.type_descriptor->interfaces.size());
+    for (const AbiTypeDescriptor::InterfaceDispatch& interface_dispatch :
+         file.type_descriptor->interfaces) {
+      interfaces.push_back(ImportedInterfaceDispatch{
+          file_identity(interface_dispatch.interface_file, semantics),
+          interface_dispatch.interface_id,
+          symbol_identities(interface_dispatch.functions, semantics)});
+    }
 
-  ImportedTypeDescriptor descriptor{
-      file.type_descriptor.kind,
-      canonical_member_identity(semantic_file.identity,
-                                CanonicalMemberKind::kDescriptor, ""),
-      file.type_descriptor.parent_file
-          ? std::optional<std::string>{file_identity(
-                *file.type_descriptor.parent_file, semantics)}
-          : std::nullopt,
-      file.type_descriptor.name,
-      file.type_descriptor.size,
-      file.type_descriptor.alignment,
-      file.type_descriptor.reference_offsets,
-      symbol_identities(file.type_descriptor.virtual_functions, semantics),
-      std::move(interfaces),
-      file.type_descriptor.mangled_name};
+    descriptor = ImportedTypeDescriptor{
+        file.type_descriptor->kind,
+        canonical_member_identity(semantic_file.identity,
+                                  CanonicalMemberKind::kDescriptor, ""),
+        file.type_descriptor->parent_file
+            ? std::optional<std::string>{file_identity(
+                  *file.type_descriptor->parent_file, semantics)}
+            : std::nullopt,
+        file.type_descriptor->name,
+        file.type_descriptor->size,
+        file.type_descriptor->alignment,
+        file.type_descriptor->reference_offsets,
+        symbol_identities(file.type_descriptor->virtual_functions, semantics),
+        std::move(interfaces),
+        file.type_descriptor->mangled_name};
+  }
 
   std::vector<ImportedStaticFieldAbi> static_fields;
   static_fields.reserve(file.static_fields.size());
@@ -410,7 +424,8 @@ std::optional<ImportedType> import_type(TypeId id,
                       std::move(nominal),
                       layout->kind,
                       layout->bit_width,
-                      layout->storage};
+                      layout->storage,
+                      layout->reference_offsets};
 }
 
 std::optional<std::string> overload_type_identity(
@@ -505,6 +520,9 @@ AbiTypeLayout expected_type_layout(const ImportedType& type,
                          SizeAlignment{size, alignment}};
   };
   switch (type.kind) {
+    case TypeKind::kStruct:
+      return make(AbiTypeKind::kAggregate, 0, type.storage.size,
+                  type.storage.alignment);
     case TypeKind::kError:
       return make(AbiTypeKind::kInvalid, 0, 0, 1);
     case TypeKind::kVoid:
@@ -556,7 +574,8 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
       return;
     }
     const NominalKind expected_kind =
-        type.kind == TypeKind::kEnum        ? NominalKind::kEnum
+        type.kind == TypeKind::kStruct      ? NominalKind::kStruct
+        : type.kind == TypeKind::kEnum      ? NominalKind::kEnum
         : type.kind == TypeKind::kInterface ? NominalKind::kInterface
                                             : NominalKind::kClass;
     if (type.nominal_identity->kind != expected_kind) {
@@ -583,6 +602,38 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
   }
   if (type.identity != expected_identity) {
     issues.add(record, "canonical type identity does not match its record");
+  }
+  if (type.kind == TypeKind::kStruct &&
+      (type.storage.size == 0 || type.storage.size > kMaxStructSize ||
+       !is_power_of_two(type.storage.alignment) ||
+       type.storage.size % type.storage.alignment != 0)) {
+    issues.add(record,
+               "aggregate value size or alignment exceeds the contract");
+  }
+  const std::vector<std::uint64_t> scalar_references =
+      type.abi_kind == AbiTypeKind::kReference ? std::vector<std::uint64_t>{0}
+                                               : std::vector<std::uint64_t>{};
+  if (type.kind != TypeKind::kStruct &&
+      type.reference_offsets != scalar_references) {
+    issues.add(record, "scalar value reference map is invalid");
+  }
+  if (type.reference_offsets.size() > kMaxLayoutReferences ||
+      !std::ranges::is_sorted(type.reference_offsets) ||
+      std::adjacent_find(type.reference_offsets.begin(),
+                         type.reference_offsets.end()) !=
+          type.reference_offsets.end()) {
+    issues.add(record,
+               "value reference map is not bounded, sorted, and unique");
+  }
+  for (const auto offset : type.reference_offsets) {
+    if (target.pointer.alignment == 0 ||
+        offset % target.pointer.alignment != 0 ||
+        type.storage.alignment < target.pointer.alignment ||
+        offset > type.storage.size ||
+        target.pointer.size > type.storage.size - offset) {
+      issues.add(record, "value reference slot lies outside aligned storage");
+      break;
+    }
   }
   const AbiTypeLayout expected = expected_type_layout(type, target);
   if (type.abi_kind != expected.kind || type.bit_width != expected.bit_width ||
@@ -661,24 +712,31 @@ void verify_class_abi(
       abi.header_size > abi.size || abi.size % abi.alignment != 0) {
     issues.add(record, "class size or alignment is invalid");
   }
-  const ImportedTypeDescriptor& descriptor = abi.descriptor;
-  const std::string descriptor_identity = canonical_member_identity(
-      file.nominal_identity, CanonicalMemberKind::kDescriptor, "");
-  if (descriptor.kind != AbiHeapObjectKind::kFileClass ||
-      descriptor.identity != descriptor_identity ||
-      descriptor.display_name != nominal_display_name(file.nominal_identity) ||
-      descriptor.size != abi.size || descriptor.alignment != abi.alignment ||
-      descriptor.parent_identity != file.base_identity) {
-    issues.add(record, "descriptor does not match the owning file layout");
+  const bool aggregate = file.kind == FileTypeKind::kStruct;
+  if (aggregate ? abi.descriptor.has_value() : !abi.descriptor.has_value()) {
+    issues.add(record, "heap descriptor presence disagrees with nominal kind");
+    return;
   }
-  const std::string expected_descriptor_name =
-      file.kind == FileTypeKind::kClass
-          ? mangle_canonical_identity(descriptor_identity)
-          : std::string{};
-  if (descriptor.mangled_name != expected_descriptor_name) {
-    issues.add(record, "descriptor linkage name is not canonical");
+  if (abi.descriptor) {
+    const ImportedTypeDescriptor& descriptor = *abi.descriptor;
+    const std::string descriptor_identity = canonical_member_identity(
+        file.nominal_identity, CanonicalMemberKind::kDescriptor, "");
+    if (descriptor.kind != AbiHeapObjectKind::kFileClass ||
+        descriptor.identity != descriptor_identity ||
+        descriptor.display_name !=
+            nominal_display_name(file.nominal_identity) ||
+        descriptor.size != abi.size || descriptor.alignment != abi.alignment ||
+        descriptor.parent_identity != file.base_identity) {
+      issues.add(record, "descriptor does not match the owning file layout");
+    }
+    const std::string expected_descriptor_name =
+        file.kind == FileTypeKind::kClass
+            ? mangle_canonical_identity(descriptor_identity)
+            : std::string{};
+    if (descriptor.mangled_name != expected_descriptor_name) {
+      issues.add(record, "descriptor linkage name is not canonical");
+    }
   }
-
   std::set<std::uint64_t> offsets;
   for (const ImportedFieldLayout& field : abi.fields) {
     const auto type = types.find(field.type_identity);
@@ -701,12 +759,24 @@ void verify_class_abi(
   std::vector<std::uint64_t> expected_references;
   for (const ImportedFieldLayout& field : abi.fields) {
     const auto type = types.find(field.type_identity);
-    if (type != types.end() &&
-        type->second->abi_kind == AbiTypeKind::kReference) {
-      expected_references.push_back(field.offset);
+    if (type != types.end()) {
+      for (const auto offset : type->second->reference_offsets) {
+        if (offset > abi.size || field.offset > abi.size - offset ||
+            expected_references.size() == kMaxLayoutReferences) {
+          issues.add(record, "flattened reference map exceeds layout limits");
+          break;
+        }
+        expected_references.push_back(field.offset + offset);
+      }
     }
   }
-  if (descriptor.reference_offsets != expected_references) {
+  const auto own_type = types.find(file.identity);
+  if ((abi.descriptor &&
+       abi.descriptor->reference_offsets != expected_references) ||
+      (aggregate &&
+       (own_type == types.end() ||
+        own_type->second->reference_offsets != expected_references ||
+        own_type->second->storage != SizeAlignment{abi.size, abi.alignment}))) {
     issues.add(record, "managed-reference offsets do not match field layout");
   }
 
@@ -761,7 +831,7 @@ void verify_class_abi(
             mangle_canonical_identity(callable.member_identity)) {
       issues.add(record, "callable ABI does not match its declaration");
     }
-    if (constructor) {
+    if (constructor && !aggregate) {
       const auto parameters = parameter_type_identities(declaration, types);
       const std::string initializer = canonical_member_identity(
           file.nominal_identity, CanonicalMemberKind::kConstructorInitializer,
@@ -777,13 +847,16 @@ void verify_class_abi(
       if (callable.initializer_return_type_identity != void_identity ||
           callable.initializer_parameters.size() !=
               declaration.parameters.size() + 1 ||
-          !types.contains(void_identity)) {
+          !types.contains(void_identity) ||
+          callable.initializer_return_mode != AbiReturnMode::kVoid ||
+          callable.initializer_receiver_mode != AbiReceiverMode::kReference) {
         issues.add(record, "constructor initializer signature is incomplete");
       } else {
         const ImportedAbiParameter& receiver =
             callable.initializer_parameters.front();
         if (receiver.kind != AbiParameterKind::kReceiver ||
-            receiver.type_identity != file.identity) {
+            receiver.type_identity != file.identity ||
+            receiver.passing != AbiPassingMode::kDirect) {
           issues.add(record,
                      "constructor initializer receiver ABI is inconsistent");
         }
@@ -793,7 +866,13 @@ void verify_class_abi(
               callable.initializer_parameters[index + 1];
           if (parameter.kind != AbiParameterKind::kExplicit ||
               parameter.type_identity !=
-                  declaration.parameters[index].type_identity) {
+                  declaration.parameters[index].type_identity ||
+              parameter.passing !=
+                  (types.contains(parameter.type_identity) &&
+                           types.at(parameter.type_identity)->kind ==
+                               TypeKind::kStruct
+                       ? AbiPassingMode::kValuePointer
+                       : AbiPassingMode::kDirect)) {
             issues.add(record,
                        "constructor initializer parameter ABI is inconsistent");
           }
@@ -802,42 +881,52 @@ void verify_class_abi(
     } else if (callable.initializer_identity ||
                !callable.initializer_mangled_name.empty() ||
                callable.initializer_return_type_identity ||
-               !callable.initializer_parameters.empty()) {
+               !callable.initializer_parameters.empty() ||
+               callable.initializer_receiver_mode != AbiReceiverMode::kNone ||
+               callable.initializer_return_mode != AbiReturnMode::kVoid) {
       issues.add(record, "function carries constructor initializer ABI");
-    }
-    const bool has_receiver = !constructor && !declaration.is_static;
-    const std::size_t expected_parameter_count =
-        declaration.parameters.size() + (has_receiver ? 1U : 0U);
-    if (callable.parameters.size() != expected_parameter_count) {
-      issues.add(record, "callable ABI parameter count is inconsistent");
-    }
-    std::size_t explicit_index = 0;
-    for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
-      const ImportedAbiParameter& parameter = callable.parameters[index];
-      if (!types.contains(parameter.type_identity)) {
-        issues.add(record, "callable ABI references an unknown type");
-      }
-      if (has_receiver && index == 0) {
-        if (parameter.kind != AbiParameterKind::kReceiver ||
-            parameter.type_identity != file.identity) {
-          issues.add(record, "callable receiver ABI is inconsistent");
-        }
-        continue;
-      }
-      if (parameter.kind != AbiParameterKind::kExplicit ||
-          explicit_index >= declaration.parameters.size() ||
-          parameter.type_identity !=
-              declaration.parameters[explicit_index].type_identity) {
-        issues.add(record, "explicit parameter ABI is inconsistent");
-      }
-      ++explicit_index;
     }
     const std::string& expected_return =
         constructor ? file.identity : declaration.type_identity;
-    if (explicit_index != declaration.parameters.size() ||
+    const auto returned = types.find(expected_return);
+    if (returned == types.end()) {
+      issues.add(record, "callable return type is absent");
+      continue;
+    }
+    const AbiReturnMode return_mode =
+        returned->second->kind == TypeKind::kVoid     ? AbiReturnMode::kVoid
+        : returned->second->kind == TypeKind::kStruct ? AbiReturnMode::kIndirect
+                                                      : AbiReturnMode::kDirect;
+    const bool has_receiver = !constructor && !declaration.is_static;
+    const AbiReceiverMode receiver_mode =
+        constructor && aggregate ? AbiReceiverMode::kConstruction
+        : !has_receiver          ? AbiReceiverMode::kNone
+        : aggregate              ? AbiReceiverMode::kReadOnlyValue
+                                 : AbiReceiverMode::kReference;
+    std::vector<ImportedAbiParameter> expected_parameters;
+    if (return_mode == AbiReturnMode::kIndirect) {
+      expected_parameters.push_back({AbiParameterKind::kResult, expected_return,
+                                     AbiPassingMode::kResultPointer});
+    }
+    if (has_receiver) {
+      expected_parameters.push_back({AbiParameterKind::kReceiver, file.identity,
+                                     aggregate ? AbiPassingMode::kValuePointer
+                                               : AbiPassingMode::kDirect});
+    }
+    for (const auto& parameter : declaration.parameters) {
+      const auto type = types.find(parameter.type_identity);
+      expected_parameters.push_back(
+          {AbiParameterKind::kExplicit, parameter.type_identity,
+           type != types.end() && type->second->kind == TypeKind::kStruct
+               ? AbiPassingMode::kValuePointer
+               : AbiPassingMode::kDirect});
+    }
+    if (callable.parameters != expected_parameters ||
         callable.return_type_identity != expected_return ||
-        !types.contains(callable.return_type_identity)) {
-      issues.add(record, "callable ABI signature is inconsistent");
+        callable.return_mode != return_mode ||
+        callable.receiver_mode != receiver_mode) {
+      issues.add(record,
+                 "callable physical signature disagrees with declarations");
     }
   }
 
@@ -856,6 +945,8 @@ void verify_class_abi(
     issues.add(record, "interface contains storage ABI");
   }
 
+  if (!abi.descriptor) return;
+  const ImportedTypeDescriptor& descriptor = *abi.descriptor;
   if (descriptor.virtual_function_identities !=
       file.virtual_function_identities) {
     issues.add(record, "descriptor virtual table disagrees with semantics");
@@ -893,6 +984,191 @@ void verify_class_abi(
   }
   if (descriptor.interfaces.size() != file.interface_implementations.size()) {
     issues.add(record, "descriptor interface dispatch set is incomplete");
+  }
+}
+
+// Local artifacts may claim dependency-owned value layouts. Those claims are
+// shape-checked locally, then matched against their owners in the full closure.
+// The graph contains only inline fields and class bases, never managed edges.
+void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
+                         bool require_owners, IssueCollector& issues) {
+  if (packages.empty()) return;
+  const auto& target = packages.front()->target;
+  if (!is_valid_data_layout(target)) return;
+  std::map<std::string, const ImportedType*> types;
+  std::map<std::string, const ImportedFile*> files;
+  for (const auto* package : packages) {
+    if (package->target != target) {
+      issues.add("closure", "package target layouts disagree");
+      return;
+    }
+    for (const auto& type : package->types) {
+      const auto [entry, inserted] = types.emplace(type.identity, &type);
+      if (!inserted && *entry->second != type) {
+        issues.add("closure", "dependency-owned type claims disagree");
+        return;
+      }
+    }
+    for (const auto& file : package->files) {
+      if (!files.emplace(file.identity, &file).second) {
+        issues.add("closure", "nominal declaration has multiple owners");
+        return;
+      }
+    }
+  }
+  for (const auto& [id, type] : types) {
+    if (require_owners && is_nominal(type->kind) && !files.contains(id)) {
+      issues.add("closure",
+                 "nominal type has no declaration in dependency closure");
+      return;
+    }
+    if (type->kind == TypeKind::kStruct &&
+        (type->storage.size > kMaxStructSize ||
+         type->reference_offsets.size() > kMaxLayoutReferences)) {
+      issues.add("layout", "aggregate type exceeds resource limits");
+      return;
+    }
+  }
+  std::map<std::string, std::size_t> indegrees;
+  std::map<std::string, std::vector<std::string>> dependents;
+  for (const auto& [id, file] : files) {
+    std::set<std::string> dependencies;
+    if (file->base_identity && files.contains(*file->base_identity)) {
+      dependencies.insert(*file->base_identity);
+    }
+    for (const auto& member : file->members) {
+      if (member.kind != ImportedMemberKind::kField || member.is_static)
+        continue;
+      const auto type = types.find(member.type_identity);
+      if (type != types.end() && type->second->kind == TypeKind::kStruct &&
+          files.contains(member.type_identity)) {
+        dependencies.insert(member.type_identity);
+      }
+    }
+    indegrees.emplace(id, dependencies.size());
+    for (const auto& dependency : dependencies)
+      dependents[dependency].push_back(id);
+  }
+  std::set<std::string> ready;
+  for (const auto& [id, degree] : indegrees) {
+    if (degree == 0) ready.insert(id);
+  }
+  std::map<std::string, std::size_t> depths;
+  std::size_t visited = 0;
+  std::size_t map_entries = 0;
+  while (!ready.empty()) {
+    const auto id = *ready.begin();
+    ready.erase(ready.begin());
+    const auto& file = *files.at(id);
+    ++visited;
+    const bool aggregate = file.kind == FileTypeKind::kStruct;
+    const auto record = "layout " + file.logical_path;
+    const auto fail = [&](std::string message) {
+      issues.add(record, std::move(message));
+    };
+    const auto& abi = file.abi;
+    if (abi.fields.size() > kMaxStructFields && aggregate) {
+      fail("struct exceeds the field-count limit");
+      return;
+    }
+    std::size_t depth = aggregate ? 1 : 0;
+    if (file.kind != FileTypeKind::kEnum) {
+      const std::uint64_t header =
+          aggregate ? 0 : target.pointer.size * target.object_header_words;
+      std::uint64_t offset = header;
+      std::uint64_t alignment = aggregate ? 1 : target.pointer.alignment;
+      std::vector<ImportedFieldLayout> fields;
+      bool complete_base = true;
+      if (file.base_identity) {
+        const auto base = files.find(*file.base_identity);
+        if (base == files.end()) {
+          complete_base = false;
+        } else {
+          offset = base->second->abi.size;
+          alignment = std::max(alignment, base->second->abi.alignment);
+          fields = base->second->abi.fields;
+        }
+      }
+      std::map<std::string, const ImportedMember*> members;
+      for (const auto& member : file.members)
+        members.emplace(member.identity, &member);
+      for (const auto& member_id : file.member_order) {
+        const auto member = members.find(member_id);
+        if (member == members.end()) {
+          fail("field declaration order references an unknown member");
+          return;
+        }
+        const auto& declaration = *member->second;
+        if (declaration.kind != ImportedMemberKind::kField ||
+            declaration.is_static)
+          continue;
+        const auto found = types.find(declaration.type_identity);
+        if (found == types.end()) {
+          fail("field type is absent");
+          return;
+        }
+        const auto& type = *found->second;
+        if (type.storage.size == 0 ||
+            !is_power_of_two(type.storage.alignment) ||
+            offset > std::numeric_limits<std::uint64_t>::max() -
+                         (type.storage.alignment - 1)) {
+          fail("field storage is invalid or alignment overflows");
+          return;
+        }
+        offset = (offset + type.storage.alignment - 1) &
+                 ~(type.storage.alignment - 1);
+        if (type.storage.size >
+            std::numeric_limits<std::uint64_t>::max() - offset) {
+          fail("field size overflows layout");
+          return;
+        }
+        fields.push_back(
+            {declaration.identity, declaration.type_identity, offset});
+        offset += type.storage.size;
+        alignment = std::max(alignment, type.storage.alignment);
+        if (aggregate && type.kind == TypeKind::kStruct) {
+          depth = std::max(depth, depths[declaration.type_identity] + 1);
+        }
+      }
+      if (aggregate) offset = std::max(offset, std::uint64_t{1});
+      if (offset >
+          std::numeric_limits<std::uint64_t>::max() - (alignment - 1)) {
+        fail("tail padding overflows layout");
+        return;
+      }
+      const auto size = (offset + alignment - 1) & ~(alignment - 1);
+      if ((aggregate && (size > kMaxStructSize || depth > kMaxStructDepth)) ||
+          (complete_base &&
+           (abi.header_size != header || abi.size != size ||
+            abi.alignment != alignment || abi.fields != fields))) {
+        fail(
+            "layout does not match declaration-order reconstruction or exceeds "
+            "limits");
+        return;
+      }
+    }
+    depths.emplace(id, depth);
+    const auto own_type = types.find(id);
+    if (own_type == types.end()) {
+      fail("nominal type is absent");
+      return;
+    }
+    const std::size_t reference_count =
+        aggregate        ? own_type->second->reference_offsets.size()
+        : abi.descriptor ? abi.descriptor->reference_offsets.size()
+                         : 0;
+    if (reference_count > kMaxLayoutReferences ||
+        reference_count > kMaxAggregateMapEntries - map_entries) {
+      fail("flattened reference maps exceed closure resource limits");
+      return;
+    }
+    map_entries += reference_count;
+    for (const auto& dependent : dependents[id]) {
+      if (--indegrees[dependent] == 0) ready.insert(dependent);
+    }
+  }
+  if (visited != files.size()) {
+    issues.add("layout", "inline storage dependency graph contains a cycle");
   }
 }
 
@@ -1093,8 +1369,11 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
     verify_type(type, view.target, type_identities, issues);
     if (type.kind == TypeKind::kNullable && type.element_identity) {
       const auto element = types.find(*type.element_identity);
-      if (element != types.end() && element->second->kind == TypeKind::kEnum) {
-        issues.add("type", "nullable enum value types are not supported");
+      if (element != types.end() &&
+          (element->second->kind == TypeKind::kEnum ||
+           element->second->kind == TypeKind::kStruct)) {
+        issues.add("type",
+                   "nullable enum/struct value types are not supported");
       }
     }
   }
@@ -1102,7 +1381,8 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
   for (const ImportedFile& file : view.files) {
     const std::string record = "file " + file.logical_path;
     const NominalKind expected_nominal =
-        file.kind == FileTypeKind::kEnum        ? NominalKind::kEnum
+        file.kind == FileTypeKind::kStruct      ? NominalKind::kStruct
+        : file.kind == FileTypeKind::kEnum      ? NominalKind::kEnum
         : file.kind == FileTypeKind::kInterface ? NominalKind::kInterface
                                                 : NominalKind::kClass;
     if (!valid_nominal_identity(file.nominal_identity) ||
@@ -1120,7 +1400,8 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
     const auto own_type = types.find(file.identity);
     if (own_type == types.end() ||
         own_type->second->kind !=
-            (file.kind == FileTypeKind::kEnum        ? TypeKind::kEnum
+            (file.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
+             : file.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
              : file.kind == FileTypeKind::kInterface ? TypeKind::kInterface
                                                      : TypeKind::kFileClass)) {
       issues.add(record, "owning nominal type is absent or has the wrong kind");
@@ -1144,6 +1425,17 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
     for (const ImportedMember& member : file.members) {
       members.emplace(member.identity, &member);
       verify_member(file, member, type_identities, types, issues);
+      if (file.kind == FileTypeKind::kStruct &&
+          (member.is_abstract || member.is_override || member.virtual_slot ||
+           member.overridden_identity || member.base_constructor_identity)) {
+        issues.add(record,
+                   "struct member carries inheritance or dispatch metadata");
+      }
+      if (member.is_static && member.kind == ImportedMemberKind::kField &&
+          types.contains(member.type_identity) &&
+          types.at(member.type_identity)->kind == TypeKind::kStruct) {
+        issues.add(record, "aggregate static constants are not supported");
+      }
       const auto type = types.find(member.type_identity);
       if (member.static_value && type != types.end() &&
           (member.static_value->kind == LiteralKind::kEnum ||
@@ -1194,8 +1486,25 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
         issues.add(record, "interface closure is absent or has the wrong kind");
       }
     }
+    if (file.kind == FileTypeKind::kStruct &&
+        (file.is_abstract || file.is_sealed || file.base_identity ||
+         !file.direct_interface_identities.empty() ||
+         !file.interface_identities.empty() ||
+         !file.virtual_function_identities.empty() ||
+         !file.abstract_function_identities.empty() ||
+         !file.interface_function_identities.empty() ||
+         !file.interface_implementations.empty() || file.abi.header_size != 0 ||
+         file.abi.fields.size() > kMaxStructFields)) {
+      issues.add(
+          record,
+          "struct declaration carries invalid storage or inheritance metadata");
+    }
     if (file.kind == FileTypeKind::kEnum) {
       const auto& descriptor = file.abi.descriptor;
+      if (!descriptor) {
+        issues.add(record, "enum ABI placeholder descriptor is missing");
+        continue;
+      }
       if (file.enum_cases.empty() || file.enum_cases.size() > kMaxEnumCases ||
           !file.members.empty() || file.is_abstract || file.is_sealed ||
           file.base_identity || !file.direct_interface_identities.empty() ||
@@ -1207,16 +1516,16 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
           file.abi.header_size != 0 || file.abi.size != 0 ||
           file.abi.alignment != 1 || !file.abi.fields.empty() ||
           !file.abi.static_fields.empty() || !file.abi.callables.empty() ||
-          descriptor.kind != AbiHeapObjectKind::kFileClass ||
-          !descriptor.mangled_name.empty() || descriptor.parent_identity ||
-          descriptor.size != 0 || descriptor.alignment != 1 ||
-          !descriptor.reference_offsets.empty() ||
-          !descriptor.virtual_function_identities.empty() ||
-          !descriptor.interfaces.empty() ||
-          descriptor.identity !=
+          descriptor->kind != AbiHeapObjectKind::kFileClass ||
+          !descriptor->mangled_name.empty() || descriptor->parent_identity ||
+          descriptor->size != 0 || descriptor->alignment != 1 ||
+          !descriptor->reference_offsets.empty() ||
+          !descriptor->virtual_function_identities.empty() ||
+          !descriptor->interfaces.empty() ||
+          descriptor->identity !=
               canonical_member_identity(file.nominal_identity,
                                         CanonicalMemberKind::kDescriptor, "") ||
-          descriptor.display_name !=
+          descriptor->display_name !=
               nominal_display_name(file.nominal_identity)) {
         issues.add(record,
                    "enum declaration or scalar ABI metadata is invalid");
@@ -1243,7 +1552,41 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
       verify_class_abi(file, members, types, issues);
     }
   }
+  const ImportedPackageView* single = &view;
+  verify_layout_graph({&single, 1}, false, issues);
   return issues.take();
+}
+
+std::vector<ImportedPackageIssue> verify_imported_package_closure(
+    std::span<const ImportedPackageView* const> packages) {
+  for (const auto* package : packages) {
+    auto issues = verify_imported_package_view(*package);
+    if (!issues.empty()) return issues;
+  }
+  IssueCollector issues;
+  verify_layout_graph(packages, true, issues);
+  return issues.take();
+}
+
+std::string imported_callable_signature(
+    AbiReturnMode return_mode, AbiReceiverMode receiver_mode,
+    std::string_view return_type,
+    std::span<const ImportedAbiParameter> parameters) {
+  std::string result = "c:";
+  result += abi_return_mode_name(return_mode);
+  result += ':' + mangle_canonical_identity(return_type) + '(';
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    if (index != 0) result += ',';
+    const auto& parameter = parameters[index];
+    result += parameter.kind == AbiParameterKind::kResult     ? "result:"
+              : parameter.kind == AbiParameterKind::kReceiver ? "receiver:"
+                                                              : "explicit:";
+    result += abi_passing_mode_name(parameter.passing);
+    result += ':' + mangle_canonical_identity(parameter.type_identity);
+  }
+  result += ");receiver:";
+  result += abi_receiver_mode_name(receiver_mode);
+  return result;
 }
 
 }  // namespace cloth

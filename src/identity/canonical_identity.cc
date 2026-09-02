@@ -78,7 +78,8 @@ std::string canonical_nominal_identity(const NominalIdentity& identity) {
     }
   }
   append_component(result, identity.name);
-  append_component(result, identity.kind == NominalKind::kEnum ? "enum"
+  append_component(result, identity.kind == NominalKind::kStruct ? "struct"
+                           : identity.kind == NominalKind::kEnum ? "enum"
                            : identity.kind == NominalKind::kClass
                                ? "class"
                                : "interface");
@@ -113,7 +114,7 @@ std::string canonical_member_identity(
 
 std::string mangle_canonical_identity(std::string_view identity) {
   constexpr std::string_view kHex = "0123456789abcdef";
-  std::string result = "_C3";
+  std::string result = "_C4";
   for (const char character : identity) {
     const auto byte = static_cast<unsigned char>(character);
     result.push_back(kHex[byte >> 4U]);

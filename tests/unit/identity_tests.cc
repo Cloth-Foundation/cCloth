@@ -78,7 +78,7 @@ struct Graph {
     std::map<std::string, std::string> values;
     for (const auto& file : result->abi.files) {
       const std::string& owner = result->semantics.symbol(file.symbol).name;
-      values.emplace(owner, file.type_descriptor.mangled_name);
+      values.emplace(owner, file.type_descriptor->mangled_name);
       for (const auto& function : file.functions) {
         values.emplace(
             owner + "." + result->semantics.symbol(function.symbol).name,
@@ -110,18 +110,18 @@ void fixed_encoding_vectors(TestContext& test) {
   test.expect(
       cloth::mangle_canonical_identity(
           cloth::canonical_primitive_identity("int32")) ==
-          "_C309000000000000007072696d69746976650500000000000000696e743332",
+          "_C409000000000000007072696d69746976650500000000000000696e743332",
       "primitive identity does not match the ABI-2 byte fixture");
   test.expect(
       cloth::mangle_canonical_identity(
           cloth::canonical_nominal_identity({{}, "", "A"})) ==
-          "_C3"
+          "_C4"
           "07000000000000006e6f6d696e616c0a000000000000007374616e64616c6f6e65"
           "000000000000000000000000000000000000000000000000010000000000000041"
           "0500000000000000636c617373",
       "standalone nominal identity does not match its byte fixture");
   test.expect(cloth::mangle_canonical_identity(std::string_view{"\0\xff", 2}) ==
-                  "_C300ff",
+                  "_C400ff",
               "mangling depends on signed char or terminates at NUL");
   const cloth::NominalIdentity interface{{"models", "1.2.3+local"},
                                          "geometry",
@@ -203,12 +203,12 @@ void exact_version_identity(TestContext& test) {
   const auto* right = second.file("models.Base");
   test.expect(left && right, "version change affected the source-visible name");
   if (!left || !right) return;
-  test.expect(left->type_descriptor.name == right->type_descriptor.name &&
-                  left->type_descriptor.name == "models.Base",
+  test.expect(left->type_descriptor->name == right->type_descriptor->name &&
+                  left->type_descriptor->name == "models.Base",
               "ABI version leaked into source-visible type names");
   test.expect(
-      left->type_descriptor.mangled_name !=
-              right->type_descriptor.mangled_name &&
+      left->type_descriptor->mangled_name !=
+              right->type_descriptor->mangled_name &&
           left->functions[0].mangled_name != right->functions[0].mangled_name &&
           left->constructors[0].initializer_mangled_name !=
               right->constructors[0].initializer_mangled_name &&
@@ -280,11 +280,11 @@ void ownership_partition(TestContext& test) {
               "package IR partition failed");
   if (!dependency || !consumer) return;
   test.expect(
-      dependency->text.contains("@" + base->type_descriptor.mangled_name +
+      dependency->text.contains("@" + base->type_descriptor->mangled_name +
                                 " = constant") &&
-          consumer->text.contains("@" + base->type_descriptor.mangled_name +
+          consumer->text.contains("@" + base->type_descriptor->mangled_name +
                                   " = external constant") &&
-          consumer->text.contains("@" + derived->type_descriptor.mangled_name +
+          consumer->text.contains("@" + derived->type_descriptor->mangled_name +
                                   " = constant"),
       "descriptor ownership was duplicated or lost");
   const auto& initializer = base->constructors[0].initializer_mangled_name;
@@ -330,7 +330,7 @@ void rejects_identity_and_linkage_corruption(TestContext& test) {
   if (!graph.result->is_valid) return;
   for (int mutation = 0; mutation < 3; ++mutation) {
     auto broken = graph.result->abi;
-    if (mutation == 0) broken.files[0].type_descriptor.mangled_name.clear();
+    if (mutation == 0) broken.files[0].type_descriptor->mangled_name.clear();
     if (mutation == 1)
       broken.files[0].constructors[0].initializer_linkage =
           cloth::AbiLinkage::kInternal;

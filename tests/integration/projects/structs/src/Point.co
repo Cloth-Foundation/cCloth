@@ -1,0 +1,13 @@
+struct {
+  int32 X;
+  int32 Y;
+
+  Point(int32 x, int32 y) {
+    X = x;
+    Y = y;
+  }
+
+  func Moved(int32 dx, int32 dy): Point {
+    return Point(X + dx, Y + dy);
+  }
+}

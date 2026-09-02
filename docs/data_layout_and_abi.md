@@ -1,8 +1,8 @@
-# Cloth Stage 4.0 data layout and ABI
+# Cloth data layout and ABI
 
-Stage 4.0 lowers verified MIR declarations into a deterministic ABI model. The
+The compiler lowers verified MIR declarations into a deterministic ABI model. The
 model contains no LLVM C++ types, but its sizes, alignments, signatures,
-linkage, and mangled names are sufficient for a future LLVM backend. This keeps
+linkage, and mangled names drive the LLVM backend. This keeps
 the front end inexpensive to build and lets LLVM remain a replaceable backend
 boundary.
 
@@ -68,13 +68,34 @@ for an enum and does not describe its scalar storage; that belongs to the type
 record. No enum heap descriptor or constructor entry is emitted. The complete
 contract is in [enums](enums.md).
 
+## Struct values
+
+`AbiTypeKind::kAggregate` has bit width zero. Its size/alignment describes inline
+storage, with no runtime header. Fields retain declaration order, alignment, and
+tail padding; an empty struct has size/alignment 1/1. Layouts are scheduled by
+inline-field dependencies and class bases, without recursive host-stack traversal.
+
+Every type layout carries a value `reference_offsets` map: empty for scalar/enum/
+void types, `[0]` for managed references, and recursively shifted offsets for
+struct fields. A class's value map describes its reference (`[0]`); its heap
+descriptor separately describes all references inside its object, including
+embedded structs. Structs have no heap descriptor.
+
+Limits are 65,536 instance fields per struct, inline depth 128, padded struct
+size 1 MiB, 65,536 reference slots per value/layout, and 1,048,576 map entries per
+compilation/dependency closure. Count each canonical struct value map and class
+heap map once. Checked arithmetic rejects overflow before allocation or emission.
+Backend aggregate backing buffers plus their root-address slots are limited to
+256 KiB per callable. These are compiler resource limits, not source ownership
+or lifetime rules.
+
 ## File-class objects
 
 Every file-class object begins with two opaque, reference-sized runtime words.
 The first points to immutable compiler-emitted type metadata. Stage 13.3 uses
 the second for an opaque managed-allocation registry entry. The descriptor
 carries the qualified file-class identity, complete object size and alignment,
-object kind, the final ABI offset of every reference-valued instance field, and
+object kind, the final ABI offset of every reference slot in an instance field, and
 the class virtual-function table and slot count. Stage 18 appends a sorted array
 of interface dispatch entries. Each entry contains a deterministic interface
 identity, a function-pointer table in contract-slot order, and its slot count.
@@ -98,7 +119,7 @@ layout, so a derived table covers inherited and local references.
 See [garbage_collection.md](garbage_collection.md) for the Stage 13.1 contract.
 
 Static fields are not object fields. Stage 12.2 records them in a separate ABI
-table and emits their literal value as constant global storage. Their ABI-3
+table and emits their literal value as constant global storage. Their ABI-4
 name includes the canonical owner and field name. Static field linkage is
 still determined by capitalization.
 
@@ -118,14 +139,32 @@ lower to Cloth `bool` values.
 
 ## Callable ABI
 
-Every instance `func` ABI has one leading receiver slot followed by its
-declared parameters. Instance-qualified calls supply their object, and
+Every callable records `return_mode` (`void`, `direct`, `indirect`) and
+`receiver_mode` (`none`, `reference`, `readonly_value`, `construction`).
+Physical parameter order is result, receiver, then explicit parameters. Each
+parameter records `direct`, `value_pointer`, or `result_pointer` passing.
+
+Struct results use a fresh, zeroed, rooted caller buffer and return LLVM `void`.
+Struct explicit parameters point to independent writable argument copies;
+read-only struct receivers point to snapshots captured before argument
+evaluation. Scalar/reference calls remain direct. These rules also apply to
+class virtual and interface signatures containing structs. There are no host
+aggregate ABI attributes, implicit boxing, or source-level pointer parameters.
+
+A struct constructor has one canonical entry: its indirect result is writable
+incomplete `self`. It has no allocation wrapper or separate initializer entry.
+Results are complete before the callee's roots are popped. Internal field
+initializer helpers may write directly into a rooted, unpublished field; ordinary
+calls do not reuse source storage as their result buffer.
+
+Every instance `func` has a receiver followed by its declared parameters; an
+indirect result slot, when present, comes before the receiver. Instance-qualified calls supply their object, and
 unqualified instance calls forward the current receiver. Static functions omit
 the receiver slot entirely. Semantic analysis rejects class-qualified instance
 calls and instance-qualified static calls, so null is never used as a stand-in
 receiver for a valid function call.
 
-Every public instance function receives a stable virtual slot. A derived ABI
+Every public class instance function receives a stable virtual slot. A derived ABI
 copies its base table, replaces override implementations in place, and appends
 new public instance functions in declaration order. Override parameters remain
 exact, while managed-reference returns may narrow covariantly without changing
@@ -141,7 +180,7 @@ function pointer, and invokes it with the unchanged receiver. ABI verification
 checks identity ordering, contract table lengths, and implementation symbol
 kinds in addition to the existing class-layout invariants.
 
-Each constructor has an allocation entry and an initialization entry.
+Each class constructor has an allocation entry and an initialization entry.
 The allocation entry accepts only declared parameters, returns the new
 file-class reference, allocates the complete most-derived object, and runs its
 constructor MIR. Its linkage is external for the uppercase class-name spelling
@@ -161,7 +200,7 @@ convention so LLVM and non-Cloth tooling have a stable interoperability point.
 
 ## Mangling
 
-ABI revision 3 uses `_C3` followed by hexadecimal canonical symbol identity.
+ABI revision 4 uses `_C4` followed by hexadecimal canonical symbol identity.
 Identity includes the exact manifest package version (or a distinct standalone
 owner), source namespace, file kind/stem, member kind/name, and overload parameter
 types. Return types are omitted because Cloth does not overload on a return

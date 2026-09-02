@@ -13,7 +13,10 @@
 #include "cloth/source/source_range.h"
 
 #include <cstddef>
+#include <deque>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <variant>
@@ -39,6 +42,21 @@ class MirVerifier {
   }
 
  private:
+  bool is_struct_type(std::optional<TypeId> type) const {
+    return type && type->value < semantics_.types().size() &&
+           semantics_.type(*type).kind == TypeKind::kStruct;
+  }
+
+  StructReceiverMode receiver_mode(const SemanticSymbol& symbol) const {
+    if (!symbol.file ||
+        semantics_.file(*symbol.file).kind != FileTypeKind::kStruct)
+      return StructReceiverMode::kNone;
+    if (symbol.kind == SymbolKind::kConstructor)
+      return StructReceiverMode::kConstruction;
+    return symbol.is_static ? StructReceiverMode::kNone
+                            : StructReceiverMode::kReadOnlyValue;
+  }
+
   bool is_enum_type(std::optional<TypeId> type) const {
     return type && type->value < semantics_.types().size() &&
            semantics_.type(*type).kind == TypeKind::kEnum;
@@ -72,6 +90,8 @@ class MirVerifier {
       }
     }
     verify_symbol(file.symbol, range);
+    current_parameters_.clear();
+    std::set<std::size_t> initialized_fields;
     for (const MirField& field : file.fields) {
       verify_symbol(field.symbol, range);
       if (file.is_imported_declaration && field.initializer) {
@@ -80,6 +100,9 @@ class MirVerifier {
       if (field.initializer) {
         verify_body(*field.initializer,
                     symbol_type(field.symbol, semantics_.error_type()), true);
+        verify_struct_initialization(file, *field.initializer,
+                                     initialized_fields, false);
+        initialized_fields.insert(field.symbol.value);
       }
     }
     for (const MirCallable& function : file.functions) {
@@ -94,6 +117,7 @@ class MirVerifier {
         verify_imported_callable(constructor, SymbolKind::kConstructor);
       } else {
         verify_callable(constructor, SymbolKind::kConstructor);
+        verify_struct_initialization(file, constructor.body, {}, true);
       }
     }
     for (const MemberReference& member : file.member_order) {
@@ -130,6 +154,9 @@ class MirVerifier {
       return;
     }
     const SemanticSymbol& symbol = semantics_.symbol(callable.symbol);
+    if (callable.struct_receiver != receiver_mode(symbol)) {
+      report(range, "imported callable has an invalid struct receiver mode");
+    }
     if (symbol.kind != expected_kind) {
       report(range, "imported callable has the wrong symbol kind");
     }
@@ -148,6 +175,10 @@ class MirVerifier {
   }
 
   void verify_callable(const MirCallable& callable, SymbolKind expected_kind) {
+    current_parameters_.clear();
+    for (const auto parameter : callable.parameters) {
+      current_parameters_.insert(parameter.value);
+    }
     const SourceRange range = symbol_range(callable.symbol);
     verify_symbol(callable.symbol, range);
     TypeId return_type = semantics_.error_type();
@@ -167,6 +198,9 @@ class MirVerifier {
                         ? semantics_.void_type()
                         : symbol.type;
       is_abstract = symbol.is_abstract;
+      if (callable.struct_receiver != receiver_mode(symbol)) {
+        report(range, "callable has an invalid struct receiver mode");
+      }
       verify_constructor_initialization(callable, symbol, expected_kind, range);
     }
     for (const SymbolId parameter : callable.parameters) {
@@ -177,6 +211,7 @@ class MirVerifier {
       }
     }
     verify_body(callable.body, return_type,
+                expected_kind == SymbolKind::kConstructor,
                 expected_kind == SymbolKind::kConstructor);
     if (is_abstract && (callable.body.blocks.size() != 1 ||
                         !callable.body.blocks[0].instructions.empty() ||
@@ -239,8 +274,161 @@ class MirVerifier {
     }
   }
 
+  // Recheck construction state at the MIR boundary. A storage recipe can name
+  // an incomplete field; copying self, reading it, or returning cannot expose
+  // uninitialized inline data (including primitive fields).
+  void verify_struct_initialization(const MirFileClass& file,
+                                    const MirBody& body,
+                                    const std::set<std::size_t>& initial_fields,
+                                    bool constructor) {
+    if (file.file.value >= semantics_.files().size() ||
+        semantics_.file(file.file).kind != FileTypeKind::kStruct ||
+        body.entry.value >= body.blocks.size())
+      return;
+    const auto self = semantics_.file(file.file).self_symbol;
+    std::map<std::size_t, std::size_t> indices;
+    std::vector<bool> defaults;
+    std::vector<bool> finals;
+    for (const auto& field : file.fields) {
+      if (field.symbol.value >= semantics_.symbols().size()) return;
+      const auto& symbol = semantics_.symbol(field.symbol);
+      if (symbol.is_static) continue;
+      indices.emplace(field.symbol.value, defaults.size());
+      defaults.push_back(field.initializer.has_value());
+      finals.push_back(symbol.is_final);
+    }
+    struct State {
+      std::vector<bool> definite;
+      std::vector<bool> possible;
+      bool operator==(const State&) const = default;
+    };
+    State initial{std::vector<bool>(indices.size()),
+                  std::vector<bool>(indices.size())};
+    for (const auto field : initial_fields) {
+      const auto found = indices.find(field);
+      if (found != indices.end()) {
+        initial.definite[found->second] = true;
+        initial.possible[found->second] = true;
+      }
+    }
+    const auto transfer = [&](const MirBasicBlock& block, State state,
+                              bool diagnose) {
+      const auto read_all = [&](SourceRange range) {
+        if (diagnose &&
+            std::ranges::find(state.definite, false) != state.definite.end()) {
+          report(range, "incomplete struct self is copied or escapes");
+        }
+      };
+      const auto read = [&](SymbolId field, SourceRange range) {
+        const auto found = indices.find(field.value);
+        if (diagnose && found != indices.end() &&
+            !state.definite[found->second]) {
+          report(range, "struct field is read before initialization");
+        }
+      };
+      const auto write = [&](std::size_t index, SourceRange range) {
+        if (diagnose && finals[index] && state.possible[index]) {
+          report(range, "final struct field may be initialized more than once");
+        }
+        state.definite[index] = true;
+        state.possible[index] = true;
+      };
+      for (const auto& instruction : block.instructions) {
+        if (std::holds_alternative<MirInitializeFieldsInstruction>(
+                instruction.data)) {
+          for (std::size_t index = 0; index < defaults.size(); ++index) {
+            if (defaults[index]) write(index, instruction.range);
+          }
+        } else if (const auto* load = std::get_if<MirLoadStorageInstruction>(
+                       &instruction.data);
+                   load && load->path.symbol == self) {
+          if (load->path.fields.empty())
+            read_all(instruction.range);
+          else
+            read(load->path.fields.front(), instruction.range);
+        } else if (const auto* store = std::get_if<MirStoreStorageInstruction>(
+                       &instruction.data);
+                   store && store->path.symbol == self &&
+                   !store->path.fields.empty()) {
+          const auto found = indices.find(store->path.fields.front().value);
+          if (store->path.fields.size() == 1 && found != indices.end()) {
+            write(found->second, instruction.range);
+          } else {
+            read(store->path.fields.front(), instruction.range);
+          }
+        } else if (const auto* load = std::get_if<MirLoadSymbolInstruction>(
+                       &instruction.data)) {
+          if (load->symbol == self)
+            read_all(instruction.range);
+          else
+            read(load->symbol, instruction.range);
+        }
+      }
+      if (constructor &&
+          std::holds_alternative<MirReturnTerminator>(block.terminator.data)) {
+        read_all(block.terminator.range);
+      }
+      return state;
+    };
+    std::vector<std::optional<State>> incoming(body.blocks.size());
+    incoming[body.entry.value] = initial;
+    std::deque<std::size_t> pending{body.entry.value};
+    std::vector<bool> queued(body.blocks.size());
+    queued[body.entry.value] = true;
+    while (!pending.empty()) {
+      const auto index = pending.front();
+      pending.pop_front();
+      queued[index] = false;
+      const auto out = transfer(body.blocks[index], *incoming[index], false);
+      const auto propagate = [&](MirBlockId destination) {
+        if (destination.value >= incoming.size()) return;
+        auto& next = incoming[destination.value];
+        State merged = next.value_or(out);
+        if (next) {
+          for (std::size_t field = 0; field < defaults.size(); ++field) {
+            merged.definite[field] =
+                merged.definite[field] && out.definite[field];
+            merged.possible[field] =
+                merged.possible[field] || out.possible[field];
+          }
+        }
+        if (!next || *next != merged) {
+          next = std::move(merged);
+          if (!queued[destination.value]) {
+            pending.push_back(destination.value);
+            queued[destination.value] = true;
+          }
+        }
+      };
+      const auto& terminator = body.blocks[index].terminator.data;
+      if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator)) {
+        propagate(jump->target);
+      } else if (const auto* branch =
+                     std::get_if<MirBranchTerminator>(&terminator)) {
+        propagate(branch->then_block);
+        propagate(branch->else_block);
+      }
+    }
+    for (std::size_t index = 0; index < body.blocks.size(); ++index) {
+      if (incoming[index]) {
+        static_cast<void>(transfer(body.blocks[index], *incoming[index], true));
+      }
+    }
+  }
+
   void verify_body(const MirBody& body, TypeId return_type,
-                   bool suppress_self_virtual_dispatch) {
+                   bool suppress_self_virtual_dispatch,
+                   bool initialization_allowed = false) {
+    initialization_allowed_ = initialization_allowed;
+    current_locals_.clear();
+    for (const auto& block : body.blocks) {
+      for (const auto& instruction : block.instructions) {
+        if (const auto* local =
+                std::get_if<MirDeclareLocalInstruction>(&instruction.data)) {
+          current_locals_.insert(local->symbol.value);
+        }
+      }
+    }
     if (body.blocks.empty()) {
       report(body.range, "body has no basic blocks");
       return;
@@ -271,10 +459,39 @@ class MirVerifier {
       }
     }
 
+    std::vector<std::set<std::size_t>> predecessors(body.blocks.size());
+    for (std::size_t index = 0; index < body.blocks.size(); ++index) {
+      const auto add = [&](MirBlockId target) {
+        if (target.value < predecessors.size())
+          predecessors[target.value].insert(index);
+      };
+      const auto& terminator = body.blocks[index].terminator.data;
+      if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator))
+        add(jump->target);
+      if (const auto* branch = std::get_if<MirBranchTerminator>(&terminator)) {
+        add(branch->then_block);
+        add(branch->else_block);
+      }
+    }
     for (std::size_t block_index = 0; block_index < body.blocks.size();
          ++block_index) {
       const MirBasicBlock& block = body.blocks[block_index];
+      bool saw_non_phi = false;
       for (const MirInstruction& instruction : block.instructions) {
+        if (const auto* phi =
+                std::get_if<MirPhiInstruction>(&instruction.data)) {
+          std::set<std::size_t> incoming;
+          for (const auto& edge : phi->incoming)
+            incoming.insert(edge.predecessor.value);
+          if (saw_non_phi || incoming != predecessors[block_index] ||
+              incoming.size() != phi->incoming.size()) {
+            report(
+                instruction.range,
+                "phi does not cover unique predecessor edges at block entry");
+          }
+        } else {
+          saw_non_phi = true;
+        }
         verify_instruction(instruction, body, value_types,
                            suppress_self_virtual_dispatch);
       }
@@ -324,7 +541,25 @@ class MirVerifier {
                           const std::vector<std::optional<TypeId>>& value_types,
                           bool suppress_self_virtual_dispatch) {
     if (const auto* load =
-            std::get_if<MirLoadSymbolInstruction>(&instruction.data)) {
+            std::get_if<MirLoadStorageInstruction>(&instruction.data)) {
+      require_result(instruction);
+      const auto type =
+          verify_storage_path(load->path, value_types, instruction.range, false,
+                              suppress_self_virtual_dispatch);
+      if (type && *type != instruction.type)
+        report(instruction.range,
+               "storage load has an incompatible result type");
+    } else if (const auto* store =
+                   std::get_if<MirStoreStorageInstruction>(&instruction.data)) {
+      require_no_result(instruction);
+      verify_value(store->value, value_types, instruction.range);
+      const auto type =
+          verify_storage_path(store->path, value_types, instruction.range, true,
+                              suppress_self_virtual_dispatch);
+      if (type)
+        verify_value_type(store->value, *type, value_types, instruction.range);
+    } else if (const auto* load =
+                   std::get_if<MirLoadSymbolInstruction>(&instruction.data)) {
       verify_symbol(load->symbol, instruction.range);
       require_result(instruction);
       verify_symbol_type(load->symbol, instruction.type, instruction.range);
@@ -355,8 +590,9 @@ class MirVerifier {
         const TypeId type =
             symbol_type(declaration->symbol, semantics_.error_type());
         if (type.value < semantics_.types().size() &&
-            semantics_.type(type).kind == TypeKind::kEnum) {
-          report(instruction.range, "enum local has no initializer");
+            (semantics_.type(type).kind == TypeKind::kEnum ||
+             semantics_.type(type).kind == TypeKind::kStruct)) {
+          report(instruction.range, "nominal value local has no initializer");
         }
       }
     } else if (const auto* store =
@@ -402,6 +638,9 @@ class MirVerifier {
                  "static field was lowered as a member store");
         }
       }
+      if (is_struct_type(known_value_type(store->object, value_types)))
+        report(instruction.range,
+               "member store targets a struct value instead of storage");
       verify_member_receiver(store->object, store->member, value_types,
                              instruction.range);
     } else if (const auto* array =
@@ -522,7 +761,8 @@ class MirVerifier {
     } else if (const auto* unary =
                    std::get_if<MirUnaryInstruction>(&instruction.data)) {
       const auto operand_type = known_value_type(unary->operand, value_types);
-      if (is_enum_type(operand_type) || is_enum_type(instruction.type)) {
+      if (is_enum_type(operand_type) || is_enum_type(instruction.type) ||
+          is_struct_type(operand_type) || is_struct_type(instruction.type)) {
         report(instruction.range, "enum value used by a unary operation");
       }
       verify_value(unary->operand, value_types, instruction.range);
@@ -547,7 +787,8 @@ class MirVerifier {
       const std::optional<TypeId> right_type =
           known_value_type(binary->right, value_types);
       if ((is_enum_type(left_type) || is_enum_type(right_type) ||
-           is_enum_type(instruction.type)) &&
+           is_enum_type(instruction.type) || is_struct_type(left_type) ||
+           is_struct_type(right_type) || is_struct_type(instruction.type)) &&
           (left_type != right_type ||
            instruction.type != semantics_.bool_type() ||
            (binary->operation != TokenKind::kEqualEqual &&
@@ -633,7 +874,9 @@ class MirVerifier {
       verify_value(test->value, value_types, instruction.range);
       verify_type(test->target, instruction.range);
       if (is_enum_type(known_value_type(test->value, value_types)) ||
-          is_enum_type(test->target)) {
+          is_enum_type(test->target) ||
+          is_struct_type(known_value_type(test->value, value_types)) ||
+          is_struct_type(test->target)) {
         report(instruction.range, "enum value used by a reference type test");
       }
       require_result(instruction);
@@ -645,7 +888,9 @@ class MirVerifier {
       verify_value(cast->value, value_types, instruction.range);
       verify_type(cast->target, instruction.range);
       if (is_enum_type(known_value_type(cast->value, value_types)) ||
-          is_enum_type(cast->target)) {
+          is_enum_type(cast->target) ||
+          is_struct_type(known_value_type(cast->value, value_types)) ||
+          is_struct_type(cast->target)) {
         report(instruction.range, "enum value used by a reference cast");
       }
       require_result(instruction);
@@ -696,7 +941,9 @@ class MirVerifier {
       if (call->kind == MirCallKind::kInstance && !call->receiver) {
         report(instruction.range, "instance call has no receiver");
       }
-      if (call->kind != MirCallKind::kInstance && call->receiver) {
+      if (call->kind != MirCallKind::kInstance && call->receiver &&
+          !(call->kind == MirCallKind::kUnqualified &&
+            call->struct_receiver == StructReceiverMode::kReadOnlyValue)) {
         report(instruction.range, "non-instance call has a receiver");
       }
       for (const MirValueId argument : call->arguments) {
@@ -708,6 +955,14 @@ class MirVerifier {
       }
       if (call->callable.value < semantics_.symbols().size()) {
         const SemanticSymbol& callable = semantics_.symbol(call->callable);
+        if (call->struct_receiver != receiver_mode(callable) ||
+            (call->struct_receiver == StructReceiverMode::kReadOnlyValue &&
+             (!call->receiver || call->dispatch != MirDispatchKind::kDirect)) ||
+            (call->struct_receiver == StructReceiverMode::kConstruction &&
+             (call->receiver || call->kind != MirCallKind::kConstructor))) {
+          report(instruction.range,
+                 "call has an invalid struct receiver contract");
+        }
         const bool is_constructor = callable.kind == SymbolKind::kConstructor;
         const bool is_constructor_call =
             call->kind == MirCallKind::kConstructor ||
@@ -809,6 +1064,10 @@ class MirVerifier {
       }
     } else if (std::holds_alternative<MirInitializeFieldsInstruction>(
                    instruction.data)) {
+      if (!initialization_allowed_) {
+        report(instruction.range,
+               "field initialization occurs outside a constructor");
+      }
       require_no_result(instruction);
       if (instruction.type != semantics_.void_type()) {
         report(instruction.range,
@@ -829,6 +1088,10 @@ class MirVerifier {
     } else if (const auto* literal =
                    std::get_if<MirLiteralInstruction>(&instruction.data)) {
       require_result(instruction);
+      if (is_struct_type(instruction.type)) {
+        report(instruction.range,
+               "struct cannot be represented by a scalar literal");
+      }
       if ((literal->kind == LiteralKind::kEnum ||
            (instruction.type.value < semantics_.types().size() &&
             semantics_.type(instruction.type).kind == TypeKind::kEnum)) &&
@@ -1005,6 +1268,84 @@ class MirVerifier {
     return false;
   }
 
+  std::optional<TypeId> verify_storage_path(
+      const MirStoragePath& path,
+      const std::vector<std::optional<TypeId>>& value_types, SourceRange range,
+      bool write, bool construction) {
+    if (path.symbol.has_value() == path.object.has_value() ||
+        (path.index && !path.object)) {
+      report(range, "storage path must have exactly one valid root");
+      return std::nullopt;
+    }
+    std::optional<TypeId> current;
+    bool read_only = false;
+    bool self = false;
+    if (path.symbol) {
+      verify_symbol(*path.symbol, range);
+      if (path.symbol->value >= semantics_.symbols().size())
+        return std::nullopt;
+      const auto& symbol = semantics_.symbol(*path.symbol);
+      self = symbol.kind == SymbolKind::kSelf;
+      if ((symbol.kind != SymbolKind::kLocal &&
+           symbol.kind != SymbolKind::kParameter && !self) ||
+          symbol.file != current_file_ || !is_struct_type(symbol.type)) {
+        report(range,
+               "storage path symbol is not an inline value in this file");
+        return std::nullopt;
+      }
+      if ((symbol.kind == SymbolKind::kLocal &&
+           !current_locals_.contains(path.symbol->value)) ||
+          (symbol.kind == SymbolKind::kParameter &&
+           !current_parameters_.contains(path.symbol->value))) {
+        report(range, "storage path refers to another callable's storage");
+      }
+      current = symbol.type;
+      read_only = symbol.is_final || (self && !construction);
+      if (self && path.fields.empty() && write)
+        report(range, "storage path replaces self");
+    } else {
+      verify_value(*path.object, value_types, range);
+      current = known_value_type(*path.object, value_types);
+      if (path.index) {
+        verify_value(*path.index, value_types, range);
+        verify_value_type(*path.index, *semantics_.find_type("int32"),
+                          value_types, range);
+        current = array_element_type(*path.object, value_types, range);
+      } else if (current && current->value < semantics_.types().size() &&
+                 semantics_.type(*current).kind != TypeKind::kFileClass) {
+        report(range, "storage path object is not a managed class reference");
+        return std::nullopt;
+      }
+    }
+    for (std::size_t index = 0; index < path.fields.size(); ++index) {
+      if (!current || current->value >= semantics_.types().size())
+        return std::nullopt;
+      const auto& owner_type = semantics_.type(*current);
+      const SymbolId field_id = path.fields[index];
+      verify_symbol(field_id, range);
+      if (field_id.value >= semantics_.symbols().size()) return std::nullopt;
+      const auto& field = semantics_.symbol(field_id);
+      const bool class_root = path.object && !path.index && index == 0;
+      if (!owner_type.file || !field.file || field.kind != SymbolKind::kField ||
+          field.is_static ||
+          (class_root ? !is_file_subtype(*owner_type.file, *field.file)
+                      : owner_type.kind != TypeKind::kStruct ||
+                            owner_type.file != field.file)) {
+        report(
+            range,
+            "storage projection has an unrelated field or crosses a reference");
+        return std::nullopt;
+      }
+      const bool initializes_field =
+          self && construction && index == 0 && path.fields.size() == 1;
+      read_only = read_only || (field.is_final && !initializes_field);
+      current = field.type;
+    }
+    if (write && read_only)
+      report(range, "storage write targets a read-only value");
+    return current;
+  }
+
   void verify_member_receiver(
       MirValueId receiver, SymbolId member,
       const std::vector<std::optional<TypeId>>& value_types,
@@ -1020,7 +1361,9 @@ class MirVerifier {
     const SemanticType& type = semantics_.type(receiver_type);
     const std::optional<FileId> owner = semantics_.symbol(member).file;
     bool related = false;
-    if (type.kind == TypeKind::kFileClass && type.file && owner) {
+    if (type.kind == TypeKind::kStruct && type.file && owner) {
+      related = type.file == owner;
+    } else if (type.kind == TypeKind::kFileClass && type.file && owner) {
       related = is_file_subtype(*type.file, *owner);
     } else if (type.kind == TypeKind::kInterface && type.file && owner) {
       const std::vector<FileId>& interfaces =
@@ -1126,6 +1469,9 @@ class MirVerifier {
   const SemanticModel& semantics_;
   DiagnosticEngine& diagnostics_;
   std::optional<FileId> current_file_;
+  std::set<std::size_t> current_parameters_;
+  std::set<std::size_t> current_locals_;
+  bool initialization_allowed_{false};
   bool is_valid_{true};
 };
 

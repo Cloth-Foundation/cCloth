@@ -37,9 +37,11 @@ class AbiVerifier {
       report(fallback_range(), "target data layout is invalid");
       return false;
     }
-    const AbiModule expected = lower_to_abi(mir_, semantics_, abi_.target);
-    verify_types(expected);
-    verify_files(expected);
+    const auto expected =
+        lower_to_abi(mir_, semantics_, abi_.target, diagnostics_);
+    if (!expected) return false;
+    verify_types(*expected);
+    verify_files(*expected);
     verify_unique_names();
     verify_calls();
     return is_valid_;
@@ -103,13 +105,28 @@ class AbiVerifier {
     if (file.member_order != expected.member_order) {
       report(range, "member order does not match MIR");
     }
+    if (file.kind == FileTypeKind::kStruct) {
+      if (file.type_descriptor || file.base_file ||
+          file.layout.header_size != 0) {
+        report(range, "struct ABI contains a heap descriptor or base storage");
+      }
+      verify_class_layout(file.layout, range);
+      verify_callables(file.functions, expected.functions, range, "function");
+      verify_callables(file.constructors, expected.constructors, range,
+                       "constructor");
+      return;
+    }
+    if (!file.type_descriptor) {
+      report(range, "file ABI is missing its descriptor record");
+      return;
+    }
     if (file.kind == FileTypeKind::kEnum) {
       if (file.base_file || file.layout.size != 0 ||
           file.layout.header_size != 0 || file.layout.alignment != 1 ||
           !file.layout.fields.empty() || !file.static_fields.empty() ||
           !file.functions.empty() || !file.constructors.empty() ||
           !file.member_order.empty() ||
-          !file.type_descriptor.mangled_name.empty()) {
+          !file.type_descriptor->mangled_name.empty()) {
         report(range, "enum ABI contains class storage or members");
       }
       return;
@@ -117,14 +134,14 @@ class AbiVerifier {
     if (file.kind == FileTypeKind::kInterface) {
       if (file.base_file || !file.layout.fields.empty() ||
           !file.static_fields.empty() || !file.constructors.empty() ||
-          !file.type_descriptor.interfaces.empty()) {
+          !file.type_descriptor->interfaces.empty()) {
         report(range, "interface ABI contains class storage or construction");
       }
       verify_callables(file.functions, expected.functions, range, "function");
       return;
     }
     verify_class_layout(file.layout, range);
-    verify_type_descriptor(file.type_descriptor, file.layout, range);
+    verify_type_descriptor(*file.type_descriptor, file.layout, range);
     verify_interface_dispatches(file, range);
     verify_inheritance(file, range);
     verify_callables(file.functions, expected.functions, range, "function");
@@ -134,12 +151,12 @@ class AbiVerifier {
 
   void verify_inheritance(const AbiFileClass& file, SourceRange range) {
     if (!file.base_file) {
-      if (file.type_descriptor.parent_file) {
+      if (file.type_descriptor->parent_file) {
         report(range, "root file class has a parent type descriptor");
       }
       return;
     }
-    if (file.type_descriptor.parent_file != file.base_file) {
+    if (file.type_descriptor->parent_file != file.base_file) {
       report(range, "type descriptor parent does not match the base class");
     }
     if (file.base_file->value >= abi_.files.size() ||
@@ -199,7 +216,7 @@ class AbiVerifier {
     std::uint64_t previous_id = 0;
     bool has_previous = false;
     for (const AbiTypeDescriptor::InterfaceDispatch& interface :
-         file.type_descriptor.interfaces) {
+         file.type_descriptor->interfaces) {
       if (interface.interface_file.value >= semantics_.files().size()) {
         report(range, "type descriptor has an unknown interface");
         continue;
@@ -278,8 +295,9 @@ class AbiVerifier {
     std::unordered_set<std::string> names;
     for (const AbiFileClass& file : abi_.files) {
       if (file.kind == FileTypeKind::kClass &&
-          (file.type_descriptor.mangled_name.empty() ||
-           !names.insert(file.type_descriptor.mangled_name).second)) {
+          (!file.type_descriptor ||
+           file.type_descriptor->mangled_name.empty() ||
+           !names.insert(file.type_descriptor->mangled_name).second)) {
         report(symbol_range(file.symbol),
                "descriptor name is empty or not unique");
       }
@@ -294,6 +312,7 @@ class AbiVerifier {
       }
       for (const AbiCallable& callable : file.constructors) {
         verify_unique_name(callable, names);
+        if (file.kind == FileTypeKind::kStruct) continue;
         if (callable.initializer_mangled_name.empty() ||
             !names.insert(callable.initializer_mangled_name).second) {
           report(symbol_range(callable.symbol),
@@ -359,12 +378,11 @@ class AbiVerifier {
           report(instruction.range,
                  "MIR base call has no constructor initializer ABI");
         }
-        const bool has_receiver =
-            !callable->parameters.empty() &&
-            callable->parameters.front().kind == AbiParameterKind::kReceiver;
-        const std::size_t receiver_count = has_receiver ? 1U : 0U;
-        if (callable->parameters.size() !=
-            call->arguments.size() + receiver_count) {
+        const auto explicit_count = std::ranges::count(
+            callable->parameters, AbiParameterKind::kExplicit,
+            &AbiParameter::kind);
+        if (static_cast<std::size_t>(explicit_count) !=
+            call->arguments.size()) {
           report(instruction.range,
                  "MIR call does not match its ABI parameter count");
         }

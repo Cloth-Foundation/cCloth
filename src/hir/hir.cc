@@ -11,6 +11,17 @@
 
 namespace cloth {
 
+StructReceiverMode struct_receiver_mode(const SemanticSymbol& callable,
+                                        const SemanticModel& semantics) {
+  if (!callable.file || callable.is_static ||
+      semantics.file(*callable.file).kind != FileTypeKind::kStruct) {
+    return StructReceiverMode::kNone;
+  }
+  return callable.kind == SymbolKind::kConstructor
+             ? StructReceiverMode::kConstruction
+             : StructReceiverMode::kReadOnlyValue;
+}
+
 HirExpressionId HirStorage::add_expression(HirExpression expression) {
   const HirExpressionId id{expressions_.size()};
   expressions_.push_back(std::move(expression));
@@ -104,9 +115,11 @@ class Lowerer {
     }
     file.functions.reserve(syntax.functions.size());
     for (std::size_t index = 0; index < syntax.functions.size(); ++index) {
-      file.functions.push_back(
-          HirCallable{semantic_file.functions[index], std::nullopt,
-                      block(syntax.functions[index].body)});
+      file.functions.push_back(HirCallable{
+          semantic_file.functions[index], std::nullopt,
+          block(syntax.functions[index].body),
+          struct_receiver_mode(
+              semantics_.symbol(semantic_file.functions[index]), semantics_)});
     }
     file.constructors.reserve(syntax.constructors.size());
     for (std::size_t index = 0; index < syntax.constructors.size(); ++index) {
@@ -124,9 +137,9 @@ class Lowerer {
                                                 std::move(arguments),
                                                 constructor.initializer->range};
       }
-      file.constructors.push_back(HirCallable{semantic_file.constructors[index],
-                                              std::move(initializer),
-                                              block(constructor.body)});
+      file.constructors.push_back(HirCallable{
+          semantic_file.constructors[index], std::move(initializer),
+          block(constructor.body), struct_receiver_mode(symbol, semantics_)});
     }
     module_.files.push_back(std::move(file));
   }
@@ -275,8 +288,13 @@ class Lowerer {
       data = HirGroupedExpression{expression(grouped->expression)};
     }
 
-    static_cast<void>(module_.storage.add_expression(
-        HirExpression{semantic.type, syntax.range, std::move(data)}));
+    if (auto* call = std::get_if<HirCallExpression>(&data);
+        call && call->callable) {
+      call->struct_receiver =
+          struct_receiver_mode(semantics_.symbol(*call->callable), semantics_);
+    }
+    static_cast<void>(module_.storage.add_expression(HirExpression{
+        semantic.type, syntax.range, std::move(data), semantic.category}));
   }
 
   void lower_statement(StatementId id) {

@@ -7,6 +7,27 @@ set(CLOTH_INTEGRATION_EXPECTED "${CMAKE_CURRENT_SOURCE_DIR}/expected")
 set(CLOTH_INTEGRATION_ERRORS "${CMAKE_CURRENT_SOURCE_DIR}/errors")
 set(CLOTH_INTEGRATION_PROJECTS "${CMAKE_CURRENT_SOURCE_DIR}/projects")
 
+add_test(NAME cloth_cli_check_structs
+    COMMAND clothc --check
+            --source-root=${CLOTH_INTEGRATION_PROJECTS}/structs/src
+            ${CLOTH_INTEGRATION_PROJECTS}/structs/src/Main.co
+)
+set_tests_properties(cloth_cli_check_structs PROPERTIES
+    PASS_REGULAR_EXPRESSION "Struct Point"
+)
+add_test(NAME cloth_cli_check_structs_wasm32
+    COMMAND clothc --check --target=wasm32
+            --source-root=${CLOTH_INTEGRATION_PROJECTS}/structs/src
+            ${CLOTH_INTEGRATION_PROJECTS}/structs/src/Main.co
+)
+set_tests_properties(cloth_cli_check_structs_wasm32 PROPERTIES
+    PASS_REGULAR_EXPRESSION "Struct Point"
+)
+add_test(NAME cloth_cli_check_output_conflict
+    COMMAND clothc --check --emit-llvm ${CLOTH_INTEGRATION_PROJECTS}/structs/src/Main.co
+)
+set_tests_properties(cloth_cli_check_output_conflict PROPERTIES WILL_FAIL TRUE)
+
 add_test(
     NAME cloth_cli_example
     COMMAND clothc
@@ -39,6 +60,18 @@ add_test(
 )
 
 if(CLOTH_LLVM_OPT_EXECUTABLE)
+    foreach(target IN ITEMS x86_64 wasm32)
+        set(struct_ir "${PROJECT_BINARY_DIR}/cloth-structs-${target}.ll")
+        add_test(NAME cloth_cli_structs_llvm_${target}
+            COMMAND clothc --target=${target} --emit-llvm=${struct_ir}
+                --source-root=${CLOTH_INTEGRATION_PROJECTS}/structs/src
+                ${CLOTH_INTEGRATION_PROJECTS}/structs/src/Main.co)
+        add_test(NAME cloth_structs_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                -passes=verify -disable-output ${struct_ir})
+        set_tests_properties(cloth_structs_verify_${target} PROPERTIES
+            DEPENDS cloth_cli_structs_llvm_${target})
+    endforeach()
     set(CLOTH_TEST_LLVM_IR ${PROJECT_BINARY_DIR}/cloth-example.ll)
     add_test(
         NAME cloth_cli_emit_llvm
@@ -57,6 +90,32 @@ if(CLOTH_LLVM_OPT_EXECUTABLE)
 endif()
 
 if(CLOTH_LLVM_LLC_EXECUTABLE)
+    cloth_add_native_output_test(structs
+        OUTPUT "cloth structs"
+        SOURCE ${CLOTH_INTEGRATION_PROJECTS}/structs/src/Main.co
+        SOURCE_ROOT ${CLOTH_INTEGRATION_PROJECTS}/structs/src
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/structs.txt
+        EXACT
+    )
+    get_target_property(native_definitions clothc COMPILE_DEFINITIONS)
+    add_executable(cloth_struct_native_tests struct_native_tests.cc)
+    target_link_libraries(cloth_struct_native_tests PRIVATE cloth_compiler)
+    target_compile_definitions(cloth_struct_native_tests PRIVATE ${native_definitions})
+    cloth_enable_warnings(cloth_struct_native_tests)
+    add_dependencies(cloth_struct_native_tests cloth_runtime)
+    cloth_native_executable_path(struct_stress "cloth struct GC stress")
+    add_test(NAME cloth_build_struct_gc_stress
+        COMMAND cloth_struct_native_tests
+            ${CLOTH_INTEGRATION_PROJECTS}/structs/src/Main.co
+            "${struct_stress}")
+    add_test(NAME cloth_struct_gc_stress
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=${struct_stress}"
+            "-DCLOTH_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/structs.txt"
+            -DCLOTH_EXACT_OUTPUT=ON
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+    set_tests_properties(cloth_struct_gc_stress PROPERTIES
+        DEPENDS cloth_build_struct_gc_stress)
     cloth_add_native_output_test(enums
         OUTPUT "cloth enums"
         SOURCE ${CLOTH_INTEGRATION_PROJECTS}/enums/src/Main.co

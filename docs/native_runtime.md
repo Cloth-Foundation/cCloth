@@ -69,8 +69,7 @@ cloth_rt_object_is_kind(value, kind) -> uint8
 cloth_rt_object_is_type(value, type_descriptor) -> uint8
 cloth_rt_object_is_interface(value, interface_id) -> uint8
 cloth_rt_interface_function(value, interface_id, function_slot) -> pointer
-cloth_rt_array_alloc(length, element_size, element_alignment,
-                     contains_references) -> array
+cloth_rt_array_alloc(length, element_layout) -> array
 cloth_rt_array_length(array) -> int32
 cloth_rt_array_element(array, index) -> element address
 cloth_rt_require_receiver(reference)
@@ -126,7 +125,7 @@ this internal stack during marking.
 Every managed allocation, including string concatenation, is an automatic
 collector safepoint. Marking uses an intrusive, non-allocating worklist,
 descriptor offsets for file classes, and
-pointer-element scans for reference arrays. Strings are leaves. Sweeping
+per-element reference-offset scans for arrays. Strings are leaves. Sweeping
 releases unmarked headers, array payloads, owned string payloads, and registry
 entries. Cycles require
 no special case. Explicit collection and live object/byte counters support
@@ -176,3 +175,19 @@ normalization, interning, root-slot reuse,
 optimization levels, debug information, command-line arguments, exceptions, and platform
 packaging remain future work. These features should extend the runtime and
 toolchain boundaries without changing existing source contracts.
+
+
+## Runtime ABI 2 aggregate arrays
+
+`ClothArrayElementLayout` is `{ uint64 size, uint64 alignment,
+const uint64* reference_offsets, uint64 reference_count }`. Allocation has the
+physical signature `ptr(i32, ptr)`. Metadata and its offset table are immutable
+program-lifetime storage referenced by the array; neither is a managed object.
+
+The allocator rejects zero/overflowed stride, invalid alignment, mismatched
+count/table pairs, and unsorted, duplicate, unaligned, or out-of-bounds reference
+slots. It checks payload arithmetic and zeroes aligned storage before publication.
+Scanning visits every reference slot of every element, including nested structs.
+The class descriptor and root-frame shapes are unchanged. Root addresses may point
+to managed-reference slots inside aggregate buffers; an aggregate address itself
+must never be registered as a heap reference.

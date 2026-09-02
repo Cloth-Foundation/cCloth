@@ -4,6 +4,7 @@
 
 #include "cloth/artifact/package_artifact.h"
 
+#include "cloth/abi/aggregate_limits.h"
 #include "cloth/identity/package_identity.h"
 #include "cloth/lexer/literal.h"
 #include "cloth/sema/numeric_types.h"
@@ -352,13 +353,15 @@ std::string_view visibility_text(Visibility value) {
 }
 
 std::string_view file_kind_name(FileTypeKind value) {
-  return value == FileTypeKind::kEnum    ? "enum"
+  return value == FileTypeKind::kStruct  ? "struct"
+         : value == FileTypeKind::kEnum  ? "enum"
          : value == FileTypeKind::kClass ? "class"
                                          : "interface";
 }
 
 std::string_view nominal_kind_name(NominalKind value) {
-  return value == NominalKind::kEnum    ? "enum"
+  return value == NominalKind::kStruct  ? "struct"
+         : value == NominalKind::kEnum  ? "enum"
          : value == NominalKind::kClass ? "class"
                                         : "interface";
 }
@@ -375,6 +378,8 @@ std::string_view abi_type_kind_name(AbiTypeKind value) {
       return "float";
     case AbiTypeKind::kReference:
       return "reference";
+    case AbiTypeKind::kAggregate:
+      return "aggregate";
   }
   return "invalid";
 }
@@ -396,7 +401,9 @@ std::string_view linkage_name(AbiLinkage value) {
 }
 
 std::string_view parameter_kind_name(AbiParameterKind value) {
-  return value == AbiParameterKind::kReceiver ? "receiver" : "explicit";
+  return value == AbiParameterKind::kResult     ? "result"
+         : value == AbiParameterKind::kReceiver ? "receiver"
+                                                : "explicit";
 }
 
 std::string_view callable_kind_name(AbiCallableKind value) {
@@ -492,6 +499,10 @@ JsonValue encode_nominal(const std::optional<NominalIdentity>& nominal) {
 }
 
 JsonValue encode_type(const ImportedType& type) {
+  JsonValue::Array references;
+  for (const auto offset : type.reference_offsets) {
+    references.push_back(json_integer(offset));
+  }
   return JsonValue{JsonValue::Object{
       {"abi_kind", json_string(abi_type_kind_name(type.abi_kind))},
       {"bit_width", json_integer(type.bit_width)},
@@ -500,6 +511,7 @@ JsonValue encode_type(const ImportedType& type) {
       {"id", json_identity(type.identity)},
       {"kind", json_string(type_kind_name(type.kind))},
       {"nominal", encode_nominal(type.nominal_identity)},
+      {"reference_offsets", JsonValue{std::move(references)}},
       {"storage", JsonValue{JsonValue::Object{
                       {"alignment", json_integer(type.storage.alignment)},
                       {"size", json_integer(type.storage.size)}}}}}};
@@ -762,6 +774,7 @@ JsonValue encode_static_field_abi(const ImportedStaticFieldAbi& field) {
 JsonValue encode_abi_parameter(const ImportedAbiParameter& parameter) {
   return JsonValue{JsonValue::Object{
       {"kind", json_string(parameter_kind_name(parameter.kind))},
+      {"passing", json_string(abi_passing_mode_name(parameter.passing))},
       {"type", json_identity(parameter.type_identity)}}};
 }
 
@@ -782,6 +795,10 @@ JsonValue encode_callable_abi(const ImportedCallableAbi& callable) {
         {"linkage", json_string(linkage_name(callable.initializer_linkage))},
         {"mangled_name", json_string(callable.initializer_mangled_name)},
         {"parameters", encode_abi_parameters(callable.initializer_parameters)},
+        {"receiver_mode", json_string(abi_receiver_mode_name(
+                              callable.initializer_receiver_mode))},
+        {"return_mode",
+         json_string(abi_return_mode_name(callable.initializer_return_mode))},
         {"return_type",
          json_optional_identity(callable.initializer_return_type_identity)}}};
   }
@@ -793,6 +810,9 @@ JsonValue encode_callable_abi(const ImportedCallableAbi& callable) {
       {"mangled_name", json_string(callable.mangled_name)},
       {"member", json_identity(callable.member_identity)},
       {"parameters", encode_abi_parameters(callable.parameters)},
+      {"receiver_mode",
+       json_string(abi_receiver_mode_name(callable.receiver_mode))},
+      {"return_mode", json_string(abi_return_mode_name(callable.return_mode))},
       {"return_type", json_identity(callable.return_type_identity)}}};
 }
 
@@ -812,7 +832,9 @@ JsonValue encode_layout(const ImportedFile& file) {
   return JsonValue{JsonValue::Object{
       {"alignment", json_integer(file.abi.alignment)},
       {"callables", JsonValue{std::move(callables)}},
-      {"descriptor", encode_descriptor(file.abi.descriptor)},
+      {"descriptor", file.abi.descriptor
+                         ? encode_descriptor(*file.abi.descriptor)
+                         : JsonValue{}},
       {"fields", JsonValue{std::move(fields)}},
       {"header_size", json_integer(file.abi.header_size)},
       {"owner", json_identity(file.identity)},
@@ -1241,7 +1263,7 @@ std::optional<TypeKind> parse_type_kind(std::string_view value) {
       TypeKind::kUint32,    TypeKind::kUint64,    TypeKind::kFloat32,
       TypeKind::kFloat64,   TypeKind::kString,    TypeKind::kObject,
       TypeKind::kFileClass, TypeKind::kInterface, TypeKind::kEnum,
-      TypeKind::kArray,     TypeKind::kNullable};
+      TypeKind::kArray,     TypeKind::kNullable,  TypeKind::kStruct};
   const auto kind = std::ranges::find_if(kinds, [&](TypeKind candidate) {
     return type_kind_name(candidate) == value;
   });
@@ -1254,6 +1276,7 @@ std::optional<AbiTypeKind> parse_abi_type_kind(std::string_view value) {
   if (value == "integer") return AbiTypeKind::kInteger;
   if (value == "float") return AbiTypeKind::kFloat;
   if (value == "reference") return AbiTypeKind::kReference;
+  if (value == "aggregate") return AbiTypeKind::kAggregate;
   return std::nullopt;
 }
 
@@ -1263,10 +1286,11 @@ std::optional<std::vector<ImportedType>> MetadataDecoder::decode_types(
   if (values == nullptr) return std::nullopt;
   std::vector<ImportedType> result;
   for (const JsonValue& item : *values) {
-    const auto* fields = object(item,
-                                {"abi_kind", "bit_width", "display_name",
-                                 "element", "id", "kind", "nominal", "storage"},
-                                "types");
+    const auto* fields =
+        object(item,
+               {"abi_kind", "bit_width", "display_name", "element", "id",
+                "kind", "nominal", "reference_offsets", "storage"},
+               "types");
     if (fields == nullptr) return std::nullopt;
     const std::string* abi_kind_text = text(fields->at("abi_kind"), "types");
     const auto bits = integer(fields->at("bit_width"), "types");
@@ -1307,20 +1331,34 @@ std::optional<std::vector<ImportedType>> MetadataDecoder::decode_types(
       if (nominal_kind == nullptr || name == nullptr || !package ||
           source_package == nullptr ||
           (*nominal_kind != "class" && *nominal_kind != "interface" &&
-           *nominal_kind != "enum")) {
+           *nominal_kind != "enum" && *nominal_kind != "struct")) {
         issue("types.nominal", "nominal type enum is invalid");
         return std::nullopt;
       }
       nominal =
           NominalIdentity{std::move(*package), *source_package, *name,
-                          *nominal_kind == "enum"    ? NominalKind::kEnum
+                          *nominal_kind == "struct"  ? NominalKind::kStruct
+                          : *nominal_kind == "enum"  ? NominalKind::kEnum
                           : *nominal_kind == "class" ? NominalKind::kClass
                                                      : NominalKind::kInterface};
     }
-    result.push_back(ImportedType{std::move(*id), *kind, *display,
-                                  std::move(*element), std::move(nominal),
-                                  *abi_kind, static_cast<std::uint32_t>(*bits),
-                                  SizeAlignment{*size, *alignment}});
+    const auto* reference_values =
+        array(fields->at("reference_offsets"), "types");
+    if (reference_values == nullptr ||
+        reference_values->size() > kMaxLayoutReferences) {
+      issue("types", "invalid or excessive reference map");
+      return std::nullopt;
+    }
+    std::vector<std::uint64_t> references;
+    for (const JsonValue& reference : *reference_values) {
+      const auto offset = integer(reference, "types.reference_offsets");
+      if (!offset) return std::nullopt;
+      references.push_back(*offset);
+    }
+    result.push_back(ImportedType{
+        std::move(*id), *kind, *display, std::move(*element),
+        std::move(nominal), *abi_kind, static_cast<std::uint32_t>(*bits),
+        SizeAlignment{*size, *alignment}, std::move(references)});
   }
   return result;
 }
@@ -1335,6 +1373,7 @@ std::optional<FileTypeKind> parse_file_kind(std::string_view value) {
   if (value == "class") return FileTypeKind::kClass;
   if (value == "interface") return FileTypeKind::kInterface;
   if (value == "enum") return FileTypeKind::kEnum;
+  if (value == "struct") return FileTypeKind::kStruct;
   return std::nullopt;
 }
 
@@ -1584,7 +1623,8 @@ std::optional<ImportedFile> MetadataDecoder::decode_file_declaration(
                                           std::move(*case_location)});
   }
   const NominalKind nominal_kind =
-      *kind == FileTypeKind::kEnum    ? NominalKind::kEnum
+      *kind == FileTypeKind::kStruct  ? NominalKind::kStruct
+      : *kind == FileTypeKind::kEnum  ? NominalKind::kEnum
       : *kind == FileTypeKind::kClass ? NominalKind::kClass
                                       : NominalKind::kInterface;
   const NominalIdentity nominal{package, *source_package, *name, nominal_kind};
@@ -1766,6 +1806,7 @@ std::optional<AbiLinkage> parse_linkage(std::string_view value) {
 
 std::optional<AbiParameterKind> parse_parameter_kind(std::string_view value) {
   if (value == "receiver") return AbiParameterKind::kReceiver;
+  if (value == "result") return AbiParameterKind::kResult;
   if (value == "explicit") return AbiParameterKind::kExplicit;
   return std::nullopt;
 }
@@ -1776,29 +1817,55 @@ std::optional<AbiCallableKind> parse_callable_kind(std::string_view value) {
   return std::nullopt;
 }
 
+std::optional<AbiPassingMode> parse_passing_mode(std::string_view value) {
+  if (value == "direct") return AbiPassingMode::kDirect;
+  if (value == "value_pointer") return AbiPassingMode::kValuePointer;
+  if (value == "result_pointer") return AbiPassingMode::kResultPointer;
+  return std::nullopt;
+}
+
+std::optional<AbiReturnMode> parse_return_mode(std::string_view value) {
+  if (value == "void") return AbiReturnMode::kVoid;
+  if (value == "direct") return AbiReturnMode::kDirect;
+  if (value == "indirect") return AbiReturnMode::kIndirect;
+  return std::nullopt;
+}
+
+std::optional<AbiReceiverMode> parse_receiver_mode(std::string_view value) {
+  if (value == "none") return AbiReceiverMode::kNone;
+  if (value == "reference") return AbiReceiverMode::kReference;
+  if (value == "readonly_value") return AbiReceiverMode::kReadOnlyValue;
+  if (value == "construction") return AbiReceiverMode::kConstruction;
+  return std::nullopt;
+}
+
 std::optional<ImportedAbiParameter> MetadataDecoder::decode_abi_parameter(
     const JsonValue& value) {
-  const auto* fields = object(value, {"kind", "type"}, "layouts.parameter");
+  const auto* fields =
+      object(value, {"kind", "passing", "type"}, "layouts.parameter");
   if (fields == nullptr) return std::nullopt;
   const std::string* kind_text = text(fields->at("kind"), "layouts.parameter");
   auto type = identity(fields->at("type"), "layouts.parameter");
   const auto kind =
       kind_text == nullptr ? std::nullopt : parse_parameter_kind(*kind_text);
-  if (!kind || !type) {
+  const auto* passing_text = text(fields->at("passing"), "layouts.parameter");
+  const auto passing =
+      passing_text ? parse_passing_mode(*passing_text) : std::nullopt;
+  if (!kind || !type || !passing) {
     issue("layouts.parameter", "ABI parameter is invalid");
     return std::nullopt;
   }
-  return ImportedAbiParameter{*kind, std::move(*type)};
+  return ImportedAbiParameter{*kind, std::move(*type), *passing};
 }
 
 std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
     const JsonValue& value) {
   constexpr std::string_view kRecord = "layouts.callable";
-  const auto* fields =
-      object(value,
-             {"calling_convention", "initializer", "kind", "linkage",
-              "mangled_name", "member", "parameters", "return_type"},
-             kRecord);
+  const auto* fields = object(
+      value,
+      {"calling_convention", "initializer", "kind", "linkage", "mangled_name",
+       "member", "parameters", "receiver_mode", "return_mode", "return_type"},
+      kRecord);
   if (fields == nullptr) return std::nullopt;
   const std::string* calling_convention =
       text(fields->at("calling_convention"), kRecord);
@@ -1807,6 +1874,12 @@ std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
   const std::string* mangled = text(fields->at("mangled_name"), kRecord);
   auto member = identity(fields->at("member"), kRecord);
   auto return_type = identity(fields->at("return_type"), kRecord);
+  const auto* return_text = text(fields->at("return_mode"), kRecord);
+  const auto* receiver_text = text(fields->at("receiver_mode"), kRecord);
+  const auto return_mode =
+      return_text ? parse_return_mode(*return_text) : std::nullopt;
+  const auto receiver_mode =
+      receiver_text ? parse_receiver_mode(*receiver_text) : std::nullopt;
   const auto kind =
       kind_text == nullptr ? std::nullopt : parse_callable_kind(*kind_text);
   const auto linkage =
@@ -1815,7 +1888,7 @@ std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
       array(fields->at("parameters"), kRecord);
   if (calling_convention == nullptr || *calling_convention != "c" || !kind ||
       !linkage || mangled == nullptr || !member || !return_type ||
-      parameter_values == nullptr) {
+      !return_mode || !receiver_mode || parameter_values == nullptr) {
     issue(std::string{kRecord}, "callable ABI is invalid");
     return std::nullopt;
   }
@@ -1831,10 +1904,13 @@ std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
   AbiLinkage initializer_linkage = AbiLinkage::kInternal;
   std::optional<std::string> initializer_return;
   std::vector<ImportedAbiParameter> initializer_parameters;
+  AbiReturnMode initializer_return_mode = AbiReturnMode::kVoid;
+  AbiReceiverMode initializer_receiver_mode = AbiReceiverMode::kNone;
   if (!is_null(fields->at("initializer"))) {
     const auto* initializer =
         object(fields->at("initializer"),
-               {"id", "linkage", "mangled_name", "parameters", "return_type"},
+               {"id", "linkage", "mangled_name", "parameters", "receiver_mode",
+                "return_mode", "return_type"},
                "layouts.callable.initializer");
     if (initializer == nullptr) return std::nullopt;
     auto id = identity(initializer->at("id"), "layouts.callable.initializer");
@@ -1850,8 +1926,18 @@ std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
         initializer_linkage_text == nullptr
             ? std::nullopt
             : parse_linkage(*initializer_linkage_text);
-    if (!id || !parsed_initializer_linkage || initializer_name == nullptr ||
-        !initializer_return_value || initializer_parameter_values == nullptr) {
+    const auto* init_return_text =
+        text(initializer->at("return_mode"), kRecord);
+    const auto* init_receiver_text =
+        text(initializer->at("receiver_mode"), kRecord);
+    const auto init_return =
+        init_return_text ? parse_return_mode(*init_return_text) : std::nullopt;
+    const auto init_receiver = init_receiver_text
+                                   ? parse_receiver_mode(*init_receiver_text)
+                                   : std::nullopt;
+    if (!init_return || !init_receiver || !id || !parsed_initializer_linkage ||
+        initializer_name == nullptr || !initializer_return_value ||
+        initializer_parameter_values == nullptr) {
       issue("layouts.callable.initializer",
             "constructor initializer ABI is invalid");
       return std::nullopt;
@@ -1861,6 +1947,8 @@ std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
       if (!parameter) return std::nullopt;
       initializer_parameters.push_back(std::move(*parameter));
     }
+    initializer_return_mode = *init_return;
+    initializer_receiver_mode = *init_receiver;
     initializer_identity = std::move(*id);
     initializer_mangled = *initializer_name;
     initializer_linkage = *parsed_initializer_linkage;
@@ -1877,7 +1965,11 @@ std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
                              std::move(initializer_return),
                              std::move(initializer_parameters),
                              std::move(*return_type),
-                             std::move(parameters)};
+                             std::move(parameters),
+                             *return_mode,
+                             *receiver_mode,
+                             initializer_return_mode,
+                             initializer_receiver_mode};
 }
 
 std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
@@ -1948,7 +2040,11 @@ std::optional<ImportedClassAbi> MetadataDecoder::decode_layout(
                               kRecord);
   if (fields == nullptr) return std::nullopt;
   const auto alignment = integer(fields->at("alignment"), kRecord);
-  auto descriptor = decode_descriptor(fields->at("descriptor"));
+  std::optional<ImportedTypeDescriptor> descriptor;
+  if (!is_null(fields->at("descriptor"))) {
+    descriptor = decode_descriptor(fields->at("descriptor"));
+    if (!descriptor) return std::nullopt;
+  }
   const auto header = integer(fields->at("header_size"), kRecord);
   auto owner_identity = identity(fields->at("owner"), kRecord);
   const auto size = integer(fields->at("size"), kRecord);
@@ -1957,7 +2053,7 @@ std::optional<ImportedClassAbi> MetadataDecoder::decode_layout(
       array(fields->at("static_fields"), kRecord);
   const JsonValue::Array* callable_values =
       array(fields->at("callables"), kRecord);
-  if (!alignment || !descriptor || !header || !owner_identity || !size ||
+  if (!alignment || !header || !owner_identity || !size ||
       field_values == nullptr || static_values == nullptr ||
       callable_values == nullptr) {
     return std::nullopt;
@@ -2002,7 +2098,7 @@ std::optional<ImportedClassAbi> MetadataDecoder::decode_layout(
                           *size,
                           *alignment,
                           std::move(imported_fields),
-                          std::move(*descriptor),
+                          std::move(descriptor),
                           std::move(static_fields),
                           std::move(callables)};
 }
@@ -2414,13 +2510,19 @@ std::vector<ArtifactIssue> verify_package_artifact(
                  "symbol inventory is not in unique link-name order");
   }
   std::map<std::string, ArtifactSymbolKind, std::less<>> expected_definitions;
+  std::map<std::string, std::string, std::less<>> expected_signatures;
   for (const ImportedFile& file : artifact.imported.files) {
-    if (!file.abi.descriptor.mangled_name.empty()) {
-      expected_definitions.emplace(file.abi.descriptor.identity,
+    if (file.abi.descriptor && !file.abi.descriptor->mangled_name.empty()) {
+      expected_signatures.emplace(file.abi.descriptor->identity,
+                                  "descriptor:file_class");
+      expected_definitions.emplace(file.abi.descriptor->identity,
                                    ArtifactSymbolKind::kDescriptor);
     }
     for (const ImportedStaticFieldAbi& field : file.abi.static_fields) {
       if (field.linkage == AbiLinkage::kExternal) {
+        expected_signatures.emplace(
+            field.member_identity,
+            "global:" + mangle_canonical_identity(field.type_identity));
         expected_definitions.emplace(field.member_identity,
                                      ArtifactSymbolKind::kStaticField);
       }
@@ -2432,11 +2534,25 @@ std::vector<ArtifactIssue> verify_package_artifact(
     for (const ImportedCallableAbi& callable : file.abi.callables) {
       if (callable.linkage == AbiLinkage::kExternal &&
           !abstract_members.contains(callable.member_identity)) {
+        expected_signatures.emplace(
+            callable.member_identity,
+            imported_callable_signature(
+                callable.return_mode, callable.receiver_mode,
+                callable.return_type_identity, callable.parameters));
         expected_definitions.emplace(callable.member_identity,
                                      ArtifactSymbolKind::kCallable);
       }
       if (callable.initializer_identity &&
           callable.initializer_linkage == AbiLinkage::kExternal) {
+        if (callable.initializer_return_type_identity) {
+          expected_signatures.emplace(
+              *callable.initializer_identity,
+              imported_callable_signature(
+                  callable.initializer_return_mode,
+                  callable.initializer_receiver_mode,
+                  *callable.initializer_return_type_identity,
+                  callable.initializer_parameters));
+        }
         expected_definitions.emplace(
             *callable.initializer_identity,
             ArtifactSymbolKind::kConstructorInitializer);
@@ -2464,6 +2580,8 @@ std::vector<ArtifactIssue> verify_package_artifact(
           expected_definitions.find(*symbol.canonical_identity);
       if (expected == expected_definitions.end() ||
           expected->second != symbol.kind ||
+          expected_signatures[*symbol.canonical_identity] !=
+              symbol.abi_signature ||
           !actual_definitions.insert(*symbol.canonical_identity).second) {
         append_issue(issues, ArtifactIssueCode::kInvalidModel, "symbols",
                      "defined symbol is not owned by the package ABI");
