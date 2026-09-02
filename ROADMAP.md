@@ -63,7 +63,7 @@ and deliberate deferrals are recorded in `TODO.md`.
 
 Stage 21 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
-exit audits. Build-responsiveness Stage 24 is active.
+exit audits. Build-responsiveness Stage 24 is also complete.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -193,7 +193,7 @@ Exit criteria:
 
 ## Stage 24: Responsive and observable local builds
 
-Status: **active**
+Status: **complete**
 
 Objective: make Shuttle's local build loop visibly active and materially faster
 without weakening exact artifact identity, deterministic output, or validation.
@@ -236,7 +236,8 @@ Exit criteria:
 - development, sanitizer, Rust, cross-tool, native, and responsiveness suites
   pass.
 
-The build-output and reuse contracts are owned by Shuttle's Stage 24 documents.
+The build-output, reuse, and parallel-scheduling contracts are owned by
+Shuttle's Stage 24 documents.
 
 ## Beyond Stage 24
 

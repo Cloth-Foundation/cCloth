@@ -251,3 +251,25 @@ protocol and eight native Shuttle/`clothc` cases. All 40 ordinary Shuttle tests,
 the Rust 1.85 baseline, Rust formatting and Clippy, C++ formatting, and
 repository whitespace checks pass. Stage 24.3 is complete; bounded deterministic
 parallel scheduling remains Stage 24.4.
+
+## Stage 24.4 parallel scheduling and exit audit
+
+Verified on Windows on 2026-09-01 with the GNU development compiler and the
+Clang/MSVC-library ASan/UBSan compiler. Shuttle now bounds package compiler
+processes with a positive `--jobs` value, defaults to available host parallelism,
+and schedules canonical dependency levels. Candidate validation and compilation
+remain separate phases, so every long compiler operation has preceding progress.
+
+Compiler diagnostics are drained into private per-process spools and replayed
+unchanged in canonical order. A process barrier proves that the independent
+fixture packages overlap with two jobs, while reversed wall-clock failures still
+select the exact `--jobs 1` diagnostic. Real-compiler diagnostics are byte-equal
+between serial and parallel checks. Relocated one-job and four-job native builds
+produce byte-identical package artifacts and executables.
+
+All 92 development and 92 sanitizer CTest entries pass, including all 18
+protocol and eight native Shuttle/`clothc` cases. All 43 ordinary Shuttle tests,
+the Rust 1.85 baseline, Rust formatting and Clippy with warnings denied, C++
+formatting, and both repositories' whitespace checks pass. The Stage 24.2
+responsiveness baseline and Stage 24.3 unchanged-build coverage remain intact.
+Stage 24 is complete.

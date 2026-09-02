@@ -18,7 +18,7 @@ Rules:
 
 Stage 22 is complete, including the cross-tool exit audit in `docs/testing.md`.
 Stage 23 is also complete, including its coordinated development and sanitizer
-exit audit. Stage 24 is active under the responsive-build charter in
+exit audit. Stage 24 is complete under the responsive-build charter in
 `ROADMAP.md`. The ownership boundary remains recorded in
 `docs/shuttle_and_compiler.md`.
 
@@ -106,10 +106,10 @@ exit audit. Stage 24 is active under the responsive-build charter in
 - [x] **24.3 — Validated local reuse.** Persist conservative Shuttle-owned
   package input state, reuse only integrity- and compatibility-validated
   artifacts, and invalidate affected dependents precisely.
-- [ ] **24.4 — Deterministic parallel scheduling.** Execute independent ready
+- [x] **24.4 — Deterministic parallel scheduling.** Execute independent ready
   packages under a bounded job policy and prove single-job/parallel output and
   diagnostic equivalence.
-- [ ] Complete the Stage 24 development, sanitizer, Rust, cross-tool, native,
+- [x] Complete the Stage 24 development, sanitizer, Rust, cross-tool, native,
   cold-build, and unchanged-build exit audit.
 
 ## Unscheduled backlog
