@@ -40,6 +40,17 @@ if(DEFINED CLOTH_EXPECTED)
     return()
 endif()
 
+if(CLOTH_EXPECT_TRAP)
+    # llvm.trap lowers to an illegal instruction on the native x86_64 target.
+    # Do not count a timeout, ordinary error exit, or missing executable as a trap.
+    if(NOT "${program_result}" MATCHES "[Ii]llegal instruction|0xc000001d|^-1073741795$|^3221225501$")
+        message(FATAL_ERROR "expected an illegal-instruction trap, got ${program_result}: ${program_error}")
+    endif()
+    if(NOT "${program_output}" STREQUAL "")
+        message(FATAL_ERROR "invalid enum dispatch executed observable arm code: ${program_output}")
+    endif()
+endif()
+
 if("${program_result}" STREQUAL "0")
     message(FATAL_ERROR
         "program unexpectedly succeeded; stdout: ${program_output}")

@@ -35,6 +35,7 @@ class HirVerifier {
     verify_statements();
     verify_blocks();
     verify_files();
+    if (is_valid_) verify_transfer_contexts();
     if (is_valid_ &&
         std::ranges::any_of(semantics_.types(), [](const SemanticType& type) {
           return type.kind == TypeKind::kStruct;
@@ -306,6 +307,9 @@ class HirVerifier {
             if constexpr (requires { node.updates; })
               for (auto id : node.updates) enqueue(id);
             if constexpr (requires { node.body; }) enqueue(node.body);
+            if constexpr (requires { node.selector; }) enqueue(node.selector);
+            if constexpr (requires { node.arms; })
+              for (const auto& arm : node.arms) enqueue(arm.body);
             if constexpr (requires { node.block; }) enqueue(node.block);
             if constexpr (requires { node.iterable; }) enqueue(node.iterable);
             if constexpr (requires { node.then_block; })
@@ -649,6 +653,147 @@ class HirVerifier {
     return false;
   }
 
+  void verify_switch(const HirSwitchStatement& selection, SourceRange range) {
+    verify_expression(selection.selector, range);
+    verify_type(selection.selector_type, range);
+    if (selection.selector.value >= hir_.storage.expressions().size() ||
+        selection.selector_type.value >= semantics_.types().size())
+      return;
+    const auto& selector = hir_.storage.expression(selection.selector);
+    const auto& type = semantics_.type(selection.selector_type);
+    const bool is_enum = type.kind == TypeKind::kEnum;
+    if (selector.type != selection.selector_type ||
+        (!is_enum && !is_integer_type(type.kind)) ||
+        (selector.category != ValueCategory::kValue &&
+         selector.category != ValueCategory::kMutableLocation &&
+         selector.category != ValueCategory::kReadOnlyLocation)) {
+      report(range, "switch has an invalid selector type or value category");
+      return;
+    }
+    std::size_t enum_size = 0;
+    if (is_enum) {
+      if (!type.file || type.file->value >= semantics_.files().size()) {
+        report(range, "switch enum has no valid nominal file");
+        return;
+      }
+      enum_size = semantics_.file(*type.file).enum_cases.size();
+    }
+    if (selection.arms.empty() || selection.arms.size() > kMaxSwitchArms) {
+      report(range, "switch has an invalid arm count");
+    }
+    std::unordered_set<std::uint64_t> values;
+    bool has_default = false;
+    std::size_t label_count = 0;
+    for (std::size_t index = 0; index < selection.arms.size(); ++index) {
+      const auto& arm = selection.arms[index];
+      verify_block(arm.body, arm.range);
+      if (arm.is_default) {
+        if (has_default || index + 1 != selection.arms.size() ||
+            !arm.labels.empty())
+          report(arm.range, "invalid switch default arm");
+        has_default = true;
+      } else if (arm.labels.empty()) {
+        report(arm.range, "switch case arm has no labels");
+      }
+      if (arm.labels.size() > kMaxSwitchLabels - label_count) {
+        report(arm.range, "switch exceeds value label limit");
+        return;
+      }
+      label_count += arm.labels.size();
+      for (const auto& label : arm.labels) {
+        if (label.value.type != selection.selector_type ||
+            (is_enum ? label.value.bits >= enum_size
+                     : !is_valid_integer_bits(label.value.bits, type.kind)))
+          report(label.range, "switch label has an invalid typed constant");
+        if (!values.insert(label.value.bits).second)
+          report(label.range, "duplicate normalized switch label");
+        if (!label.symbol) continue;
+        verify_symbol(*label.symbol, label.range);
+        if (label.symbol->value >= semantics_.symbols().size()) continue;
+        const auto& symbol = semantics_.symbol(*label.symbol);
+        std::optional<ScalarConstant> original;
+        if (symbol.kind == SymbolKind::kEnumCase && symbol.enum_tag) {
+          original = ScalarConstant{symbol.type, *symbol.enum_tag};
+        } else if (symbol.kind == SymbolKind::kField && symbol.is_static &&
+                   symbol.is_final) {
+          original = symbol.static_constant;
+        }
+        std::optional<std::uint64_t> expected;
+        if (original && original->type.value < semantics_.types().size()) {
+          expected = original->type == selection.selector_type
+                         ? std::optional{original->bits}
+                         : widen_integer_constant(
+                               original->bits,
+                               semantics_.type(original->type).kind, type.kind);
+        }
+        if (!symbol.is_valid || !expected || *expected != label.value.bits)
+          report(label.range,
+                 "switch label disagrees with its constant symbol");
+      }
+    }
+    const bool exhaustive =
+        has_default || (is_enum && values.size() == enum_size);
+    if (selection.is_exhaustive != exhaustive || (is_enum && !exhaustive))
+      report(range, "switch has invalid exhaustiveness metadata");
+  }
+
+  // Traverse callable statement trees iteratively. A block cannot be shared
+  // between contexts: otherwise a transfer could acquire two different targets.
+  void verify_transfer_contexts() {
+    struct Work {
+      HirBlockId block;
+      std::size_t loops;
+      std::size_t breaks;
+    };
+    std::vector<Work> pending;
+    for (const auto& file : hir_.files) {
+      for (const auto& callable : file.functions)
+        pending.push_back({callable.body, 0, 0});
+      for (const auto& callable : file.constructors)
+        pending.push_back({callable.body, 0, 0});
+    }
+    std::vector<bool> visited(hir_.storage.blocks().size());
+    while (!pending.empty()) {
+      const Work work = pending.back();
+      pending.pop_back();
+      const auto& block = hir_.storage.block(work.block);
+      if (visited[work.block.value]) {
+        report(block.range, "cyclic or shared callable block");
+        continue;
+      }
+      visited[work.block.value] = true;
+      const auto enqueue = [&](HirBlockId child, bool loop,
+                               bool selection = false) {
+        pending.push_back({child, work.loops + (loop ? 1U : 0U),
+                           work.breaks + (loop || selection ? 1U : 0U)});
+      };
+      for (const auto id : block.statements) {
+        const auto& statement = hir_.storage.statement(id);
+        const auto& data = statement.data;
+        if (std::holds_alternative<HirBreakStatement>(data) && work.breaks == 0)
+          report(statement.range, "break has no enclosing loop or switch");
+        if (std::holds_alternative<HirContinueStatement>(data) &&
+            work.loops == 0)
+          report(statement.range, "continue has no enclosing loop");
+        if (const auto* node = std::get_if<HirIfStatement>(&data)) {
+          enqueue(node->then_block, false);
+          if (node->else_block) enqueue(*node->else_block, false);
+        } else if (const auto* node = std::get_if<HirWhileStatement>(&data)) {
+          enqueue(node->body, true);
+        } else if (const auto* node = std::get_if<HirForEachStatement>(&data)) {
+          enqueue(node->body, true);
+        } else if (const auto* node = std::get_if<HirForStatement>(&data)) {
+          enqueue(node->body, true);
+        } else if (const auto* node = std::get_if<HirSwitchStatement>(&data)) {
+          for (const auto& arm : node->arms) enqueue(arm.body, false, true);
+        } else if (const auto* node =
+                       std::get_if<HirNestedBlockStatement>(&data)) {
+          enqueue(node->block, false);
+        }
+      }
+    }
+  }
+
   void verify_statements() {
     for (const HirStatement& statement : hir_.storage.statements()) {
       if (const auto* local = std::get_if<HirLocalStatement>(&statement.data)) {
@@ -703,6 +848,9 @@ class HirVerifier {
           verify_expression(update, statement.range);
         }
         verify_block(for_statement->body, statement.range);
+      } else if (const auto* selection =
+                     std::get_if<HirSwitchStatement>(&statement.data)) {
+        verify_switch(*selection, statement.range);
       } else if (const auto* nested =
                      std::get_if<HirNestedBlockStatement>(&statement.data)) {
         verify_block(nested->block, statement.range);

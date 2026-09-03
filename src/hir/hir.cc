@@ -358,6 +358,25 @@ class Lowerer {
               semantics_.file(current_file_)
                   .expressions.at(for_statement->condition->value)
                   .is_presence_test};
+    } else if (const auto* selection =
+                   std::get_if<SwitchStatement>(&syntax.data)) {
+      const auto& switches = semantics_.file(current_file_).switches;
+      const auto checked = switches.find(id.value);
+      HirSwitchStatement lowered{
+          expression(selection->selector), semantics_.error_type(), {}, false};
+      if (checked != switches.end()) {
+        lowered.selector_type = checked->second.selector_type;
+        lowered.is_exhaustive = checked->second.is_exhaustive;
+      }
+      for (std::size_t index = 0; index < selection->arms.size(); ++index) {
+        const auto& arm = selection->arms[index];
+        std::vector<SwitchLabel> labels;
+        if (checked != switches.end() && index < checked->second.labels.size())
+          labels = checked->second.labels[index];
+        lowered.arms.push_back(HirSwitchArm{std::move(labels), block(arm.body),
+                                            arm.range, arm.labels.empty()});
+      }
+      data = std::move(lowered);
     } else if (std::holds_alternative<BreakStatement>(syntax.data)) {
       data = HirBreakStatement{};
     } else if (std::holds_alternative<ContinueStatement>(syntax.data)) {

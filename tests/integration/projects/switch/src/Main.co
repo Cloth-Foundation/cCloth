@@ -1,0 +1,148 @@
+import State;
+import Data;
+import Counter;
+static func Describe(State state): string {
+  switch (state) {
+    case State.Ready, State.Running: { return "active"; }
+    case State.Done: { return "done"; }
+  }
+}
+static func Fallback(State state): string {
+  switch (state) {
+    case State.Ready: { return "ready"; }
+    default: { return "fallback"; }
+  }
+}
+static func Signed(int64 value): int32 {
+  switch (value) {
+    case -9223372036854775808: { return 1; }
+    case 9223372036854775807: { return 2; }
+    default: { return 3; }
+  }
+}
+static func Unsigned(uint64 value): int32 {
+  switch (value) {
+    case 0: { return 4; }
+    case 18446744073709551615: { return 5; }
+    default: { return 6; }
+  }
+}
+static func Narrow(int8 value): int32 {
+  switch (value) { case -128: { return 7; } case 127: { return 8; } default: { return 0; } }
+}
+static func Byte(byte value): int32 {
+  switch (value) { case 255: { return 9; } default: { return 0; } }
+}
+static func Churn(): string {
+  string text = "live";
+  for (int32 i = 0; i < 12; i++) { text += "!"; }
+  return text;
+}
+// The native stress harness also replaces this body with equivalent mixed
+// scalar/aggregate phis to exercise grouped and default edges explicitly.
+static func Phi(Data first, Data second, int32 selector): Data {
+  switch (selector) {
+    case 0, 1: { Churn(); return first; }
+    default: { Churn(); return second; }
+  }
+}
+static func EnumPhi(State state): int32 {
+  switch (state) { case State.Ready: { return 10; } default: { return 10; } }
+}
+static func Cross(Data value): string {
+  for (var item in [0, 1, 2]) {
+    switch (item) { case 0, 1: { Churn(); continue; } default: { Churn(); break; } }
+  }
+  return value.Labels[0];
+}
+static func Presence(int32 code, string? text): int32 {
+  switch (code) {
+    case 0: { if (!text) { return -1; } break; }
+    default: { if (!text) { return -2; } }
+  }
+  Churn();
+  return text::length;
+}
+static func Main() {
+  var counter = Counter();
+  switch (counter.Next()) { case 0, 1: { println("selected"); } default: { println("wrong"); } }
+  println(counter.Calls);
+  switch (counter.Next()) { default: {} }
+  println(counter.Calls);
+  int32 captured = 1;
+  switch (captured++) { case 1: { captured = 99; } default: { captured = 0; } }
+  println(captured);
+  switch (captured) { case 1: { captured = 0; } }
+  println(captured);
+  println(Signed(-9223372036854775808));
+  println(Signed(9223372036854775807));
+  println(Signed(0));
+  println(Unsigned(0));
+  println(Unsigned(18446744073709551615));
+  println(Unsigned(10));
+  println(Narrow(-128));
+  println(Narrow(127));
+  println(Byte(255));
+  println(Describe(State.Ready));
+  println(Describe(State.Running));
+  println(Describe(State.Done));
+  println(Fallback(State.Ready));
+  println(Fallback(State.Running));
+  println(Fallback(State.Done));
+
+  int32 sum = 0;
+  for (int32 i = 0; i < 5; i++) {
+    switch (i) {
+      case 0: { continue; }
+      case 1: { break; }
+      case 2: {
+        while (true) { break; }
+        switch (i) { default: { break; } }
+      }
+      default: { sum += 10; }
+    }
+    sum++;
+  }
+  println(sum);
+  sum = 0;
+  for (var value in [1, 2, 3, 4]) {
+    switch (value) { case 1: { continue; } case 2: { break; } default: { sum += value; } }
+    sum += 10;
+  }
+  println(sum);
+  int32 index = 0;
+  sum = 0;
+  while (index < 3) {
+    index++;
+    switch (index) { case 1: { continue; } default: { break; } }
+    sum++;
+  }
+  println(sum);
+
+  var first = Data(State.Ready);
+  var second = Data(State.Done);
+  for (var value in [0, 1, 2, 3]) {
+    string keep = "root" + "ed";
+    switch (value) {
+      case 0, 1: { Churn(); println(first.Text); }
+      default: { Churn(); println(second.Labels[0]); }
+    }
+    println(keep);
+    println(Phi(first, second, value).Text);
+  }
+  println(EnumPhi(State.Ready));
+  println(EnumPhi(State.Running));
+  println(EnumPhi(State.Done));
+  println(Cross(first));
+  println(Presence(0, null));
+  println(Presence(1, null));
+  println(Presence(0, "abc"));
+  println(Presence(1, "four"));
+  int32[] selectors = [2, 1];
+  index = 0;
+  switch (selectors[index++]) {
+    case 2: { println("indexed"); }
+    default: { println("wrong"); }
+  }
+  println(index);
+}

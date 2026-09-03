@@ -453,3 +453,126 @@ Legacy new-file generator alignment remains explicitly deferred in `TODO.md`.
 **26.5.1 is complete.** Existing interface implementations must add `override`;
 inherited implementations need no redeclaration. No `impl` keyword, artifact
 schema, physical ABI, process protocol, or manifest revision was introduced.
+
+## Stage 27.2 switch frontend
+
+Verified on Windows on 2026-09-02: **127/127 development and 127/127 ASan/UBSan
+CTests pass** (30 unit and 97 integration entries). The shared suites retain
+22 protocol and 12 native Shuttle tests. All 43 ordinary Rust tests, Clippy with
+warnings denied, Rust 1.85 checking, and C++/Rust formatting checks pass. All six
+VS Code grammar/snippet checks pass with both compilers.
+
+`cloth_switch_tests` covers grouped/scoped arms, parser recovery, selector/label
+restrictions, typed widening and nominal enum identity, duplicate normalization,
+64-bit endpoints, missing cases, defaults, return completeness, nearest-target
+break/continue, nullable joins, and required/final class/struct fields. Source-free
+declaration views retain imported enum and scalar-constant labels. Explicit
+literal conversions already retained as scalar values are normalized consistently;
+unretained unary static initializers are not promoted into new constant forms.
+
+The suite reaches the combined maximum of 65,536 enum cases/labels and 65,537
+arms including default. It checks integer no-match flow even with every uint8
+value listed, one-over-limit source rejection, and forged HIR selectors, constants,
+duplicates, defaults, counts, symbols, block targets, sharing, and coverage flags.
+Enum-case binding is indexed rather than repeatedly scanning the declaration set.
+
+At the 27.2 checkpoint, direct `--check` succeeded on both target layouts while
+LLVM emission and direct MIR lowering explicitly rejected switch HIR. The 27.3
+audit below supersedes that temporary gate. Compiler-backed editor tests and the
+shared protocol suite retain failed-output preservation checks with invalid source.
+
+Both compiler protocols use lexer keyword classification. Shuttle's sorted keyword
+list includes `switch`, `case`, and `default`; ordering of integer keywords was
+also corrected. Package names, artifact format 3, compiler ABI 4, runtime ABI 2,
+and process/receipt/manifest schemas are unchanged.
+
+## Stage 27.3 switch lowering
+
+Verified on Windows on 2026-09-02: **139/139 development and 139/139 ASan/UBSan
+CTests pass** (30 unit and 109 integration entries). Shared gates include
+22 protocol and 13 native Shuttle tests. All 43 ordinary Rust tests, formatting,
+Clippy with warnings denied, Rust 1.85 checking, and six VS Code tests with each
+compiler pass.
+
+The switch suite now verifies typed, sorted MIR tables; exact selector/case
+types and enum owners; malformed value/block IDs; out-of-range and duplicate
+constants; selector dominance; reachability; trap structure; unique phi inputs;
+and constructor initialization across a default return. The combined maximum
+of 65,536 enum labels and 65,537 arms reaches LLVM. Its sanitizer run measured
+7.5 seconds alone and 12.8 seconds in the suite; a contended run exceeded the
+ordinary 15-second limit. Only this boundary suite receives four times the
+configured unit timeout (60 seconds by default).
+
+LLVM `opt` accepts x86-64 and wasm32 switch modules. Native execution covers
+signed/unsigned 64-bit endpoints, int8/byte bounds, grouped labels, defaults,
+integer no-match paths, exactly-once selectors, captured updates, exhaustive
+returns, struct construction, and nested loop/switch break/continue targets.
+The native harness installs verified mixed scalar/aggregate phis, including
+shared case/default targets and a guarded enum default, and forces collection
+at every generated allocation boundary. Managed values and GC-bearing structs
+survive arm calls, joins, and continues. Separate trap programs corrupt the
+native enum producer after MIR verification: exhaustive, default, and default-only
+switches must terminate with an illegal instruction, not an ordinary error,
+missing executable, or timeout.
+
+Shuttle tests compile switches in both dependencies and consumers, then hide
+dependency sources and recompile/link the consumer from artifacts. Nominal enum
+aliases, imported enum constants, widened integer constants, and full-width
+unsigned constants preserve whole/separate/source-free output. The existing
+invalid-output and editor checks preserve completed LLVM files.
+
+Compatibility review: MIR bodies and trap successors are compiler-internal;
+declaration records, physical signatures, layouts, and runtime entry points do
+not change. Artifact format 3, compiler ABI 4, runtime ABI 2, protocol 2, receipt
+schema 1, and manifest schema 1 remain unchanged. Exact compiler identity
+invalidates prior cached products.
+
+At the 27.3 checkpoint, dependency evolution and deterministic package builds
+remained scheduled for 27.4. The exit audit below closes that work.
+
+## Stage 27.4 switch exit audit
+
+Verified on Windows on 2026-09-02: **141/141 development and 141/141 ASan/UBSan
+CTests pass** (30 unit and 111 integration entries). The shared suites pass all
+**24 compiler-protocol and 16 native Shuttle tests** with each compiler.
+
+- Source-free consumers reject added cases without coverage, removed/renamed
+  case references, duplicate labels caused by enum-constant edits, private
+  constants, and labels from another nominal enum. Failed compilation preserves
+  the previous consumer artifact. Explicit protocol-v2 requests independently
+  reject `switch`, `case`, and `default` aliases without replacing output.
+- Native case reordering and integer/enum-constant edits rebuild the producer
+  and consumer while reusing byte-identical unrelated packages. An unchanged
+  repeat reuses all four packages. Whole-project, separate, and source-free
+  execution agree after each valid edit, including changed fallback selection.
+- Mixing an old consumer with a changed dependency fails linking without
+  replacing the completed executable. Added/removed/renamed cases and
+  duplicate-producing constants also leave the previous consumer and executable
+  intact after failed `shuttle run`; no stale program output is produced.
+  Adding an explicit default repairs an uncovered consumer, and the new case
+  reaches that fallback in all three compilation modes.
+- Relocated `--jobs 1` and `--jobs 4` builds with reversed dependency declaration
+  order produce byte-identical interface artifacts on x86-64 and wasm32, and
+  native artifacts/executables on x86-64 across a PE timestamp boundary.
+  Added-case diagnostics retain identical text, source positions, notes, and
+  ordering after normalizing only the absolute fixture-root prefix; preserved
+  artifacts remain byte-identical after both failures.
+- Native coverage now executes all 256 int8 labels and 256 sparse uint64 labels
+  plus adjacent misses. Nullable facts survive switch joins and forced GC;
+  indexed selectors with postfix updates are evaluated once. Diagnostic tests
+  check duplicate/note locations and bound missing-case lists in declaration
+  order. Existing parser, HIR/MIR corruption, maximum-size emission, phi,
+  constructor, scoped-transfer, invalid-tag trap, and GC suites remain green.
+
+All 43 ordinary Shuttle tests, Rust 1.85 checking, Rust formatting, Clippy with
+warnings denied, C++ formatting/warnings-as-errors, and repository whitespace
+checks pass. All six VS Code grammar/snippet/compiler tests pass with each
+compiler. User documentation explains enum evolution and defaults; maintainer
+contracts and both stage ledgers are synchronized. Existing test infrastructure
+was extended without adding launch scripts or production test switches.
+
+**Stage 27 is complete.** This audit required no production behavior changes.
+Artifact format 3, compiler ABI 4, runtime ABI 2, process protocol 2, receipt
+schema 1, and manifest schema 1 remain unchanged. Pattern matching, guards,
+ranges, switch expressions, general constant folding, and all other recorded
+non-goals remain deferred. No later stage is implicitly activated.

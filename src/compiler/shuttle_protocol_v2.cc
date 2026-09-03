@@ -5,6 +5,7 @@
 #include "cloth/compiler/shuttle_protocol_v2.h"
 
 #include "cloth/identity/package_identity.h"
+#include "cloth/lexer/token.h"
 #include "cloth/source/path.h"
 
 #include <algorithm>
@@ -178,6 +179,7 @@ std::expected<TargetDataLayout, std::string> parse_target(
 
 bool valid_alias(std::string_view value) {
   return !value.empty() && value.front() >= 'a' && value.front() <= 'z' &&
+         identifier_token_kind(value) == TokenKind::kIdentifier &&
          std::ranges::all_of(value, [](char character) {
            return (character >= 'a' && character <= 'z') ||
                   (character >= '0' && character <= '9') || character == '_';

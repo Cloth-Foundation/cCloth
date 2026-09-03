@@ -212,6 +212,21 @@ struct ForStatement {
 
 struct BreakStatement {};
 
+inline constexpr std::size_t kMaxSwitchLabels = 65536;
+inline constexpr std::size_t kMaxSwitchArms = kMaxSwitchLabels + 1;
+
+struct SwitchArm {
+  // An empty label list denotes default.
+  std::vector<ExpressionId> labels;
+  BlockId body;
+  SourceRange range;
+};
+
+struct SwitchStatement {
+  ExpressionId selector;
+  std::vector<SwitchArm> arms;
+};
+
 struct ContinueStatement {};
 
 struct NestedBlockStatement {
@@ -221,8 +236,8 @@ struct NestedBlockStatement {
 using StatementData =
     std::variant<InvalidStatement, LocalVariableStatement, ReturnStatement,
                  ExpressionStatement, IfStatement, WhileStatement,
-                 ForEachStatement, ForStatement, BreakStatement,
-                 ContinueStatement, NestedBlockStatement>;
+                 ForEachStatement, ForStatement, SwitchStatement,
+                 BreakStatement, ContinueStatement, NestedBlockStatement>;
 
 struct Statement {
   SourceRange range;

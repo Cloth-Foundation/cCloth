@@ -417,8 +417,13 @@ FrontendResult Compilation::analyze_frontend(DiagnosticEngine& diagnostics) {
       semantic_result.model.files(), [](const FileSemantics& file) {
         return file.kind == FileTypeKind::kStruct;
       });
-  const bool hir_is_valid = (semantic_result.is_valid || !contains_structs) &&
-                            verify_hir(hir, semantic_result.model, diagnostics);
+  const bool contains_switch = std::ranges::any_of(
+      hir.storage.statements(), [](const HirStatement& statement) {
+        return std::holds_alternative<HirSwitchStatement>(statement.data);
+      });
+  const bool hir_is_valid =
+      (semantic_result.is_valid || (!contains_structs && !contains_switch)) &&
+      verify_hir(hir, semantic_result.model, diagnostics);
   ControlFlowAnalysis control_flow;
   if (hir_is_valid) {
     control_flow =
@@ -440,8 +445,15 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
       frontend.semantics.files(), [](const FileSemantics& file) {
         return file.kind == FileTypeKind::kStruct;
       });
+  bool has_switch = false;
+  for (const auto& statement : frontend.hir.storage.statements()) {
+    if (std::holds_alternative<HirSwitchStatement>(statement.data)) {
+      has_switch = true;
+      break;
+    }
+  }
   if (frontend.is_valid ||
-      (!has_structs &&
+      (!has_structs && !has_switch &&
        verify_hir(frontend.hir, frontend.semantics, diagnostics))) {
     mir = lower_to_mir(frontend.hir, frontend.semantics);
     for (std::size_t index = mir.files.size();

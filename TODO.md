@@ -2,7 +2,8 @@
 
 `ROADMAP.md` defines stage order and scope. This file tracks the concrete work
 inside scheduled stages and preserves accepted but unscheduled gaps. Implemented
-behavior belongs in `docs/` rather than in a growing history of checked boxes.
+user behavior belongs in `documentation/`; compiler contracts and maintainer
+guidance belong in `docs/`, rather than in a growing history of checked boxes.
 
 Rules:
 
@@ -37,6 +38,11 @@ The [26.4 exit audit](docs/testing.md#stage-264-struct-exit-audit) passed on
 2026-09-02. Stage 26.5.1 is complete for the approved explicit interface-override
 contract; its exit audit is recorded in `docs/testing.md`. Unrelated ideas
 remain in the backlog.
+
+Stage 27 is complete. Its [switch contract](docs/proposals/stage_27_switch.md)
+and implementation through 27.4 were approved on 2026-09-02. Frontend, native
+lowering, and the coordinated [exit audit](docs/testing.md#stage-274-switch-exit-audit)
+are complete. No later stage is activated.
 
 ## Scheduled work
 
@@ -239,6 +245,54 @@ ordinary Rust tests and quality gates, and three VS Code checks with each
 compiler. The covariance regression also removed source-order dependence from
 class override validation. Existing ABI and artifact versions are unchanged.
 
+### Stage 27: Switch statements and exhaustive enum handling
+
+- [x] **27.1 — Contract.** Approve the source/flow/lowering boundaries and
+  authorize implementation of the [switch proposal](docs/proposals/stage_27_switch.md).
+
+  - [x] Draft selector and label types, grouped case blocks, exhaustiveness,
+    default behavior, transfers, initialization/narrowing, MIR/GC integration,
+    source-free dependencies, compatibility, resource limits, and non-goals.
+  - [x] Record stage order and coordinated Shuttle work without claiming the
+    feature in user documentation or modifying compiler behavior.
+  - [x] Record user approval of the concrete contract and 27.2 implementation
+    on 2026-09-02.
+
+- [x] **27.2 — Frontend.** Add keyword/parser/AST support and recovery; bind and
+  normalize labels; reject duplicate, incompatible, nonconstant, and missing
+  cases; enforce arm scope and transfer targets. Extend typed HIR verification,
+  return/required-field/final/nullable-flow analysis, and negative tests.
+  Synchronize compiler/Shuttle keyword restrictions and editor highlighting.
+  Gate native/IR emission explicitly until 27.3 is ready.
+
+  Completed 2026-09-02: 127/127 development and sanitizer CTests, 43 ordinary
+  Rust tests plus formatting/Clippy/Rust 1.85 checks, and six editor checks with
+  each compiler. See the [frontend audit](docs/testing.md#stage-272-switch-frontend).
+
+- [x] **27.3 — Lowering.** Add typed MIR switch terminators and full verifier,
+  CFG/phi/constructor-dataflow/GC-liveness integration. Emit LLVM switches and
+  invalid-enum guards; test native behavior and imported enum/static constants.
+  Audit compatibility before changing any persistent format or physical ABI.
+
+  Completed 2026-09-02: 139/139 development and sanitizer CTests, including
+  forced GC, mixed phis, invalid-tag traps, maximum-size LLVM emission, and
+  source-free native packages. Rust and editor gates pass. Artifact 3, compiler
+  ABI 4, runtime ABI 2, and process/receipt/manifest versions are unchanged.
+  See the [lowering audit](docs/testing.md#stage-273-switch-lowering).
+
+- [x] **27.4 — Exit audit.** Cover selector side effects, scoped nested
+  transfers, exhaustive returns, initialization, joins, forced GC, malformed
+  representations, and case limits. Prove source-free case/constant edits,
+  dependency invalidation, failed-output preservation, whole/separate behavior,
+  and serial/parallel equivalence. Update `documentation/`, owning `docs/`,
+  and VS Code snippets/tests; pass development/sanitizer and all shared gates.
+
+  Completed 2026-09-02: 141/141 development and sanitizer CTests, including
+  24 shared protocol and 16 native Shuttle tests; all 43 ordinary Rust tests,
+  formatting/Clippy/Rust 1.85 checks, and six editor checks with each compiler.
+  Enum/constant evolution, stale-consumer rejection, preserved outputs, and
+  relocated serial/parallel equivalence pass. No compatibility version changed.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -276,8 +330,9 @@ active stage without first updating `ROADMAP.md`.
 
 ### Expressions, numeric operations, and control flow
 
-- Design `switch` or pattern matching, including exhaustiveness and evolution
-  of closed case sets, before adding enum-specific control-flow syntax.
+- Switch statements and enum exhaustiveness are complete under Stage 27 above.
+  Pattern matching, destructuring, guards, ranges, and value-producing switch
+  expressions remain deferred and require separate contracts.
 - Add wrapping and saturating conversions as explicit primitive meta operations
   without changing the checked `NumericType(value)` contract. Their exact
   spelling, signedness behavior, and integer/floating scope remain subject to a
@@ -329,6 +384,13 @@ active stage without first updating `ROADMAP.md`.
   preserving the stable default representation.
 
 ### Static storage and initialization
+
+- Align unary-literal static initializers across frontend, retained constants,
+  artifact export, and native emission. For example, `int8(-1)` in a static
+  initializer is accepted by existing frontend conversion checking but is not
+  a retained scalar literal. Stage 27 labels deliberately reject such fields;
+  use a negative literal directly in a signed switch label. This does not
+  authorize general constant folding or broaden Stage 27.
 
 - Define deterministic static initialization order and collector root
   registration before dynamic initializers, mutable static fields, or

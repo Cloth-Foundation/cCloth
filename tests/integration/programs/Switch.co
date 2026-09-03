@@ -1,0 +1,12 @@
+static func Main() {
+  int32 value = 1;
+  switch (value) {
+    case 0, 1: {
+      println("selected");
+      break;
+    }
+    default: {
+      println("other");
+    }
+  }
+}

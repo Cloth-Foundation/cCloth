@@ -12,7 +12,9 @@
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <map>
 #include <optional>
@@ -400,14 +402,8 @@ class MirVerifier {
           }
         }
       };
-      const auto& terminator = body.blocks[index].terminator.data;
-      if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator)) {
-        propagate(jump->target);
-      } else if (const auto* branch =
-                     std::get_if<MirBranchTerminator>(&terminator)) {
-        propagate(branch->then_block);
-        propagate(branch->else_block);
-      }
+      for (const auto successor : mir_successors(body.blocks[index].terminator))
+        propagate(successor);
     }
     for (std::size_t index = 0; index < body.blocks.size(); ++index) {
       if (incoming[index]) {
@@ -465,13 +461,8 @@ class MirVerifier {
         if (target.value < predecessors.size())
           predecessors[target.value].insert(index);
       };
-      const auto& terminator = body.blocks[index].terminator.data;
-      if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator))
-        add(jump->target);
-      if (const auto* branch = std::get_if<MirBranchTerminator>(&terminator)) {
-        add(branch->then_block);
-        add(branch->else_block);
-      }
+      for (const auto successor : mir_successors(body.blocks[index].terminator))
+        add(successor);
     }
     for (std::size_t block_index = 0; block_index < body.blocks.size();
          ++block_index) {
@@ -498,6 +489,48 @@ class MirVerifier {
       verify_terminator(block.terminator, body, value_types, return_type);
     }
     verify_reachability(body);
+    verify_switch_definitions(body);
+  }
+
+  void verify_switch_definitions(const MirBody& body) {
+    std::vector<std::optional<MirBlockId>> definitions(body.value_count);
+    for (std::size_t index = 0; index < body.blocks.size(); ++index) {
+      for (const auto& instruction : body.blocks[index].instructions) {
+        if (instruction.result &&
+            instruction.result->value < definitions.size())
+          definitions[instruction.result->value] = MirBlockId{index};
+      }
+    }
+    for (std::size_t index = 0; index < body.blocks.size(); ++index) {
+      const auto& block = body.blocks[index];
+      const auto* selection =
+          std::get_if<MirSwitchTerminator>(&block.terminator.data);
+      if (!selection || selection->selector.value >= definitions.size())
+        continue;
+      const auto definition = definitions[selection->selector.value];
+      if (!definition || definition->value == index) continue;
+      // Normally lowering defines the captured selector in this block. For
+      // transformed MIR, reject any reachable path that bypasses its
+      // definition.
+      std::vector<bool> visited(body.blocks.size());
+      std::vector<MirBlockId> pending{body.entry};
+      while (!pending.empty()) {
+        const auto current = pending.back();
+        pending.pop_back();
+        if (current.value >= body.blocks.size() || visited[current.value] ||
+            current == *definition)
+          continue;
+        if (current.value == index) {
+          report(block.terminator.range,
+                 "switch selector definition does not dominate dispatch");
+          break;
+        }
+        visited[current.value] = true;
+        for (const auto successor :
+             mir_successors(body.blocks[current.value].terminator))
+          pending.push_back(successor);
+      }
+    }
   }
 
   void verify_reachability(const MirBody& body) {
@@ -513,21 +546,9 @@ class MirVerifier {
         continue;
       }
       reachable[block_id.value] = true;
-      const MirTerminatorData& terminator =
-          body.blocks[block_id.value].terminator.data;
-      if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator)) {
-        if (jump->target.value < body.blocks.size()) {
-          worklist.push_back(jump->target);
-        }
-      } else if (const auto* branch =
-                     std::get_if<MirBranchTerminator>(&terminator)) {
-        if (branch->then_block.value < body.blocks.size()) {
-          worklist.push_back(branch->then_block);
-        }
-        if (branch->else_block.value < body.blocks.size()) {
-          worklist.push_back(branch->else_block);
-        }
-      }
+      for (const auto successor :
+           mir_successors(body.blocks[block_id.value].terminator))
+        if (successor.value < body.blocks.size()) worklist.push_back(successor);
     }
     for (std::size_t index = 0; index < body.blocks.size(); ++index) {
       if (body.blocks[index].is_reachable != reachable[index]) {
@@ -1102,6 +1123,68 @@ class MirVerifier {
     }
   }
 
+  void verify_switch(const MirSwitchTerminator& selection, const MirBody& body,
+                     const std::vector<std::optional<TypeId>>& value_types,
+                     SourceRange range) {
+    verify_value(selection.selector, value_types, range);
+    verify_type(selection.selector_type, range);
+    verify_value_type(selection.selector, selection.selector_type, value_types,
+                      range);
+    verify_block(selection.default_block, body, range);
+    if (selection.cases.size() > kMaxSwitchLabels) {
+      report(range, "switch exceeds the 65536-label limit");
+      return;
+    }
+    if (selection.selector_type.value >= semantics_.types().size()) return;
+    const auto& type = semantics_.type(selection.selector_type);
+    const bool is_enum = type.kind == TypeKind::kEnum;
+    if (!is_enum && !is_integer_type(type.kind)) {
+      report(range, "switch selector must be an integer or enum");
+      return;
+    }
+    std::size_t enum_size = 0;
+    if (is_enum) {
+      if (!type.file || type.file->value >= semantics_.files().size() ||
+          semantics_.file(*type.file).type != selection.selector_type ||
+          semantics_.file(*type.file).kind != FileTypeKind::kEnum) {
+        report(range, "switch enum has an invalid nominal owner");
+        return;
+      }
+      enum_size = semantics_.file(*type.file).enum_cases.size();
+      if (!selection.invalid_block) {
+        report(range, "enum switch has no invalid-tag trap");
+      } else {
+        verify_block(*selection.invalid_block, body, range);
+        if (selection.invalid_block->value < body.blocks.size()) {
+          const auto& invalid = body.blocks[selection.invalid_block->value];
+          if (!invalid.instructions.empty() ||
+              !std::holds_alternative<MirTrapTerminator>(
+                  invalid.terminator.data))
+            report(range,
+                   "enum switch invalid-tag target is not an empty trap block");
+        }
+        if (selection.default_block == *selection.invalid_block &&
+            selection.cases.size() != enum_size)
+          report(range, "enum switch without default is not exhaustive");
+      }
+    } else if (selection.invalid_block) {
+      report(range, "integer switch cannot have an enum invalid-tag target");
+    }
+    std::optional<std::uint64_t> previous;
+    for (const auto& entry : selection.cases) {
+      verify_block(entry.target, body, range);
+      if (entry.value.type != selection.selector_type)
+        report(range, "switch case type differs from selector type");
+      if (is_enum ? entry.value.bits >= enum_size
+                  : !is_valid_integer_bits(entry.value.bits, type.kind))
+        report(range, "switch case has an invalid normalized value");
+      if (previous && *previous >= entry.value.bits)
+        report(range,
+               "switch cases must be distinct and sorted by normalized bits");
+      previous = entry.value.bits;
+    }
+  }
+
   void verify_terminator(const MirTerminator& terminator, const MirBody& body,
                          const std::vector<std::optional<TypeId>>& value_types,
                          TypeId return_type) {
@@ -1114,6 +1197,9 @@ class MirVerifier {
                         terminator.range);
       verify_block(branch->then_block, body, terminator.range);
       verify_block(branch->else_block, body, terminator.range);
+    } else if (const auto* selection =
+                   std::get_if<MirSwitchTerminator>(&terminator.data)) {
+      verify_switch(*selection, body, value_types, terminator.range);
     } else if (const auto* return_terminator =
                    std::get_if<MirReturnTerminator>(&terminator.data)) {
       verify_optional_value(return_terminator->value, value_types,

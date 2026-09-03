@@ -190,6 +190,12 @@ void protocol_configuration_validation(TestContext& test) {
   write_file(models / "User.co", "User() {}\n");
   const auto baseline = valid_arguments(app, models);
 
+  for (const std::string_view keyword : {"switch", "case", "default"}) {
+    auto arguments = baseline;
+    arguments[20] = keyword;
+    expect_rejected(test, arguments);
+  }
+
   for (const std::string_view version :
        {"", "1", "1.0", "1.0.0.1", "01.0.0", "1.0.0-01", "1.0.0+"}) {
     auto arguments = baseline;
@@ -280,6 +286,16 @@ void protocol_v2_operations(TestContext& test) {
   test.expect(request && std::holds_alternative<cloth::ShuttleV2CompileRequest>(
                              *request),
               "valid protocol-v2 compile request was rejected");
+  for (const std::string_view alias : {"models", "switch", "case", "default"}) {
+    auto arguments = compile;
+    arguments.insert(arguments.end(),
+                     {"--dependency", alias, "models", "--artifact", "models",
+                      "1.0.0", digest, artifact_path});
+    const auto checked = cloth::prepare_shuttle_v2_request(arguments);
+    test.expect(
+        checked.has_value() == (alias == "models"),
+        "protocol-v2 switch keyword alias policy differs from the lexer");
+  }
 
   const std::array<std::filesystem::path, 6> inspect{
       "--shuttle-protocol", "2", "--operation", "inspect", "--input",

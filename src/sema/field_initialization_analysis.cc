@@ -32,6 +32,11 @@ struct FlowState {
   bool can_fall_through{true};
 };
 
+struct FieldTransferContext {
+  bool is_loop;
+  FlowState breaks;
+};
+
 class FieldInitializationAnalyzer {
  public:
   FieldInitializationAnalyzer(const FileClassDecl& file,
@@ -203,13 +208,21 @@ class FieldInitializationAnalyzer {
     if (const auto* while_statement =
             std::get_if<WhileStatement>(&statement.data)) {
       analyze_expression(while_statement->condition, flow.assignments, false);
+      transfers_.push_back(FieldTransferContext{true, FlowState{{}, false}});
       static_cast<void>(analyze_block(while_statement->body, flow, true));
+      if (is_true_literal(while_statement->condition))
+        flow.can_fall_through = false;
+      flow = merge_flows(std::move(flow), std::move(transfers_.back().breaks));
+      transfers_.pop_back();
       return flow;
     }
     if (const auto* for_statement =
             std::get_if<ForEachStatement>(&statement.data)) {
       analyze_expression(for_statement->iterable, flow.assignments, false);
+      transfers_.push_back(FieldTransferContext{true, FlowState{{}, false}});
       static_cast<void>(analyze_block(for_statement->body, flow, true));
+      flow = merge_flows(std::move(flow), std::move(transfers_.back().breaks));
+      transfers_.pop_back();
       return flow;
     }
     if (const auto* for_statement =
@@ -233,8 +246,35 @@ class FieldInitializationAnalyzer {
       for (const ExpressionId update : for_statement->updates) {
         analyze_expression(update, flow.assignments, false);
       }
+      transfers_.push_back(FieldTransferContext{true, FlowState{{}, false}});
       static_cast<void>(analyze_block(for_statement->body, flow, true));
+      if (!for_statement->condition ||
+          is_true_literal(*for_statement->condition))
+        flow.can_fall_through = false;
+      flow = merge_flows(std::move(flow), std::move(transfers_.back().breaks));
+      transfers_.pop_back();
       return flow;
+    }
+    if (const auto* selection = std::get_if<SwitchStatement>(&statement.data)) {
+      analyze_expression(selection->selector, flow.assignments, false);
+      const auto& switches = semantics_.file(file_id_).switches;
+      const auto checked = switches.find(id.value);
+      FlowState join = flow;
+      join.can_fall_through =
+          checked == switches.end() || !checked->second.is_exhaustive;
+      transfers_.push_back(FieldTransferContext{false, FlowState{{}, false}});
+      for (const auto& arm : selection->arms) {
+        join = merge_flows(std::move(join),
+                           analyze_block(arm.body, flow, inside_loop));
+      }
+      join = merge_flows(std::move(join), std::move(transfers_.back().breaks));
+      transfers_.pop_back();
+      return join;
+    }
+    if (std::holds_alternative<BreakStatement>(statement.data) &&
+        !transfers_.empty()) {
+      transfers_.back().breaks =
+          merge_flows(std::move(transfers_.back().breaks), flow);
     }
     if (std::holds_alternative<BreakStatement>(statement.data) ||
         std::holds_alternative<ContinueStatement>(statement.data)) {
@@ -246,6 +286,16 @@ class FieldInitializationAnalyzer {
       return analyze_block(nested->block, std::move(flow), inside_loop);
     }
     return flow;
+  }
+
+  bool is_true_literal(ExpressionId id) const {
+    while (const auto* group = std::get_if<ParenthesizedExpression>(
+               &file_.storage.expression(id).data))
+      id = group->expression;
+    const auto* literal =
+        std::get_if<LiteralExpression>(&file_.storage.expression(id).data);
+    return literal && literal->kind == LiteralKind::kBoolean &&
+           literal->lexeme == "true";
   }
 
   FlowState merge_flows(FlowState left, FlowState right) const {
@@ -586,6 +636,7 @@ class FieldInitializationAnalyzer {
   FileId file_id_;
   DiagnosticEngine& diagnostics_;
   std::vector<TrackedField> tracked_fields_;
+  std::vector<FieldTransferContext> transfers_;
 };
 
 }  // namespace

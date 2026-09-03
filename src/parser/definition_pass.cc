@@ -332,6 +332,18 @@ BlockId DefinitionPass::parse_block() {
 }
 
 StatementId DefinitionPass::parse_statement() {
+  if (current().kind == TokenKind::kKwSwitch) {
+    return parse_switch_statement();
+  }
+  if (current().kind == TokenKind::kKwCase ||
+      current().kind == TokenKind::kKwDefault) {
+    const SourceRange range = advance().range;
+    diagnostics_.error(range,
+                       "switch labels are only valid directly inside a switch");
+    synchronize_statement();
+    return file_class_.storage.add_statement(
+        Statement{range, InvalidStatement{}});
+  }
   if (current().kind == TokenKind::kLeftBrace) {
     const BlockId block = parse_block();
     return file_class_.storage.add_statement(Statement{
@@ -540,6 +552,102 @@ StatementId DefinitionPass::parse_for_statement() {
       ForStatement{initializer, condition, std::move(updates), body}});
 }
 
+void DefinitionPass::synchronize_switch_arm() {
+  std::size_t depth = 0;
+  while (!at_limit()) {
+    const TokenKind kind = current().kind;
+    if (depth == 0 &&
+        (kind == TokenKind::kKwCase || kind == TokenKind::kKwDefault ||
+         kind == TokenKind::kRightBrace)) {
+      return;
+    }
+    if (kind == TokenKind::kLeftBrace) ++depth;
+    if (kind == TokenKind::kRightBrace) --depth;
+    advance();
+  }
+}
+
+StatementId DefinitionPass::parse_switch_statement() {
+  const SourceLocation begin = advance().range.begin;
+  expect(TokenKind::kLeftParen, "expected '(' after 'switch'");
+  const ExpressionId selector = parse_expression();
+  expect(TokenKind::kRightParen, "expected ')' after switch selector");
+  std::vector<SwitchArm> arms;
+  if (expect(TokenKind::kLeftBrace, "expected '{' before switch arms")) {
+    std::size_t label_count = 0;
+    bool has_default = false;
+    while (!at_limit() && current().kind != TokenKind::kRightBrace) {
+      const Token keyword = current();
+      if (keyword.kind != TokenKind::kKwCase &&
+          keyword.kind != TokenKind::kKwDefault) {
+        diagnostics_.error(keyword.range,
+                           "expected 'case' or 'default' in switch");
+        synchronize_switch_arm();
+        continue;
+      }
+      advance();
+      if (has_default) {
+        diagnostics_.error(keyword.range,
+                           keyword.kind == TokenKind::kKwDefault
+                               ? "switch may have only one default arm"
+                               : "default must be the last switch arm");
+      }
+      std::vector<ExpressionId> labels;
+      if (keyword.kind == TokenKind::kKwCase) {
+        do {
+          if (current().kind == TokenKind::kColon ||
+              current().kind == TokenKind::kKwCase ||
+              current().kind == TokenKind::kKwDefault || at_limit()) {
+            diagnostics_.error(current().range,
+                               "expected case label (no trailing comma)");
+            break;
+          }
+          if (++label_count > kMaxSwitchLabels) {
+            diagnostics_.error(current().range,
+                               "switch exceeds 65536 value labels");
+            // Consume the remaining switch, respecting nested body braces.
+            std::size_t depth = 0;
+            while (!at_limit()) {
+              if (current().kind == TokenKind::kRightBrace && depth == 0) break;
+              if (current().kind == TokenKind::kLeftBrace) ++depth;
+              if (current().kind == TokenKind::kRightBrace) --depth;
+              advance();
+            }
+            break;
+          }
+          labels.push_back(parse_expression());
+        } while (match(TokenKind::kComma));
+        if (label_count > kMaxSwitchLabels) break;
+      } else {
+        has_default = true;
+      }
+      expect(TokenKind::kColon, "expected ':' after switch label");
+      if (current().kind != TokenKind::kLeftBrace) {
+        diagnostics_.error(current().range,
+                           "expected '{' before switch arm body");
+        synchronize_switch_arm();
+        continue;
+      }
+      const BlockId body = parse_block();
+      if (arms.size() == kMaxSwitchArms) {
+        diagnostics_.error(keyword.range, "switch exceeds 65537 arms");
+      } else {
+        arms.push_back(
+            SwitchArm{std::move(labels), body,
+                      SourceRange{keyword.range.begin,
+                                  file_class_.storage.block(body).range.end}});
+      }
+    }
+    expect(TokenKind::kRightBrace, "expected '}' after switch arms");
+  }
+  if (arms.empty())
+    diagnostics_.error(SourceRange{begin, begin},
+                       "switch requires at least one arm");
+  const SourceLocation end = tokens_[current_ - 1].range.end;
+  return file_class_.storage.add_statement(Statement{
+      SourceRange{begin, end}, SwitchStatement{selector, std::move(arms)}});
+}
+
 StatementId DefinitionPass::parse_loop_control_statement() {
   const Token& keyword = advance();
   SourceLocation end = keyword.range.end;
@@ -580,6 +688,9 @@ void DefinitionPass::synchronize_statement() {
         current().kind == TokenKind::kKwIf ||
         current().kind == TokenKind::kKwWhile ||
         current().kind == TokenKind::kKwFor ||
+        current().kind == TokenKind::kKwSwitch ||
+        current().kind == TokenKind::kKwCase ||
+        current().kind == TokenKind::kKwDefault ||
         current().kind == TokenKind::kKwBreak ||
         current().kind == TokenKind::kKwContinue ||
         current().kind == TokenKind::kLeftBrace || is_local_variable_start()) {

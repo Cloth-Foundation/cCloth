@@ -5,11 +5,11 @@
 #include "cloth/compiler/shuttle_protocol.h"
 
 #include "cloth/identity/package_identity.h"
+#include "cloth/lexer/token.h"
 #include "cloth/sema/visibility.h"
 #include "cloth/source/path.h"
 
 #include <algorithm>
-#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -262,17 +262,7 @@ bool valid_dependency_alias(std::string_view value) {
 }
 
 bool is_keyword(std::string_view value) {
-  constexpr std::array<std::string_view, 50> kKeywords{
-      "abstract", "as",     "bool",     "break",     "byte",    "char",
-      "class",    "const",  "continue", "else",      "enum",    "extern",
-      "false",    "final",  "float",    "float32",   "float64", "for",
-      "func",     "if",     "import",   "in",        "int",     "int8",
-      "int16",    "int32",  "int64",    "interface", "is",      "let",
-      "match",    "null",   "object",   "override",  "return",  "sealed",
-      "static",   "struct", "super",    "trait",     "true",    "uint",
-      "uint8",    "uint16", "uint32",   "uint64",    "unsafe",  "var",
-      "void",     "while"};
-  return std::ranges::binary_search(kKeywords, value);
+  return identifier_token_kind(value) != TokenKind::kIdentifier;
 }
 
 std::expected<std::string, std::string> path_text(

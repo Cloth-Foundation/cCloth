@@ -1,0 +1,13 @@
+import State;
+
+struct {
+  final string Text;
+  string[] Labels;
+
+  Data(State state) {
+    switch (state) {
+      case State.Ready: { Text = "ready"; Labels = [Text]; break; }
+      default: { Text = "other"; Labels = [Text]; return; }
+    }
+  }
+}

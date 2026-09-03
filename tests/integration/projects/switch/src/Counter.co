@@ -1,0 +1,3 @@
+int32 Calls = 0;
+Counter() {}
+func Next(): int32 { Calls++; return 1; }

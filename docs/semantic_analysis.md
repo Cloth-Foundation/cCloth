@@ -13,6 +13,13 @@ registered before member signatures are resolved, and all member signatures
 are registered before any initializer or body is checked. Forward references,
 same-package references, and import cycles therefore have deterministic meaning.
 
+All field initializers are checked before callable bodies. Verified integer/enum
+static scalar values are retained on semantic symbols, so switch labels do not
+depend on member/file order. This retains the existing scalar-initializer forms,
+not general expression folding. Imports restore the same typed constants from
+verified artifact values. Enum-case name indexes avoid rescanning a full case
+set for every switch label; duplicate/coverage checks remain non-quadratic.
+
 After imports are bound, Stage 16.1 resolves every optional file-class base and
 stores its `FileId` in `FileSemantics::base_file`. A base must be a visible file
 class. Qualified-name-ordered graph traversal rejects self-inheritance and

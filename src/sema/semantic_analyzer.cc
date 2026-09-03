@@ -61,6 +61,12 @@ struct ConditionFacts {
   NonNullSet when_false;
 };
 
+struct TransferContext {
+  bool is_loop;
+  std::optional<NonNullSet> breaks{};
+  std::optional<NonNullSet> continues{};
+};
+
 bool contains_symbol(const NonNullSet& symbols, SymbolId symbol) {
   return std::find(symbols.begin(), symbols.end(), symbol) != symbols.end();
 }
@@ -482,6 +488,22 @@ class SemanticAnalyzer {
           semantic.is_override = imported.is_override;
           semantic.is_abstract = imported.is_abstract;
           semantic.virtual_slot = imported.virtual_slot;
+          if (imported.static_value && semantic.is_static &&
+              semantic.is_final) {
+            const auto& literal = *imported.static_value;
+            std::optional<std::uint64_t> bits;
+            if (literal.kind == LiteralKind::kEnum) {
+              bits = enum_constant_tag(literal.lexeme, semantic.type, model_);
+            } else if (literal.kind == LiteralKind::kInteger) {
+              std::string_view text = literal.lexeme;
+              const bool negative = text.starts_with('-');
+              if (negative) text.remove_prefix(1);
+              bits = integer_constant_bits(text, negative,
+                                           model_.type(semantic.type).kind);
+            }
+            if (bits)
+              semantic.static_constant = ScalarConstant{semantic.type, *bits};
+          }
           imported_member_ids_.emplace(imported.identity, symbol);
         }
       }
@@ -902,6 +924,7 @@ class SemanticAnalyzer {
     symbol.is_static = true;
     const SymbolId id = model_.add_symbol(std::move(symbol));
     model_.mutable_file(file).enum_cases.push_back(id);
+    enum_case_names_[file.value].emplace(name, id);
   }
 
   void register_members() {
@@ -1565,6 +1588,18 @@ class SemanticAnalyzer {
   }
 
   void analyze_definitions() {
+    // Retain checked scalar fields before any body references them, independent
+    // of member or source-file order. Static initializers cannot read fields.
+    for (std::size_t file_index = 0; file_index < files_.size(); ++file_index) {
+      current_file_ = FileId{file_index};
+      for (std::size_t index = 0; index < files_[file_index]->fields.size();
+           ++index) {
+        const std::size_t before = diagnostics_.diagnostics().size();
+        analyze_field(index);
+        if (diagnostics_.diagnostics().size() != before)
+          model_.mutable_file(current_file_).is_valid = false;
+      }
+    }
     for (std::size_t file_index = 0; file_index < files_.size(); ++file_index) {
       current_file_ = FileId{file_index};
       const std::size_t diagnostic_begin = diagnostics_.diagnostics().size();
@@ -1572,7 +1607,6 @@ class SemanticAnalyzer {
       for (const MemberReference& reference : syntax.member_order) {
         switch (reference.kind) {
           case DeclarationKind::kField:
-            analyze_field(reference.index);
             break;
           case DeclarationKind::kFunction:
             analyze_function(reference.index);
@@ -1598,6 +1632,7 @@ class SemanticAnalyzer {
   }
 
   void analyze_field(std::size_t index) {
+    const std::size_t diagnostic_begin = diagnostics_.diagnostics().size();
     const FieldDecl& field = files_[current_file_.value]->fields.at(index);
     const SymbolId symbol = model_.file(current_file_).fields.at(index);
     if (field.is_static) {
@@ -1635,6 +1670,11 @@ class SemanticAnalyzer {
             ->storage.expression(*field.initializer)
             .range,
         "field initializer");
+    if (field.is_static && field.is_final &&
+        diagnostics_.diagnostics().size() == diagnostic_begin) {
+      model_.mutable_symbol(symbol).static_constant =
+          scalar_initializer(*field.initializer, field_type);
+    }
     end_root_scope();
   }
 
@@ -1880,16 +1920,251 @@ class SemanticAnalyzer {
     return std::nullopt;
   }
 
+  static void merge_non_null(std::optional<NonNullSet>& join,
+                             const NonNullSet& path) {
+    join = join ? intersect_symbols(*join, path) : path;
+  }
+
+  void finish_loop(const NonNullSet& base, bool body_terminates) {
+    auto paths = transfers_.back().breaks;
+    if (transfers_.back().continues)
+      merge_non_null(paths, *transfers_.back().continues);
+    if (!body_terminates) merge_non_null(paths, active_non_null_);
+    active_non_null_ = paths ? intersect_symbols(base, *paths) : base;
+    transfers_.pop_back();
+  }
+
+  ExpressionId ungroup(ExpressionId id) const {
+    const AstStorage& storage = files_[current_file_.value]->storage;
+    while (const auto* group = std::get_if<ParenthesizedExpression>(
+               &storage.expression(id).data)) {
+      id = group->expression;
+    }
+    return id;
+  }
+
+  bool is_true_literal(ExpressionId id) const {
+    const auto* literal = std::get_if<LiteralExpression>(
+        &files_[current_file_.value]->storage.expression(ungroup(id)).data);
+    return literal && literal->kind == LiteralKind::kBoolean &&
+           literal->lexeme == "true";
+  }
+
+  std::optional<ScalarConstant> integer_case_literal(ExpressionId id,
+                                                     TypeId type) const {
+    const AstStorage& storage = files_[current_file_.value]->storage;
+    id = ungroup(id);
+    bool negative = false;
+    if (const auto* unary =
+            std::get_if<UnaryExpression>(&storage.expression(id).data)) {
+      if (unary->operation != TokenKind::kMinus) return std::nullopt;
+      negative = true;
+      id = ungroup(unary->operand);
+    }
+    const auto* literal =
+        std::get_if<LiteralExpression>(&storage.expression(id).data);
+    if (!literal || literal->kind != LiteralKind::kInteger) return std::nullopt;
+    const auto bits = integer_constant_bits(literal->lexeme, negative,
+                                            model_.type(type).kind);
+    return bits ? std::optional{ScalarConstant{type, *bits}} : std::nullopt;
+  }
+
+  std::optional<ScalarConstant> scalar_initializer(ExpressionId id,
+                                                   TypeId type) const {
+    id = ungroup(id);
+    const AstStorage& storage = files_[current_file_.value]->storage;
+    const auto symbol =
+        model_.file(current_file_).expressions.at(id.value).symbol;
+    if (symbol && model_.symbol(*symbol).kind == SymbolKind::kEnumCase &&
+        model_.symbol(*symbol).type == type &&
+        model_.symbol(*symbol).enum_tag) {
+      return ScalarConstant{type, *model_.symbol(*symbol).enum_tag};
+    }
+    // Preserve only the existing verified scalar initializer contract, not a
+    // general constant evaluator. Explicit literal conversions are already
+    // checked and contextualized by analyze_numeric_conversion.
+    if (const auto* conversion = std::get_if<NumericConversionExpression>(
+            &storage.expression(id).data)) {
+      id = ungroup(conversion->value);
+      // Unary expressions still produce MIR instructions, not retained scalar
+      // literals. Do not widen the static-constant contract here.
+      const auto* literal =
+          std::get_if<LiteralExpression>(&storage.expression(id).data);
+      if (!literal || !is_integer(type)) return std::nullopt;
+      if (literal->kind == LiteralKind::kInteger) {
+        const auto bits = integer_constant_bits(literal->lexeme, false,
+                                                model_.type(type).kind);
+        if (bits) return ScalarConstant{type, *bits};
+      } else if (literal->kind == LiteralKind::kFloat) {
+        double value = 0;
+        const auto text = literal->lexeme;
+        const auto parsed =
+            std::from_chars(text.data(), text.data() + text.size(), value,
+                            std::chars_format::general);
+        if (parsed.ec != std::errc{} ||
+            parsed.ptr != text.data() + text.size() || !std::isfinite(value))
+          return std::nullopt;
+        value = std::trunc(value);
+        const auto properties =
+            *numeric_type_properties(model_.type(type).kind);
+        const bool is_signed =
+            properties.category == NumericCategory::kSignedInteger;
+        const double upper = std::ldexp(
+            1.0, static_cast<int>(properties.bit_width) - (is_signed ? 1 : 0));
+        if (value >= upper || value < (is_signed ? -upper : 0.0))
+          return std::nullopt;
+        const auto magnitude = static_cast<std::uint64_t>(std::abs(value));
+        const auto bits = integer_constant_bits(
+            std::to_string(magnitude), value < 0, model_.type(type).kind);
+        if (bits) return ScalarConstant{type, *bits};
+      }
+      return std::nullopt;
+    }
+    return integer_case_literal(id, type);
+  }
+
+  std::optional<SwitchLabel> analyze_case_label(ExpressionId id,
+                                                TypeId selector_type) {
+    const NonNullSet before = active_non_null_;
+    const ExpressionState state = analyze_expression(id, selector_type);
+    active_non_null_ = before;  // Labels never execute, including invalid ones.
+    const SourceRange range = expression_range(id);
+    if (!check_value(state, range) || state.type == model_.error_type())
+      return std::nullopt;
+    if (const auto literal = integer_case_literal(id, selector_type)) {
+      return SwitchLabel{*literal, range};
+    }
+    const Expression& syntax =
+        files_[current_file_.value]->storage.expression(ungroup(id));
+    if (state.symbol &&
+        (std::holds_alternative<IdentifierExpression>(syntax.data) ||
+         std::holds_alternative<MemberAccessExpression>(syntax.data))) {
+      const SemanticSymbol& symbol = model_.symbol(*state.symbol);
+      std::optional<ScalarConstant> value;
+      if (symbol.kind == SymbolKind::kEnumCase && symbol.enum_tag &&
+          std::holds_alternative<MemberAccessExpression>(syntax.data)) {
+        value = ScalarConstant{symbol.type, *symbol.enum_tag};
+      } else if (symbol.kind == SymbolKind::kField && symbol.is_static &&
+                 symbol.is_final) {
+        value = symbol.static_constant;
+      }
+      if (value) {
+        if (value->type == selector_type)
+          return SwitchLabel{*value, range, state.symbol};
+        const auto widened =
+            widen_integer_constant(value->bits, model_.type(value->type).kind,
+                                   model_.type(selector_type).kind);
+        if (widened)
+          return SwitchLabel{ScalarConstant{selector_type, *widened}, range,
+                             state.symbol};
+        diagnostics_.error(range, "case constant of type '" +
+                                      type_name(value->type) +
+                                      "' cannot be used for switch selector '" +
+                                      type_name(selector_type) + "'");
+        return std::nullopt;
+      }
+    }
+    diagnostics_.error(
+        range,
+        "case label must be an integer literal, a qualified enum case, or a "
+        "verified static final integer/enum constant");
+    return std::nullopt;
+  }
+
+  bool analyze_switch(StatementId id, const SwitchStatement& selection,
+                      SourceRange range) {
+    const ExpressionState selector = analyze_expression(selection.selector);
+    check_value(selector, expression_range(selection.selector));
+    const TypeKind kind = model_.type(selector.type).kind;
+    const bool valid_selector =
+        is_integer_type(kind) || kind == TypeKind::kEnum;
+    if (!valid_selector && selector.type != model_.error_type()) {
+      diagnostics_.error(expression_range(selection.selector),
+                         "switch selector must be an enum or integer value");
+    }
+    SwitchSemantics checked{selector.type, {}, false};
+    std::map<std::uint64_t, SourceRange> values;
+    bool has_default = false;
+    std::size_t label_count = 0;
+    for (const SwitchArm& arm : selection.arms) {
+      std::vector<SwitchLabel> labels;
+      has_default = has_default || arm.labels.empty();
+      for (const ExpressionId label : arm.labels) {
+        ++label_count;
+        if (auto value = analyze_case_label(label, selector.type);
+            value && valid_selector) {
+          const auto [first, inserted] =
+              values.emplace(value->value.bits, value->range);
+          if (!inserted) {
+            diagnostics_.error(value->range, "duplicate switch case value");
+            diagnostics_.note(first->second,
+                              "first case with this value is here");
+          }
+          labels.push_back(*value);
+        }
+      }
+      checked.labels.push_back(std::move(labels));
+    }
+    if (label_count > kMaxSwitchLabels ||
+        selection.arms.size() > kMaxSwitchArms)
+      diagnostics_.error(range, "switch exceeds case limits");
+    checked.is_exhaustive = has_default;
+    if (kind == TypeKind::kEnum) {
+      const auto& cases =
+          model_.file(*model_.type(selector.type).file).enum_cases;
+      std::size_t missing = 0;
+      std::string names;
+      for (const SymbolId case_id : cases) {
+        const SemanticSymbol& symbol = model_.symbol(case_id);
+        if (symbol.enum_tag && !values.contains(*symbol.enum_tag)) {
+          if (missing < 8) {
+            if (!names.empty()) names += ", ";
+            names += symbol.name;
+          }
+          ++missing;
+        }
+      }
+      checked.is_exhaustive = has_default || missing == 0;
+      if (!checked.is_exhaustive) {
+        if (missing > 8)
+          names += " (and " + std::to_string(missing - 8) + " more)";
+        diagnostics_.error(
+            range, "non-exhaustive enum switch; missing cases: " + names);
+      }
+    }
+    const NonNullSet entry = active_non_null_;
+    std::optional<NonNullSet> join;
+    if (!checked.is_exhaustive) join = entry;
+    transfers_.push_back(TransferContext{false});
+    for (const SwitchArm& arm : selection.arms) {
+      active_non_null_ = entry;
+      if (!analyze_block(arm.body, true))
+        merge_non_null(join, active_non_null_);
+    }
+    if (transfers_.back().breaks)
+      merge_non_null(join, *transfers_.back().breaks);
+    transfers_.pop_back();
+    active_non_null_ = join.value_or(entry);
+    model_.mutable_file(current_file_)
+        .switches.emplace(id.value, std::move(checked));
+    return !join;
+  }
+
   bool analyze_block(BlockId id, bool create_scope) {
     if (create_scope) {
       push_scope();
     }
     bool definitely_returns = false;
+    const bool entry_reachable = flow_reachable_;
     const Block& block = files_[current_file_.value]->storage.block(id);
     for (const StatementId statement : block.statements) {
+      const NonNullSet before = active_non_null_;
+      flow_reachable_ = entry_reachable && !definitely_returns;
       const bool statement_returns = analyze_statement(statement);
+      if (definitely_returns) active_non_null_ = before;
       definitely_returns = definitely_returns || statement_returns;
     }
+    flow_reachable_ = entry_reachable;
     if (create_scope) {
       pop_scope();
     }
@@ -2041,15 +2316,12 @@ class SemanticAnalyzer {
       const ConditionFacts facts = condition_facts(while_statement->condition);
       const NonNullSet loop_base = active_non_null_;
       add_non_null_facts(facts.when_true);
-      ++loop_depth_;
+      transfers_.push_back(TransferContext{true});
       const bool body_returns = analyze_block(while_statement->body, true);
-      --loop_depth_;
-      if (body_returns) {
-        active_non_null_ = loop_base;
-      } else {
-        active_non_null_ = intersect_symbols(loop_base, active_non_null_);
-      }
-      return false;
+      const bool terminates = is_true_literal(while_statement->condition) &&
+                              !transfers_.back().breaks;
+      finish_loop(loop_base, body_returns);
+      return terminates;
     }
     if (const auto* for_statement =
             std::get_if<ForEachStatement>(&statement.data)) {
@@ -2093,15 +2365,10 @@ class SemanticAnalyzer {
       bind_name(for_statement->variable.name, symbol,
                 for_statement->variable.range);
       const NonNullSet loop_base = active_non_null_;
-      ++loop_depth_;
+      transfers_.push_back(TransferContext{true});
       const bool body_returns = analyze_block(for_statement->body, false);
-      --loop_depth_;
+      finish_loop(loop_base, body_returns);
       pop_scope();
-      if (body_returns) {
-        active_non_null_ = loop_base;
-      } else {
-        active_non_null_ = intersect_symbols(loop_base, active_non_null_);
-      }
       return false;
     }
     if (const auto* for_statement =
@@ -2121,33 +2388,46 @@ class SemanticAnalyzer {
       const NonNullSet loop_base = active_non_null_;
       add_non_null_facts(facts.when_true);
 
-      ++loop_depth_;
+      transfers_.push_back(TransferContext{true});
       const bool body_returns = analyze_block(for_statement->body, true);
-      --loop_depth_;
+      auto update_entry = transfers_.back().continues;
+      if (!body_returns) merge_non_null(update_entry, active_non_null_);
+      active_non_null_ = update_entry.value_or(loop_base);
       for (const ExpressionId update : for_statement->updates) {
         static_cast<void>(analyze_expression(update));
       }
+      // continue paths run the updates; breaks do not.
+      transfers_.back().continues.reset();
+      const bool terminates = (!for_statement->condition ||
+                               is_true_literal(*for_statement->condition)) &&
+                              !transfers_.back().breaks;
+      finish_loop(loop_base, !update_entry);
       pop_scope();
-      if (body_returns) {
-        active_non_null_ = loop_base;
-      } else {
-        active_non_null_ = intersect_symbols(loop_base, active_non_null_);
-      }
-      return false;
+      return terminates;
+    }
+    if (const auto* selection = std::get_if<SwitchStatement>(&statement.data)) {
+      return analyze_switch(id, *selection, statement.range);
     }
     if (std::holds_alternative<BreakStatement>(statement.data)) {
-      if (loop_depth_ == 0) {
+      if (transfers_.empty()) {
         diagnostics_.error(statement.range,
-                           "'break' is only valid inside a loop");
+                           "'break' is only valid inside a loop or switch");
+      } else if (flow_reachable_) {
+        merge_non_null(transfers_.back().breaks, active_non_null_);
       }
-      return false;
+      return true;
     }
     if (std::holds_alternative<ContinueStatement>(statement.data)) {
-      if (loop_depth_ == 0) {
+      auto loop = std::find_if(
+          transfers_.rbegin(), transfers_.rend(),
+          [](const TransferContext& context) { return context.is_loop; });
+      if (loop == transfers_.rend()) {
         diagnostics_.error(statement.range,
                            "'continue' is only valid inside a loop");
+      } else if (flow_reachable_) {
+        merge_non_null(loop->continues, active_non_null_);
       }
-      return false;
+      return true;
     }
     const auto& nested = std::get<NestedBlockStatement>(statement.data);
     return analyze_block(nested.block, true);
@@ -3234,10 +3514,11 @@ class SemanticAnalyzer {
                            "enum cases must be accessed through their type");
         return ExpressionState{model_.error_type()};
       }
-      for (const SymbolId id : model_.file(*object_type.file).enum_cases) {
-        if (model_.symbol(id).name == member.member) {
-          return ExpressionState{object.type, ValueCategory::kValue, id};
-        }
+      const auto& names = enum_case_names_[object_type.file->value];
+      const auto found = names.find(member.member);
+      if (found != names.end()) {
+        return ExpressionState{object.type, ValueCategory::kValue,
+                               found->second};
       }
       diagnostics_.error(range, "enum '" + object_type.name +
                                     "' has no case '" +
@@ -4573,6 +4854,8 @@ class SemanticAnalyzer {
   std::map<std::string, FileId, std::less<>> imported_file_ids_;
   std::map<std::string, TypeId, std::less<>> imported_type_ids_;
   std::map<std::string, SymbolId, std::less<>> imported_member_ids_;
+  std::map<std::size_t, std::map<std::string, SymbolId, std::less<>>>
+      enum_case_names_;
   FileId current_file_{0};
   TypeId expected_return_type_{0};
   std::optional<SymbolKind> current_callable_kind_;
@@ -4583,7 +4866,8 @@ class SemanticAnalyzer {
   bool has_implicit_receiver_{false};
   bool analyzing_base_initializer_{false};
   bool defer_default_numeric_literal_range_{false};
-  std::size_t loop_depth_{0};
+  std::vector<TransferContext> transfers_;
+  bool flow_reachable_{true};
 };
 
 SemanticAnalysisResult analyze_semantics(

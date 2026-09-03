@@ -20,6 +20,45 @@ phis preserve simultaneous value assignment across loop edges.
 
 ## Verification
 
+### Switch representation and control flow
+
+Stage 27.2 retains each selector and scoped arm once in AST/HIR. HIR labels carry
+canonical typed integer bits or nominal enum tags, source ranges, and optional
+constant symbols. The verifier checks selector/category identity, bit widths,
+case ownership, duplicates, coverage/default metadata, label/arm bounds, and
+callable transfer contexts. Cyclic/shared callable blocks are rejected before
+flow traversal.
+
+Semantic non-null flow records break and continue joins in a nested control
+context stack. Switches consume their breaks but not enclosing-loop continues;
+return/continue paths do not join after the switch. Constructor initialization
+uses the same structured target distinction. Return/reachability analysis
+consumes switch breaks so they cannot make an enclosing infinite loop finite.
+Unreachable statements remain type-checked without exporting flow facts.
+
+Stage 27.3 lowers the captured selector to one typed `MirSwitchTerminator`.
+Its case table is sorted by normalized unsigned bits and pairs exact typed
+constants with targets. Every switch has an explicit default successor; enums
+also have an invalid-tag successor, verified to be an empty `MirTrapTerminator`
+block. An exhaustive enum without source default uses that trap as its default.
+An integer without source default uses the join. No runtime label evaluation or
+source-level comparison chain is introduced.
+
+MIR verification rechecks selector definitions (including dominance), nominal
+ownership, exact case types, bit/tag ranges, sorted uniqueness, targets, label
+limits, and trap structure. `mir_successors` enumerates sorted unique targets,
+including the invalid-tag path. Reachability, phi predecessors, struct constructor
+initialization, and backend GC dataflow all use this shared enumeration.
+The lowering transfer stack gives switches a break target but no continue target.
+
+LLVM uses integer `switch`, guarding an unmatched enum tag against the verified
+case count before entering a source default. Invalid tags call `llvm.trap`.
+Successor blocks with phis receive one edge bridge per switch predecessor,
+including shared case/default destinations. This preserves MIR's unique-block
+phi rule despite LLVM's physical edges. See [LLVM lowering](llvm_backend.md).
+
+### Existing representation checks
+
 The HIR verifier checks stable-handle bounds and relationships among files,
 declarations, blocks, statements, expressions, types, and symbols. Recovered
 invalid nodes are valid compiler data; broken references are compiler-internal

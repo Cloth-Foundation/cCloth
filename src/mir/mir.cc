@@ -28,8 +28,8 @@ struct LoweredLocation {
   std::optional<MirStoragePath> path{};
 };
 
-struct LoopTargets {
-  MirBlockId continue_target;
+struct TransferTargets {
+  std::optional<MirBlockId> continue_target;
   MirBlockId break_target;
 };
 
@@ -336,15 +336,24 @@ class BodyBuilder {
       return;
     }
     if (std::holds_alternative<HirBreakStatement>(statement.data)) {
-      if (!loop_targets_.empty()) {
-        jump_to(loop_targets_.back().break_target, statement.range);
+      if (!transfer_targets_.empty()) {
+        jump_to(transfer_targets_.back().break_target, statement.range);
       }
       return;
     }
     if (std::holds_alternative<HirContinueStatement>(statement.data)) {
-      if (!loop_targets_.empty()) {
-        jump_to(loop_targets_.back().continue_target, statement.range);
+      for (auto target = transfer_targets_.rbegin();
+           target != transfer_targets_.rend(); ++target) {
+        if (target->continue_target) {
+          jump_to(*target->continue_target, statement.range);
+          break;
+        }
       }
+      return;
+    }
+    if (const auto* selection =
+            std::get_if<HirSwitchStatement>(&statement.data)) {
+      lower_switch(*selection, statement.range);
       return;
     }
     const auto& nested = std::get<HirNestedBlockStatement>(statement.data);
@@ -427,6 +436,44 @@ class BodyBuilder {
     current_block_ = continuation;
   }
 
+  void lower_switch(const HirSwitchStatement& selection, SourceRange range) {
+    const MirValueId selector = require_value(
+        lower_expression(selection.selector), selection.selector_type, range);
+    const bool reachable = current_is_reachable();
+    const MirBlockId dispatch = *current_block_;
+    const MirBlockId join = add_block(reachable);
+    std::optional<MirBlockId> invalid;
+    if (semantics_.type(selection.selector_type).kind == TypeKind::kEnum) {
+      invalid = add_block(reachable);
+      current_block_ = *invalid;
+      terminate(MirTrapTerminator{}, range);
+    }
+    MirSwitchTerminator terminator{
+        selector, selection.selector_type, {}, invalid.value_or(join), invalid};
+    std::vector<MirBlockId> arms;
+    arms.reserve(selection.arms.size());
+    for (const auto& arm : selection.arms) {
+      const MirBlockId target = add_block(reachable);
+      arms.push_back(target);
+      if (arm.is_default) terminator.default_block = target;
+      for (const auto& label : arm.labels)
+        terminator.cases.push_back(MirSwitchCase{label.value, target});
+    }
+    std::ranges::sort(terminator.cases, {}, [](const MirSwitchCase& entry) {
+      return entry.value.bits;
+    });
+    current_block_ = dispatch;
+    terminate(std::move(terminator), range);
+    transfer_targets_.push_back(TransferTargets{std::nullopt, join});
+    for (std::size_t index = 0; index < arms.size(); ++index) {
+      current_block_ = arms[index];
+      lower_block(selection.arms[index].body);
+      if (current_block_) jump_to(join, range);
+    }
+    transfer_targets_.pop_back();
+    current_block_ = join;
+  }
+
   void lower_while(const HirWhileStatement& while_statement,
                    SourceRange range) {
     const bool loop_reachable = current_is_reachable();
@@ -440,13 +487,13 @@ class BodyBuilder {
         while_statement.condition, while_statement.condition_is_presence_test);
     terminate(MirBranchTerminator{condition, body_block, exit_block}, range);
 
-    loop_targets_.push_back(LoopTargets{condition_block, exit_block});
+    transfer_targets_.push_back(TransferTargets{condition_block, exit_block});
     current_block_ = body_block;
     lower_block(while_statement.body);
     if (current_block_) {
       jump_to(condition_block, range);
     }
-    loop_targets_.pop_back();
+    transfer_targets_.pop_back();
     current_block_ = exit_block;
   }
 
@@ -495,12 +542,12 @@ class BodyBuilder {
     emit_void(range,
               MirDeclareLocalInstruction{*for_statement.variable, element});
 
-    loop_targets_.push_back(LoopTargets{latch_block, exit_block});
+    transfer_targets_.push_back(TransferTargets{latch_block, exit_block});
     lower_block(for_statement.body);
     if (current_block_) {
       jump_to(latch_block, range);
     }
-    loop_targets_.pop_back();
+    transfer_targets_.pop_back();
 
     current_block_ = latch_block;
     const MirValueId one = emit_value(
@@ -538,12 +585,12 @@ class BodyBuilder {
     }
 
     current_block_ = body_block;
-    loop_targets_.push_back(LoopTargets{update_block, exit_block});
+    transfer_targets_.push_back(TransferTargets{update_block, exit_block});
     lower_block(for_statement.body);
     if (current_block_) {
       jump_to(update_block, range);
     }
-    loop_targets_.pop_back();
+    transfer_targets_.pop_back();
 
     current_block_ = update_block;
     for (const HirExpressionId update : for_statement.updates) {
@@ -1374,14 +1421,8 @@ class BodyBuilder {
         continue;
       }
       block.is_reachable = true;
-      if (const auto* jump =
-              std::get_if<MirJumpTerminator>(&block.terminator.data)) {
-        worklist.push_back(jump->target);
-      } else if (const auto* branch =
-                     std::get_if<MirBranchTerminator>(&block.terminator.data)) {
-        worklist.push_back(branch->then_block);
-        worklist.push_back(branch->else_block);
-      }
+      for (const auto successor : mir_successors(block.terminator))
+        worklist.push_back(successor);
     }
   }
 
@@ -1394,7 +1435,7 @@ class BodyBuilder {
   std::vector<TypeId> value_types_;
   std::vector<bool> terminated_;
   std::optional<MirBlockId> current_block_;
-  std::vector<LoopTargets> loop_targets_;
+  std::vector<TransferTargets> transfer_targets_;
 };
 
 MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,
@@ -1417,6 +1458,24 @@ MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,
 }
 
 }  // namespace
+
+std::vector<MirBlockId> mir_successors(const MirTerminator& terminator) {
+  if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator.data))
+    return {jump->target};
+  std::vector<MirBlockId> result;
+  if (const auto* branch = std::get_if<MirBranchTerminator>(&terminator.data)) {
+    result = {branch->then_block, branch->else_block};
+  } else if (const auto* selection =
+                 std::get_if<MirSwitchTerminator>(&terminator.data)) {
+    result.reserve(selection->cases.size() + 2);
+    for (const auto& entry : selection->cases) result.push_back(entry.target);
+    result.push_back(selection->default_block);
+    if (selection->invalid_block) result.push_back(*selection->invalid_block);
+  }
+  std::ranges::sort(result, {}, &MirBlockId::value);
+  result.erase(std::unique(result.begin(), result.end()), result.end());
+  return result;
+}
 
 MirModule lower_to_mir(const HirModule& hir, const SemanticModel& semantics) {
   MirModule module;

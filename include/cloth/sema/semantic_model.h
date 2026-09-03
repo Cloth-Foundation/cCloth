@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -125,6 +126,28 @@ enum class IntrinsicKind {
   kPrintStruct,
 };
 
+// Integer bits are zero-extended to 64 bits from their declared width; enum
+// values are declaration-order tags. No host signed arithmetic is involved.
+struct ScalarConstant {
+  TypeId type;
+  std::uint64_t bits;
+
+  friend bool operator==(const ScalarConstant&,
+                         const ScalarConstant&) = default;
+};
+
+struct SwitchLabel {
+  ScalarConstant value;
+  SourceRange range;
+  std::optional<SymbolId> symbol{};
+};
+
+struct SwitchSemantics {
+  TypeId selector_type;
+  std::vector<std::vector<SwitchLabel>> labels;
+  bool is_exhaustive{false};
+};
+
 struct SemanticSymbol {
   SymbolKind kind;
   std::string name;
@@ -144,6 +167,7 @@ struct SemanticSymbol {
   std::optional<std::size_t> virtual_slot{};
   std::optional<SymbolId> overridden_symbol{};
   std::optional<std::uint32_t> enum_tag{};
+  std::optional<ScalarConstant> static_constant{};
 };
 
 enum class ValueCategory {
@@ -199,6 +223,7 @@ struct FileSemantics {
   NominalIdentity identity{};
   std::vector<MemberReference> member_order{};
   std::vector<SymbolId> enum_cases{};
+  std::map<std::size_t, SwitchSemantics> switches{};
 };
 
 class SemanticModel {

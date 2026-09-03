@@ -297,16 +297,9 @@ std::vector<MirValueId> terminator_value_uses(const MirTerminator& terminator) {
       returned != nullptr && returned->value) {
     return {*returned->value};
   }
-  return {};
-}
-
-std::vector<MirBlockId> terminator_successors(const MirTerminator& terminator) {
-  if (const auto* jump = std::get_if<MirJumpTerminator>(&terminator.data)) {
-    return {jump->target};
-  }
-  if (const auto* branch = std::get_if<MirBranchTerminator>(&terminator.data)) {
-    return {branch->then_block, branch->else_block};
-  }
+  if (const auto* selection =
+          std::get_if<MirSwitchTerminator>(&terminator.data))
+    return {selection->selector};
   return {};
 }
 
@@ -362,6 +355,7 @@ class BodyEmitter {
   std::string storage_address(const MirStoragePath& path,
                               std::ostringstream& output);
   bool has_aggregate_phi(std::size_t block) const;
+  bool needs_edge_block(std::size_t predecessor, std::size_t successor) const;
   std::string edge_label(std::size_t predecessor, std::size_t successor) const;
   void emit_phi_edges(std::ostringstream& output);
   std::string call_argument(const MirInstruction& instruction,
@@ -474,6 +468,8 @@ class BodyEmitter {
   std::vector<SymbolId> storage_symbols_;
   std::vector<SymbolId> gc_symbol_roots_;
   std::vector<bool> gc_value_roots_;
+  std::vector<std::vector<MirBlockId>> successors_;
+  std::vector<std::vector<std::size_t>> predecessors_;
   std::vector<GcLiveSet> gc_live_in_;
   std::vector<GcLiveSet> gc_live_out_;
   std::vector<GcLiveSet> gc_live_after_phis_;
@@ -1260,6 +1256,13 @@ BodyEmitter::BodyEmitter(ModuleEmitter& module, const MirBody& body,
       callable_(callable),
       values_(body.value_count),
       value_types_(body.value_count, module.semantics().error_type()) {
+  successors_.reserve(body.blocks.size());
+  predecessors_.resize(body.blocks.size());
+  for (std::size_t index = 0; index < body.blocks.size(); ++index) {
+    successors_.push_back(mir_successors(body.blocks[index].terminator));
+    for (const auto successor : successors_.back())
+      predecessors_.at(successor.value).push_back(index);
+  }
   prepare_values();
   collect_storage();
   collect_gc_roots();
@@ -1386,6 +1389,9 @@ void BodyEmitter::collect_gc_roots() {
 }
 
 void BodyEmitter::analyze_gc_liveness() {
+  // Receivers have independent roots. Bodies with no managed temporaries or
+  // locals need no liveness tables, even for a full-width dense enum switch.
+  if (gc_value_root_count_ == 0 && gc_symbol_roots_.empty()) return;
   const std::size_t block_count = body_.blocks.size();
   const std::size_t value_count = gc_value_roots_.size();
   const std::size_t symbol_count = module_.semantics().symbols().size();
@@ -1476,8 +1482,7 @@ void BodyEmitter::analyze_gc_liveness() {
         continue;
       }
       GcLiveSet next_out = empty_set();
-      for (const MirBlockId successor :
-           terminator_successors(block.terminator)) {
+      for (const MirBlockId successor : successors_[block_index]) {
         if (successor.value >= block_count ||
             !body_.blocks[successor.value].is_reachable) {
           continue;
@@ -1843,22 +1848,15 @@ void BodyEmitter::emit_gc_block_entry_clears(std::size_t block,
       }
     }
   }
-  for (std::size_t predecessor = 0; predecessor < body_.blocks.size();
-       ++predecessor) {
-    for (const MirBlockId successor :
-         terminator_successors(body_.blocks[predecessor].terminator)) {
-      if (successor.value != block || predecessor >= gc_live_out_.size()) {
-        continue;
-      }
-      const GcLiveSet& predecessor_live = gc_live_out_[predecessor];
-      for (std::size_t index = 0; index < candidates.values.size(); ++index) {
-        candidates.values[index] =
-            candidates.values[index] || predecessor_live.values[index];
-      }
-      for (std::size_t index = 0; index < candidates.symbols.size(); ++index) {
-        candidates.symbols[index] =
-            candidates.symbols[index] || predecessor_live.symbols[index];
-      }
+  for (const std::size_t predecessor : predecessors_[block]) {
+    const GcLiveSet& predecessor_live = gc_live_out_[predecessor];
+    for (std::size_t index = 0; index < candidates.values.size(); ++index) {
+      candidates.values[index] =
+          candidates.values[index] || predecessor_live.values[index];
+    }
+    for (std::size_t index = 0; index < candidates.symbols.size(); ++index) {
+      candidates.symbols[index] =
+          candidates.symbols[index] || predecessor_live.symbols[index];
     }
   }
   for (const SymbolId symbol : gc_symbol_roots_) {
@@ -2966,9 +2964,20 @@ bool BodyEmitter::has_aggregate_phi(std::size_t block) const {
       });
 }
 
+bool BodyEmitter::needs_edge_block(std::size_t predecessor,
+                                   std::size_t successor) const {
+  if (has_aggregate_phi(successor)) return true;
+  const auto& instructions = body_.blocks[successor].instructions;
+  return std::holds_alternative<MirSwitchTerminator>(
+             body_.blocks[predecessor].terminator.data) &&
+         !instructions.empty() &&
+         std::holds_alternative<MirPhiInstruction>(instructions.front().data);
+}
+
 std::string BodyEmitter::edge_label(std::size_t predecessor,
                                     std::size_t successor) const {
-  if (!has_aggregate_phi(successor)) return "bb" + std::to_string(successor);
+  if (!needs_edge_block(predecessor, successor))
+    return "bb" + std::to_string(successor);
   return "edge." + std::to_string(predecessor) + "." +
          std::to_string(successor);
 }
@@ -2976,12 +2985,10 @@ std::string BodyEmitter::edge_label(std::size_t predecessor,
 void BodyEmitter::emit_phi_edges(std::ostringstream& output) {
   for (std::size_t predecessor = 0; predecessor < body_.blocks.size();
        ++predecessor) {
-    auto successors =
-        terminator_successors(body_.blocks[predecessor].terminator);
-    if (successors.size() == 2 && successors[0] == successors[1])
-      successors.pop_back();
-    for (const auto successor : successors) {
-      if (!has_aggregate_phi(successor.value)) continue;
+    // One bridge per unique successor also gives scalar phis one LLVM edge,
+    // regardless of how many switch labels (or guarded defaults) select it.
+    for (const auto successor : successors_[predecessor]) {
+      if (!needs_edge_block(predecessor, successor.value)) continue;
       output << "edge." << predecessor << "." << successor.value << ":\n";
       // Two phases preserve simultaneous phi assignment, including loop swaps.
       for (const auto& instruction :
@@ -3021,7 +3028,8 @@ void BodyEmitter::emit_phi(const MirInstruction& instruction,
       output << ", ";
     }
     output << "[ " << value(phi.incoming[index].value) << ", %"
-           << (has_aggregate_phi(current_block_)
+           << (needs_edge_block(phi.incoming[index].predecessor.value,
+                                current_block_)
                    ? edge_label(phi.incoming[index].predecessor.value,
                                 current_block_)
                    : "bb" +
@@ -3043,6 +3051,40 @@ void BodyEmitter::emit_terminator(const MirTerminator& terminator,
            << edge_label(current_block_, branch->then_block.value)
            << ", label %"
            << edge_label(current_block_, branch->else_block.value) << '\n';
+  } else if (const auto* selection =
+                 std::get_if<MirSwitchTerminator>(&terminator.data)) {
+    const std::string type = module_.llvm_type(selection->selector_type);
+    const bool guard_default =
+        selection->invalid_block &&
+        *selection->invalid_block != selection->default_block;
+    const std::string guard =
+        "switch.default." + std::to_string(current_block_);
+    output << "  switch " << type << ' ' << value(selection->selector)
+           << ", label %"
+           << (guard_default
+                   ? guard
+                   : edge_label(current_block_, selection->default_block.value))
+           << " [\n";
+    for (const auto& entry : selection->cases)
+      output << "    " << type << ' ' << entry.value.bits << ", label %"
+             << edge_label(current_block_, entry.target.value) << '\n';
+    output << "  ]\n";
+    if (guard_default) {
+      const auto& enum_type =
+          module_.semantics().type(selection->selector_type);
+      const auto count =
+          module_.semantics().file(*enum_type.file).enum_cases.size();
+      const std::string valid = next_address();
+      output << guard << ":\n  " << valid << " = icmp ult " << type << ' '
+             << value(selection->selector) << ", " << count << "\n  br i1 "
+             << valid << ", label %"
+             << edge_label(current_block_, selection->default_block.value)
+             << ", label %"
+             << edge_label(current_block_, selection->invalid_block->value)
+             << '\n';
+    }
+  } else if (std::holds_alternative<MirTrapTerminator>(terminator.data)) {
+    output << "  call void @llvm.trap()\n  unreachable\n";
   } else if (const auto* return_terminator =
                  std::get_if<MirReturnTerminator>(&terminator.data)) {
     if (return_terminator->value && module_.is_aggregate(return_type_))

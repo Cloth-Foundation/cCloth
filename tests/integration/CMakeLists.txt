@@ -7,6 +7,24 @@ set(CLOTH_INTEGRATION_EXPECTED "${CMAKE_CURRENT_SOURCE_DIR}/expected")
 set(CLOTH_INTEGRATION_ERRORS "${CMAKE_CURRENT_SOURCE_DIR}/errors")
 set(CLOTH_INTEGRATION_PROJECTS "${CMAKE_CURRENT_SOURCE_DIR}/projects")
 
+foreach(target IN ITEMS x86_64 wasm32)
+    add_test(NAME cloth_cli_check_switch_${target}
+        COMMAND clothc --check --target=${target}
+            ${CLOTH_INTEGRATION_PROGRAMS}/Switch.co)
+    set(switch_ir "${PROJECT_BINARY_DIR}/cloth-switch-${target}.ll")
+    add_test(NAME cloth_cli_switch_llvm_${target}
+        COMMAND clothc --target=${target} --emit-llvm=${switch_ir}
+            --source-root=${CLOTH_INTEGRATION_PROJECTS}/switch/src
+            ${CLOTH_INTEGRATION_PROJECTS}/switch/src/Main.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_switch_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                -passes=verify -disable-output ${switch_ir})
+        set_tests_properties(cloth_switch_verify_${target} PROPERTIES
+            DEPENDS cloth_cli_switch_llvm_${target})
+    endif()
+endforeach()
+
 add_test(NAME cloth_cli_check_structs
     COMMAND clothc --check
             --source-root=${CLOTH_INTEGRATION_PROJECTS}/structs/src
@@ -90,6 +108,13 @@ if(CLOTH_LLVM_OPT_EXECUTABLE)
 endif()
 
 if(CLOTH_LLVM_LLC_EXECUTABLE)
+    cloth_add_native_output_test(switch
+        OUTPUT "cloth switch"
+        SOURCE ${CLOTH_INTEGRATION_PROJECTS}/switch/src/Main.co
+        SOURCE_ROOT ${CLOTH_INTEGRATION_PROJECTS}/switch/src
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/switch.txt
+        EXACT
+    )
     cloth_add_native_output_test(structs
         OUTPUT "cloth structs"
         SOURCE ${CLOTH_INTEGRATION_PROJECTS}/structs/src/Main.co
@@ -98,6 +123,37 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXACT
     )
     get_target_property(native_definitions clothc COMPILE_DEFINITIONS)
+    add_executable(cloth_switch_native_tests switch_native_tests.cc)
+    target_link_libraries(cloth_switch_native_tests PRIVATE cloth_compiler)
+    target_compile_definitions(cloth_switch_native_tests PRIVATE ${native_definitions})
+    cloth_enable_warnings(cloth_switch_native_tests)
+    add_dependencies(cloth_switch_native_tests cloth_runtime)
+    foreach(mode IN ITEMS stress exhaustive default default_only tables)
+        cloth_native_executable_path(switch_executable "cloth switch ${mode}")
+        add_test(NAME cloth_build_switch_${mode}
+            COMMAND cloth_switch_native_tests
+                ${CLOTH_INTEGRATION_PROJECTS}/switch/src/Main.co
+                "${switch_executable}" ${mode})
+        if(mode STREQUAL "tables")
+            add_test(NAME cloth_switch_tables COMMAND "${switch_executable}")
+            set_tests_properties(cloth_switch_tables PROPERTIES
+                DEPENDS cloth_build_switch_tables)
+            continue()
+        endif()
+        if(mode STREQUAL "stress")
+            set(switch_expectation
+                "-DCLOTH_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/switch.txt"
+                -DCLOTH_EXACT_OUTPUT=ON)
+        else()
+            set(switch_expectation -DCLOTH_EXPECTED_ERROR= -DCLOTH_EXPECT_TRAP=ON)
+        endif()
+        add_test(NAME cloth_switch_${mode}
+            COMMAND ${CMAKE_COMMAND}
+                "-DCLOTH_PROGRAM=${switch_executable}" ${switch_expectation}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/RunProgram.cmake)
+        set_tests_properties(cloth_switch_${mode} PROPERTIES
+            DEPENDS cloth_build_switch_${mode})
+    endforeach()
     add_executable(cloth_struct_native_tests struct_native_tests.cc)
     target_link_libraries(cloth_struct_native_tests PRIVATE cloth_compiler)
     target_compile_definitions(cloth_struct_native_tests PRIVATE ${native_definitions})

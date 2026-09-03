@@ -7,6 +7,7 @@
 #include "cloth/abi/aggregate_limits.h"
 #include "cloth/identity/package_identity.h"
 #include "cloth/sema/canonical_identity.h"
+#include "cloth/sema/numeric_types.h"
 
 #include <algorithm>
 #include <charconv>
@@ -264,6 +265,28 @@ ImportedMember import_member(SymbolId id, std::string_view owner,
     const MirField* field = find_mir_field(mir_file, id);
     if (field != nullptr && field->initializer) {
       static_value = returned_literal(*field->initializer);
+      if (static_value && symbol.static_constant) {
+        const auto constant = *symbol.static_constant;
+        const TypeKind kind = semantics.type(constant.type).kind;
+        if (kind == TypeKind::kEnum) {
+          static_value = ImportedLiteral{LiteralKind::kEnum,
+                                         std::to_string(constant.bits)};
+        } else if (is_valid_integer_bits(constant.bits, kind)) {
+          const auto properties = *numeric_type_properties(kind);
+          const bool negative =
+              properties.category == NumericCategory::kSignedInteger &&
+              (constant.bits &
+               (std::uint64_t{1} << (properties.bit_width - 1))) != 0;
+          const std::uint64_t magnitude =
+              !negative ? constant.bits
+              : properties.bit_width == 64
+                  ? std::uint64_t{0} - constant.bits
+                  : (std::uint64_t{1} << properties.bit_width) - constant.bits;
+          static_value = ImportedLiteral{
+              LiteralKind::kInteger,
+              std::string{negative ? "-" : ""} + std::to_string(magnitude)};
+        }
+      }
     }
   }
 

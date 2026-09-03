@@ -34,6 +34,17 @@ void print_terminator(const MirTerminator& terminator, std::ostream& output) {
                  std::get_if<MirBranchTerminator>(&terminator.data)) {
     output << "branch %" << branch->condition.value << ", bb"
            << branch->then_block.value << ", bb" << branch->else_block.value;
+  } else if (const auto* selection =
+                 std::get_if<MirSwitchTerminator>(&terminator.data)) {
+    output << "switch %" << selection->selector.value << " type#"
+           << selection->selector_type.value;
+    for (const auto& entry : selection->cases)
+      output << ", " << entry.value.bits << ": bb" << entry.target.value;
+    output << ", default: bb" << selection->default_block.value;
+    if (selection->invalid_block)
+      output << ", invalid: bb" << selection->invalid_block->value;
+  } else if (std::holds_alternative<MirTrapTerminator>(terminator.data)) {
+    output << "trap";
   } else if (const auto* return_terminator =
                  std::get_if<MirReturnTerminator>(&terminator.data)) {
     output << "return";

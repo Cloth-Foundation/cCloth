@@ -189,6 +189,7 @@ statement
     | if_statement
     | while_statement
     | for_statement
+    | switch_statement
     | break_statement
     | continue_statement
     | expression_statement
@@ -239,11 +240,23 @@ continue_statement
 
 expression_statement
     = expression ";" ;
+
+switch_statement
+    = "switch" "(" expression ")" "{" switch_arm { switch_arm } "}" ;
+
+switch_arm
+    = "case" expression { "," expression } ":" block
+    | "default" ":" block ;
 ```
 
-Braces and semicolons shown above are mandatory. `break` and `continue` are
-valid only inside a `while` or `for` body. Nested type declarations inside
-blocks remain deferred.
+Braces and semicolons shown above are mandatory. `break` targets the nearest loop
+or switch; `continue` targets the nearest loop, skipping switches. Nested type
+declarations inside blocks remain deferred.
+
+Switch selectors are integers or enums; labels are
+restricted constants despite their expression grammar. Default is unique and
+last, enum coverage is exhaustive, and arm bodies do not fall through. Limits,
+normalization, and recovery follow the [approved switch contract](proposals/stage_27_switch.md).
 
 ## Expressions
 

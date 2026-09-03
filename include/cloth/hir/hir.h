@@ -236,6 +236,20 @@ struct HirForStatement {
 
 struct HirBreakStatement {};
 
+struct HirSwitchArm {
+  std::vector<SwitchLabel> labels;
+  HirBlockId body;
+  SourceRange range;
+  bool is_default{false};
+};
+
+struct HirSwitchStatement {
+  HirExpressionId selector;
+  TypeId selector_type;
+  std::vector<HirSwitchArm> arms;
+  bool is_exhaustive{false};
+};
+
 struct HirContinueStatement {};
 
 struct HirNestedBlockStatement {
@@ -245,8 +259,9 @@ struct HirNestedBlockStatement {
 using HirStatementData =
     std::variant<HirInvalidStatement, HirLocalStatement, HirReturnStatement,
                  HirExpressionStatement, HirIfStatement, HirWhileStatement,
-                 HirForEachStatement, HirForStatement, HirBreakStatement,
-                 HirContinueStatement, HirNestedBlockStatement>;
+                 HirForEachStatement, HirForStatement, HirSwitchStatement,
+                 HirBreakStatement, HirContinueStatement,
+                 HirNestedBlockStatement>;
 
 struct HirStatement {
   SourceRange range;

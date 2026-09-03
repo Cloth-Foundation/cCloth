@@ -40,10 +40,28 @@ opaque to generated code.
 
 ## Control flow and expressions
 
-Each MIR basic block becomes one LLVM basic block. Jumps, branches, returns,
+Each MIR basic block starts an LLVM basic block. Jumps, branches, returns,
 and unreachable terminators lower directly. Scalar MIR phi values remain LLVM phi
 instructions, preserving `&&` and `||` short-circuit behavior. Aggregate phis use
 two-phase copies on split incoming edges to preserve simultaneous assignment.
+
+Typed MIR switches emit LLVM `switch` at the selector's integer width (or `i32`
+for enums). Case tables retain deterministic normalized-bit order; neither
+dense nor sparse labels allocate by their numeric span. LLVM chooses the final
+branch/table strategy. An unmatched enum tag is range-checked before a source
+default; invalid tags enter an explicit trap block. Exhaustive enums without a
+source default send unmatched tags directly to that trap.
+
+Switch successors with scalar or aggregate phis use a shared edge bridge for
+each unique predecessor/destination pair. Grouped labels and case/default edges
+therefore never duplicate phi incoming entries. Destinations without phis need
+no bridge. Aggregate copies remain simultaneous, and guarded enum defaults use
+the same bridge as any named label targeting that block.
+
+GC liveness includes the selector and all unique successors, including loop
+transfers. Successor/predecessor indexes are built once per body, avoiding an
+all-block predecessor scan at every arm. Bodies without managed temporaries or
+bindings skip empty liveness tables; independently rooted receivers are unchanged.
 
 Integer operations select signed or unsigned division, remainder, and
 comparison from the semantic operand type. Floating-point operations use LLVM

@@ -1,10 +1,11 @@
 # Cloth compiler roadmap
 
 This roadmap is the authoritative order of compiler stages. `TODO.md` owns the
-work items inside that order, while the owning contracts under `docs/` define
-implemented behavior. Drafts under `docs/proposals/` are explicitly marked and
-are not implementation claims. A backlog item is not scheduled merely because
-it is documented.
+work items inside that order. User-facing language documentation lives in the
+`documentation/` submodule; compiler contracts and maintainer guidance live in
+`docs/`. Drafts under `docs/proposals/` are explicitly marked and are not
+implementation claims. A backlog item is not scheduled merely because it is
+documented.
 
 Stages that cross the Shuttle boundary record their shared objective and exit
 criteria here. Shuttle owns its implementation order and work ledger in the
@@ -63,8 +64,9 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 25 | Named value enums with public cases, scalar lowering, and separate-compilation support |
 | 26 | Inline value structs with precise tracing, aggregate calls, and source-free package support |
 | 26.5.1 | Explicit interface implementations using the existing `override` keyword |
+| 27 | Scoped switch statements, exhaustive enum handling, and deterministic package evolution |
 
-Stage 26.5.1 is the current completed language baseline. Coordinated toolchain Stage
+Stage 27 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
 exit audits. Build-responsiveness Stage 24 is also complete.
 
@@ -72,7 +74,8 @@ Stage 26 is complete for value structs, including its approved source contract,
 frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
 and coordinated 26.4 exit audit. Native execution and source-free
 packages use artifact format 3, compiler ABI 4, and runtime ABI 2. The explicit
-interface-override follow-up is complete; no further stage is activated.
+interface-override follow-up and Stage 27 switch implementation are complete,
+including the coordinated 27.4 exit audit on 2026-09-02.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -398,10 +401,61 @@ implementations, struct conformance, editor scaffold redesign, or other backlog
 features. Exit requires development/sanitizer, native/shared-tool, Rust, and
 VS Code support checks plus synchronized compiler/Shuttle ledgers.
 
-## Beyond Stage 26
+## Stage 27: Switch statements and exhaustive enum handling
 
-No stage beyond 26.5.1 is assigned. Completing this work does not schedule the rest
-of the backlog or freeze the Cloth 1.0 release scope.
+Status: **complete — coordinated 27.4 exit audit passed 2026-09-02**
+
+The [approved contract](docs/proposals/stage_27_switch.md) specifies the source,
+flow, MIR, compatibility, and verification requirements. Frontend checking and
+native lowering are implemented, including source-free packages. The
+[exit audit](docs/testing.md#stage-274-switch-exit-audit) verifies dependency
+evolution, stale-artifact rejection, failed-output preservation, and relocated
+serial/parallel equivalence with both compiler configurations and shared gates.
+
+Objective: branch over existing enum and integer values with exactly-once
+selection, explicit case scopes, no implicit fallthrough, and compile-time
+enum exhaustiveness across both source and artifact-only dependencies.
+
+Prerequisites: completed enum/struct/override stages, existing callable and
+constructor flow analysis, and the verified separate-compilation pipeline.
+
+Deliverables:
+
+1. **27.1 — Contract.** Approve syntax, selector/constant forms, grouped cases,
+   scope, default/coverage policy, loop transfers, flow rules, resource limits,
+   and package compatibility before implementation.
+2. **27.2 — Frontend.** Implement parsing, typing, constant normalization,
+   diagnostics, HIR verification, return/initialization/nullable-flow analysis,
+   and keyword coordination. Reject native emission until lowering is ready.
+3. **27.3 — Lowering.** Implement verified typed MIR switches, CFG/phi/GC
+   integration, LLVM emission, invalid-enum traps, and source-free compilation.
+4. **27.4 — Exit audit.** Verify native whole/separate execution, dependency
+   evolution, deterministic artifacts, and failed-output preservation. Update
+   user documentation, maintainer contracts, and editor support; pass both
+   compiler configurations and the coordinated Rust/toolchain/editor gates.
+
+Non-goals: pattern matching, guards, destructuring, ranges, labeled transfers,
+fallthrough, switch expressions, other selector types, enum payloads, general
+constant folding, a new local initialization policy, new targets, or unrelated
+Shuttle/editor features. No ABI/artifact/protocol revision is expected; any
+necessary compatibility change requires review before implementation.
+
+Exit criteria:
+
+- every Stage 27 item in both work ledgers is complete;
+- exhaustiveness, normalized constants, scoped transfers, return paths,
+  initialization, and GC behavior match the approved contract;
+- source and malformed HIR/MIR fail deterministically at the proper boundary;
+- source-free dependencies preserve enum coverage and constant identity, and
+  edits invalidate affected consumers without replacing outputs on failure;
+- whole/separate and serial/parallel builds remain equivalent; and
+- development, sanitizer, native/shared-tool, Rust, and editor checks pass,
+  with user documentation separated from maintainer implementation records.
+
+## Beyond Stage 27
+
+No stage beyond 27 is assigned. Completing switch does not schedule the rest of
+the backlog or freeze the Cloth 1.0 release scope.
 
 The following candidates remain recorded without priority or order:
 
@@ -410,7 +464,7 @@ The following candidates remain recorded without priority or order:
 - a general constant-folding optimizer stage; and
 - immutable per-case enum metadata, after its constant-data prerequisites.
 
-These candidates follow completion of Stage 26 and their own prerequisites.
+These candidates follow completion of Stage 27 and their own prerequisites.
 Each candidate still requires its own stage charter, dependency review,
 non-goals, approved language or optimizer contract, concrete `TODO.md` items,
 and explicit implementation go-ahead. Inclusion here does not activate or

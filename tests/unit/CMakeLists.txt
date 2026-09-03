@@ -4,6 +4,7 @@
 
 cloth_add_unit_test(cloth_abi_tests abi_tests.cc)
 cloth_add_unit_test(cloth_enum_tests enum_tests.cc)
+cloth_add_unit_test(cloth_switch_tests switch_tests.cc)
 cloth_add_unit_test(cloth_struct_tests struct_tests.cc)
 cloth_add_unit_test(cloth_aggregate_tests aggregate_tests.cc)
 cloth_add_unit_test(cloth_backend_tests backend_tests.cc)
@@ -39,3 +40,9 @@ foreach(scenario IN ITEMS null zero alignment stride table count offset
 endforeach()
 
 cloth_finalize_tests(LABEL unit)
+
+# Includes full MIR/LLVM emission at the 65,536-label/65,537-arm boundary.
+# Allow sanitizer instrumentation and concurrent toolchain tests headroom
+# without relaxing the timeout for ordinary unit tests.
+math(EXPR switch_test_timeout "4 * ${CLOTH_TEST_TIMEOUT_SECONDS}")
+set_tests_properties(cloth_switch_tests PROPERTIES TIMEOUT ${switch_test_timeout})

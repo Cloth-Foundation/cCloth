@@ -35,6 +35,15 @@ struct NumericTypeProperties {
 // required.
 [[nodiscard]] bool can_widen_numeric(TypeKind source, TypeKind target) noexcept;
 
+// Parse a decimal magnitude with a separately supplied sign, checking the
+// declared width. The result is the canonical, zero-extended bit pattern.
+[[nodiscard]] std::optional<std::uint64_t> integer_constant_bits(
+    std::string_view magnitude, bool negative, TypeKind type) noexcept;
+[[nodiscard]] bool is_valid_integer_bits(std::uint64_t bits,
+                                         TypeKind type) noexcept;
+[[nodiscard]] std::optional<std::uint64_t> widen_integer_constant(
+    std::uint64_t bits, TypeKind source, TypeKind target) noexcept;
+
 }  // namespace cloth
 
 #endif  // CLOTH_SEMA_NUMERIC_TYPES_H_

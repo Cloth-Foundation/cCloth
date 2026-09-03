@@ -132,6 +132,12 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "break";
     case TokenKind::kKwContinue:
       return "continue";
+    case TokenKind::kKwSwitch:
+      return "switch";
+    case TokenKind::kKwCase:
+      return "case";
+    case TokenKind::kKwDefault:
+      return "default";
     case TokenKind::kKwStruct:
       return "struct";
     case TokenKind::kKwClass:

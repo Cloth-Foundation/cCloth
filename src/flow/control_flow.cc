@@ -75,6 +75,17 @@ class CallableAnalyzer {
       return FlowResult{
           !is_true(while_statement->condition) || body_flow.has_break, false};
     }
+    if (const auto* selection =
+            std::get_if<HirSwitchStatement>(&statement.data)) {
+      bool can_fall_through = !selection->is_exhaustive;
+      for (const auto& arm : selection->arms) {
+        const FlowResult flow = analyze_block(arm.body);
+        can_fall_through =
+            can_fall_through || flow.can_fall_through || flow.has_break;
+      }
+      // Breaks in arms belong to this switch, not an enclosing loop.
+      return FlowResult{can_fall_through, false};
+    }
     if (const auto* for_statement =
             std::get_if<HirForEachStatement>(&statement.data)) {
       static_cast<void>(analyze_block(for_statement->body));

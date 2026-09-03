@@ -6,6 +6,8 @@
 
 #include "cloth/sema/semantic_model.h"
 
+#include <charconv>
+#include <limits>
 #include <optional>
 
 namespace cloth {
@@ -72,6 +74,60 @@ bool can_widen_numeric(TypeKind source, TypeKind target) noexcept {
     return false;
   }
   return source_properties->bit_width < target_properties->bit_width;
+}
+
+namespace {
+
+std::uint64_t integer_mask(std::uint32_t width) noexcept {
+  return width == 64 ? std::numeric_limits<std::uint64_t>::max()
+                     : (std::uint64_t{1} << width) - 1;
+}
+
+}  // namespace
+
+std::optional<std::uint64_t> integer_constant_bits(std::string_view magnitude,
+                                                   bool negative,
+                                                   TypeKind type) noexcept {
+  const auto properties = numeric_type_properties(type);
+  if (!properties || !is_integer_type(type) || magnitude.empty() ||
+      magnitude.front() < '0' || magnitude.front() > '9' ||
+      (negative && properties->category == NumericCategory::kUnsignedInteger)) {
+    return std::nullopt;
+  }
+  std::uint64_t value = 0;
+  const auto parsed = std::from_chars(
+      magnitude.data(), magnitude.data() + magnitude.size(), value);
+  if (parsed.ec != std::errc{} ||
+      parsed.ptr != magnitude.data() + magnitude.size())
+    return std::nullopt;
+  std::uint64_t maximum = integer_mask(properties->bit_width);
+  if (properties->category == NumericCategory::kSignedInteger) {
+    maximum =
+        (std::uint64_t{1} << (properties->bit_width - 1)) - (negative ? 0 : 1);
+  }
+  if (value > maximum) return std::nullopt;
+  return (negative ? std::uint64_t{0} - value : value) &
+         integer_mask(properties->bit_width);
+}
+
+bool is_valid_integer_bits(std::uint64_t bits, TypeKind type) noexcept {
+  const auto properties = numeric_type_properties(type);
+  return properties && is_integer_type(type) &&
+         bits <= integer_mask(properties->bit_width);
+}
+
+std::optional<std::uint64_t> widen_integer_constant(std::uint64_t bits,
+                                                    TypeKind source,
+                                                    TypeKind target) noexcept {
+  if (!is_valid_integer_bits(bits, source) || !is_integer_type(target) ||
+      (source != target && !can_widen_numeric(source, target)))
+    return std::nullopt;
+  const auto properties = *numeric_type_properties(source);
+  if (properties.category == NumericCategory::kSignedInteger &&
+      (bits & (std::uint64_t{1} << (properties.bit_width - 1))) != 0) {
+    bits |= ~integer_mask(properties.bit_width);
+  }
+  return bits & integer_mask(numeric_type_properties(target)->bit_width);
 }
 
 }  // namespace cloth

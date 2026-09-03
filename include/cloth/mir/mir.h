@@ -234,20 +234,43 @@ struct MirBranchTerminator {
   MirBlockId else_block;
 };
 
+struct MirSwitchCase {
+  ScalarConstant value;
+  MirBlockId target;
+};
+
+// Cases are sorted by normalized bits, with exact selector types. Enum
+// dispatch checks unmatched tags before default; invalid tags take
+// invalid_block.
+struct MirSwitchTerminator {
+  MirValueId selector;
+  TypeId selector_type;
+  std::vector<MirSwitchCase> cases;
+  MirBlockId default_block;
+  std::optional<MirBlockId> invalid_block;
+};
+
 struct MirReturnTerminator {
   std::optional<MirValueId> value;
 };
 
 struct MirUnreachableTerminator {};
+struct MirTrapTerminator {};
 
 using MirTerminatorData =
-    std::variant<MirJumpTerminator, MirBranchTerminator, MirReturnTerminator,
-                 MirUnreachableTerminator>;
+    std::variant<MirJumpTerminator, MirBranchTerminator, MirSwitchTerminator,
+                 MirReturnTerminator, MirUnreachableTerminator,
+                 MirTrapTerminator>;
 
 struct MirTerminator {
   SourceRange range;
   MirTerminatorData data;
 };
+
+// Sorted unique successors, including the enum invalid-tag path. Phi incoming
+// values are per predecessor block, not per label or physical LLVM edge.
+[[nodiscard]] std::vector<MirBlockId> mir_successors(
+    const MirTerminator& terminator);
 
 struct MirBasicBlock {
   bool is_reachable;
@@ -289,6 +312,7 @@ struct MirModule {
   std::vector<MirFileClass> files;
 };
 
+// Requires verified HIR.
 [[nodiscard]] MirModule lower_to_mir(const HirModule& hir,
                                      const SemanticModel& semantics);
 
