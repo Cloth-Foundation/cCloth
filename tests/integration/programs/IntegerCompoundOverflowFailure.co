@@ -1,0 +1,5 @@
+static func Main() {
+  int16 value = 30000;
+  value *= 2;
+  println("unreachable");
+}

@@ -1,0 +1,73 @@
+int32 memberCalls;
+int32 arrayCalls;
+int32 indexCalls;
+int32 rightCalls;
+int32 value;
+int32[] values;
+
+CheckedIntegerUpdates() {
+  memberCalls = 0;
+  arrayCalls = 0;
+  indexCalls = 0;
+  rightCalls = 0;
+  value = 7;
+  values = [10];
+}
+
+func Target(): CheckedIntegerUpdates {
+  memberCalls += 1;
+  return self;
+}
+
+func TargetArray(): int32[] {
+  arrayCalls += 1;
+  return values;
+}
+
+func Index(): int32 {
+  indexCalls += 1;
+  return 0;
+}
+
+func Right(): int32 {
+  rightCalls += 1;
+  values[0] = 20;
+  return 2;
+}
+
+static func Main() {
+  int8 signed = 1;
+  println(++signed);
+  println(signed++);
+  println(signed);
+  println(--signed);
+  println(signed--);
+  println(signed);
+
+  uint8 unsigned = 1;
+  println(unsigned++);
+  println(--unsigned);
+
+  int32 local = 40;
+  local += 2;
+  println(local);
+  local -= 10;
+  println(local);
+  local *= 3;
+  println(local);
+  local /= 4;
+  println(local);
+  local %= 7;
+  println(local);
+
+  CheckedIntegerUpdates tracker = CheckedIntegerUpdates();
+  tracker.Target().value *= 3;
+  println(tracker.memberCalls);
+  println(tracker.value);
+
+  tracker.TargetArray()[tracker.Index()] += tracker.Right();
+  println(tracker.arrayCalls);
+  println(tracker.indexCalls);
+  println(tracker.rightCalls);
+  println(tracker.values[0]);
+}

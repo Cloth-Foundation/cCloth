@@ -13,6 +13,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -75,6 +76,26 @@ std::size_t count_occurrences(std::string_view text, std::string_view pattern) {
   return count;
 }
 
+std::string_view function_definition(std::string_view module,
+                                     std::string_view name) {
+  const std::string marker = "@" + std::string{name} + "(";
+  std::size_t start = 0;
+  while ((start = module.find("define ", start)) != std::string_view::npos) {
+    const std::size_t body = module.find(" {", start);
+    if (body == std::string_view::npos) {
+      return {};
+    }
+    if (module.substr(start, body - start).contains(marker)) {
+      const std::size_t end = module.find("\n}", body);
+      return end == std::string_view::npos
+                 ? std::string_view{}
+                 : module.substr(start, end + 2 - start);
+    }
+    start = body + 2;
+  }
+  return {};
+}
+
 void target_header(TestContext& test) {
   CompiledSources sources;
   sources.add("Empty.co", "");
@@ -91,6 +112,9 @@ void target_header(TestContext& test) {
               "int32 print runtime boundary is missing");
   test.expect(sources.contains("declare void @cloth_rt_print_bool(i8)"),
               "bool print runtime boundary is missing");
+  test.expect(sources.contains(
+                  "declare void @cloth_rt_require_integer_arithmetic(i8, i8)"),
+              "integer arithmetic runtime boundary is missing");
 }
 
 void arithmetic_and_control_flow(TestContext& test) {
@@ -105,12 +129,250 @@ void arithmetic_and_control_flow(TestContext& test) {
 
   test.expect(sources.llvm.has_value(), "control-flow module failed to emit");
   test.expect(
-      sources.contains(" = mul i32 2, 3") && sources.contains(" = add i32 "),
-      "integer arithmetic was not lowered");
+      sources.contains("@llvm.smul.with.overflow.i32") &&
+          sources.contains("@llvm.sadd.with.overflow.i32") &&
+          sources.contains("call void @cloth_rt_require_integer_arithmetic"),
+      "checked integer arithmetic was not lowered");
   test.expect(sources.contains(" = phi i1 ") && sources.contains("br i1 "),
               "short-circuit control flow was not lowered");
-  test.expect(sources.contains(" = sub i32 0, "),
-              "integer negation was not lowered");
+  test.expect(sources.contains("@llvm.ssub.with.overflow.i32(i32 0, i32 "),
+              "checked integer negation was not lowered");
+}
+
+void checked_integer_arithmetic(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Arithmetic.co", R"(
+    func Signed(int32 left, int32 right): int32 {
+      int32 sum = left + right;
+      int32 difference = sum - right;
+      int32 product = difference * right;
+      int32 quotient = product / right;
+      int32 remainder = product % right;
+      return -quotient + remainder;
+    }
+    func Unsigned(uint8 left, uint8 right): uint8 {
+      uint8 sum = left + right;
+      uint8 difference = sum - right;
+      uint8 product = difference * right;
+      uint8 quotient = product / right;
+      return quotient % right;
+    }
+    func Float(float32 left, float32 right): float32 {
+      return -((left + right) * right / left);
+    }
+    func Text(string left, string right): string { return left + right; }
+    func Bits(uint32 left, uint32 right): uint32 {
+      return (left & right) | (left ^ right);
+    }
+  )");
+  std::string widths;
+  const auto add_width = [&](std::string_view name, std::string_view type) {
+    widths += "func " + std::string{name} + "(" + std::string{type} +
+              " left, " + std::string{type} + " right): " + std::string{type} +
+              " {\n" + "  " + std::string{type} + " sum = left + right;\n" +
+              "  " + std::string{type} + " difference = sum - right;\n" + "  " +
+              std::string{type} + " product = difference * right;\n" + "  " +
+              std::string{type} + " quotient = product / right;\n" + "  " +
+              std::string{type} + " remainder = product % right;\n" +
+              "  return -remainder;\n}\n";
+  };
+  for (const auto& [name, type] :
+       {std::pair{"S8", "int8"}, std::pair{"S16", "int16"},
+        std::pair{"S32", "int32"}, std::pair{"S64", "int64"},
+        std::pair{"UByte", "byte"}, std::pair{"U8", "uint8"},
+        std::pair{"U16", "uint16"}, std::pair{"U32", "uint32"},
+        std::pair{"U64", "uint64"}}) {
+    add_width(name, type);
+  }
+  sources.add("Widths.co", std::move(widths));
+  sources.compile();
+  test.expect(sources.result->is_valid && sources.llvm,
+              "checked arithmetic fixture failed LLVM lowering");
+  for (const std::string_view operation :
+       {"sadd.with.overflow.i32", "ssub.with.overflow.i32",
+        "smul.with.overflow.i32", "uadd.with.overflow.i8",
+        "usub.with.overflow.i8", "umul.with.overflow.i8"}) {
+    test.expect(
+        sources.contains("call { i" +
+                         std::string{operation.ends_with("i8") ? "8" : "32"} +
+                         ", i1 } @llvm." + std::string{operation}),
+        "missing checked intrinsic " + std::string{operation});
+  }
+  test.expect(
+      count_occurrences(sources.llvm->text,
+                        "call void @cloth_rt_require_integer_arithmetic") >= 14,
+      "integer arithmetic guards are missing");
+  test.expect(sources.contains(", i8 0)") && sources.contains(", i8 1)") &&
+                  sources.contains(", i8 2)"),
+              "overflow/division/remainder reasons are not distinguished");
+  const auto signed_guard = sources.llvm->text.find(", i8 1)");
+  const auto signed_division = sources.llvm->text.find(" = sdiv i32 ");
+  test.expect(signed_guard < signed_division,
+              "signed division precedes its runtime guards");
+  const auto remainder_guard = sources.llvm->text.find(", i8 2)");
+  const auto signed_remainder = sources.llvm->text.find(" = srem i32 ");
+  test.expect(remainder_guard < signed_remainder,
+              "signed remainder precedes its runtime guards");
+  test.expect(sources.contains(" = udiv i8 ") &&
+                  sources.contains(" = urem i8 ") &&
+                  sources.contains(" = fadd float ") &&
+                  sources.contains(" = fmul float ") &&
+                  sources.contains(" = fdiv float ") &&
+                  sources.contains(" = fneg float "),
+              "checked integer lowering changed unsigned or floating forms");
+
+  for (const auto& [name, type, width] :
+       {std::tuple{"S8", "int8", "8"}, std::tuple{"S16", "int16", "16"},
+        std::tuple{"S32", "int32", "32"}, std::tuple{"S64", "int64", "64"}}) {
+    const std::string_view function = function_definition(
+        sources.llvm->text,
+        cloth::test::function_name("Widths", name, {type, type}));
+    test.expect(
+        function.contains("@llvm.sadd.with.overflow.i" + std::string{width}) &&
+            function.contains("@llvm.ssub.with.overflow.i" +
+                              std::string{width}) &&
+            function.contains("@llvm.smul.with.overflow.i" +
+                              std::string{width}) &&
+            function.contains(" = sdiv i" + std::string{width} + " ") &&
+            function.contains(" = srem i" + std::string{width} + " ") &&
+            count_occurrences(
+                function, "call void @cloth_rt_require_integer_arithmetic") >=
+                8,
+        "signed checked arithmetic matrix is incomplete for " +
+            std::string{type});
+  }
+  for (const auto& [name, type, width] :
+       {std::tuple{"UByte", "byte", "8"}, std::tuple{"U8", "uint8", "8"},
+        std::tuple{"U16", "uint16", "16"}, std::tuple{"U32", "uint32", "32"},
+        std::tuple{"U64", "uint64", "64"}}) {
+    const std::string_view function = function_definition(
+        sources.llvm->text,
+        cloth::test::function_name("Widths", name, {type, type}));
+    test.expect(
+        function.contains("@llvm.uadd.with.overflow.i" + std::string{width}) &&
+            function.contains("@llvm.usub.with.overflow.i" +
+                              std::string{width}) &&
+            function.contains("@llvm.umul.with.overflow.i" +
+                              std::string{width}) &&
+            function.contains(" = udiv i" + std::string{width} + " ") &&
+            function.contains(" = urem i" + std::string{width} + " ") &&
+            count_occurrences(
+                function, "call void @cloth_rt_require_integer_arithmetic") >=
+                6,
+        "unsigned checked arithmetic matrix is incomplete for " +
+            std::string{type});
+  }
+  for (const auto& [name, types] :
+       {std::pair{"Float", std::initializer_list<std::string_view>{"float32",
+                                                                   "float32"}},
+        std::pair{"Text",
+                  std::initializer_list<std::string_view>{"string", "string"}},
+        std::pair{"Bits", std::initializer_list<std::string_view>{"uint32",
+                                                                  "uint32"}}}) {
+    const std::string_view function = function_definition(
+        sources.llvm->text,
+        cloth::test::function_name("Arithmetic", name, types));
+    test.expect(
+        !function.contains("call void @cloth_rt_require_integer_arithmetic"),
+        std::string{name} + " unexpectedly acquired an integer guard");
+  }
+}
+
+void checked_integer_updates(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Updates.co", R"(
+    int32 value;
+    Updates(int32 initial) { value = initial; }
+    static func Target(Updates item): Updates { return item; }
+    static func TargetArray(int32[] values): int32[] { return values; }
+    static func Index(): int32 { return 0; }
+    static func Right(): int32 { return 2; }
+    static func ApplyMember(Updates item): int32 {
+      Target(item).value += Right();
+      return item.value;
+    }
+    static func ApplyArray(int32[] values): int32 {
+      TargetArray(values)[Index()] *= Right();
+      return values[0];
+    }
+    static func Compounds(int32 value, int32 divisor): int32 {
+      value += 1;
+      value -= 1;
+      value *= 2;
+      value /= divisor;
+      value %= divisor;
+      return value;
+    }
+    static func ApplyUpdates(int8 value): int8 {
+      int8 prior = value++;
+      int8 current = ++value;
+      --value;
+      value--;
+      return current - prior + value;
+    }
+  )");
+  sources.compile();
+  test.expect(sources.result->is_valid && sources.llvm,
+              "checked update fixture failed LLVM lowering");
+  if (!sources.llvm) {
+    return;
+  }
+
+  const std::string_view member = function_definition(
+      sources.llvm->text,
+      cloth::test::function_name("Updates", "ApplyMember", {"Updates"}));
+  const std::string target_call =
+      "call ptr @" +
+      cloth::test::function_name("Updates", "Target", {"Updates"});
+  const std::string right_call =
+      "call i32 @" + cloth::test::function_name("Updates", "Right");
+  const std::size_t target = member.find(target_call);
+  const std::size_t right = member.find(right_call);
+  const std::size_t load = member.find("load i32", right);
+  const std::size_t guard =
+      member.find("call void @cloth_rt_require_integer_arithmetic", load);
+  const std::size_t store = member.find("store i32", guard);
+  test.expect(!member.empty() && count_occurrences(member, target_call) == 1 &&
+                  count_occurrences(member, right_call) == 1 &&
+                  target < right && right < load && load < guard &&
+                  guard < store,
+              "member compound lost exactly-once order or stored before its "
+              "guard");
+
+  const std::string_view array = function_definition(
+      sources.llvm->text,
+      cloth::test::function_name("Updates", "ApplyArray", {"int32[]"}));
+  const std::string array_call =
+      "call ptr @" +
+      cloth::test::function_name("Updates", "TargetArray", {"int32[]"});
+  const std::string index_call =
+      "call i32 @" + cloth::test::function_name("Updates", "Index");
+  const std::size_t array_target = array.find(array_call);
+  const std::size_t array_index = array.find(index_call);
+  const std::size_t array_right = array.find(right_call);
+  const std::size_t array_guard =
+      array.find("call void @cloth_rt_require_integer_arithmetic", array_right);
+  const std::size_t array_store = array.find("store i32", array_guard);
+  test.expect(count_occurrences(array, array_call) == 1 &&
+                  count_occurrences(array, index_call) == 1 &&
+                  count_occurrences(array, right_call) == 1 &&
+                  array_target < array_index && array_index < array_right &&
+                  array_right < array_guard && array_guard < array_store,
+              "array compound lost exactly-once order or stored before its "
+              "guard");
+
+  const std::string_view compounds = function_definition(
+      sources.llvm->text,
+      cloth::test::function_name("Updates", "Compounds", {"int32", "int32"}));
+  test.expect(
+      compounds.contains("@llvm.sadd.with.overflow.i32") &&
+          compounds.contains("@llvm.ssub.with.overflow.i32") &&
+          compounds.contains("@llvm.smul.with.overflow.i32") &&
+          compounds.contains(" = sdiv i32 ") &&
+          compounds.contains(" = srem i32 ") &&
+          count_occurrences(
+              compounds, "call void @cloth_rt_require_integer_arithmetic") >= 7,
+      "an arithmetic compound bypassed checked lowering");
 }
 
 void integer_binary_lowering(TestContext& test) {
@@ -895,6 +1157,8 @@ int main() {
   const std::vector<TestCase> tests{
       {"target header", target_header},
       {"arithmetic and control flow", arithmetic_and_control_flow},
+      {"checked integer arithmetic", checked_integer_arithmetic},
+      {"checked integer updates", checked_integer_updates},
       {"integer binary lowering", integer_binary_lowering},
       {"numeric literal and widening lowering",
        numeric_literal_and_widening_lowering},

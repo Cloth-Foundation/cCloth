@@ -1,5 +1,91 @@
 # Cloth testing and diagnostic builds
 
+## Stage 29.4 checked runtime arithmetic exit audit
+
+Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.
+Both configurations pass all **186 CTests**, including **28 public
+compiler-protocol and 22 native Shuttle cases** per compiler. All **43 ordinary
+Rust tests**, the Rust 1.85 baseline, Rust formatting, Clippy with warnings
+denied, and all six compiler-backed VS Code tests pass with each compiler.
+C++ formatting and repository whitespace checks also pass.
+
+The native success matrix covers `int8`, `int16`, `int32`, `int64`, `byte`,
+`uint8`, `uint16`, `uint32`, and `uint64` across `+`, `-`, `*`, `/`, `%`, and
+unary `-`, including zero, adjacent, minimum, and maximum endpoints. LLVM tests
+require checked signed and unsigned lowering at widths 8, 16, 32, and 64 and
+require division/remainder guards before their LLVM operations. They also prove
+that float arithmetic, string concatenation, and bitwise operations do not gain
+integer-arithmetic guards.
+
+All Stage 29 runtime failures emit exactly one frozen stderr line with nonzero
+status and clean stdout. The matrix includes signed-minimum remainder by `-1`
+and an ordinary literal-only expression that fails only when executed; the
+equivalent `static final` initializer remains a Stage 28 compile-time error.
+Independent HIR and MIR verification rejects malformed arithmetic metadata,
+operators, result types, and mutability before backend lowering.
+
+The 29.3 whole/separate/source-free, affected-only invalidation, output
+preservation, stale-run prevention, runtime-ABI-2 rejection, and relocated
+serial/parallel determinism cases remain green. Artifact format **4**, compiler
+ABI **4**, runtime ABI **3**, process protocol **2**, receipt schema **1**, and
+manifest schema **1** are the completed compatibility boundary.
+
+**Stage 29 is complete.** No later stage or deferred feature is assigned or
+active.
+
+## Stage 29.3 checked update and package integration checkpoint
+
+Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.
+Both configurations pass all **182 CTests**, including **28 shared public
+compiler-protocol and 22 native Shuttle cases**. All **43 standalone Rust
+tests**, Rust 1.85 checking, Rust formatting, Clippy with warnings denied, and
+all six compiler-backed VS Code tests pass with each compiler.
+
+Prefix/postfix regression vectors freeze their old/new result values. Every
+arithmetic compound is exercised natively; member and array targets expose
+left-to-right evaluation and exactly-once source calls, including an RHS that
+changes the selected array element before its current value is loaded. MIR and
+LLVM checks require target then RHS then load/arithmetic/store, with the runtime
+guard before every store. Projected imported-struct storage is covered through
+the same checked path.
+
+Dedicated prefix, postfix, multiply-compound, divide-compound, and
+remainder-compound failures terminate before an unreachable print and therefore
+produce clean stdout. Checked update IR verifies after LLVM's default O2 pipeline
+on x86-64 and wasm32.
+
+The shared package fixture produces the same result through whole-project,
+separate-package, and source-free native execution. Relocated one-job/four-job
+builds have identical artifacts on both targets. A dependency body edit rebuilds
+that package and its consumer while reusing unrelated packages; a subsequent
+invalid edit preserves completed artifacts/executable bytes and never runs stale
+code. Compiler-owned runtime-ABI-2 rejection remains covered without exposing
+runtime ABI in Shuttle's public protocol.
+
+At the 29.3 checkpoint, Stage 29 remained active for the separately authorized
+29.4 exit audit recorded above.
+
+## Stage 29.2 checked integer lowering checkpoint
+
+Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.
+Both configurations pass all **166 CTests**, including the unchanged **27 shared
+compiler-protocol and 20 native Shuttle cases**. All **43 standalone Rust tests**,
+Rust 1.85 checking, Rust formatting, Clippy with warnings denied, and all six
+compiler-backed VS Code tests pass.
+
+The checkpoint adds direct checked arithmetic at integer widths 8, 16, 32, and
+64; native fixtures cover every Cloth integer type, signed-minimum literal
+formation, all three exact runtime failures, and clean failure output. Unit
+coverage verifies signed/unsigned LLVM overflow intrinsics, ordered guards,
+unchanged floating operations, MIR type rejection, the runtime helper, and
+runtime-ABI-2 artifact rejection. Format-4 artifact goldens now carry runtime
+ABI 3 for x86-64 and wasm32.
+
+Shuttle capabilities and receipts do not expose runtime ABI. Their schemas and
+production code remain unchanged; artifacts stay opaque and `clothc` owns the
+compatibility check. Stage 29.2 is complete. Update/compound integration remains
+scheduled for 29.3 and is not activated by this checkpoint.
+
 Tests are executable language and toolchain contracts. The default suite
 contains unit, verifier, LLVM, driver, native-output, and expected-failure
 tests. Run it after building:

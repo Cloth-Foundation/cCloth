@@ -1,0 +1,108 @@
+static func Main() {
+  int8 int8Minimum = -128;
+  int8 int8Maximum = 127;
+  int8 int8Zero = 0;
+  int8 int8One = 1;
+  println(int8Minimum + int8One);
+  println(int8Maximum - int8One);
+  println(int8Maximum * int8One);
+  println(int8Zero * int8Maximum);
+  println(-int8Zero);
+  println(-int8Maximum);
+  println(int8Minimum / int8One);
+  println(int8Minimum % int8Maximum);
+
+  int16 int16Minimum = -32768;
+  int16 int16Maximum = 32767;
+  int16 int16Zero = 0;
+  int16 int16One = 1;
+  println(int16Minimum + int16One);
+  println(int16Maximum - int16One);
+  println(int16Maximum * int16One);
+  println(int16Zero * int16Maximum);
+  println(-int16Zero);
+  println(-int16Maximum);
+  println(int16Minimum / int16One);
+  println(int16Minimum % int16Maximum);
+
+  int32 int32Minimum = -2147483648;
+  int32 int32Maximum = 2147483647;
+  int32 int32Zero = 0;
+  int32 int32One = 1;
+  println(int32Minimum + int32One);
+  println(int32Maximum - int32One);
+  println(int32Maximum * int32One);
+  println(int32Zero * int32Maximum);
+  println(-int32Zero);
+  println(-int32Maximum);
+  println(int32Minimum / int32One);
+  println(int32Minimum % int32Maximum);
+
+  int64 int64Minimum = -9223372036854775808;
+  int64 int64Maximum = 9223372036854775807;
+  int64 int64Zero = 0;
+  int64 int64One = 1;
+  println(int64Minimum + int64One);
+  println(int64Maximum - int64One);
+  println(int64Maximum * int64One);
+  println(int64Zero * int64Maximum);
+  println(-int64Zero);
+  println(-int64Maximum);
+  println(int64Minimum / int64One);
+  println(int64Minimum % int64Maximum);
+
+  byte byteZero = 0;
+  byte byteMaximum = 255;
+  byte byteOne = 1;
+  println(byteZero + byteMaximum);
+  println(byteMaximum - byteOne);
+  println(byteMaximum * byteOne);
+  println(byteZero * byteMaximum);
+  println(-byteZero);
+  println(byteMaximum / byteOne);
+  println(byteMaximum % byteMaximum);
+
+  uint8 uint8Zero = 0;
+  uint8 uint8Maximum = 255;
+  uint8 uint8One = 1;
+  println(uint8Zero + uint8Maximum);
+  println(uint8Maximum - uint8One);
+  println(uint8Maximum * uint8One);
+  println(uint8Zero * uint8Maximum);
+  println(-uint8Zero);
+  println(uint8Maximum / uint8One);
+  println(uint8Maximum % uint8Maximum);
+
+  uint16 uint16Zero = 0;
+  uint16 uint16Maximum = 65535;
+  uint16 uint16One = 1;
+  println(uint16Zero + uint16Maximum);
+  println(uint16Maximum - uint16One);
+  println(uint16Maximum * uint16One);
+  println(uint16Zero * uint16Maximum);
+  println(-uint16Zero);
+  println(uint16Maximum / uint16One);
+  println(uint16Maximum % uint16Maximum);
+
+  uint32 uint32Zero = 0;
+  uint32 uint32Maximum = 4294967295;
+  uint32 uint32One = 1;
+  println(uint32Zero + uint32Maximum);
+  println(uint32Maximum - uint32One);
+  println(uint32Maximum * uint32One);
+  println(uint32Zero * uint32Maximum);
+  println(-uint32Zero);
+  println(uint32Maximum / uint32One);
+  println(uint32Maximum % uint32Maximum);
+
+  uint64 uint64Zero = 0;
+  uint64 uint64Maximum = 18446744073709551615;
+  uint64 uint64One = 1;
+  println(uint64Zero + uint64Maximum);
+  println(uint64Maximum - uint64One);
+  println(uint64Maximum * uint64One);
+  println(uint64Zero * uint64Maximum);
+  println(-uint64Zero);
+  println(uint64Maximum / uint64One);
+  println(uint64Maximum % uint64Maximum);
+}

@@ -227,9 +227,9 @@ void imported_aggregates(TestContext& test) {
     const bool native = target.pointer.size == 8;
     const std::string_view digest =
         native
-            ? "ad68f14823d95a0a0cc3afd9493346f24bf4e1d8b2a97f2b30baf591188031cf"
-            : "c94c291c11682b1db107c438750963ce3ebc58b698d571ee826ad6a1ea46c35"
-              "9";
+            ? "46ded18c458a4ea50e51a8ca8cafea580be32cdb8080d99554bcc943517e806c"
+            : "7252df88c66d3a6b36d23f5e4a94b1d5f67fecde3656ac7c0fd7485e047c3ec"
+              "3";
     test.expect(
         encoded.artifact->bytes.size() == (native ? 30464U : 30462U) &&
             cloth::artifact_digest_hex(encoded.artifact->digest) == digest,
@@ -309,7 +309,7 @@ void imported_aggregates(TestContext& test) {
       Main() {}
       static func Run() {
         var value = Packet(Data("hello", 100));
-        value.Value.Count++;
+        value.Value.Count += 2;
         var copy = value.Copy();
         println(copy == value);
         println(copy);
@@ -327,6 +327,16 @@ void imported_aggregates(TestContext& test) {
         cloth::emit_llvm_ir(consumed.mir, consumed.abi, consumed.semantics,
                             consumer_diagnostics, options);
     test.expect(llvm.has_value(), messages(consumer_diagnostics));
+    if (llvm) {
+      const std::size_t checked_add =
+          llvm->text.find("@llvm.uadd.with.overflow.i64");
+      const std::size_t guard = llvm->text.find(
+          "call void @cloth_rt_require_integer_arithmetic", checked_add);
+      const std::size_t store = llvm->text.find("store i64", guard);
+      test.expect(checked_add < guard && guard < store,
+                  "projected imported-struct compound stored before its "
+                  "checked guard");
+    }
     const auto app = cloth::build_imported_package_view(
         {"app", "1.0.0"}, consumed.semantics, consumed.mir, consumed.abi);
     test.expect(app.is_valid(), "consumer aggregate ABI failed export");

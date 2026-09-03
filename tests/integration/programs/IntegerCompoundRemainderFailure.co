@@ -1,0 +1,6 @@
+static func Main() {
+  int32 value = 10;
+  int32 zero = 0;
+  value %= zero;
+  println("unreachable");
+}

@@ -39,6 +39,15 @@ foreach(scenario IN ITEMS null zero alignment stride table count offset
             "-DCLOTH_EXPECTED_ERROR=array"
             -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 endforeach()
+foreach(scenario IN ITEMS integer_overflow integer_division_by_zero
+                          integer_remainder_by_zero invalid_integer_arithmetic_reason)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=integer"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
 
 cloth_finalize_tests(LABEL unit)
 

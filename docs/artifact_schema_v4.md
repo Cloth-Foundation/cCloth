@@ -9,15 +9,16 @@ change.
 ## Compatibility
 
 Header offset 8 contains little-endian format integer **4**. Compiler ABI **4**
-(`_C4` names), runtime ABI **2**, process protocol **2**, receipt schema **1**, and
-manifest schema **1** are unchanged. Earlier artifacts must be rebuilt; the
-reader does not migrate or reinterpret them.
+(`_C4` names), runtime ABI **3**, process protocol **2**, receipt schema **1**, and
+manifest schema **1** are current. Stage 29 changed only the runtime ABI, adding
+the checked-integer-arithmetic runtime boundary. Earlier artifacts must be
+rebuilt; the reader does not migrate or reinterpret them.
 
 Capabilities advertise `artifact_formats: [4]`; receipts carry
-`artifact_format: 4`. Shuttle requires these values but continues to treat the
-artifact as opaque. Exact compiler identity, target, native-tool compatibility,
-and dependency digests remain mandatory, even when a changed dependency produces
-the same constant value.
+`artifact_format: 4`. Runtime ABI remains compiler-owned metadata inside that
+opaque artifact; it is not a capability or receipt field. Exact compiler
+identity, target, native-tool compatibility, and dependency digests remain
+mandatory, even when a changed dependency produces the same constant value.
 
 ## Static scalar values
 

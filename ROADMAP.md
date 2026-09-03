@@ -65,8 +65,10 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 26 | Inline value structs with precise tracing, aggregate calls, and source-free package support |
 | 26.5.1 | Explicit interface implementations using the existing `override` keyword |
 | 27 | Scoped switch statements, exhaustive enum handling, and deterministic package evolution |
+| 28 | Typed scalar constants, format-4 artifacts, and source-free constant values |
+| 29 | Checked runtime integer arithmetic and deterministic terminal failures |
 
-Stage 27 is the current completed language baseline. Coordinated toolchain Stage
+Stage 29 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
 exit audits. Build-responsiveness Stage 24 is also complete.
 
@@ -81,7 +83,10 @@ Stage 28 is complete, including its separately authorized
 [28.4 exit audit](docs/testing.md#stage-284-scalar-constant-exit-audit) on
 2026-09-02. Typed scalar evaluation, native/source-free integration, artifact
 format 4, dependency evolution, and all coordinated verification gates pass.
-No later stage is active or assigned.
+Stage 29 is complete following its separately authorized
+[29.4 exit audit](docs/testing.md#stage-294-checked-runtime-arithmetic-exit-audit)
+on 2026-09-03. Checked lowering, updates, package integration, runtime ABI 3,
+and all coordinated verification gates pass.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -517,10 +522,48 @@ Exit criteria:
 - development/sanitizer, shared native/protocol, Rust, and editor gates pass,
   with implementation claims only in the owning implemented documentation.
 
-## Beyond Stage 28
+## Stage 29: Checked runtime integer arithmetic
 
-No stage beyond 28 is assigned. Completing scalar constant evaluation does not
-schedule the rest of the backlog or freeze the Cloth 1.0 release scope.
+Status: **complete — 29.4 exit audit passed 2026-09-03**
+
+The [approved contract](docs/proposals/stage_29_checked_runtime_arithmetic.md)
+defines checked runtime integer arithmetic before Cloth introduces optimization
+or explicit wrapping/saturating operations. The user approved its concrete
+runtime-failure, lowering, runtime-ABI-3, verification, and non-goal rules on
+2026-09-03. The separately approved 29.2 implementation completed the direct
+checked-lowering and runtime-ABI transition on the same date.
+
+Objective: ensure ordinary integer arithmetic either produces a representable
+fixed-width result or terminates through Cloth's deterministic runtime-failure
+path before LLVM can execute an invalid operation.
+
+Deliverables:
+
+1. **29.1 — Contract (complete).** Freeze integer types/operations, exact failures,
+   evaluation/store ordering, LLVM strategy, compatibility, tests, and non-goals.
+2. **29.2 — Checked lowering (complete).** Add overflow/divisor guards, the runtime helper,
+   verifier coverage, and the coordinated runtime-ABI transition.
+3. **29.3 — Updates and integration (complete).** Prove identical behavior for
+   direct, prefix/postfix, compound, native, package, and source-free execution.
+4. **29.4 — Exit audit (complete).** Complete boundary/malformed/determinism tests,
+   documentation, ledgers, and every compiler/Shuttle/editor quality gate.
+
+Approved compatibility transition: runtime ABI **3**. Artifact format **4**,
+compiler ABI **4**, process protocol **2**, receipt schema **1**, and manifest
+schema **1** remain unchanged. Runtime-ABI-2 packages would require rebuilding.
+
+Non-goals: float-policy changes, wrapping/saturating operations, numeric suffixes,
+general folding, optimization controls, recoverable exceptions, new runtimes or
+targets, and unrelated language/tooling work.
+
+Exit requires exact runtime/constant agreement, guards before invalid LLVM
+operations, exactly-once update/compound targets, coordinated compatibility and
+source-free behavior, deterministic builds, and all existing verification gates.
+
+## Beyond Stage 29
+
+No stage beyond 29 is assigned or active. Completing checked runtime arithmetic
+does not schedule the rest of the backlog or freeze the Cloth 1.0 release scope.
 
 The following candidates remain recorded without priority or order:
 
@@ -529,7 +572,7 @@ The following candidates remain recorded without priority or order:
 - a general constant-folding optimizer stage; and
 - immutable per-case enum metadata, after its constant-data prerequisites.
 
-These candidates follow completion of Stage 28 and their own prerequisites.
+These candidates follow completion of their prerequisites and approved stages.
 Each candidate still requires its own stage charter, dependency review,
 non-goals, approved language or optimizer contract, concrete `TODO.md` items,
 and explicit implementation go-ahead. Inclusion here does not activate or

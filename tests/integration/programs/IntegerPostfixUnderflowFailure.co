@@ -1,0 +1,5 @@
+static func Main() {
+  uint8 value = 0;
+  value--;
+  println("unreachable");
+}

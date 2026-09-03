@@ -14,7 +14,8 @@ inherited reference maps. Stage 16.4 makes checked file-class operations follow
 those parent links. Stage 16.5 adds immutable virtual-function tables to
 file-class descriptors; generated code performs the dispatch directly. Stage
 18 adds sorted interface dispatch tables and checked interface lookup without
-changing the managed-reference representation.
+changing the managed-reference representation. Stage 29.2 adds the checked
+integer-arithmetic guard and advances the runtime ABI to 3.
 
 ## Source contract
 
@@ -75,6 +76,7 @@ cloth_rt_array_element(array, index) -> element address
 cloth_rt_require_receiver(reference)
 cloth_rt_require_non_null(reference)
 cloth_rt_require_numeric_conversion(valid)
+cloth_rt_require_integer_arithmetic(valid, reason)
 cloth_rt_print(string)
 cloth_rt_print_{i8,i16,i32,i64}(signed integer)
 cloth_rt_print_{u8,u16,u32,u64}(unsigned integer)
@@ -145,6 +147,13 @@ equal to `::length` terminate through the runtime failure path.
 predicate is false. The runtime does not perform the conversion or define
 wrapping behavior; source and target types remain explicit in MIR.
 
+`cloth_rt_require_integer_arithmetic` returns without side effects for a true
+predicate. A false predicate terminates with `integer arithmetic overflow`,
+`integer division by zero`, or `integer remainder by zero` according to the
+compiler-owned reason code. Generated code performs the fixed-width operation;
+the helper centralizes deterministic failure reporting rather than recomputing
+arithmetic in C++.
+
 Runtime contract violations write a concise message to standard error and
 terminate the process. There is no recovery or exception ABI yet.
 
@@ -177,7 +186,7 @@ packaging remain future work. These features should extend the runtime and
 toolchain boundaries without changing existing source contracts.
 
 
-## Runtime ABI 2 aggregate arrays
+## Aggregate arrays introduced in runtime ABI 2
 
 `ClothArrayElementLayout` is `{ uint64 size, uint64 alignment,
 const uint64* reference_offsets, uint64 reference_count }`. Allocation has the

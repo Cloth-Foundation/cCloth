@@ -373,6 +373,7 @@ void frontend(TestContext& test) {
           "overflow");
   check(test, "static final int32 Bad = 1 / 0;", "by zero");
   check(test, "static final int8 Bad = int8(-(-(-128)));", "overflow");
+  check(test, "static final int8 Bad = int8(127) + 1;", "overflow");
   check(test, "static final int8 Bad = -(-(-128));", "overflow");
   check(test, "static final int64 Bad = -(-(-9223372036854775808));",
         "overflow");

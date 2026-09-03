@@ -22,6 +22,34 @@ foreach(target IN ITEMS x86_64 wasm32)
         set_tests_properties(cloth_constants_verify_${target} PROPERTIES
             DEPENDS cloth_cli_constants_llvm_${target})
     endif()
+    set(checked_arithmetic_ir
+        "${PROJECT_BINARY_DIR}/cloth-checked-arithmetic-${target}.ll")
+    add_test(NAME cloth_cli_checked_arithmetic_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${checked_arithmetic_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/CheckedIntegerArithmetic.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_checked_arithmetic_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${checked_arithmetic_ir})
+        set_tests_properties(cloth_checked_arithmetic_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_checked_arithmetic_llvm_${target})
+    endif()
+    set(checked_updates_ir
+        "${PROJECT_BINARY_DIR}/cloth-checked-updates-${target}.ll")
+    add_test(NAME cloth_cli_checked_updates_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${checked_updates_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/CheckedIntegerUpdates.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_checked_updates_optimized_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${checked_updates_ir})
+        set_tests_properties(cloth_checked_updates_optimized_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_checked_updates_llvm_${target})
+    endif()
     set(switch_ir "${PROJECT_BINARY_DIR}/cloth-switch-${target}.ll")
     add_test(NAME cloth_cli_switch_llvm_${target}
         COMMAND clothc --target=${target} --emit-llvm=${switch_ir}
@@ -361,6 +389,84 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         OUTPUT "cloth integer binary data"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerBinaryData.co
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/integer_binary_data.txt
+        EXACT
+    )
+    cloth_add_native_output_test(checked_integer_arithmetic
+        OUTPUT "cloth checked integer arithmetic"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/CheckedIntegerArithmetic.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/checked_integer_arithmetic.txt
+        EXACT
+    )
+    cloth_add_native_output_test(checked_integer_updates
+        OUTPUT "cloth checked integer updates"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/CheckedIntegerUpdates.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/checked_integer_updates.txt
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_overflow_failure
+        OUTPUT "cloth integer overflow failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerOverflowFailure.co
+        ERROR "cloth runtime error: integer arithmetic overflow"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_division_by_zero_failure
+        OUTPUT "cloth integer division by zero failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerDivisionByZeroFailure.co
+        ERROR "cloth runtime error: integer division by zero"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_remainder_by_zero_failure
+        OUTPUT "cloth integer remainder by zero failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerRemainderByZeroFailure.co
+        ERROR "cloth runtime error: integer remainder by zero"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_division_overflow_failure
+        OUTPUT "cloth integer division overflow failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerDivisionOverflowFailure.co
+        ERROR "cloth runtime error: integer arithmetic overflow"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_remainder_overflow_failure
+        OUTPUT "cloth integer remainder overflow failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerRemainderOverflowFailure.co
+        ERROR "cloth runtime error: integer arithmetic overflow"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_literal_expression_failure
+        OUTPUT "cloth integer literal expression failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerLiteralExpressionFailure.co
+        ERROR "cloth runtime error: integer arithmetic overflow"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_update_overflow_failure
+        OUTPUT "cloth integer update overflow failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerUpdateOverflowFailure.co
+        ERROR "cloth runtime error: integer arithmetic overflow"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_postfix_underflow_failure
+        OUTPUT "cloth integer postfix underflow failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerPostfixUnderflowFailure.co
+        ERROR "cloth runtime error: integer arithmetic overflow"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_compound_overflow_failure
+        OUTPUT "cloth integer compound overflow failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerCompoundOverflowFailure.co
+        ERROR "cloth runtime error: integer arithmetic overflow"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_compound_division_failure
+        OUTPUT "cloth integer compound division failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerCompoundDivisionFailure.co
+        ERROR "cloth runtime error: integer division by zero"
+        EXACT
+    )
+    cloth_add_native_failure_test(integer_compound_remainder_failure
+        OUTPUT "cloth integer compound remainder failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerCompoundRemainderFailure.co
+        ERROR "cloth runtime error: integer remainder by zero"
         EXACT
     )
     cloth_add_native_failure_test(shift_count_failure

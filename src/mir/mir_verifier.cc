@@ -829,14 +829,23 @@ class MirVerifier {
       }
       verify_value(unary->operand, value_types, instruction.range);
       require_result(instruction);
-      if (unary->operation == TokenKind::kTilde) {
-        const std::optional<TypeId> operand_type =
-            known_value_type(unary->operand, value_types);
-        if (operand_type && operand_type->value < semantics_.types().size() &&
-            (!is_integer_type(semantics_.type(*operand_type).kind) ||
-             instruction.type != *operand_type)) {
+      if (operand_type && operand_type->value < semantics_.types().size()) {
+        const TypeKind operand_kind = semantics_.type(*operand_type).kind;
+        bool valid = false;
+        if (unary->operation == TokenKind::kTilde) {
+          valid = is_integer_type(operand_kind) &&
+                  instruction.type == *operand_type;
+        } else if (unary->operation == TokenKind::kPlus ||
+                   unary->operation == TokenKind::kMinus) {
+          valid = is_numeric_type(operand_kind) &&
+                  instruction.type == *operand_type;
+        } else if (unary->operation == TokenKind::kBang) {
+          valid = *operand_type == semantics_.bool_type() &&
+                  instruction.type == semantics_.bool_type();
+        }
+        if (!valid) {
           report(instruction.range,
-                 "integer complement has incompatible types");
+                 "unary instruction has incompatible types or operation");
         }
       }
     } else if (const auto* binary =
@@ -848,6 +857,29 @@ class MirVerifier {
           known_value_type(binary->left, value_types);
       const std::optional<TypeId> right_type =
           known_value_type(binary->right, value_types);
+      const bool is_arithmetic = binary->operation == TokenKind::kPlus ||
+                                 binary->operation == TokenKind::kMinus ||
+                                 binary->operation == TokenKind::kStar ||
+                                 binary->operation == TokenKind::kSlash ||
+                                 binary->operation == TokenKind::kPercent;
+      if (is_arithmetic && left_type && right_type &&
+          left_type->value < semantics_.types().size() &&
+          right_type->value < semantics_.types().size()) {
+        const TypeKind left_kind = semantics_.type(*left_type).kind;
+        const bool numeric = *left_type == *right_type &&
+                             instruction.type == *left_type &&
+                             is_numeric_type(left_kind) &&
+                             (binary->operation != TokenKind::kPercent ||
+                              is_integer_type(left_kind));
+        const bool concatenate = binary->operation == TokenKind::kPlus &&
+                                 *left_type == semantics_.string_type() &&
+                                 *right_type == semantics_.string_type() &&
+                                 instruction.type == semantics_.string_type();
+        if (!numeric && !concatenate) {
+          report(instruction.range,
+                 "arithmetic instruction has incompatible types");
+        }
+      }
       if ((is_enum_type(left_type) || is_enum_type(right_type) ||
            is_enum_type(instruction.type) || is_struct_type(left_type) ||
            is_struct_type(right_type) || is_struct_type(instruction.type)) &&

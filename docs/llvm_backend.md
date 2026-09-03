@@ -63,10 +63,15 @@ transfers. Successor/predecessor indexes are built once per body, avoiding an
 all-block predecessor scan at every arm. Bodies without managed temporaries or
 bindings skip empty liveness tables; independently rooted receivers are unchanged.
 
-Integer operations select signed or unsigned division, remainder, and
-comparison from the semantic operand type. Floating-point operations use LLVM
-floating instructions. Null-to-reference and managed-reference-to-`object`
-conversions disappear because all use opaque pointers.
+Integer `+`, `-`, and `*` use the signed or unsigned LLVM overflow intrinsic at
+the semantic operand width. Unary runtime negation uses checked subtraction from
+zero. Division and remainder call the runtime guard for a zero divisor and, for
+signed types, the minimum/`-1` pair before emitting `sdiv`, `udiv`, `srem`, or
+`urem`. Leading-minus signed literals are resolved as literal values so the
+minimum remains constructible. Comparisons retain signedness from the semantic
+type. Floating-point operations use LLVM floating instructions.
+Null-to-reference and managed-reference-to-`object` conversions disappear
+because all use opaque pointers.
 
 Canonical void functions lower to LLVM `void` regardless of whether the source
 omitted the return annotation or wrote `: void`. Their fallthrough and
@@ -147,6 +152,7 @@ declare ptr @cloth_rt_array_element(ptr, i32)
 declare void @cloth_rt_require_receiver(ptr)
 declare void @cloth_rt_require_non_null(ptr)
 declare void @cloth_rt_require_numeric_conversion(i8)
+declare void @cloth_rt_require_integer_arithmetic(i8, i8)
 declare float @llvm.trunc.f32(float)
 declare double @llvm.trunc.f64(double)
 declare void @cloth_rt_print(ptr)
@@ -188,6 +194,10 @@ LLVM conversion. Integer narrowing uses `trunc`, integer/floating conversion
 uses `sitofp`, `uitofp`, `fptosi`, or `fptoui`, and floating narrowing uses
 `fptrunc`. Floating-to-integer lowering first applies the matching `llvm.trunc`
 intrinsic so the range predicate follows Cloth's truncate-toward-zero contract.
+Checked integer arithmetic passes a validity predicate plus compiler-owned reason
+code to `cloth_rt_require_integer_arithmetic` before an invalid result can be
+observed. Reason `0` is overflow, `1` is division by zero, and `2` is remainder
+by zero.
 Object widening is pointer-preserving. `::typeName` calls the runtime and
 returns a managed string. Stage 16.4 base widening is equally pointer-preserving
 because the base object is a byte-zero prefix. File-class checks pass the

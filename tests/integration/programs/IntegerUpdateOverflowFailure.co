@@ -1,0 +1,5 @@
+static func Main() {
+  int8 value = 127;
+  ++value;
+  println("unreachable");
+}

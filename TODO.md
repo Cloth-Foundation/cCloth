@@ -49,7 +49,9 @@ Stage 28 is complete. The user approved the
 2026-09-02, including its concrete evaluation rules and format-4 transition.
 The separately authorized 28.2 evaluation, 28.3 integration, and
 [28.4 exit audit](docs/testing.md#stage-284-scalar-constant-exit-audit) are
-complete. No later stage is activated; the remaining backlog is unscheduled.
+complete. Stage 29 is also complete following its separately authorized
+[29.4 exit audit](docs/testing.md#stage-294-checked-runtime-arithmetic-exit-audit)
+on 2026-09-03. No later stage is assigned or active.
 
 ## Scheduled work
 
@@ -373,6 +375,57 @@ class override validation. Existing ABI and artifact versions are unchanged.
   editor tests per compiler pass. See the
   [exit record](docs/testing.md#stage-284-scalar-constant-exit-audit).
 
+### Stage 29: Checked runtime integer arithmetic
+
+- [x] **29.1 — Contract.** Review and approve the
+  [runtime arithmetic proposal](docs/proposals/stage_29_checked_runtime_arithmetic.md),
+  including exact operation/failure rules, evaluation ordering, LLVM guards,
+  runtime ABI 3, source-free compatibility, test gates, and non-goals.
+
+  Approved 2026-09-03. This records the checked default, exact terminal failure
+  messages, exactly-once/store ordering, LLVM guards, the runtime ABI 3
+  transition, test gates, and explicit non-goals. It also records division by
+  zero for a future constructed-error model without activating that model.
+
+- [x] **29.2 — Checked lowering.** After a separate implementation go-ahead,
+  implement signed/unsigned overflow intrinsics, pre-division/remainder guards,
+  unary negation, the runtime helper/messages, verifier hardening, and the
+  coordinated runtime-ABI-3 compiler/Shuttle transition.
+
+  Completed 2026-09-03. Direct integer expressions now use signed/unsigned LLVM
+  overflow intrinsics and ordered division/remainder guards at widths 8 through
+  64. One runtime helper owns the three exact failure messages; signed-minimum
+  literal formation remains valid while runtime negation is checked. MIR type
+  hardening, runtime/unit/native failure tests, clean-output enforcement,
+  runtime-ABI-2 rejection, format-4 goldens, and the opaque Shuttle boundary are
+  covered without changing public capabilities, receipts, or protocol schemas.
+
+- [x] **29.3 — Updates and integration.** Apply and verify the same checks for
+  prefix/postfix updates and arithmetic compound assignments while evaluating
+  every target and operand exactly once. Cover LLVM optimization, native,
+  whole/separate/source-free packages, compatibility rejection, invalidation,
+  output preservation, and stale-run prevention.
+
+  Completed 2026-09-03. MIR/LLVM tests freeze prefix/postfix result values,
+  left-to-right target/RHS evaluation, and guard-before-store behavior for
+  locals, members, arrays, and projected imported-struct storage. Native tests
+  cover successful updates and all arithmetic compounds plus update/compound
+  overflow and zero-divisor failures. Optimized x86-64/wasm32 IR verifies, and
+  the public Shuttle boundary proves whole/separate/source-free equivalence,
+  affected-only invalidation, output preservation, no stale execution, and
+  serial/parallel artifact determinism.
+
+- [x] **29.4 — Exit audit.** Complete all widths/endpoints and malformed-model
+  coverage, deterministic relocated builds, user/maintainer documentation, and
+  both compiler configurations plus Rust/shared Shuttle/editor quality gates.
+
+  Completed 2026-09-03. Native execution covers every canonical integer width
+  at zero, adjacent, minimum, and maximum endpoints. LLVM and malformed HIR/MIR
+  tests freeze checked signed/unsigned lowering while excluding float, string,
+  and bitwise operations. Exact runtime failures, compile-time/runtime agreement,
+  relocated package determinism, both 186-test compiler configurations, all Rust,
+  shared Shuttle, editor, format, and repository gates pass.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -422,16 +475,17 @@ active stage without first updating `ROADMAP.md`.
   representability checks, or overload-resolution rules.
 - Add floating-point bit representation and byte-order operations after the
   integer-only Stage 21 boundary is proven.
-- Define runtime integer overflow/division/remainder failure policy separately
-  from Stage 28's required-constant rules. Current arithmetic lowering uses
-  unguarded LLVM operations; constant diagnostics must not be mistaken for
-  runtime checks or permission to change runtime semantics.
 - Align wider Unicode character literals/escapes and artifact constants across
   lexer, scalar decoding, and emission. Current literal/artifact handling is
   byte-oriented despite `char` having 32-bit storage; Stage 28 preserves that
   boundary rather than implicitly expanding the character language.
 - Design recoverable exceptions, including syntax, control flow, unwinding,
-  runtime representation, and a stable exception ABI.
+  runtime representation, and a stable exception ABI. Preserve the proposed
+  file-wide nominal form `error { Name() {} }`, constructed like a class with
+  implicit inheritance from a universal `Error` type. Decide whether that base
+  is compiler-provided or standard-library-owned. When the exception model is
+  implemented, migrate division-by-zero failure to its approved constructed
+  error; until then Stage 29's deterministic terminal failure remains normative.
 
 ### Optimization
 

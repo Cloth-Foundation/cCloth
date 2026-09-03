@@ -1,0 +1,5 @@
+static func Main() {
+  int8 value = 127;
+  int8 delta = 1;
+  println(value + delta);
+}

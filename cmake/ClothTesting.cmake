@@ -59,7 +59,7 @@ function(cloth_add_native_output_test name)
 endfunction()
 
 function(cloth_add_native_failure_test name)
-    cmake_parse_arguments(ARG "" "OUTPUT;SOURCE;ERROR" "" ${ARGN})
+    cmake_parse_arguments(ARG "EXACT" "OUTPUT;SOURCE;ERROR" "" ${ARGN})
     if(NOT ARG_OUTPUT OR NOT ARG_SOURCE OR NOT ARG_ERROR)
         message(FATAL_ERROR
             "cloth_add_native_failure_test requires OUTPUT, SOURCE, and ERROR"
@@ -71,13 +71,17 @@ function(cloth_add_native_failure_test name)
         NAME cloth_cli_build_${name}
         COMMAND clothc "--build=${executable}" "${ARG_SOURCE}"
     )
-    add_test(
-        NAME cloth_${name}
-        COMMAND ${CMAKE_COMMAND}
-                "-DCLOTH_PROGRAM=${executable}"
-                "-DCLOTH_EXPECTED_ERROR=${ARG_ERROR}"
-                -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake
+    set(check_command
+        ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=${executable}"
+        "-DCLOTH_EXPECTED_ERROR=${ARG_ERROR}"
     )
+    if(ARG_EXACT)
+        list(APPEND check_command -DCLOTH_EXACT_ERROR=ON)
+    endif()
+    list(APPEND check_command
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+    add_test(NAME cloth_${name} COMMAND ${check_command})
     set_tests_properties(cloth_${name} PROPERTIES
         DEPENDS cloth_cli_build_${name}
     )

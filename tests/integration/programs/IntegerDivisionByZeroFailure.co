@@ -1,0 +1,5 @@
+static func Main() {
+  int32 value = 42;
+  int32 divisor = 0;
+  println(value / divisor);
+}

@@ -197,17 +197,18 @@ void canonical_interface_round_trip(TestContext& test) {
   test.expect(!metadata.empty() && metadata.front() == '{' &&
                   metadata.back() == '}' && !metadata.ends_with('\n') &&
                   metadata.starts_with("{\"compatibility\":") &&
+                  metadata.contains("\"runtime_abi\":\"3\"") &&
                   metadata.contains("\"value\":\"3fc00000\"") &&
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
   test.expect(
       metadata.size() == 12288 &&
           cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-              "22560baef8517f607064e20963034209d22"
-              "abc9277e1728b27c985fa3846c504" &&
+              "7ccf7eb4d3e2d58d2368a6808a53ddce5f"
+              "5c04df3ab08b69540b99abfdd4ff0c" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "cf24c550514aad3270cb32f3f899f853eef"
-              "adbcdcf954f7d51f40ac60fe222a0",
+              "9436003fd8bf4912e55f075a8423eb5df86"
+              "2f1d929bce77653eaee51ec9779fb",
       "canonical version-4 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
@@ -441,6 +442,20 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
   changed.replace(changed.find("\"compiler_abi\":\"4\""), 18,
                   "\"compiler_abi\":4");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
+  changed = original;
+  const std::string_view current_runtime = "\"runtime_abi\":\"3\"";
+  const std::size_t runtime = changed.find(current_runtime);
+  test.expect(runtime != std::string::npos,
+              "runtime ABI fixture did not contain version 3");
+  if (runtime != std::string::npos) {
+    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"2\"");
+    const auto rejected = cloth::read_package_artifact(
+        replace_metadata(encoded.artifact->bytes, std::move(changed)));
+    test.expect(
+        !rejected.is_valid() && !rejected.issues.empty() &&
+            rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
+        "artifact with runtime ABI 2 was accepted by runtime ABI 3");
+  }
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");
   expect_rejected(std::move(changed),

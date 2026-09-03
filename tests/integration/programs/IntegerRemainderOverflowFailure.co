@@ -1,0 +1,6 @@
+static func Main() {
+  int16 value = -32768;
+  int16 divisor = -1;
+  println(value % divisor);
+  println("unreachable");
+}

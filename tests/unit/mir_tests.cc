@@ -12,6 +12,7 @@
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_file.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <iostream>
@@ -107,8 +108,9 @@ void straight_line_body(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Math.co",
                   "func Add(int a, int b): int {\n"
+                  "  float scaled = 1.0 + 2.0;\n"
                   "  int sum = a + b;\n"
-                  "  return sum;\n"
+                  "  return -sum;\n"
                   "}\n");
   compilation.compile();
 
@@ -127,6 +129,84 @@ void straight_line_body(TestContext& test) {
   test.expect(
       body_has_instruction<cloth::MirDeclareLocalInstruction>(function.body),
       "local declaration was not lowered");
+
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    cloth::HirModule broken = compilation.result->hir;
+    bool changed = false;
+    for (const cloth::HirExpression& stored : broken.storage.expressions()) {
+      auto& expression = const_cast<cloth::HirExpression&>(stored);
+      if (mutation == 0) {
+        const auto* binary =
+            std::get_if<cloth::HirBinaryExpression>(&expression.data);
+        if (binary != nullptr &&
+            compilation.result->semantics.type(expression.type).kind ==
+                cloth::TypeKind::kInt32) {
+          expression.type = compilation.result->semantics.bool_type();
+          changed = true;
+          break;
+        }
+      }
+      if (mutation == 1) {
+        auto* binary =
+            std::get_if<cloth::HirBinaryExpression>(&expression.data);
+        if (binary != nullptr &&
+            compilation.result->semantics.type(expression.type).kind ==
+                cloth::TypeKind::kFloat32) {
+          binary->operation = cloth::TokenKind::kPercent;
+          changed = true;
+          break;
+        }
+      }
+      if (mutation == 2 &&
+          std::holds_alternative<cloth::HirUnaryExpression>(expression.data)) {
+        expression.type = compilation.result->semantics.bool_type();
+        changed = true;
+        break;
+      }
+    }
+    cloth::DiagnosticEngine rejected;
+    test.expect(changed &&
+                    !cloth::verify_hir(broken, compilation.result->semantics,
+                                       rejected) &&
+                    has_diagnostic(rejected, "incompatible HIR metadata"),
+                "HIR verifier accepted malformed runtime arithmetic");
+  }
+
+  for (int mutation = 0; mutation < 3; ++mutation) {
+    auto broken = compilation.result->mir;
+    bool changed = false;
+    for (auto& block : broken.files[0].functions[0].body.blocks) {
+      for (auto& instruction : block.instructions) {
+        if (mutation == 0 &&
+            std::holds_alternative<cloth::MirBinaryInstruction>(
+                instruction.data)) {
+          instruction.type = compilation.result->semantics.bool_type();
+          changed = true;
+        }
+        if (mutation == 1 && std::holds_alternative<cloth::MirUnaryInstruction>(
+                                 instruction.data)) {
+          std::get<cloth::MirUnaryInstruction>(instruction.data).operation =
+              cloth::TokenKind::kBang;
+          changed = true;
+        }
+        if (mutation == 2 &&
+            std::holds_alternative<cloth::MirBinaryInstruction>(
+                instruction.data) &&
+            compilation.result->semantics.type(instruction.type).kind ==
+                cloth::TypeKind::kFloat32) {
+          std::get<cloth::MirBinaryInstruction>(instruction.data).operation =
+              cloth::TokenKind::kPercent;
+          changed = true;
+        }
+      }
+    }
+    cloth::DiagnosticEngine rejected;
+    test.expect(changed &&
+                    !cloth::verify_mir(broken, compilation.result->semantics,
+                                       rejected) &&
+                    has_diagnostic(rejected, "incompatible types"),
+                "MIR verifier accepted malformed arithmetic");
+  }
 }
 
 void integer_binary_instructions(TestContext& test) {
@@ -761,6 +841,191 @@ void classical_for_and_update_lowering(TestContext& test) {
   }
   test.expect(update_edges >= 2,
               "continue or body fallthrough bypasses the for update clause");
+}
+
+void checked_update_and_compound_order(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Updates.co", R"(
+    int32 value;
+    Updates(int32 initial) { value = initial; }
+    static func Target(Updates item): Updates { return item; }
+    static func TargetArray(int32[] values): int32[] { return values; }
+    static func Index(): int32 { return 0; }
+    static func Right(): int32 { return 2; }
+    static func ApplyMember(Updates item): int32 {
+      Target(item).value += Right();
+      return item.value;
+    }
+    static func ApplyArray(int32[] values): int32 {
+      TargetArray(values)[Index()] *= Right();
+      return values[0];
+    }
+    static func ApplyUpdates(int32 value): int32 {
+      int32 prior = value++;
+      int32 current = ++value;
+      --value;
+      value--;
+      return current - prior + value;
+    }
+  )");
+  compilation.compile();
+  test.expect(compilation.result->is_valid,
+              "checked update fixture failed MIR lowering");
+  if (!compilation.result->is_valid) {
+    return;
+  }
+  const cloth::SemanticModel& semantics = compilation.result->semantics;
+  const auto find_function =
+      [&](std::string_view name) -> const cloth::MirCallable* {
+    for (const cloth::MirCallable& function :
+         compilation.result->mir.files[0].functions) {
+      if (semantics.symbol(function.symbol).name == name) {
+        return &function;
+      }
+    }
+    return nullptr;
+  };
+
+  const auto expect_call_order = [&](const cloth::MirCallable* function,
+                                     std::string_view target_name,
+                                     bool member) {
+    test.expect(function != nullptr, "checked compound function is missing");
+    if (function == nullptr) {
+      return;
+    }
+    std::vector<std::string> calls;
+    std::size_t target_position = 0;
+    std::size_t right_position = 0;
+    std::size_t load_position = 0;
+    std::size_t binary_position = 0;
+    std::size_t store_position = 0;
+    bool found_target = false;
+    bool found_right = false;
+    bool found_load = false;
+    bool found_binary = false;
+    bool found_store = false;
+    std::size_t position = 0;
+    for (const cloth::MirBasicBlock& block : function->body.blocks) {
+      for (const cloth::MirInstruction& instruction : block.instructions) {
+        if (const auto* call =
+                std::get_if<cloth::MirCallInstruction>(&instruction.data)) {
+          const std::string& name = semantics.symbol(call->callable).name;
+          calls.push_back(name);
+          if (name == target_name) {
+            found_target = true;
+            target_position = position;
+          }
+          if (name == "Right") {
+            found_right = true;
+            right_position = position;
+          }
+        }
+        const bool is_load =
+            member ? std::holds_alternative<cloth::MirLoadMemberInstruction>(
+                         instruction.data)
+                   : std::holds_alternative<cloth::MirArrayLoadInstruction>(
+                         instruction.data);
+        const bool is_store =
+            member ? std::holds_alternative<cloth::MirStoreMemberInstruction>(
+                         instruction.data)
+                   : std::holds_alternative<cloth::MirArrayStoreInstruction>(
+                         instruction.data);
+        if (is_load && !found_load) {
+          found_load = true;
+          load_position = position;
+        }
+        if (std::holds_alternative<cloth::MirBinaryInstruction>(
+                instruction.data) &&
+            !found_binary) {
+          found_binary = true;
+          binary_position = position;
+        }
+        if (is_store && !found_store) {
+          found_store = true;
+          store_position = position;
+        }
+        ++position;
+      }
+    }
+    test.expect(std::ranges::count(calls, target_name) == 1 &&
+                    std::ranges::count(calls, std::string{"Right"}) == 1 &&
+                    found_target && found_right && found_load && found_binary &&
+                    found_store && target_position < right_position &&
+                    right_position < load_position &&
+                    load_position < binary_position &&
+                    binary_position < store_position,
+                "compound target/RHS ordering is not explicit and exactly "
+                "once in MIR");
+  };
+  expect_call_order(find_function("ApplyMember"), "Target", true);
+  expect_call_order(find_function("ApplyArray"), "TargetArray", false);
+
+  for (int mutation = 0; mutation < 2; ++mutation) {
+    cloth::HirModule broken = compilation.result->hir;
+    bool changed = false;
+    for (const cloth::HirExpression& stored : broken.storage.expressions()) {
+      auto& expression = const_cast<cloth::HirExpression&>(stored);
+      if (mutation == 0) {
+        auto* update =
+            std::get_if<cloth::HirUpdateExpression>(&expression.data);
+        if (update != nullptr) {
+          update->operation = cloth::TokenKind::kStar;
+          changed = true;
+          break;
+        }
+      } else if (const auto* assignment =
+                     std::get_if<cloth::HirAssignmentExpression>(
+                         &expression.data);
+                 assignment != nullptr &&
+                 assignment->operation != cloth::TokenKind::kEqual) {
+        expression.type = compilation.result->semantics.bool_type();
+        changed = true;
+        break;
+      }
+    }
+    cloth::DiagnosticEngine rejected;
+    test.expect(changed &&
+                    !cloth::verify_hir(broken, compilation.result->semantics,
+                                       rejected) &&
+                    has_diagnostic(rejected, "incompatible HIR metadata"),
+                "HIR verifier accepted malformed update/compound metadata");
+  }
+
+  const cloth::MirCallable* updates = find_function("ApplyUpdates");
+  test.expect(updates != nullptr, "checked update function is missing");
+  if (updates == nullptr) {
+    return;
+  }
+  std::vector<const cloth::MirBinaryInstruction*> operations;
+  std::vector<cloth::MirValueId> results;
+  std::optional<cloth::MirValueId> prior;
+  std::optional<cloth::MirValueId> current;
+  for (const cloth::MirBasicBlock& block : updates->body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* binary =
+              std::get_if<cloth::MirBinaryInstruction>(&instruction.data)) {
+        if (binary->operation == cloth::TokenKind::kPlus ||
+            binary->operation == cloth::TokenKind::kMinus) {
+          operations.push_back(binary);
+          results.push_back(*instruction.result);
+        }
+      }
+      if (const auto* declaration =
+              std::get_if<cloth::MirDeclareLocalInstruction>(
+                  &instruction.data)) {
+        const std::string& name = semantics.symbol(declaration->symbol).name;
+        if (name == "prior") {
+          prior = declaration->initializer;
+        }
+        if (name == "current") {
+          current = declaration->initializer;
+        }
+      }
+    }
+  }
+  test.expect(operations.size() >= 4 && prior && current &&
+                  *prior == operations[0]->left && *current == results[1],
+              "prefix/postfix MIR does not preserve old/new result values");
 }
 
 void nullable_conversion(TestContext& test) {
@@ -1566,6 +1831,7 @@ int main() {
       {"for iteration control flow", for_iteration_control_flow},
       {"for terminating body reachability", for_terminating_body_reachability},
       {"classical for and update lowering", classical_for_and_update_lowering},
+      {"checked update and compound order", checked_update_and_compound_order},
       {"nullable conversion", nullable_conversion},
       {"numeric widening conversion", numeric_widening_conversion},
       {"overload-directed literal lowering",

@@ -192,6 +192,11 @@ signedness changes are checked and trap when the mathematical result is not
 representable; numeric literals are validated at compile time. The syntax is a
 numeric operation rather than a primitive constructor, and it does not change
 the failure contract of nullable reference `as`.
+Ordinary fixed-width integer addition, subtraction, multiplication, and negation
+also trap on an unrepresentable result. Division and remainder trap on a zero
+divisor and on the signed minimum/`-1` overflow pair. A leading minus forms a
+signed literal value, so signed minimum literals remain valid; negating a runtime
+value is checked. Floating arithmetic retains IEEE behavior.
 `object` is the universal non-null managed-reference
 type for file classes, strings, and arrays; widening to it is representation
 preserving and does not box primitives. References are non-null by default. `T?` is a
@@ -403,6 +408,8 @@ exact type. The right numeric operand may widen losslessly to that target;
 numeric locations. Prefix yields the stored result, while postfix yields the
 previous value. Member receivers and array/index operands are captured once for
 every compound assignment or update. A `final` binding cannot use either form.
+Integer updates and arithmetic compounds use the same checked arithmetic as
+their direct operators and store only after the check succeeds.
 
 Fixed-width integers support `~`, `&`, `|`, `^`, `<<`, and `>>` together with
 their compound-assignment forms. Bitwise operands use lossless common integer

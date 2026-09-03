@@ -36,7 +36,19 @@ struct InlineValue {
   void* second;
 };
 
-int invalid_array_layout(std::string_view scenario) {
+int runtime_failure_scenario(std::string_view scenario) {
+  if (scenario == "integer_overflow") {
+    cloth_rt_require_integer_arithmetic(0, kClothIntegerArithmeticOverflow);
+  }
+  if (scenario == "integer_division_by_zero") {
+    cloth_rt_require_integer_arithmetic(0, kClothIntegerDivisionByZero);
+  }
+  if (scenario == "integer_remainder_by_zero") {
+    cloth_rt_require_integer_arithmetic(0, kClothIntegerRemainderByZero);
+  }
+  if (scenario == "invalid_integer_arithmetic_reason") {
+    cloth_rt_require_integer_arithmetic(0, UINT8_MAX);
+  }
   std::uint64_t offsets[]{0, sizeof(void*)};
   ClothArrayElementLayout layout{2 * sizeof(void*), alignof(void*), offsets, 2};
   if (scenario == "null") {
@@ -76,8 +88,11 @@ void store_reference(void* object, std::size_t offset, void* reference) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc == 2) return invalid_array_layout(argv[1]);
+  if (argc == 2) return runtime_failure_scenario(argv[1]);
   TestContext test{"runtime"};
+  cloth_rt_require_integer_arithmetic(1, kClothIntegerArithmeticOverflow);
+  cloth_rt_require_integer_arithmetic(1, kClothIntegerDivisionByZero);
+  cloth_rt_require_integer_arithmetic(1, kClothIntegerRemainderByZero);
   void* first = nullptr;
   void* second = nullptr;
   void** outer_roots[]{&first, &second};

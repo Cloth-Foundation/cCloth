@@ -1074,6 +1074,21 @@ extern "C" void cloth_rt_require_shift_count(std::uint8_t valid) noexcept {
   }
 }
 
+extern "C" void cloth_rt_require_integer_arithmetic(
+    std::uint8_t valid, std::uint8_t reason) noexcept {
+  if (valid != 0) return;
+  switch (reason) {
+    case kClothIntegerArithmeticOverflow:
+      runtime_failure("integer arithmetic overflow");
+    case kClothIntegerDivisionByZero:
+      runtime_failure("integer division by zero");
+    case kClothIntegerRemainderByZero:
+      runtime_failure("integer remainder by zero");
+    default:
+      runtime_failure("invalid integer arithmetic failure code");
+  }
+}
+
 extern "C" void cloth_rt_print(const void* value) noexcept {
   if (value == nullptr) {
     runtime_failure("print received a null string");

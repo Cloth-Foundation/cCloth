@@ -858,6 +858,19 @@ class HirVerifier {
       } else if (const auto* unary =
                      std::get_if<HirUnaryExpression>(&expression.data)) {
         verify_expression(unary->operand, expression.range);
+        if (unary->operation == TokenKind::kPlus ||
+            unary->operation == TokenKind::kMinus) {
+          const std::optional<TypeId> operand = expression_type(unary->operand);
+          const bool valid = operand &&
+                             operand->value < semantics_.types().size() &&
+                             expression.type == *operand &&
+                             is_numeric_type(semantics_.type(*operand).kind) &&
+                             !unary->operand_is_presence_test;
+          if (!valid) {
+            report(expression.range,
+                   "numeric unary expression has incompatible HIR metadata");
+          }
+        }
         if (const auto type = expression_type(unary->operand);
             type && is_struct(*type)) {
           report(expression.range, "struct used by a unary operation");
@@ -869,6 +882,20 @@ class HirVerifier {
       } else if (const auto* update =
                      std::get_if<HirUpdateExpression>(&expression.data)) {
         verify_expression(update->operand, expression.range);
+        const std::optional<TypeId> operand = expression_type(update->operand);
+        const bool valid = operand &&
+                           operand->value < semantics_.types().size() &&
+                           expression.type == *operand &&
+                           is_numeric_type(semantics_.type(*operand).kind) &&
+                           (update->operation == TokenKind::kPlusPlus ||
+                            update->operation == TokenKind::kMinusMinus) &&
+                           hir_.storage.expression(update->operand).category ==
+                               ValueCategory::kMutableLocation &&
+                           expression.category == ValueCategory::kValue;
+        if (!valid) {
+          report(expression.range,
+                 "numeric update has incompatible HIR metadata");
+        }
         if (is_enum_expression(update->operand) ||
             is_enum_type(expression.type)) {
           report(expression.range, "enum value used by an update operation");
@@ -877,6 +904,44 @@ class HirVerifier {
                      std::get_if<HirBinaryExpression>(&expression.data)) {
         verify_expression(binary->left, expression.range);
         verify_expression(binary->right, expression.range);
+        const bool arithmetic = binary->operation == TokenKind::kPlus ||
+                                binary->operation == TokenKind::kMinus ||
+                                binary->operation == TokenKind::kStar ||
+                                binary->operation == TokenKind::kSlash ||
+                                binary->operation == TokenKind::kPercent;
+        if (arithmetic) {
+          const std::optional<TypeId> left = expression_type(binary->left);
+          const std::optional<TypeId> right = expression_type(binary->right);
+          bool numeric = false;
+          bool concatenate = false;
+          if (left && right && left->value < semantics_.types().size() &&
+              right->value < semantics_.types().size()) {
+            const TypeKind left_kind = semantics_.type(*left).kind;
+            const TypeKind right_kind = semantics_.type(*right).kind;
+            std::optional<TypeId> common;
+            if (*left == *right) {
+              common = *left;
+            } else if (can_widen_numeric(left_kind, right_kind)) {
+              common = *right;
+            } else if (can_widen_numeric(right_kind, left_kind)) {
+              common = *left;
+            }
+            numeric =
+                common && expression.type == *common &&
+                is_numeric_type(left_kind) && is_numeric_type(right_kind) &&
+                (binary->operation != TokenKind::kPercent ||
+                 (is_integer_type(left_kind) && is_integer_type(right_kind)));
+            concatenate = binary->operation == TokenKind::kPlus &&
+                          *left == semantics_.string_type() &&
+                          *right == semantics_.string_type() &&
+                          expression.type == semantics_.string_type();
+          }
+          if ((!numeric && !concatenate) || binary->left_is_presence_test ||
+              binary->right_is_presence_test) {
+            report(expression.range,
+                   "arithmetic expression has incompatible HIR metadata");
+          }
+        }
         if (is_enum_type(expression.type) || is_enum_expression(binary->left) ||
             is_enum_expression(binary->right)) {
           if (binary->left.value >= expressions.size() ||
@@ -930,6 +995,43 @@ class HirVerifier {
                      std::get_if<HirAssignmentExpression>(&expression.data)) {
         verify_expression(assignment->target, expression.range);
         verify_expression(assignment->value, expression.range);
+        const bool arithmetic =
+            assignment->operation == TokenKind::kPlusEqual ||
+            assignment->operation == TokenKind::kMinusEqual ||
+            assignment->operation == TokenKind::kStarEqual ||
+            assignment->operation == TokenKind::kSlashEqual ||
+            assignment->operation == TokenKind::kPercentEqual;
+        if (arithmetic) {
+          const std::optional<TypeId> target =
+              expression_type(assignment->target);
+          const std::optional<TypeId> value =
+              expression_type(assignment->value);
+          bool numeric = false;
+          bool concatenate = false;
+          if (target && value && target->value < semantics_.types().size() &&
+              value->value < semantics_.types().size()) {
+            const TypeKind target_kind = semantics_.type(*target).kind;
+            const TypeKind value_kind = semantics_.type(*value).kind;
+            const bool assignable =
+                *target == *value || can_widen_numeric(value_kind, target_kind);
+            numeric =
+                expression.type == *target && assignable &&
+                is_numeric_type(target_kind) && is_numeric_type(value_kind) &&
+                (assignment->operation != TokenKind::kPercentEqual ||
+                 (is_integer_type(target_kind) && is_integer_type(value_kind)));
+            concatenate = assignment->operation == TokenKind::kPlusEqual &&
+                          *target == semantics_.string_type() &&
+                          *value == semantics_.string_type() &&
+                          expression.type == semantics_.string_type();
+          }
+          if ((!numeric && !concatenate) || !target ||
+              hir_.storage.expression(assignment->target).category !=
+                  ValueCategory::kMutableLocation ||
+              expression.category != ValueCategory::kValue) {
+            report(expression.range,
+                   "arithmetic assignment has incompatible HIR metadata");
+          }
+        }
         if (is_enum_type(expression.type) ||
             is_enum_expression(assignment->target) ||
             is_enum_expression(assignment->value)) {

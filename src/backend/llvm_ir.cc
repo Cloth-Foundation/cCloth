@@ -87,38 +87,31 @@ std::optional<std::string> lower_scalar_literal(
       return std::to_string(tag);
     }
     case LiteralKind::kInteger: {
+      std::string_view magnitude = literal.lexeme;
+      const bool negative = magnitude.starts_with('-');
+      if (negative) magnitude.remove_prefix(1);
       std::uint64_t parsed = 0;
-      const char* const begin = literal.lexeme.data();
-      const char* const end = begin + literal.lexeme.size();
+      const char* const begin = magnitude.data();
+      const char* const end = begin + magnitude.size();
       const auto result = std::from_chars(begin, end, parsed);
       const std::optional<NumericTypeProperties> properties =
           numeric_type_properties(semantic_kind);
       if (properties &&
           properties->category == NumericCategory::kFloatingPoint) {
-        if (result.ec != std::errc{} || result.ptr != end) {
+        if (negative || result.ec != std::errc{} || result.ptr != end) {
           return std::nullopt;
         }
         return semantic_kind == TypeKind::kFloat32
                    ? format_floating_literal(static_cast<float>(parsed))
                    : format_floating_literal(static_cast<double>(parsed));
       }
-      std::uint64_t maximum = 0;
-      if (properties &&
-          properties->category == NumericCategory::kUnsignedInteger) {
-        maximum = properties->bit_width >= 64
-                      ? std::numeric_limits<std::uint64_t>::max()
-                      : (std::uint64_t{1} << properties->bit_width) - 1;
-      } else if (properties &&
-                 properties->category == NumericCategory::kSignedInteger) {
-        // The extra magnitude is needed by a following unary minus to form the
-        // minimum signed value. Semantic analysis rejects it when positive.
-        maximum = std::uint64_t{1} << (properties->bit_width - 1);
-      }
+      const std::optional<std::uint64_t> bits =
+          integer_constant_bits(magnitude, negative, semantic_kind);
       if (type.bit_width == 0 || result.ec != std::errc{} ||
-          result.ptr != end || parsed > maximum) {
+          result.ptr != end || !bits) {
         return std::nullopt;
       }
-      return std::to_string(parsed);
+      return std::to_string(*bits);
     }
     case LiteralKind::kFloat: {
       const char* const begin = literal.lexeme.data();
@@ -397,6 +390,9 @@ class BodyEmitter {
                          std::ostringstream& output);
   void emit_unary(const MirInstruction& instruction,
                   const MirUnaryInstruction& unary, std::ostringstream& output);
+  void emit_integer_arithmetic_guard(std::string_view valid,
+                                     std::uint8_t reason,
+                                     std::ostringstream& output);
   void emit_binary(const MirInstruction& instruction,
                    const MirBinaryInstruction& binary,
                    std::ostringstream& output);
@@ -564,6 +560,7 @@ class ModuleEmitter {
            << "declare void @cloth_rt_require_non_null(ptr)\n"
            << "declare void @cloth_rt_require_numeric_conversion(i8)\n"
            << "declare void @cloth_rt_require_shift_count(i8)\n"
+           << "declare void @cloth_rt_require_integer_arithmetic(i8, i8)\n"
            << "declare float @llvm.trunc.f32(float)\n"
            << "declare double @llvm.trunc.f64(double)\n"
            << "declare void @cloth_rt_print(ptr)\n"
@@ -581,6 +578,16 @@ class ModuleEmitter {
            << "declare void @cloth_rt_print_bool(i8)\n"
            << "declare void @cloth_rt_print_object(ptr)\n"
            << "declare void @cloth_rt_print_newline()\n\n";
+    for (const unsigned int width : {8U, 16U, 32U, 64U}) {
+      for (const std::string_view sign : {"s", "u"}) {
+        for (const std::string_view operation : {"add", "sub", "mul"}) {
+          output << "declare { i" << width << ", i1 } @llvm." << sign
+                 << operation << ".with.overflow.i" << width << "(i" << width
+                 << ", i" << width << ")\n";
+        }
+      }
+    }
+    output << '\n';
     output << "declare void @llvm.trap()\n\n";
     for (const std::string& global : globals_) {
       output << global << '\n';
@@ -2270,6 +2277,15 @@ void BodyEmitter::emit_integer_read(const MirInstruction& instruction,
          << " to " << module_.llvm_type(instruction.type) << '\n';
 }
 
+void BodyEmitter::emit_integer_arithmetic_guard(std::string_view valid,
+                                                std::uint8_t reason,
+                                                std::ostringstream& output) {
+  const std::string valid_byte = next_address();
+  output << "  " << valid_byte << " = zext i1 " << valid << " to i8\n"
+         << "  call void @cloth_rt_require_integer_arithmetic(i8 " << valid_byte
+         << ", i8 " << static_cast<unsigned int>(reason) << ")\n";
+}
+
 void BodyEmitter::emit_unary(const MirInstruction& instruction,
                              const MirUnaryInstruction& unary,
                              std::ostringstream& output) {
@@ -2279,6 +2295,27 @@ void BodyEmitter::emit_unary(const MirInstruction& instruction,
   const std::string operand = value(unary.operand);
   if (unary.operation == TokenKind::kPlus) {
     values_.at(instruction.result->value) = operand;
+    return;
+  }
+  const auto properties = numeric_type_properties(kind);
+  if (unary.operation == TokenKind::kMinus && properties &&
+      properties->category != NumericCategory::kFloatingPoint) {
+    const bool is_unsigned =
+        properties->category == NumericCategory::kUnsignedInteger;
+    const std::string aggregate = next_address();
+    const std::string overflow = next_address();
+    const std::string valid = next_address();
+    output << "  " << aggregate << " = call { " << type << ", i1 } @llvm."
+           << (is_unsigned ? 'u' : 's') << "sub.with.overflow.i"
+           << properties->bit_width << '(' << type << " 0, " << type << ' '
+           << operand << ")\n"
+           << "  " << result_name(instruction) << " = extractvalue { " << type
+           << ", i1 } " << aggregate << ", 0\n"
+           << "  " << overflow << " = extractvalue { " << type << ", i1 } "
+           << aggregate << ", 1\n"
+           << "  " << valid << " = xor i1 " << overflow << ", true\n";
+    emit_integer_arithmetic_guard(valid, kClothIntegerArithmeticOverflow,
+                                  output);
     return;
   }
   output << "  " << result_name(instruction) << " = ";
@@ -2334,7 +2371,71 @@ void BodyEmitter::emit_binary(const MirInstruction& instruction,
       kind == TypeKind::kByte || kind == TypeKind::kChar ||
       kind == TypeKind::kUint8 || kind == TypeKind::kUint16 ||
       kind == TypeKind::kUint32 || kind == TypeKind::kUint64;
+  const std::optional<NumericTypeProperties> integer_properties =
+      numeric_type_properties(kind);
+  const bool is_integer =
+      integer_properties &&
+      integer_properties->category != NumericCategory::kFloatingPoint;
   const std::string type = module_.llvm_type(operand_type);
+  if (is_integer && (binary.operation == TokenKind::kPlus ||
+                     binary.operation == TokenKind::kMinus ||
+                     binary.operation == TokenKind::kStar)) {
+    const std::string_view operation =
+        binary.operation == TokenKind::kPlus    ? "add"
+        : binary.operation == TokenKind::kMinus ? "sub"
+                                                : "mul";
+    const std::string aggregate = next_address();
+    const std::string overflow = next_address();
+    const std::string valid = next_address();
+    output << "  " << aggregate << " = call { " << type << ", i1 } @llvm."
+           << (is_unsigned ? 'u' : 's') << operation << ".with.overflow.i"
+           << integer_properties->bit_width << '(' << type << ' '
+           << value(binary.left) << ", " << type << ' ' << value(binary.right)
+           << ")\n"
+           << "  " << result_name(instruction) << " = extractvalue { " << type
+           << ", i1 } " << aggregate << ", 0\n"
+           << "  " << overflow << " = extractvalue { " << type << ", i1 } "
+           << aggregate << ", 1\n"
+           << "  " << valid << " = xor i1 " << overflow << ", true\n";
+    emit_integer_arithmetic_guard(valid, kClothIntegerArithmeticOverflow,
+                                  output);
+    return;
+  }
+  if (is_integer && (binary.operation == TokenKind::kSlash ||
+                     binary.operation == TokenKind::kPercent)) {
+    const bool division = binary.operation == TokenKind::kSlash;
+    const std::string nonzero = next_address();
+    output << "  " << nonzero << " = icmp ne " << type << ' '
+           << value(binary.right) << ", 0\n";
+    emit_integer_arithmetic_guard(
+        nonzero,
+        division ? kClothIntegerDivisionByZero : kClothIntegerRemainderByZero,
+        output);
+    if (!is_unsigned) {
+      const std::uint64_t minimum_magnitude =
+          std::uint64_t{1} << (integer_properties->bit_width - 1);
+      const std::string minimum = "-" + std::to_string(minimum_magnitude);
+      const std::string left_is_minimum = next_address();
+      const std::string right_is_negative_one = next_address();
+      const std::string overflows = next_address();
+      const std::string valid = next_address();
+      output << "  " << left_is_minimum << " = icmp eq " << type << ' '
+             << value(binary.left) << ", " << minimum << "\n"
+             << "  " << right_is_negative_one << " = icmp eq " << type << ' '
+             << value(binary.right) << ", -1\n"
+             << "  " << overflows << " = and i1 " << left_is_minimum << ", "
+             << right_is_negative_one << "\n"
+             << "  " << valid << " = xor i1 " << overflows << ", true\n";
+      emit_integer_arithmetic_guard(valid, kClothIntegerArithmeticOverflow,
+                                    output);
+    }
+    output << "  " << result_name(instruction) << " = "
+           << (division ? (is_unsigned ? "udiv" : "sdiv")
+                        : (is_unsigned ? "urem" : "srem"))
+           << ' ' << type << ' ' << value(binary.left) << ", "
+           << value(binary.right) << '\n';
+    return;
+  }
   std::string operation;
   switch (binary.operation) {
     case TokenKind::kPlus:

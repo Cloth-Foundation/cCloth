@@ -1,0 +1,5 @@
+static func Main() {
+  uint64 value = 42;
+  uint64 divisor = 0;
+  println(value % divisor);
+}

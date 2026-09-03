@@ -55,6 +55,19 @@ if("${program_result}" STREQUAL "0")
     message(FATAL_ERROR
         "program unexpectedly succeeded; stdout: ${program_output}")
 endif()
+if(NOT "${program_output}" STREQUAL "")
+    message(FATAL_ERROR
+        "failing program produced unexpected stdout: ${program_output}")
+endif()
+if(CLOTH_EXACT_ERROR)
+    string(REPLACE "\r\n" "\n" program_error "${program_error}")
+    if(NOT program_error STREQUAL "${CLOTH_EXPECTED_ERROR}\n")
+        message(FATAL_ERROR
+            "program error did not exactly match '${CLOTH_EXPECTED_ERROR}'; "
+            "stderr: ${program_error}")
+    endif()
+    return()
+endif()
 string(FIND "${program_error}" "${CLOTH_EXPECTED_ERROR}" error_position)
 if(error_position EQUAL -1)
     message(FATAL_ERROR

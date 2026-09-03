@@ -52,6 +52,10 @@ struct ClothArrayElementLayout {
   std::uint64_t reference_count;
 };
 
+inline constexpr std::uint8_t kClothIntegerArithmeticOverflow = 0;
+inline constexpr std::uint8_t kClothIntegerDivisionByZero = 1;
+inline constexpr std::uint8_t kClothIntegerRemainderByZero = 2;
+
 extern "C" {
 
 [[nodiscard]] void* cloth_rt_alloc(const ClothTypeDescriptor* type) noexcept;
@@ -98,6 +102,8 @@ void cloth_rt_require_receiver(const void* receiver) noexcept;
 void cloth_rt_require_non_null(const void* value) noexcept;
 void cloth_rt_require_numeric_conversion(std::uint8_t valid) noexcept;
 void cloth_rt_require_shift_count(std::uint8_t valid) noexcept;
+void cloth_rt_require_integer_arithmetic(std::uint8_t valid,
+                                         std::uint8_t reason) noexcept;
 void cloth_rt_print(const void* string) noexcept;
 void cloth_rt_print_char(std::uint32_t value) noexcept;
 void cloth_rt_print_i8(std::int8_t value) noexcept;

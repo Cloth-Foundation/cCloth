@@ -621,6 +621,28 @@ class BodyBuilder {
       return invalid_value(expression.range);
     }
     if (const auto* unary = std::get_if<HirUnaryExpression>(&expression.data)) {
+      if (unary->operation == TokenKind::kMinus) {
+        const std::optional<NumericTypeProperties> properties =
+            numeric_type_properties(semantics_.type(expression.type).kind);
+        if (properties &&
+            properties->category == NumericCategory::kSignedInteger) {
+          HirExpressionId literal_id = unary->operand;
+          const HirExpression* literal_expression =
+              &hir_.storage.expression(literal_id);
+          while (const auto* grouped = std::get_if<HirGroupedExpression>(
+                     &literal_expression->data)) {
+            literal_id = grouped->expression;
+            literal_expression = &hir_.storage.expression(literal_id);
+          }
+          if (const auto* literal =
+                  std::get_if<HirLiteralExpression>(&literal_expression->data);
+              literal && literal->kind == LiteralKind::kInteger) {
+            return emit_value(expression.type, expression.range,
+                              MirLiteralInstruction{LiteralKind::kInteger,
+                                                    "-" + literal->lexeme});
+          }
+        }
+      }
       const HirExpression& operand_syntax =
           hir_.storage.expression(unary->operand);
       const MirValueId operand =
