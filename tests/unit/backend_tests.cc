@@ -163,7 +163,7 @@ void numeric_literal_and_widening_lowering(TestContext& test) {
               "uint64 literal lost its full unsigned range");
   test.expect(sources.contains("store i64 20"),
               "contextual int64 assignment was not lowered at its target type");
-  test.expect(sources.contains("float 5.000000000e-01"),
+  test.expect(sources.contains("float bitcast (i32 1056964608 to float)"),
               "contextual float32 literal was not rounded and lowered once");
 }
 

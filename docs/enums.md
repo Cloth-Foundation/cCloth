@@ -78,7 +78,7 @@ them to scalars. Printing uses module-private, bounds-checked case-name tables
 and traps on invalid tags. No enum heap descriptor or new runtime ABI is added.
 
 Source-free package consumers retain every case and static enum constant.
-The current package contract is [artifact format 3](artifact_schema_v3.md),
+The current package contract is [artifact format 4](artifact_schema_v4.md),
 compiler ABI 4, and runtime ABI 2; older artifacts must be rebuilt. Enum value
 representation is unchanged by that aggregate transition. Shuttle's process
 protocol remains version 2.

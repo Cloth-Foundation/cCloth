@@ -142,8 +142,8 @@ void owns_declarations_and_static_values(TestContext& test) {
           private_constructor->visibility == cloth::Visibility::kPrivate,
       "private declarations were discarded or promoted");
   test.expect(version != nullptr && version->static_value &&
-                  version->static_value->kind == cloth::LiteralKind::kInteger &&
-                  version->static_value->lexeme == "12",
+                  version->static_value->kind == cloth::TypeKind::kInt64 &&
+                  version->static_value->bits == 12,
               "typed static literal was not retained");
   test.expect(base->member_order.size() == base->members.size(),
               "source declaration order was not retained explicitly");

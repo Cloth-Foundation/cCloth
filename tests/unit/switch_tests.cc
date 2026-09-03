@@ -101,10 +101,6 @@ void syntax_and_constants(TestContext& test) {
   check(test,
         "static final int32 Rounded = int32(1.9); static func Read(int64 n) { "
         "switch (n) { case Rounded: {} } }");
-  check(test,
-        "static final int8 Negative = int8(-1); static func Read(int64 n) { "
-        "switch (n) { case Negative: {} } }",
-        "verified static final");
   check(test, "static func Read(int32 n) { switch (n) { case 1, 01: {} } }",
         "duplicate switch case");
   check(test,

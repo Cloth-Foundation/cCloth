@@ -576,3 +576,136 @@ Artifact format 3, compiler ABI 4, runtime ABI 2, process protocol 2, receipt
 schema 1, and manifest schema 1 remain unchanged. Pattern matching, guards,
 ranges, switch expressions, general constant folding, and all other recorded
 non-goals remain deferred. No later stage is implicitly activated.
+
+## Stage 28.2 typed constant checkpoint
+
+Verified on Windows on 2026-09-02: **142/142 development and 142/142 ASan/UBSan
+CTests pass** (31 unit and 111 integration entries), including all **25 shared
+compiler-protocol and 16 native Shuttle tests** with each compiler. All 43
+ordinary Rust tests, Rust 1.85 checking, Rust formatting, Clippy with warnings
+denied, and six VS Code grammar/snippet/compiler tests per compiler pass.
+
+The scalar suite covers exhaustive 8-bit signed/unsigned arithmetic, 64-bit
+endpoints, shifts, checked conversions, exact IEEE rounding vectors under four
+host rounding modes, signed zero, subnormals, underflow, and non-finite failures.
+Frontend tests cover forward/imported/aliased values, privacy, named switch
+constants, skipped evaluation versus eligibility, cycles with bounded notes,
+reversed source registration, diamonds, and suppression of dependent cascades.
+
+Maximum and one-over cases cover 65,536 declarations, 65,536 initializer nodes,
+1,048,576 package nodes, depth 256, and 4,096-byte numeric spellings. Package
+budgets span source directories but not independent owning packages. The full
+65,536-declaration dependency chain uses iterative evaluation. Depth tests cover
+groups, unary/binary/logical chains, checked conversions, and ineligible call and
+member paths. They exposed sanitizer stack exhaustion; separating recursive
+dispatch from construction/type-checking temporaries fixed it without raising
+stack sizes or lowering the language limit. The resource suite runs serially
+with the existing extended test timeout.
+
+Public CLI/protocol tests accept new forms through direct `--check`, reject
+LLVM/native/interface emission with an explicit checkpoint diagnostic, and
+preserve completed outputs. Source-free frontend consumers retain the existing
+literal scalar/enum values on x86-64 and wasm32. No launch script, compiler test
+switch, external dependency, keyword, or compatibility version was added.
+
+**28.2 is complete; Stage 28 is not.** Authoritative output-side values,
+independent value-claim verification, and the coordinated format-4 transition
+remain 28.3 work; the complete native/source-free/evolution audit remains 28.4.
+
+## Stage 28.3 constant integration checkpoint
+
+Verified on Windows on 2026-09-02: **148/148 development and 148/148 ASan/UBSan
+CTests pass** (31 unit and 117 integration entries). These include all **25
+shared compiler-protocol and 17 native Shuttle tests** with each compiler.
+All 43 ordinary Rust tests, Rust 1.85 checking, formatting, Clippy with warnings
+denied, and six VS Code tests per compiler pass. C++ formatting and repository
+whitespace checks pass.
+
+Static fields carry canonical typed bits through semantics, HIR, MIR, LLVM,
+and owned imported declarations. No returned-MIR-literal recovery, executable
+static initializer, floating decimal round trip, or temporary emission gate
+remains. Existing runtime expression lowering is unchanged. HIR independently
+checks source/value agreement, types, ownership, and dependency cycles; MIR and
+imported-model checks reject missing, malformed, or inconsistent scalar claims.
+
+Coverage includes signed endpoints and full-width unsigned values; bool/char,
+exact float bits, signed zero and subnormals; checked conversions and skipped
+evaluation; private/public and cross-package dependencies; aliases, inherited
+lookup, and integer/enum switch labels. LLVM verifies the new constant globals
+on x86-64 and wasm32. Whole-project, separate-package, and source-free native
+execution agree. A full-suite regression exposed an unsigned-subtraction
+type-probe overflow; the verifier now uses safe probe operands and the focused
+test preserves that distinction between type validity and evaluated overflow.
+
+Format-4 tests cover exact owned-value round trips, signed mathematical decimal
+encoding, noncanonical/out-of-range re-signed metadata, non-finite/invalid-width
+float bits, enum ownership/tags, updated golden artifact digests, and rejection
+of format 3. Invalid source constants preserve completed LLVM, native, and
+interface outputs. Compiler capability and receipt requirements agree with
+Shuttle without adding metadata interpretation to it.
+
+The maximum-size fixtures also pass the new HIR verification. They run serially
+with a 120-second default test timeout for sanitizer headroom; language limits
+and host stack sizes are unchanged. Existing test infrastructure was extended
+without new launch scripts, dependencies, keywords, or production test switches.
+
+**28.3 is complete; Stage 28 remains active.** Artifact format **4** is required;
+compiler ABI **4**, runtime ABI **2**, protocol **2**, receipt schema **1**, and
+manifest schema **1** are unchanged. Rebuild older artifacts. Constant-specific
+dependency evolution, stale links, relocated serial/parallel determinism, and the
+remaining comprehensive boundary audit stay scheduled for **28.4**.
+
+## Stage 28.4 scalar constant exit audit
+
+Verified on Windows on 2026-09-02: **148/148 development and 148/148 ASan/UBSan
+CTests pass** (31 unit and 117 integration entries). The runs include all **27
+shared compiler-protocol and 20 native Shuttle tests** with each compiler.
+All **43 ordinary Rust tests**, Rust 1.85 checking, formatting, Clippy with
+warnings denied, and **six VS Code tests per compiler** pass. C++ formatting
+and whitespace checks pass in the compiler and affected submodules.
+
+The exit audit found and corrected two executable regressions:
+
+- Nested unary signs were cancelled before evaluation, allowing a signed-minimum
+  negation overflow to disappear. The innermost sign forms a literal; every
+  outer operation is now checked in source order, including literal conversions.
+  HIR re-evaluation follows the same rule. Skipped arithmetic remains unevaluated.
+- A valid float32 literal at a rounding boundary emitted decimal LLVM IR that
+  `opt` and `llc` rejected. Runtime literal and numeric-bound emission now retains
+  the resolved IEEE bits in constant bitcasts. Literal parsing, numeric typing,
+  runtime arithmetic policy, and optimization scope are unchanged.
+
+Independent verification now also checks grouped/signed literal child types,
+presence flags, and character escape spellings. Tests exercise malformed HIR
+graphs, initializer/count/spelling limits, excessive imported constants and MIR
+claims, re-signed wrong-kind/bool/character records, and the existing signed,
+float, enum-owner/tag, old-format, and integrity failures. The full declaration
+limit passes MIR verification; maximum/one-over parser/evaluator budgets and
+deep/diamond graphs continue to pass under sanitizers without larger stacks.
+
+Exact expected integer and IEEE encodings cover every scalar width across
+x86-64 and wasm32, including recurring quotients, widening, ties, signed zero,
+subnormals, and underflow. No host-double oracle supplies expected float values.
+LLVM verifies both targets; native checks agree with ordinary runtime arithmetic,
+shifts/bitwise operations, conversions, and rounding. Static fields remain data,
+without executable initializer bodies or startup/GC registration.
+
+Shared regressions prove computed/private/transitive edits rebuild affected
+consumers; a source edit with the same evaluated value still changes the artifact
+identity. Unrelated packages reuse unchanged bytes, warm builds reuse every
+package, and stale consumer links fail without replacing the executable.
+Invalid arithmetic, cycles, narrowing/private access, and duplicate integer/enum
+labels preserve completed outputs; failed `run` never executes the stale program.
+Whole-project, separate, and source-free native outputs agree after edits.
+
+Relocated one/four-job builds with reversed dependency declarations produce
+byte-identical interface artifacts within each target and native artifacts and
+executables on x86-64 across a timestamp boundary. Cycle/evaluation diagnostics
+also agree after normalizing only the fixture-root path. Existing test suites and
+launchers were extended; no keyword, dependency, test switch, or scheduler change
+was needed. Editor grammar remains applicable without modification.
+
+**Stage 28 is complete in both repositories.** User documentation and maintainer
+contracts agree. Artifact format **4**, compiler ABI **4**, runtime ABI **2**,
+protocol **2**, receipt schema **1**, and manifest schema **1** remain unchanged
+from 28.3. No later stage or deferred feature is activated.

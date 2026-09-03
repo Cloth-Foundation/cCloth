@@ -7,6 +7,7 @@
 #include "cloth/parser/syntax_facts.h"
 #include "cloth/sema/visibility.h"
 
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -899,11 +900,27 @@ std::size_t DeclarationPass::add_symbol(MemberSymbol symbol) {
     symbol.is_valid = false;
     is_valid_ = false;
   }
+  const auto index = symbols_.members().size();
+  member_names_[symbol.name].push_back(index);
+  if (symbol.kind == DeclarationKind::kConstructor)
+    constructor_indices_.push_back(index);
   return symbols_.add(std::move(symbol));
 }
 
 bool DeclarationPass::has_duplicate(const MemberSymbol& symbol) {
-  for (const MemberSymbol& previous : symbols_.members()) {
+  std::vector<std::size_t> candidates;
+  if (const auto found = member_names_.find(symbol.name);
+      found != member_names_.end())
+    candidates = found->second;
+  if (symbol.kind == DeclarationKind::kConstructor) {
+    candidates.insert(candidates.end(), constructor_indices_.begin(),
+                      constructor_indices_.end());
+    std::ranges::sort(candidates);
+    candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                     candidates.end());
+  }
+  for (const auto index : candidates) {
+    const MemberSymbol& previous = symbols_.members()[index];
     const bool constructor_pair =
         previous.kind == DeclarationKind::kConstructor &&
         symbol.kind == DeclarationKind::kConstructor;

@@ -62,12 +62,14 @@ enum class ImportedMemberKind {
   kConstructor,
 };
 
-struct ImportedLiteral {
-  LiteralKind kind;
-  std::string lexeme;
+// The member's canonical type identity supplies nominal ownership; kind and
+// zero-extended bits preserve the scalar representation without source text.
+struct ImportedScalarConstant {
+  TypeKind kind;
+  std::uint64_t bits;
 
-  friend bool operator==(const ImportedLiteral&,
-                         const ImportedLiteral&) = default;
+  friend bool operator==(const ImportedScalarConstant&,
+                         const ImportedScalarConstant&) = default;
 };
 
 struct ImportedMember {
@@ -86,7 +88,7 @@ struct ImportedMember {
   std::optional<std::uint64_t> virtual_slot;
   std::optional<std::string> overridden_identity;
   std::optional<std::string> base_constructor_identity;
-  std::optional<ImportedLiteral> static_value;
+  std::optional<ImportedScalarConstant> static_value;
 
   friend bool operator==(const ImportedMember&,
                          const ImportedMember&) = default;

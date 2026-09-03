@@ -20,7 +20,7 @@
 
 namespace cloth {
 
-inline constexpr std::uint32_t kPackageArtifactFormatVersion = 3;
+inline constexpr std::uint32_t kPackageArtifactFormatVersion = 4;
 inline constexpr std::uint32_t kRuntimeAbiVersion = 2;
 inline constexpr std::uint64_t kMaximumArtifactMetadataSize =
     64ULL * 1024 * 1024;

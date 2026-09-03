@@ -8,6 +8,7 @@
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/mir/mir.h"
 #include "cloth/sema/numeric_types.h"
+#include "cloth/sema/scalar_constants.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
@@ -34,6 +35,25 @@ class MirVerifier {
       : mir_(mir), semantics_(semantics), diagnostics_(diagnostics) {}
 
   bool run() {
+    std::map<std::string, std::size_t> constant_counts;
+    for (const auto& symbol : semantics_.symbols()) {
+      if (symbol.kind == SymbolKind::kField && symbol.is_static) {
+        if (!symbol.is_final || !symbol.static_constant ||
+            !is_valid_scalar_constant(*symbol.static_constant, symbol.type,
+                                      semantics_)) {
+          report(symbol.range, "static field has no valid scalar constant");
+        }
+        if (symbol.file && symbol.file->value < semantics_.files().size() &&
+            ++constant_counts[semantics_.file(*symbol.file)
+                                  .identity.package.name] >
+                kMaxStaticConstants) {
+          report(symbol.range, "package exceeds 65536 static constants");
+          return false;
+        }
+      } else if (symbol.static_constant) {
+        report(symbol.range, "non-static field carries a scalar constant");
+      }
+    }
     if (mir_.files.size() != semantics_.files().size()) {
       report(fallback_range(), "file count does not match the semantic model");
     }
@@ -94,8 +114,29 @@ class MirVerifier {
     verify_symbol(file.symbol, range);
     current_parameters_.clear();
     std::set<std::size_t> initialized_fields;
-    for (const MirField& field : file.fields) {
+    for (std::size_t index = 0; index < file.fields.size(); ++index) {
+      const auto& field = file.fields[index];
       verify_symbol(field.symbol, range);
+      if (file.file.value < semantics_.files().size()) {
+        const auto& fields = semantics_.file(file.file).fields;
+        if (index >= fields.size() || fields[index] != field.symbol)
+          report(range, "field identity/order does not match semantics");
+      }
+      if (field.symbol.value < semantics_.symbols().size()) {
+        const auto& symbol = semantics_.symbol(field.symbol);
+        if (symbol.kind != SymbolKind::kField || symbol.file != file.file)
+          report(range, "field ownership does not match semantics");
+        if (symbol.is_static) {
+          if (field.initializer || !field.static_constant ||
+              !is_valid_scalar_constant(*field.static_constant, symbol.type,
+                                        semantics_) ||
+              field.static_constant != symbol.static_constant) {
+            report(range, "static field constant does not match semantics");
+          }
+        } else if (field.static_constant) {
+          report(range, "instance field carries a static constant");
+        }
+      }
       if (file.is_imported_declaration && field.initializer) {
         report(range, "imported field declaration contains an initializer");
       }

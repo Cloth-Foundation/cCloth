@@ -33,7 +33,7 @@ Stage 26 is complete for value structs. The
 value receivers, and 26.2 implementation were approved on 2026-09-02.
 The frontend and [26.3 aggregate implementation](docs/proposals/stage_26_aggregate_abi.md)
 are complete, including native execution and source-free packages. Artifact
-format 3, compiler ABI 4, and runtime ABI 2 require rebuilding older packages.
+format 3, compiler ABI 4, and runtime ABI 2 were introduced at that checkpoint.
 The [26.4 exit audit](docs/testing.md#stage-264-struct-exit-audit) passed on
 2026-09-02. Stage 26.5.1 is complete for the approved explicit interface-override
 contract; its exit audit is recorded in `docs/testing.md`. Unrelated ideas
@@ -42,7 +42,14 @@ remain in the backlog.
 Stage 27 is complete. Its [switch contract](docs/proposals/stage_27_switch.md)
 and implementation through 27.4 were approved on 2026-09-02. Frontend, native
 lowering, and the coordinated [exit audit](docs/testing.md#stage-274-switch-exit-audit)
-are complete. No later stage is activated.
+are complete.
+
+Stage 28 is complete. The user approved the
+[28.1 scalar-constant contract](docs/proposals/stage_28_scalar_constants.md) on
+2026-09-02, including its concrete evaluation rules and format-4 transition.
+The separately authorized 28.2 evaluation, 28.3 integration, and
+[28.4 exit audit](docs/testing.md#stage-284-scalar-constant-exit-audit) are
+complete. No later stage is activated; the remaining backlog is unscheduled.
 
 ## Scheduled work
 
@@ -293,6 +300,79 @@ class override validation. Existing ABI and artifact versions are unchanged.
   Enum/constant evolution, stale-consumer rejection, preserved outputs, and
   relocated serial/parallel equivalence pass. No compatibility version changed.
 
+### Stage 28: Compile-time scalar constants
+
+- [x] **28.1 — Contract.** Approve the
+  [scalar-constant proposal](docs/proposals/stage_28_scalar_constants.md),
+  including its artifact-format review, before activating implementation.
+
+  - [x] Draft supported scalars/operators/conversions, checked constant-context
+    arithmetic, finite IEEE evaluation, typing, short-circuiting, forward
+    references/cycles, visibility, canonical values, and deterministic limits.
+  - [x] Review downstream boundaries: format 3 cannot encode negative signed
+    constants. Propose format 4 without changing physical ABI/runtime/protocol
+    versions; record migration, source-free tests, and coordinated Shuttle work.
+  - [x] Schedule the stage in both repositories while preserving the implemented
+    user reference and current compiler/tool versions.
+  - [x] Record user approval of the concrete source/evaluation/resource and
+    artifact-format contract on 2026-09-02.
+
+- [x] **28.2 — Typed evaluation.** Implement eligibility and ordinary typing,
+  a shared canonical scalar evaluator, constant-reference resolution, forward
+  declarations, deterministic cycle/failure handling, and resource limits.
+
+  - [x] Obtain explicit 28.2 implementation go-ahead before activating the stage
+    (received 2026-09-02).
+  - [x] Retain unary-literal initializer values, including
+    `static final int8 Minimum = int8(-128);`, for frontend checking and named
+    switch labels. Output consumers remain explicitly gated until 28.3.
+  - [x] Test checked integer arithmetic, division/remainder/shifts, literal versus
+    typed conversions, finite IEEE rounding/underflow/signed-zero vectors,
+    short-circuit eligibility, privacy, source order, cycles, and bounded graphs.
+  - [x] Keep new-form emission explicitly gated until 28.3; never silently
+    discard an initializer or synthesize a fallback value.
+
+  Completed 2026-09-02. Per-package parser budgets and iterative preflight stop
+  oversized/ineligible trees before recursive typing; canonical memoized graph
+  evaluation handles the full declaration limit. New forms pass direct `--check`
+  and remain rejected by emission/package paths without replacing completed
+  outputs. See the [checkpoint verification](docs/testing.md#stage-282-typed-constant-checkpoint).
+
+- [x] **28.3 — Integration.** Make verified scalar values authoritative in
+  HIR/MIR, LLVM static globals, imported declarations, and existing switch-label
+  references. Test malformed values and ensure no startup code or GC storage.
+
+  - [x] Implement the approved format-4 integer encoding with full signed range;
+    coordinate readers/writers, capabilities/receipts, Shuttle validation,
+    golden fixtures, diagnostics, and schema docs. Reject prior formats.
+  - [x] Verify private/aliased/cross-package constant chains and integer/enum
+    labels without dependency sources. Preserve Stage 27 label eligibility.
+  - [x] Remove the temporary gate only after whole/separate/source-free
+    checking and native output agree for every supported scalar form.
+
+  Completed 2026-09-02. Static MIR contains typed data rather than executable
+  initializers; HIR independently checks claims and the dependency graph.
+  Format-4 readers/writers preserve exact scalar bits, and Shuttle requires
+  format 4 without interpreting metadata. Both 148-test compiler configurations,
+  shared protocol/native suites, Rust, and editor gates pass. See the
+  [checkpoint record](docs/testing.md#stage-283-constant-integration-checkpoint).
+
+- [x] **28.4 — Exit audit.** Complete boundary, malformed-artifact/model,
+  dependency-evolution, stale-link, failed-output, and relocated serial/parallel
+  tests. Verify exact scalar bits on x86-64/wasm32 and native behavior on x86-64.
+  Pass development/sanitizer, Rust, shared protocol/native, and editor gates;
+  update `documentation/`, owning maintainer contracts, and both stage ledgers.
+
+  Completed 2026-09-02 after the separate go-ahead. Fixed nested-sign overflow
+  cancellation and invalid LLVM decimal emission for valid float32 literals;
+  hardened retained HIR literal/group/unary checks. Added width/resource/model,
+  re-signed artifact, cross-target exact-bit, computed dependency evolution,
+  source-free failure, stale-link, and relocated serial/parallel regressions.
+  Both 148-test compiler configurations, all 27 shared protocol and 20 native
+  tests per compiler, 43 ordinary Rust tests, Rust quality/MSRV checks, and six
+  editor tests per compiler pass. See the
+  [exit record](docs/testing.md#stage-284-scalar-constant-exit-audit).
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -342,6 +422,14 @@ active stage without first updating `ROADMAP.md`.
   representability checks, or overload-resolution rules.
 - Add floating-point bit representation and byte-order operations after the
   integer-only Stage 21 boundary is proven.
+- Define runtime integer overflow/division/remainder failure policy separately
+  from Stage 28's required-constant rules. Current arithmetic lowering uses
+  unguarded LLVM operations; constant diagnostics must not be mistaken for
+  runtime checks or permission to change runtime semantics.
+- Align wider Unicode character literals/escapes and artifact constants across
+  lexer, scalar decoding, and emission. Current literal/artifact handling is
+  byte-oriented despite `char` having 32-bit storage; Stage 28 preserves that
+  boundary rather than implicitly expanding the character language.
 - Design recoverable exceptions, including syntax, control flow, unwinding,
   runtime representation, and a stable exception ABI.
 
@@ -350,7 +438,9 @@ active stage without first updating `ROADMAP.md`.
 - Add a general constant-folding optimizer stage after the language semantics
   it consumes are stable. Folding must preserve evaluation order, overflow and
   trap behavior, floating-point rounding, diagnostics, and target-independent
-  results; it is not required for language correctness.
+  results; it is not required for language correctness. Stage 28's required
+  scalar evaluation does not schedule this optimizer or impose its stricter
+  constant-context failures on ordinary runtime expressions.
 - Add ability to make full qualified name calls.
 
 ### Nullability
@@ -384,13 +474,6 @@ active stage without first updating `ROADMAP.md`.
   preserving the stable default representation.
 
 ### Static storage and initialization
-
-- Align unary-literal static initializers across frontend, retained constants,
-  artifact export, and native emission. For example, `int8(-1)` in a static
-  initializer is accepted by existing frontend conversion checking but is not
-  a retained scalar literal. Stage 27 labels deliberately reject such fields;
-  use a negative literal directly in a signed switch label. This does not
-  authorize general constant folding or broaden Stage 27.
 
 - Define deterministic static initialization order and collector root
   registration before dynamic initializers, mutable static fields, or

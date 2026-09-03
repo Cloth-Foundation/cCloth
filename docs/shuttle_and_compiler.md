@@ -101,8 +101,8 @@ Direct `--check` performs parsing, semantic/HIR verification, and control-flow
 checking, then prints typed HIR. It emits no artifact and does not change
 Shuttle's versioned check/build operations. This frontend-only path supports
 [struct declarations](structs.md) without native emission. Struct native builds
-and source-free dependencies are supported by artifact format 3. Compiler ABI 4
-and runtime ABI 2 are compiler-owned; Shuttle requires format 3 in capabilities
+and source-free dependencies are supported by artifact format 4. Compiler ABI 4
+and runtime ABI 2 are compiler-owned; Shuttle requires format 4 in capabilities
 and receipts while process protocol 2 and manifest schema 1 remain unchanged.
 
 ## Versioning and failures

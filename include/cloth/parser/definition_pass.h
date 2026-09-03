@@ -8,6 +8,7 @@
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/lexer/token.h"
+#include "cloth/parser/constant_parse_budget.h"
 #include "cloth/parser/declaration_pass.h"
 #include "cloth/sema/file_class_symbols.h"
 #include "cloth/source/source_file.h"
@@ -29,7 +30,8 @@ class DefinitionPass {
                  bool has_explicit_class_declaration, bool is_abstract,
                  bool is_sealed, FileTypeKind file_type_kind,
                  std::span<const TypeSyntax> interfaces,
-                 DiagnosticEngine& diagnostics);
+                 DiagnosticEngine& diagnostics,
+                 ConstantParseBudget* constant_budget = nullptr);
 
   [[nodiscard]] FileClassDecl run();
 
@@ -76,6 +78,8 @@ class DefinitionPass {
   FileClassDecl file_class_;
   std::size_t current_{0};
   std::size_t limit_{0};
+  ConstantParseBudget local_constant_budget_;
+  ConstantParseBudget* constant_budget_;
 };
 
 }  // namespace cloth

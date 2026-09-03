@@ -11,6 +11,17 @@ foreach(target IN ITEMS x86_64 wasm32)
     add_test(NAME cloth_cli_check_switch_${target}
         COMMAND clothc --check --target=${target}
             ${CLOTH_INTEGRATION_PROGRAMS}/Switch.co)
+    set(constant_ir "${PROJECT_BINARY_DIR}/cloth-constants-${target}.ll")
+    add_test(NAME cloth_cli_constants_llvm_${target}
+        COMMAND clothc --target=${target} --emit-llvm=${constant_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/Constants.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_constants_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                -passes=verify -disable-output ${constant_ir})
+        set_tests_properties(cloth_constants_verify_${target} PROPERTIES
+            DEPENDS cloth_cli_constants_llvm_${target})
+    endif()
     set(switch_ir "${PROJECT_BINARY_DIR}/cloth-switch-${target}.ll")
     add_test(NAME cloth_cli_switch_llvm_${target}
         COMMAND clothc --target=${target} --emit-llvm=${switch_ir}
@@ -108,6 +119,12 @@ if(CLOTH_LLVM_OPT_EXECUTABLE)
 endif()
 
 if(CLOTH_LLVM_LLC_EXECUTABLE)
+    cloth_add_native_output_test(constants
+        OUTPUT "cloth constants"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/Constants.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/constants.txt
+        EXACT
+    )
     cloth_add_native_output_test(switch
         OUTPUT "cloth switch"
         SOURCE ${CLOTH_INTEGRATION_PROJECTS}/switch/src/Main.co

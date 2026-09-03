@@ -1,0 +1,14 @@
+42
+-128
+18446744073709551615
+false
+true
+true
+true
+true
+true
+minimum
+true
+true
+true
+true

@@ -8,6 +8,7 @@
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/lexer/token.h"
+#include "cloth/parser/constant_parse_budget.h"
 #include "cloth/sema/file_class_symbols.h"
 #include "cloth/source/source_file.h"
 
@@ -24,7 +25,8 @@ struct ParseResult {
 class Parser {
  public:
   Parser(const SourceFile& source, std::span<const Token> tokens,
-         DiagnosticEngine& diagnostics) noexcept;
+         DiagnosticEngine& diagnostics,
+         ConstantParseBudget* constant_budget = nullptr) noexcept;
 
   [[nodiscard]] ParseResult parse();
 
@@ -32,6 +34,7 @@ class Parser {
   const SourceFile& source_;
   std::span<const Token> tokens_;
   DiagnosticEngine& diagnostics_;
+  ConstantParseBudget* constant_budget_;
 };
 
 }  // namespace cloth

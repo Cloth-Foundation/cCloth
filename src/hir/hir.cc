@@ -111,7 +111,8 @@ class Lowerer {
           semantic_file.fields[index],
           field.initializer
               ? std::optional<HirExpressionId>{expression(*field.initializer)}
-              : std::nullopt});
+              : std::nullopt,
+          semantics_.symbol(semantic_file.fields[index]).static_constant});
     }
     file.functions.reserve(syntax.functions.size());
     for (std::size_t index = 0; index < syntax.functions.size(); ++index) {

@@ -13,8 +13,12 @@
 namespace cloth {
 
 Parser::Parser(const SourceFile& source, std::span<const Token> tokens,
-               DiagnosticEngine& diagnostics) noexcept
-    : source_(source), tokens_(tokens), diagnostics_(diagnostics) {}
+               DiagnosticEngine& diagnostics,
+               ConstantParseBudget* constant_budget) noexcept
+    : source_(source),
+      tokens_(tokens),
+      diagnostics_(diagnostics),
+      constant_budget_(constant_budget) {}
 
 ParseResult Parser::parse() {
   if (tokens_.empty() || tokens_.back().kind != TokenKind::kEof) {
@@ -54,7 +58,8 @@ ParseResult Parser::parse() {
                      declarations.is_sealed,
                      declarations.file_type_kind,
                      declarations.interfaces,
-                     diagnostics_}
+                     diagnostics_,
+                     constant_budget_}
           .run();
   file_class.enum_cases = std::move(declarations.enum_cases);
   file_class.is_valid = file_class.is_valid && declarations.is_valid;

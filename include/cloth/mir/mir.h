@@ -288,6 +288,8 @@ struct MirBody {
 struct MirField {
   SymbolId symbol;
   std::optional<MirBody> initializer;
+  // Static fields carry data only; initializer bodies belong to instances.
+  std::optional<ScalarConstant> static_constant{};
 };
 
 struct MirCallable {

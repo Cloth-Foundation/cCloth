@@ -2648,9 +2648,10 @@ void invalid_static_members(TestContext& test) {
 
   test.expect(compilation.has_diagnostic("must also be final"),
               "mutable static field was accepted");
-  test.expect(compilation.has_diagnostic(
-                  "static field initializer must be a scalar literal"),
-              "reference-valued static field was accepted");
+  test.expect(
+      compilation.has_diagnostic(
+          "static field initializer must be a scalar constant expression"),
+      "reference-valued static field was accepted");
   test.expect(compilation.has_diagnostic("requires an initializer"),
               "uninitialized static field was accepted");
   test.expect(compilation.has_diagnostic(

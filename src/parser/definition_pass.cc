@@ -6,6 +6,7 @@
 
 #include "cloth/parser/expression_parser.h"
 #include "cloth/parser/syntax_facts.h"
+#include "cloth/sema/scalar_constants.h"
 
 #include <string>
 #include <utility>
@@ -26,7 +27,7 @@ DefinitionPass::DefinitionPass(
     const std::optional<TypeSyntax>& base_class,
     bool has_explicit_class_declaration, bool is_abstract, bool is_sealed,
     FileTypeKind file_type_kind, std::span<const TypeSyntax> interfaces,
-    DiagnosticEngine& diagnostics)
+    DiagnosticEngine& diagnostics, ConstantParseBudget* constant_budget)
     : tokens_(tokens),
       symbols_(symbols),
       imports_(imports),
@@ -44,7 +45,9 @@ DefinitionPass::DefinitionPass(
                   {},
                   {},
                   {},
-                  true} {
+                  true},
+      constant_budget_(constant_budget ? constant_budget
+                                       : &local_constant_budget_) {
   file_class_.base_class = base_class;
   file_class_.has_explicit_class_declaration = has_explicit_class_declaration;
   file_class_.is_abstract = is_abstract;
@@ -176,11 +179,31 @@ void DefinitionPass::build_field(const MemberOutline& outline,
                                  const MemberSymbol& symbol) {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
   std::optional<ExpressionId> initializer;
-  if (outline.initializer_tokens) {
+  const bool declaration_limit =
+      symbol.is_static &&
+      ++constant_budget_->declarations > kMaxStaticConstants;
+  if (declaration_limit &&
+      constant_budget_->declarations == kMaxStaticConstants + 1)
+    diagnostics_.error(outline.range, "package exceeds 65536 static constants");
+  const bool node_limit =
+      symbol.is_static &&
+      constant_budget_->expression_nodes >= kMaxPackageConstantNodes;
+  if (!declaration_limit && node_limit && outline.initializer_tokens)
+    diagnostics_.error(outline.range,
+                       "package exceeds 1048576 constant expression nodes");
+  if (!declaration_limit && !node_limit && outline.initializer_tokens) {
     current_ = outline.initializer_tokens->begin;
     limit_ = outline.initializer_tokens->end;
     if (current_ < limit_) {
-      initializer = parse_expression();
+      initializer =
+          ExpressionParser{tokens_,
+                           current_,
+                           limit_,
+                           file_class_.storage,
+                           diagnostics_,
+                           symbol.is_static,
+                           symbol.is_static ? constant_budget_ : nullptr}
+              .parse_expression();
       if (!at_limit()) {
         diagnostics_.error(current().range,
                            "unexpected token in field initializer");
@@ -190,8 +213,8 @@ void DefinitionPass::build_field(const MemberOutline& outline,
 
   const TypeSyntax type = symbol.declared_type.value_or(
       TypeSyntax{"<invalid>", false, point_range(outline.range.begin)});
-  const bool is_valid =
-      symbol.is_valid && diagnostics_.diagnostics().size() == diagnostic_count;
+  const bool is_valid = symbol.is_valid && !declaration_limit && !node_limit &&
+                        diagnostics_.diagnostics().size() == diagnostic_count;
   const std::size_t index = file_class_.fields.size();
   file_class_.fields.push_back(FieldDecl{type, symbol.name, symbol.visibility,
                                          initializer, outline.range, is_valid,

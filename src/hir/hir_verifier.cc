@@ -8,12 +8,14 @@
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/hir/hir.h"
 #include "cloth/sema/numeric_types.h"
+#include "cloth/sema/scalar_constants.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
 
 #include <algorithm>
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -31,10 +33,12 @@ class HirVerifier {
       : hir_(hir), semantics_(semantics), diagnostics_(diagnostics) {}
 
   bool run() {
+    if (!verify_constant_limits()) return false;
     verify_expressions();
     verify_statements();
     verify_blocks();
     verify_files();
+    if (is_valid_) verify_constants();
     if (is_valid_) verify_transfer_contexts();
     if (is_valid_ &&
         std::ranges::any_of(semantics_.types(), [](const SemanticType& type) {
@@ -46,6 +50,413 @@ class HirVerifier {
   }
 
  private:
+  bool verify_constant_limits() {
+    std::map<std::string, std::pair<std::size_t, std::size_t>> budgets;
+    for (const auto& file : hir_.files) {
+      if (file.file.value >= semantics_.files().size()) continue;
+      auto& budget = budgets[semantics_.file(file.file).identity.package.name];
+      for (const auto& field : file.fields) {
+        if (field.symbol.value >= semantics_.symbols().size() ||
+            !semantics_.symbol(field.symbol).is_static)
+          continue;
+        if (++budget.first > kMaxStaticConstants) {
+          report(symbol_range(field.symbol),
+                 "package exceeds 65536 static constants");
+          return false;
+        }
+        if (!field.initializer) continue;
+        std::vector<std::pair<HirExpressionId, std::size_t>> work{
+            {*field.initializer, 1}};
+        std::size_t count = 0;
+        // Bound retained initializer trees before recursive verification.
+        // Source budgets are additionally enforced before HIR lowering.
+        while (!work.empty()) {
+          const auto [id, depth] = work.back();
+          work.pop_back();
+          if (id.value >= hir_.storage.expressions().size()) {
+            report(symbol_range(field.symbol),
+                   "constant references an unknown expression");
+            return false;
+          }
+          const auto& expression = hir_.storage.expression(id);
+          if (++count > kMaxConstantNodes ||
+              ++budget.second > kMaxPackageConstantNodes ||
+              depth > kMaxConstantDepth) {
+            report(expression.range,
+                   "constant expression exceeds node or nesting limits");
+            return false;
+          }
+          const auto push = [&](HirExpressionId child) {
+            work.emplace_back(child, depth + 1);
+          };
+          const auto& data = expression.data;
+          if (const auto* literal = std::get_if<HirLiteralExpression>(&data)) {
+            if ((literal->kind == LiteralKind::kInteger ||
+                 literal->kind == LiteralKind::kFloat) &&
+                literal->lexeme.size() > kMaxConstantLiteralBytes) {
+              report(expression.range,
+                     "constant numeric literal exceeds 4096 bytes");
+              return false;
+            }
+          } else if (const auto* unary =
+                         std::get_if<HirUnaryExpression>(&data)) {
+            push(unary->operand);
+          } else if (const auto* binary =
+                         std::get_if<HirBinaryExpression>(&data)) {
+            push(binary->right);
+            push(binary->left);
+          } else if (const auto* conversion =
+                         std::get_if<HirNumericConversionExpression>(&data)) {
+            push(conversion->value);
+          } else if (const auto* group =
+                         std::get_if<HirGroupedExpression>(&data)) {
+            push(group->expression);
+          } else if (const auto* member =
+                         std::get_if<HirMemberExpression>(&data)) {
+            push(member->object);
+          } else if (!std::holds_alternative<HirSymbolExpression>(data) &&
+                     !std::holds_alternative<HirTypeExpression>(data)) {
+            report(expression.range, "ineligible static constant expression");
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  // Evaluate each bounded expression using dependency claims, then compare the
+  // result to both HIR and semantics. An independent graph walk rejects cycles,
+  // including references in short-circuited branches.
+  void verify_constants() {
+    std::map<std::size_t, std::vector<std::size_t>> edges;
+    std::map<std::string, std::size_t> counts;
+    for (const auto& symbol : semantics_.symbols()) {
+      if (symbol.kind == SymbolKind::kField && symbol.is_static) {
+        if (symbol.file && symbol.file->value < semantics_.files().size() &&
+            ++counts[semantics_.file(*symbol.file).identity.package.name] >
+                kMaxStaticConstants) {
+          report(symbol.range, "package exceeds 65536 static constants");
+          return;
+        }
+        if (!symbol.is_final || !symbol.static_constant ||
+            !is_valid_scalar_constant(*symbol.static_constant, symbol.type,
+                                      semantics_))
+          report(symbol.range, "static field has no valid scalar constant");
+      } else if (symbol.static_constant) {
+        report(symbol.range, "non-static field carries a scalar constant");
+      }
+    }
+    for (const auto& file : hir_.files) {
+      for (const auto& field : file.fields) {
+        const auto& symbol = semantics_.symbol(field.symbol);
+        if (symbol.kind != SymbolKind::kField || symbol.file != file.file)
+          report(symbol.range, "field ownership does not match semantics");
+        if (!symbol.is_static) {
+          if (field.static_constant)
+            report(symbol.range, "instance field carries a static constant");
+          continue;
+        }
+        if (!field.initializer || !field.static_constant ||
+            !is_valid_scalar_constant(*field.static_constant, symbol.type,
+                                      semantics_) ||
+            field.static_constant != symbol.static_constant) {
+          report(symbol.range,
+                 "static field constant does not match semantics");
+          continue;
+        }
+        auto& dependencies = edges[field.symbol.value];
+        std::vector<HirExpressionId> work{*field.initializer};
+        while (!work.empty()) {
+          const auto id = work.back();
+          work.pop_back();
+          const auto& expression = hir_.storage.expression(id);
+          const auto& data = expression.data;
+          std::optional<SymbolId> reference;
+          if (const auto literal = constant_literal(id)) {
+            if (!scalar_literal(literal->literal->kind,
+                                literal->literal->lexeme,
+                                semantics_.type(expression.type).kind,
+                                !literal->signs.empty() &&
+                                    literal->signs.back() == TokenKind::kMinus))
+              report(expression.range,
+                     "constant literal does not fit its type");
+            continue;
+          }
+          if (const auto* name = std::get_if<HirSymbolExpression>(&data)) {
+            reference = name->symbol;
+          } else if (const auto* member =
+                         std::get_if<HirMemberExpression>(&data)) {
+            reference = member->member;
+            const auto& object = ungroup(member->object);
+            const auto* qualifier =
+                std::get_if<HirTypeExpression>(&object.data);
+            auto owner = qualifier ? semantics_.type(qualifier->type).file
+                                   : std::nullopt;
+            bool matches = false;
+            for (std::size_t depth = 0;
+                 reference && owner &&
+                 owner->value < semantics_.files().size() &&
+                 depth < semantics_.files().size();
+                 ++depth) {
+              if (owner == semantics_.symbol(*reference).file) {
+                matches = true;
+                break;
+              }
+              owner = semantics_.file(*owner).base_file;
+            }
+            if (!matches)
+              report(expression.range,
+                     "constant member has an invalid type qualifier");
+          } else if (const auto* group =
+                         std::get_if<HirGroupedExpression>(&data)) {
+            work.push_back(group->expression);
+            if (expression.type !=
+                hir_.storage.expression(group->expression).type)
+              report(expression.range,
+                     "constant group has an inconsistent type");
+          } else if (const auto* unary =
+                         std::get_if<HirUnaryExpression>(&data)) {
+            work.push_back(unary->operand);
+            if (expression.type !=
+                    hir_.storage.expression(unary->operand).type ||
+                !unary_scalar(unary->operation,
+                              semantics_.type(expression.type).kind, 0))
+              report(expression.range,
+                     "constant unary operation has inconsistent types");
+            if (unary->operand_is_presence_test)
+              report(expression.range,
+                     "constant unary operation has a presence test");
+          } else if (const auto* binary =
+                         std::get_if<HirBinaryExpression>(&data)) {
+            work.push_back(binary->left);
+            work.push_back(binary->right);
+            const auto left = hir_.storage.expression(binary->left).type;
+            const auto right = hir_.storage.expression(binary->right).type;
+            const auto a = semantics_.type(left).kind;
+            const auto b = semantics_.type(right).kind;
+            const bool shift = binary->operation == TokenKind::kShiftLeft ||
+                               binary->operation == TokenKind::kShiftRight;
+            const auto common = !shift && can_widen_numeric(a, b) ? b : a;
+            bool boolean = false;
+            switch (binary->operation) {
+              case TokenKind::kEqualEqual:
+              case TokenKind::kBangEqual:
+              case TokenKind::kLess:
+              case TokenKind::kLessEqual:
+              case TokenKind::kGreater:
+              case TokenKind::kGreaterEqual:
+              case TokenKind::kAmpersandAmpersand:
+              case TokenKind::kPipePipe:
+                boolean = true;
+                break;
+              default:
+                break;
+            }
+            const auto one = common == TypeKind::kFloat32 ? 0x3f800000ULL
+                             : common == TypeKind::kFloat64
+                                 ? 0x3ff0000000000000ULL
+                                 : 1ULL;
+            if ((!shift && left != right && !can_widen_numeric(a, b) &&
+                 !can_widen_numeric(b, a)) ||
+                semantics_.type(expression.type).kind !=
+                    (boolean ? TypeKind::kBool : common) ||
+                !binary_scalar(binary->operation, common, one, one,
+                               shift ? b : common))
+              report(expression.range,
+                     "constant binary operation has inconsistent types");
+            if (binary->left_is_presence_test || binary->right_is_presence_test)
+              report(expression.range,
+                     "constant binary operation has a presence test");
+          } else if (const auto* conversion =
+                         std::get_if<HirNumericConversionExpression>(&data)) {
+            if (const auto literal = constant_literal(conversion->value)) {
+              if (!scalar_literal(
+                      literal->literal->kind, literal->literal->lexeme,
+                      semantics_.type(expression.type).kind,
+                      !literal->signs.empty() &&
+                          literal->signs.back() == TokenKind::kMinus))
+                report(expression.range,
+                       "constant literal conversion is out of range");
+            } else {
+              work.push_back(conversion->value);
+            }
+          } else if (const auto* literal =
+                         std::get_if<HirLiteralExpression>(&data)) {
+            if (literal->kind != LiteralKind::kEnum &&
+                !scalar_literal(literal->kind, literal->lexeme,
+                                semantics_.type(expression.type).kind))
+              report(expression.range,
+                     "constant literal has an invalid kind or value");
+          } else {
+            report(expression.range, "ineligible static constant expression");
+          }
+          if (!is_scalar_constant_type(semantics_.type(expression.type).kind))
+            report(expression.range,
+                   "constant expression has a non-scalar type");
+          if (reference) {
+            const auto& target = semantics_.symbol(*reference);
+            if (target.kind != SymbolKind::kField || !target.is_static ||
+                !target.is_final || target.type != expression.type)
+              report(expression.range,
+                     "constant reference has an invalid binding");
+            dependencies.push_back(reference->value);
+          }
+        }
+      }
+    }
+    if (!is_valid_) return;
+    std::map<std::size_t, unsigned> state;
+    for (const auto& [root, unused] : edges) {
+      if (state[root] == 2) continue;
+      std::vector<std::pair<std::size_t, std::size_t>> stack{{root, 0}};
+      state[root] = 1;
+      while (!stack.empty()) {
+        auto& [node, next] = stack.back();
+        if (next < edges[node].size()) {
+          const auto dependency = edges[node][next++];
+          if (state[dependency] == 1) {
+            report(semantics_.symbol(SymbolId{node}).range,
+                   "cyclic HIR static constant dependency");
+            return;
+          }
+          if (state[dependency] == 0) {
+            state[dependency] = 1;
+            stack.emplace_back(dependency, 0);
+          }
+        } else {
+          state[node] = 2;
+          stack.pop_back();
+        }
+      }
+    }
+    for (const auto& file : hir_.files) {
+      for (const auto& field : file.fields) {
+        if (!field.static_constant) continue;
+        const auto value = constant_expression(*field.initializer);
+        const auto type = field.static_constant->type;
+        const auto bits =
+            value
+                ? convert_scalar(value->bits, semantics_.type(value->type).kind,
+                                 semantics_.type(type).kind)
+                : ConstantBits{
+                      std::unexpected(ConstantError::kInvalidOperation)};
+        if (!value ||
+            (value->type != type &&
+             !can_widen_numeric(semantics_.type(value->type).kind,
+                                semantics_.type(type).kind)) ||
+            !bits || *bits != field.static_constant->bits)
+          report(symbol_range(field.symbol),
+                 "static constant claim disagrees with its initializer");
+      }
+    }
+  }
+
+  struct SignedLiteral {
+    const HirLiteralExpression* literal;
+    std::vector<TokenKind> signs;
+  };
+
+  std::optional<SignedLiteral> constant_literal(HirExpressionId id) const {
+    std::vector<TokenKind> signs;
+    for (;;) {
+      const auto& expression = hir_.storage.expression(id);
+      const auto& data = expression.data;
+      if (const auto* group = std::get_if<HirGroupedExpression>(&data)) {
+        if (expression.type != hir_.storage.expression(group->expression).type)
+          return std::nullopt;
+        id = group->expression;
+      } else if (const auto* unary = std::get_if<HirUnaryExpression>(&data)) {
+        if (unary->operand_is_presence_test ||
+            expression.type != hir_.storage.expression(unary->operand).type)
+          return std::nullopt;
+        if (unary->operation != TokenKind::kPlus &&
+            unary->operation != TokenKind::kMinus)
+          return std::nullopt;
+        signs.push_back(unary->operation);
+        id = unary->operand;
+      } else if (const auto* literal = std::get_if<HirLiteralExpression>(&data);
+                 literal && (literal->kind == LiteralKind::kInteger ||
+                             literal->kind == LiteralKind::kFloat)) {
+        return SignedLiteral{literal, std::move(signs)};
+      } else {
+        return std::nullopt;
+      }
+    }
+  }
+
+  std::optional<ScalarConstant> constant_expression(HirExpressionId id) const {
+    const auto& expression = hir_.storage.expression(id);
+    const auto kind = semantics_.type(expression.type).kind;
+    const auto result =
+        [&](ConstantBits bits) -> std::optional<ScalarConstant> {
+      if (!bits) return std::nullopt;
+      return ScalarConstant{expression.type, *bits};
+    };
+    if (const auto literal = constant_literal(id))
+      return result(scalar_signed_literal(literal->literal->kind,
+                                          literal->literal->lexeme, kind,
+                                          literal->signs));
+    const auto& data = expression.data;
+    if (const auto* literal = std::get_if<HirLiteralExpression>(&data)) {
+      if (literal->kind == LiteralKind::kEnum) {
+        const auto tag =
+            enum_constant_tag(literal->lexeme, expression.type, semantics_);
+        return tag ? result(*tag) : std::nullopt;
+      }
+      return result(scalar_literal(literal->kind, literal->lexeme, kind));
+    }
+    if (const auto* group = std::get_if<HirGroupedExpression>(&data))
+      return constant_expression(group->expression);
+    if (const auto* name = std::get_if<HirSymbolExpression>(&data))
+      return semantics_.symbol(name->symbol).static_constant;
+    if (const auto* member = std::get_if<HirMemberExpression>(&data))
+      return member->member ? semantics_.symbol(*member->member).static_constant
+                            : std::nullopt;
+    if (const auto* conversion =
+            std::get_if<HirNumericConversionExpression>(&data)) {
+      if (const auto literal = constant_literal(conversion->value))
+        return result(scalar_signed_literal(literal->literal->kind,
+                                            literal->literal->lexeme, kind,
+                                            literal->signs));
+      const auto operand = constant_expression(conversion->value);
+      return operand ? result(convert_scalar(
+                           operand->bits, semantics_.type(operand->type).kind,
+                           kind))
+                     : std::nullopt;
+    }
+    if (const auto* unary = std::get_if<HirUnaryExpression>(&data)) {
+      const auto operand = constant_expression(unary->operand);
+      if (!operand || operand->type != expression.type) return std::nullopt;
+      return result(unary_scalar(unary->operation, kind, operand->bits));
+    }
+    const auto* binary = std::get_if<HirBinaryExpression>(&data);
+    if (!binary) return std::nullopt;
+    const auto left = constant_expression(binary->left);
+    if (!left) return std::nullopt;
+    if ((binary->operation == TokenKind::kAmpersandAmpersand && !left->bits) ||
+        (binary->operation == TokenKind::kPipePipe && left->bits))
+      return kind == TypeKind::kBool ? result(left->bits != 0) : std::nullopt;
+    const auto right = constant_expression(binary->right);
+    if (!right) return std::nullopt;
+    const auto a = semantics_.type(left->type).kind;
+    const auto b = semantics_.type(right->type).kind;
+    if (binary->operation == TokenKind::kShiftLeft ||
+        binary->operation == TokenKind::kShiftRight)
+      return left->type == expression.type
+                 ? result(binary_scalar(binary->operation, a, left->bits,
+                                        right->bits, b))
+                 : std::nullopt;
+    if (left->type != right->type && !can_widen_numeric(a, b) &&
+        !can_widen_numeric(b, a))
+      return std::nullopt;
+    const auto common = can_widen_numeric(a, b) ? b : a;
+    const auto l = convert_scalar(left->bits, a, common);
+    const auto r = convert_scalar(right->bits, b, common);
+    if (!l || !r) return std::nullopt;
+    return result(binary_scalar(binary->operation, common, *l, *r, common));
+  }
+
   bool is_struct(TypeId type) const {
     return type.value < semantics_.types().size() &&
            semantics_.type(type).kind == TypeKind::kStruct;
@@ -902,8 +1313,14 @@ class HirVerifier {
         }
       }
       verify_symbol(file.symbol, range);
-      for (const HirField& field : file.fields) {
+      for (std::size_t index = 0; index < file.fields.size(); ++index) {
+        const auto& field = file.fields[index];
         verify_symbol(field.symbol, range);
+        if (file.file.value < semantics_.files().size()) {
+          const auto& fields = semantics_.file(file.file).fields;
+          if (index >= fields.size() || fields[index] != field.symbol)
+            report(range, "field identity/order does not match semantics");
+        }
         if (field.initializer) {
           verify_expression(*field.initializer, range);
         }

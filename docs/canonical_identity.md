@@ -37,7 +37,7 @@ Nominal identity is this ordered sequence:
 6. `component("class")`, `component("interface")`, `component("enum")`, or
    `component("struct")`.
 
-Struct nominal identity is retained through native lowering and artifact format 3.
+Struct nominal identity is retained through native lowering and artifact format 4.
 Struct constructors use the ordinary `constructor` domain without a companion
 initializer or descriptor symbol.
 

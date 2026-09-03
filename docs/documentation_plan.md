@@ -45,7 +45,7 @@ historical specifications stay in this repository's engineering documentation.
 | `garbage_collection.md`, `native_runtime.md` | Memory and runtime failures |
 | `shuttle_and_compiler.md` | Compiler and Shuttle guides |
 | `canonical_identity.md`, `imported_package_views.md` | Package identity and dependency boundaries |
-| `artifact_schema_v3.md`, `data_layout_and_abi.md`, `llvm_backend.md` | Tooling compatibility and target limits |
+| `artifact_schema_v4.md`, `data_layout_and_abi.md`, `llvm_backend.md` | Tooling compatibility and target limits |
 | `artifact_schema_v1.md`, `artifact_schema_v2.md` | Historical formats; no standalone learner pages |
 | `testing.md`, `proposals/` | Verification and conflict resolution; no public stage/audit pages |
 

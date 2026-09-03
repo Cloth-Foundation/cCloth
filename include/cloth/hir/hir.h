@@ -296,6 +296,7 @@ class HirStorage {
 struct HirField {
   SymbolId symbol;
   std::optional<HirExpressionId> initializer;
+  std::optional<ScalarConstant> static_constant{};
 };
 
 struct HirConstructorInitializer {

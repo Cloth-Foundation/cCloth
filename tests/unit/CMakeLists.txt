@@ -5,6 +5,7 @@
 cloth_add_unit_test(cloth_abi_tests abi_tests.cc)
 cloth_add_unit_test(cloth_enum_tests enum_tests.cc)
 cloth_add_unit_test(cloth_switch_tests switch_tests.cc)
+cloth_add_unit_test(cloth_constant_tests constant_tests.cc)
 cloth_add_unit_test(cloth_struct_tests struct_tests.cc)
 cloth_add_unit_test(cloth_aggregate_tests aggregate_tests.cc)
 cloth_add_unit_test(cloth_backend_tests backend_tests.cc)
@@ -46,3 +47,8 @@ cloth_finalize_tests(LABEL unit)
 # without relaxing the timeout for ordinary unit tests.
 math(EXPR switch_test_timeout "4 * ${CLOTH_TEST_TIMEOUT_SECONDS}")
 set_tests_properties(cloth_switch_tests PROPERTIES TIMEOUT ${switch_test_timeout})
+# The maximum-size constant fixtures also undergo independent HIR value and
+# dependency verification. Allow both passes to complete under ASan/UBSan.
+math(EXPR constant_test_timeout "8 * ${CLOTH_TEST_TIMEOUT_SECONDS}")
+set_tests_properties(cloth_constant_tests PROPERTIES
+    TIMEOUT ${constant_test_timeout} RUN_SERIAL TRUE)

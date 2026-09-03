@@ -85,6 +85,10 @@ its leading `self` argument and returns `void`.
 
 Static scalar fields lower to constant LLVM globals using their verified ABI
 names. Loads address those globals directly; they never use an object offset.
+Static values come from MIR's typed constant data, not an executable initializer
+body. Floating globals use exact integer-bitcast constants, preserving signed
+zero and subnormals without host floating-point parsing. This creates no startup
+callable or GC root; the physical static-field ABI is unchanged.
 
 Each field initializer becomes an internal LLVM helper taking the new object as
 its receiver. An allocating constructor entry allocates the verified
@@ -215,7 +219,9 @@ line feeds. LLVM `i1` booleans are extended to the runtime ABI's `i8`.
 
 Contextual integer literals use the complete signed or unsigned range selected
 by semantic analysis. Contextual decimal literals are emitted after one
-conversion to their selected IEEE-754 width. Typed numeric widening lowers to
+conversion to their selected IEEE-754 width. Floating literals and numeric
+conversion bounds use integer-to-float constant bitcasts, preserving exact bits
+without depending on LLVM's decimal-literal acceptance rules. Typed numeric widening lowers to
 `sext` for signed integers, `zext` for unsigned integers, and `fpext` for
 `float32` to `float64`; it is never erased as a representation-preserving cast.
 

@@ -13,12 +13,13 @@
 #include "cloth/mir/mir.h"
 #include "cloth/runtime/runtime.h"
 #include "cloth/sema/numeric_types.h"
+#include "cloth/sema/scalar_constants.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_location.h"
 #include "cloth/source/source_range.h"
 
 #include <algorithm>
-#include <array>
+#include <bit>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
@@ -30,6 +31,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -58,14 +60,16 @@ std::uint32_t decode_character(std::string_view lexeme) noexcept {
 
 template <typename Value>
 std::optional<std::string> format_floating_literal(Value value) {
-  std::array<char, 128> buffer{};
-  const auto formatted = std::to_chars(
-      buffer.data(), buffer.data() + buffer.size(), value,
-      std::chars_format::scientific, std::numeric_limits<Value>::max_digits10);
-  if (formatted.ec != std::errc{}) {
-    return std::nullopt;
-  }
-  return std::string{buffer.data(), formatted.ptr};
+  static_assert(std::is_same_v<Value, float> || std::is_same_v<Value, double>);
+  static_assert(std::numeric_limits<Value>::is_iec559);
+  if (!std::isfinite(value)) return std::nullopt;
+  using Bits = std::conditional_t<std::is_same_v<Value, float>, std::uint32_t,
+                                  std::uint64_t>;
+  // A decimal that round-trips through float need not be accepted by LLVM's
+  // decimal IR parser. Preserve the already-resolved IEEE bits directly.
+  return "bitcast (i" + std::to_string(sizeof(Bits) * 8) + " " +
+         std::to_string(std::bit_cast<Bits>(value)) + " to " +
+         (std::is_same_v<Value, float> ? "float)" : "double)");
 }
 
 std::optional<std::string> lower_scalar_literal(
@@ -162,24 +166,6 @@ std::optional<std::string> lower_scalar_literal(
       return std::nullopt;
   }
   return std::nullopt;
-}
-
-const MirInstruction* returned_instruction(const MirBody& body) {
-  for (const MirBasicBlock& block : body.blocks) {
-    const auto* returned =
-        std::get_if<MirReturnTerminator>(&block.terminator.data);
-    if (returned == nullptr || !returned->value) {
-      continue;
-    }
-    for (const MirBasicBlock& candidate_block : body.blocks) {
-      for (const MirInstruction& instruction : candidate_block.instructions) {
-        if (instruction.result == returned->value) {
-          return &instruction;
-        }
-      }
-    }
-  }
-  return nullptr;
 }
 
 std::vector<MirValueId> instruction_value_uses(
@@ -1073,35 +1059,33 @@ class ModuleEmitter {
 
   void emit_static_field(const MirField& field) {
     const AbiStaticField* abi_field = find_static_field(field.symbol);
-    if (abi_field == nullptr || !field.initializer) {
+    if (abi_field == nullptr || !field.static_constant ||
+        !is_valid_scalar_constant(*field.static_constant, abi_field->type,
+                                  semantics_)) {
       report(semantics_.symbol(field.symbol).range,
-             "static field has no ABI declaration or initializer");
+             "static field has no verified scalar constant or ABI declaration");
       return;
     }
-    const MirInstruction* instruction =
-        returned_instruction(*field.initializer);
-    const auto* literal =
-        instruction == nullptr
-            ? nullptr
-            : std::get_if<MirLiteralInstruction>(&instruction->data);
-    if (literal == nullptr) {
-      report(semantics_.symbol(field.symbol).range,
-             "static field initializer is not a scalar literal");
-      return;
-    }
-    const std::optional<std::string> value =
-        lower_scalar_literal(*literal, abi_.types.at(abi_field->type.value),
-                             semantics_.type(abi_field->type).kind);
-    if (!value) {
-      report(instruction->range, "static field literal is out of range");
-      return;
+    const auto constant = *field.static_constant;
+    const auto kind = semantics_.type(constant.type).kind;
+    std::string value;
+    if (kind == TypeKind::kFloat32 || kind == TypeKind::kFloat64) {
+      // LLVM accepts an exact integer-to-float constant bitcast. This preserves
+      // signed zero and subnormals without host arithmetic or decimal
+      // reparsing.
+      value = "bitcast (i" +
+              std::string{kind == TypeKind::kFloat32 ? "32" : "64"} + " " +
+              std::to_string(constant.bits) + " to " +
+              llvm_type(constant.type) + ")";
+    } else {
+      value = std::to_string(constant.bits);
     }
     std::ostringstream global;
     global << '@' << abi_field->mangled_name << " = ";
     if (abi_field->linkage == AbiLinkage::kInternal) {
       global << "internal ";
     }
-    global << "constant " << llvm_type(abi_field->type) << ' ' << *value
+    global << "constant " << llvm_type(abi_field->type) << ' ' << value
            << ", align " << alignment(abi_field->type);
     globals_.push_back(global.str());
   }

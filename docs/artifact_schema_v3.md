@@ -1,6 +1,7 @@
 # Cloth package artifact schema, version 3
 
-This is the current `.cpa` contract. It inherits the frozen
+This is the frozen Stage 26 `.cpa` contract, superseded by
+[version 4](artifact_schema_v4.md). It inherits the frozen
 [version-2 schema](artifact_schema_v2.md) and its version-1 rules except for the
 changes below. Exact-key validation, canonical ordering/encoding, integrity,
 tool identity, payload, and source/dependency rules remain mandatory.

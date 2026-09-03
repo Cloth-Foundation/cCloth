@@ -8,13 +8,12 @@
 #include "cloth/identity/package_identity.h"
 #include "cloth/lexer/literal.h"
 #include "cloth/sema/numeric_types.h"
+#include "cloth/sema/scalar_constants.h"
 #include "cloth/sema/visibility.h"
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -576,110 +575,39 @@ std::string fixed_hex(std::uint64_t value, std::size_t width) {
   return result;
 }
 
-std::optional<JsonValue> encode_literal(const ImportedLiteral& literal,
-                                        TypeKind type) {
-  if (literal.kind == LiteralKind::kEnum && type == TypeKind::kEnum) {
-    return JsonValue{JsonValue::Object{{"kind", json_string("enum")},
-                                       {"value", json_string(literal.lexeme)}}};
-  }
-  if (literal.kind == LiteralKind::kBoolean && type == TypeKind::kBool) {
-    if (literal.lexeme == "true") {
-      return JsonValue{JsonValue::Object{{"kind", json_string("boolean")},
-                                         {"value", JsonValue{true}}}};
-    }
-    if (literal.lexeme == "false") {
-      return JsonValue{JsonValue::Object{{"kind", json_string("boolean")},
-                                         {"value", JsonValue{false}}}};
-    }
+std::optional<JsonValue> encode_static_constant(
+    const ImportedScalarConstant& value, TypeKind type) {
+  if (value.kind != type || !is_valid_scalar_bits(type, value.bits))
     return std::nullopt;
+  std::string kind;
+  JsonValue encoded;
+  switch (type) {
+    case TypeKind::kBool:
+      kind = "boolean";
+      encoded = JsonValue{value.bits != 0};
+      break;
+    case TypeKind::kChar:
+      kind = "character";
+      encoded = json_integer(value.bits);
+      break;
+    case TypeKind::kEnum:
+      kind = "enum";
+      encoded = json_integer(value.bits);
+      break;
+    case TypeKind::kFloat32:
+    case TypeKind::kFloat64:
+      kind = type == TypeKind::kFloat32 ? "float32" : "float64";
+      encoded = json_string(
+          fixed_hex(value.bits, type == TypeKind::kFloat32 ? 8 : 16));
+      break;
+    default:
+      if (!is_integer_type(type)) return std::nullopt;
+      kind = "integer";
+      encoded = json_string(scalar_integer_decimal(type, value.bits));
+      break;
   }
-  if (literal.kind == LiteralKind::kCharacter && type == TypeKind::kChar) {
-    if (literal.lexeme.size() < 3) return std::nullopt;
-    const char value = literal.lexeme[1] == '\\' && literal.lexeme.size() >= 4
-                           ? decode_escape_character(literal.lexeme[2])
-                           : literal.lexeme[1];
-    return JsonValue{JsonValue::Object{
-        {"kind", json_string("character")},
-        {"value", json_integer(static_cast<unsigned char>(value))}}};
-  }
-
-  const std::optional<NumericTypeProperties> properties =
-      numeric_type_properties(type);
-  if (!properties) return std::nullopt;
-  const char* const begin = literal.lexeme.data();
-  const char* const end = begin + literal.lexeme.size();
-  if (properties->category == NumericCategory::kFloatingPoint) {
-    if (type == TypeKind::kFloat32) {
-      float value = 0.0F;
-      if (literal.kind == LiteralKind::kInteger) {
-        std::uint64_t integer = 0;
-        const auto parsed = std::from_chars(begin, end, integer);
-        if (parsed.ec != std::errc{} || parsed.ptr != end) return std::nullopt;
-        value = static_cast<float>(integer);
-      } else if (literal.kind == LiteralKind::kFloat) {
-        const auto parsed =
-            std::from_chars(begin, end, value, std::chars_format::general);
-        if (parsed.ec != std::errc{} || parsed.ptr != end ||
-            !std::isfinite(value)) {
-          return std::nullopt;
-        }
-      } else {
-        return std::nullopt;
-      }
-      return JsonValue{JsonValue::Object{
-          {"kind", json_string("float32")},
-          {"value",
-           json_string(fixed_hex(std::bit_cast<std::uint32_t>(value), 8))}}};
-    }
-    double value = 0.0;
-    if (literal.kind == LiteralKind::kInteger) {
-      std::uint64_t integer = 0;
-      const auto parsed = std::from_chars(begin, end, integer);
-      if (parsed.ec != std::errc{} || parsed.ptr != end) return std::nullopt;
-      value = static_cast<double>(integer);
-    } else if (literal.kind == LiteralKind::kFloat) {
-      const auto parsed =
-          std::from_chars(begin, end, value, std::chars_format::general);
-      if (parsed.ec != std::errc{} || parsed.ptr != end ||
-          !std::isfinite(value)) {
-        return std::nullopt;
-      }
-    } else {
-      return std::nullopt;
-    }
-    return JsonValue{JsonValue::Object{
-        {"kind", json_string("float64")},
-        {"value",
-         json_string(fixed_hex(std::bit_cast<std::uint64_t>(value), 16))}}};
-  }
-
-  std::uint64_t value = 0;
-  if (literal.kind == LiteralKind::kInteger) {
-    const auto parsed = std::from_chars(begin, end, value);
-    if (parsed.ec != std::errc{} || parsed.ptr != end) return std::nullopt;
-  } else if (literal.kind == LiteralKind::kFloat) {
-    double floating = 0.0;
-    const auto parsed =
-        std::from_chars(begin, end, floating, std::chars_format::general);
-    const long double upper = std::ldexp(1.0L, 64);
-    if (parsed.ec != std::errc{} || parsed.ptr != end ||
-        !std::isfinite(floating) || floating < 0.0 ||
-        static_cast<long double>(std::trunc(floating)) >= upper) {
-      return std::nullopt;
-    }
-    value = static_cast<std::uint64_t>(std::trunc(floating));
-  } else {
-    return std::nullopt;
-  }
-  std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
-  if (properties->category == NumericCategory::kSignedInteger) {
-    maximum = (std::uint64_t{1} << (properties->bit_width - 1)) - 1;
-  } else if (properties->bit_width < 64) {
-    maximum = (std::uint64_t{1} << properties->bit_width) - 1;
-  }
-  if (value > maximum) return std::nullopt;
-  return JsonValue{JsonValue::Object{{"kind", json_string("integer")},
-                                     {"value", json_integer(value)}}};
+  return JsonValue{JsonValue::Object{{"kind", json_string(std::move(kind))},
+                                     {"value", std::move(encoded)}}};
 }
 
 JsonValue encode_parameter(const ImportedParameter& parameter) {
@@ -700,7 +628,7 @@ std::optional<JsonValue> encode_member_declaration(
   if (member.static_value) {
     const auto type = types.find(member.type_identity);
     if (type == types.end()) return std::nullopt;
-    auto encoded = encode_literal(*member.static_value, type->second);
+    auto encoded = encode_static_constant(*member.static_value, type->second);
     if (!encoded) return std::nullopt;
     static_value = std::move(*encoded);
   }
@@ -1055,8 +983,8 @@ class MetadataDecoder {
   std::optional<std::vector<ArtifactDependency>> decode_dependencies(
       const JsonValue& value);
   std::optional<std::vector<ImportedType>> decode_types(const JsonValue& value);
-  std::optional<ImportedLiteral> decode_literal(const JsonValue& value,
-                                                TypeKind type);
+  std::optional<ImportedScalarConstant> decode_static_constant(
+      const JsonValue& value, TypeKind type);
   std::optional<ImportedParameter> decode_parameter(const JsonValue& value);
   std::optional<ImportedFile> decode_file_declaration(
       const JsonValue& value, const PackageIdentity& package);
@@ -1402,123 +1330,45 @@ std::optional<std::uint64_t> parse_fixed_hex(std::string_view value,
   return result;
 }
 
-template <typename Value>
-std::optional<std::string> float_lexeme(Value value) {
-  std::array<char, 128> output{};
-  const auto result = std::to_chars(
-      output.data(), output.data() + output.size(), value,
-      std::chars_format::scientific, std::numeric_limits<Value>::max_digits10);
-  if (result.ec != std::errc{}) return std::nullopt;
-  return std::string{output.data(), result.ptr};
-}
-
-std::string character_lexeme(std::uint64_t value) {
-  const char character = static_cast<char>(value);
-  std::string result{"'"};
-  switch (character) {
-    case '\n':
-      result += "\\n";
-      break;
-    case '\r':
-      result += "\\r";
-      break;
-    case '\t':
-      result += "\\t";
-      break;
-    case '\0':
-      result += "\\0";
-      break;
-    case '\\':
-      result += "\\\\";
-      break;
-    case '\'':
-      result += "\\'";
-      break;
-    default:
-      result.push_back(character);
-      break;
-  }
-  result.push_back('\'');
-  return result;
-}
-
-std::optional<ImportedLiteral> MetadataDecoder::decode_literal(
+std::optional<ImportedScalarConstant> MetadataDecoder::decode_static_constant(
     const JsonValue& value, TypeKind type) {
   const auto* fields = object(value, {"kind", "value"}, "static_value");
   if (fields == nullptr) return std::nullopt;
   const std::string* kind = text(fields->at("kind"), "static_value");
   if (kind == nullptr) return std::nullopt;
-  if (*kind == "enum" && type == TypeKind::kEnum) {
-    const auto tag = integer(fields->at("value"), "enum constant");
-    if (!tag || *tag >= kMaxEnumCases) {
-      issue("static_value", "enum tag is out of range");
-      return std::nullopt;
-    }
-    return ImportedLiteral{LiteralKind::kEnum, std::to_string(*tag)};
-  }
+  std::optional<std::uint64_t> bits;
   if (*kind == "boolean" && type == TypeKind::kBool) {
     const auto decoded = boolean(fields->at("value"), "static_value");
-    if (!decoded) return std::nullopt;
-    return ImportedLiteral{LiteralKind::kBoolean, *decoded ? "true" : "false"};
+    if (decoded) bits = *decoded ? 1 : 0;
+  } else if ((*kind == "character" && type == TypeKind::kChar) ||
+             (*kind == "enum" && type == TypeKind::kEnum)) {
+    bits = integer(fields->at("value"), "static_value");
+  } else if (*kind == "integer" && is_integer_type(type)) {
+    const auto* encoded = text(fields->at("value"), "static_value");
+    if (encoded) {
+      std::string_view magnitude = *encoded;
+      const bool negative = magnitude.starts_with('-');
+      if (negative) magnitude.remove_prefix(1);
+      if (!magnitude.empty() &&
+          (magnitude.size() == 1 || magnitude.front() != '0') &&
+          !(negative && magnitude == "0") &&
+          std::ranges::all_of(magnitude,
+                              [](char c) { return c >= '0' && c <= '9'; })) {
+        bits = integer_constant_bits(magnitude, negative, type);
+      }
+    }
+  } else if ((*kind == "float32" && type == TypeKind::kFloat32) ||
+             (*kind == "float64" && type == TypeKind::kFloat64)) {
+    const auto* encoded = text(fields->at("value"), "static_value");
+    if (encoded)
+      bits = parse_fixed_hex(*encoded, type == TypeKind::kFloat32 ? 8 : 16);
   }
-  if (*kind == "character" && type == TypeKind::kChar) {
-    const auto decoded = integer(fields->at("value"), "static_value");
-    if (!decoded || *decoded > 255) {
-      issue("static_value", "character value is out of range");
-      return std::nullopt;
-    }
-    return ImportedLiteral{LiteralKind::kCharacter, character_lexeme(*decoded)};
+  if (!bits || !is_valid_scalar_bits(type, *bits)) {
+    issue("static_value",
+          "constant is noncanonical, out of range, or has the wrong kind");
+    return std::nullopt;
   }
-  const auto properties = numeric_type_properties(type);
-  if (*kind == "integer" && properties &&
-      properties->category != NumericCategory::kFloatingPoint) {
-    const auto decoded = integer(fields->at("value"), "static_value");
-    if (!decoded) return std::nullopt;
-    std::uint64_t maximum = std::numeric_limits<std::uint64_t>::max();
-    if (properties->category == NumericCategory::kSignedInteger) {
-      maximum = (std::uint64_t{1} << (properties->bit_width - 1)) - 1;
-    } else if (properties->bit_width < 64) {
-      maximum = (std::uint64_t{1} << properties->bit_width) - 1;
-    }
-    if (*decoded > maximum) {
-      issue("static_value", "integer value is out of range for its type");
-      return std::nullopt;
-    }
-    return ImportedLiteral{LiteralKind::kInteger, std::to_string(*decoded)};
-  }
-  const std::string* encoded = text(fields->at("value"), "static_value");
-  if (encoded == nullptr) return std::nullopt;
-  if (*kind == "float32" && type == TypeKind::kFloat32) {
-    const auto bits = parse_fixed_hex(*encoded, 8);
-    if (!bits) {
-      issue("static_value", "float32 bits are not canonical");
-      return std::nullopt;
-    }
-    const float decoded =
-        std::bit_cast<float>(static_cast<std::uint32_t>(*bits));
-    auto lexeme = float_lexeme(decoded);
-    if (!std::isfinite(decoded) || !lexeme) {
-      issue("static_value", "float32 constant is not finite");
-      return std::nullopt;
-    }
-    return ImportedLiteral{LiteralKind::kFloat, std::move(*lexeme)};
-  }
-  if (*kind == "float64" && type == TypeKind::kFloat64) {
-    const auto bits = parse_fixed_hex(*encoded, 16);
-    if (!bits) {
-      issue("static_value", "float64 bits are not canonical");
-      return std::nullopt;
-    }
-    const double decoded = std::bit_cast<double>(*bits);
-    auto lexeme = float_lexeme(decoded);
-    if (!std::isfinite(decoded) || !lexeme) {
-      issue("static_value", "float64 constant is not finite");
-      return std::nullopt;
-    }
-    return ImportedLiteral{LiteralKind::kFloat, std::move(*lexeme)};
-  }
-  issue("static_value", "literal kind does not match its declared type");
-  return std::nullopt;
+  return ImportedScalarConstant{type, *bits};
 }
 
 std::optional<ImportedParameter> MetadataDecoder::decode_parameter(
@@ -1714,15 +1564,15 @@ std::optional<ImportedMember> MetadataDecoder::decode_member_declaration(
     if (!parameter) return std::nullopt;
     parameters.push_back(std::move(*parameter));
   }
-  std::optional<ImportedLiteral> static_value;
+  std::optional<ImportedScalarConstant> static_value;
   if (!is_null(fields->at("static_value"))) {
     const auto type_kind = type_kinds.find(*type);
     if (type_kind == type_kinds.end()) {
-      issue(std::string{kRecord}, "static literal type is unknown");
+      issue(std::string{kRecord}, "static constant type is unknown");
       return std::nullopt;
     }
     auto literal =
-        decode_literal(fields->at("static_value"), type_kind->second);
+        decode_static_constant(fields->at("static_value"), type_kind->second);
     if (!literal) return std::nullopt;
     static_value = std::move(*literal);
   }
@@ -2610,7 +2460,7 @@ std::vector<ArtifactIssue> verify_package_artifact(
   }
   if (!encode_metadata(artifact)) {
     append_issue(issues, ArtifactIssueCode::kInvalidModel, "declarations",
-                 "typed static literal cannot be canonically encoded");
+                 "typed static constant cannot be canonically encoded");
   }
   return issues;
 }
@@ -2685,7 +2535,8 @@ PackageArtifactReadResult read_package_artifact(
   }
   if (read_little_u32(bytes, 8) != kPackageArtifactFormatVersion) {
     return fail(ArtifactIssueCode::kIncompatible, "header",
-                "artifact format version is unsupported");
+                "artifact format version is unsupported; rebuild the package "
+                "with this compiler");
   }
   if (read_little_u32(bytes, 12) != 0) {
     return fail(ArtifactIssueCode::kMalformedEnvelope, "header",

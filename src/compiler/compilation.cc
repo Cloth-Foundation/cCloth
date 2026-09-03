@@ -214,6 +214,7 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
   }
   std::set<std::string> loaded_packages;
   std::map<std::string, std::string> package_versions;
+  std::map<std::string, ConstantParseBudget> constant_budgets;
 
   auto prepare_unit = [&](Unit& unit) {
     if (!unit.owning_package.empty()) {
@@ -260,8 +261,9 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
     unit.qualified_name = qualified_name(unit.owning_package, unit.package_name,
                                          unit.source.stem());
     unit.tokens = Lexer{unit.source, diagnostics}.lex();
-    unit.parse_result.emplace(
-        Parser{unit.source, unit.tokens, diagnostics}.parse());
+    unit.parse_result.emplace(Parser{unit.source, unit.tokens, diagnostics,
+                                     &constant_budgets[unit.owning_package]}
+                                  .parse());
     unit.parse_result->file_class.package_name = unit.package_name;
     unit.parse_result->file_class.qualified_name = unit.qualified_name;
     unit.parse_result->file_class.owning_package = unit.owning_package;
@@ -422,7 +424,13 @@ FrontendResult Compilation::analyze_frontend(DiagnosticEngine& diagnostics) {
         return std::holds_alternative<HirSwitchStatement>(statement.data);
       });
   const bool hir_is_valid =
-      (semantic_result.is_valid || (!contains_structs && !contains_switch)) &&
+      (semantic_result.is_valid ||
+       (!contains_structs && !contains_switch &&
+        !std::ranges::any_of(semantic_result.model.symbols(),
+                             [](const SemanticSymbol& symbol) {
+                               return symbol.kind == SymbolKind::kField &&
+                                      symbol.is_static;
+                             }))) &&
       verify_hir(hir, semantic_result.model, diagnostics);
   ControlFlowAnalysis control_flow;
   if (hir_is_valid) {
@@ -452,8 +460,12 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
       break;
     }
   }
+  const bool has_constants = std::ranges::any_of(
+      frontend.semantics.symbols(), [](const SemanticSymbol& symbol) {
+        return symbol.kind == SymbolKind::kField && symbol.is_static;
+      });
   if (frontend.is_valid ||
-      (!has_structs && !has_switch &&
+      (!has_structs && !has_switch && !has_constants &&
        verify_hir(frontend.hir, frontend.semantics, diagnostics))) {
     mir = lower_to_mir(frontend.hir, frontend.semantics);
     for (std::size_t index = mir.files.size();
@@ -470,7 +482,9 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
                             true};
       imported.fields.reserve(semantic_file.fields.size());
       for (const SymbolId symbol : semantic_file.fields) {
-        imported.fields.push_back(MirField{symbol, std::nullopt});
+        imported.fields.push_back(
+            MirField{symbol, std::nullopt,
+                     frontend.semantics.symbol(symbol).static_constant});
       }
       const auto add_callables = [&](std::span<const SymbolId> symbols,
                                      std::vector<MirCallable>& output) {

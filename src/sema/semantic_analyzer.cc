@@ -7,8 +7,10 @@
 #include "cloth/lexer/literal.h"
 #include "cloth/lexer/token.h"
 #include "cloth/sema/canonical_identity.h"
+#include "cloth/sema/constant_evaluator.h"
 #include "cloth/sema/field_initialization_analysis.h"
 #include "cloth/sema/numeric_types.h"
+#include "cloth/sema/scalar_constants.h"
 
 #include <algorithm>
 #include <charconv>
@@ -22,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -159,6 +162,7 @@ class SemanticAnalyzer {
     register_imports();
     register_type_relationships();
     register_members();
+    index_members();
     validate_struct_layout_cycles();
     validate_interface_contracts();
     validate_overrides();
@@ -437,11 +441,10 @@ class SemanticAnalyzer {
           }
           std::vector<TypeId> parameter_types;
           if (imported.static_value &&
-              (model_.type(type->second).kind == TypeKind::kEnum ||
-               imported.static_value->kind == LiteralKind::kEnum) &&
-              (imported.static_value->kind != LiteralKind::kEnum ||
-               !enum_constant_tag(imported.static_value->lexeme, type->second,
-                                  model_))) {
+              (imported.static_value->kind != model_.type(type->second).kind ||
+               !is_valid_scalar_constant(
+                   {type->second, imported.static_value->bits}, type->second,
+                   model_))) {
             report_invalid(imported.identity);
             continue;
           }
@@ -490,19 +493,8 @@ class SemanticAnalyzer {
           semantic.virtual_slot = imported.virtual_slot;
           if (imported.static_value && semantic.is_static &&
               semantic.is_final) {
-            const auto& literal = *imported.static_value;
-            std::optional<std::uint64_t> bits;
-            if (literal.kind == LiteralKind::kEnum) {
-              bits = enum_constant_tag(literal.lexeme, semantic.type, model_);
-            } else if (literal.kind == LiteralKind::kInteger) {
-              std::string_view text = literal.lexeme;
-              const bool negative = text.starts_with('-');
-              if (negative) text.remove_prefix(1);
-              bits = integer_constant_bits(text, negative,
-                                           model_.type(semantic.type).kind);
-            }
-            if (bits)
-              semantic.static_constant = ScalarConstant{semantic.type, *bits};
+            semantic.static_constant =
+                ScalarConstant{semantic.type, imported.static_value->bits};
           }
           imported_member_ids_.emplace(imported.identity, symbol);
         }
@@ -1588,12 +1580,35 @@ class SemanticAnalyzer {
   }
 
   void analyze_definitions() {
-    // Retain checked scalar fields before any body references them, independent
-    // of member or source-file order. Static initializers cannot read fields.
+    // Bind every static initializer before evaluating the dependency graph.
+    // Canonical ordering also makes independent constant errors reproducible.
+    std::vector<std::pair<std::string, std::pair<FileId, std::size_t>>>
+        constants;
+    for (std::size_t file = 0; file < files_.size(); ++file) {
+      for (std::size_t field = 0; field < files_[file]->fields.size();
+           ++field) {
+        if (!files_[file]->fields[field].is_static) continue;
+        const auto symbol = model_.file(FileId{file}).fields[field];
+        constants.push_back(
+            {canonical_symbol_identity(model_.symbol(symbol), model_,
+                                       CanonicalMemberKind::kStaticField),
+             {FileId{file}, field}});
+      }
+    }
+    std::ranges::sort(
+        constants, {},
+        [](const auto& entry) -> const std::string& { return entry.first; });
+    for (const auto& [identity, location] : constants) {
+      static_cast<void>(identity);
+      current_file_ = location.first;
+      analyze_field(location.second);
+    }
+    evaluate_static_constants(files_, model_, diagnostics_);
     for (std::size_t file_index = 0; file_index < files_.size(); ++file_index) {
       current_file_ = FileId{file_index};
       for (std::size_t index = 0; index < files_[file_index]->fields.size();
            ++index) {
+        if (files_[file_index]->fields[index].is_static) continue;
         const std::size_t before = diagnostics_.diagnostics().size();
         analyze_field(index);
         if (diagnostics_.diagnostics().size() != before)
@@ -1636,6 +1651,35 @@ class SemanticAnalyzer {
     const FieldDecl& field = files_[current_file_.value]->fields.at(index);
     const SymbolId symbol = model_.file(current_file_).fields.at(index);
     if (field.is_static) {
+      auto& budget =
+          constant_budgets_[model_.file(current_file_).identity.package.name];
+      if (++budget.first > kMaxStaticConstants) {
+        if (budget.first == kMaxStaticConstants + 1)
+          diagnostics_.error(field.range,
+                             "package exceeds 65536 static constants");
+        model_.mutable_symbol(symbol).is_valid = false;
+        model_.mutable_file(current_file_).is_valid = false;
+        return;
+      }
+      if (!field.is_valid) {
+        model_.mutable_symbol(symbol).is_valid = false;
+        return;
+      }
+      if (field.initializer) {
+        const auto count =
+            preflight_constant_expression(files_[current_file_.value]->storage,
+                                          *field.initializer, diagnostics_);
+        if (!count || *count > kMaxPackageConstantNodes - budget.second) {
+          if (count)
+            diagnostics_.error(
+                field.range,
+                "package exceeds 1048576 constant expression nodes");
+          model_.mutable_symbol(symbol).is_valid = false;
+          model_.mutable_file(current_file_).is_valid = false;
+          return;
+        }
+        budget.second += *count;
+      }
       if (!field.is_final) {
         diagnostics_.error(field.range, "static field '" +
                                             std::string{field.name} +
@@ -1648,17 +1692,18 @@ class SemanticAnalyzer {
       }
     }
     if (!field.initializer) {
+      if (field.is_static) model_.mutable_symbol(symbol).is_valid = false;
       return;
     }
+    constant_context_ = field.is_static;
     begin_root_scope(!field.is_static);
     const TypeId field_type = model_.symbol(symbol).type;
     const ExpressionState value =
         analyze_expression(*field.initializer, field_type);
-    if (field.is_static && (!is_static_scalar_initializer(*field.initializer) ||
-                            !is_static_scalar_type(field_type))) {
+    if (field.is_static && !is_static_scalar_type(field_type)) {
       diagnostics_.error(
           expression_range(*field.initializer),
-          "static field initializer must be a scalar literal or enum case");
+          "static field initializer must be a scalar constant expression");
     }
     check_value(value, files_[current_file_.value]
                            ->storage.expression(*field.initializer)
@@ -1670,11 +1715,10 @@ class SemanticAnalyzer {
             ->storage.expression(*field.initializer)
             .range,
         "field initializer");
-    if (field.is_static && field.is_final &&
-        diagnostics_.diagnostics().size() == diagnostic_begin) {
-      model_.mutable_symbol(symbol).static_constant =
-          scalar_initializer(*field.initializer, field_type);
-    }
+    if (field.is_static &&
+        diagnostics_.diagnostics().size() != diagnostic_begin)
+      model_.mutable_symbol(symbol).is_valid = false;
+    constant_context_ = false;
     end_root_scope();
   }
 
@@ -1967,60 +2011,6 @@ class SemanticAnalyzer {
     const auto bits = integer_constant_bits(literal->lexeme, negative,
                                             model_.type(type).kind);
     return bits ? std::optional{ScalarConstant{type, *bits}} : std::nullopt;
-  }
-
-  std::optional<ScalarConstant> scalar_initializer(ExpressionId id,
-                                                   TypeId type) const {
-    id = ungroup(id);
-    const AstStorage& storage = files_[current_file_.value]->storage;
-    const auto symbol =
-        model_.file(current_file_).expressions.at(id.value).symbol;
-    if (symbol && model_.symbol(*symbol).kind == SymbolKind::kEnumCase &&
-        model_.symbol(*symbol).type == type &&
-        model_.symbol(*symbol).enum_tag) {
-      return ScalarConstant{type, *model_.symbol(*symbol).enum_tag};
-    }
-    // Preserve only the existing verified scalar initializer contract, not a
-    // general constant evaluator. Explicit literal conversions are already
-    // checked and contextualized by analyze_numeric_conversion.
-    if (const auto* conversion = std::get_if<NumericConversionExpression>(
-            &storage.expression(id).data)) {
-      id = ungroup(conversion->value);
-      // Unary expressions still produce MIR instructions, not retained scalar
-      // literals. Do not widen the static-constant contract here.
-      const auto* literal =
-          std::get_if<LiteralExpression>(&storage.expression(id).data);
-      if (!literal || !is_integer(type)) return std::nullopt;
-      if (literal->kind == LiteralKind::kInteger) {
-        const auto bits = integer_constant_bits(literal->lexeme, false,
-                                                model_.type(type).kind);
-        if (bits) return ScalarConstant{type, *bits};
-      } else if (literal->kind == LiteralKind::kFloat) {
-        double value = 0;
-        const auto text = literal->lexeme;
-        const auto parsed =
-            std::from_chars(text.data(), text.data() + text.size(), value,
-                            std::chars_format::general);
-        if (parsed.ec != std::errc{} ||
-            parsed.ptr != text.data() + text.size() || !std::isfinite(value))
-          return std::nullopt;
-        value = std::trunc(value);
-        const auto properties =
-            *numeric_type_properties(model_.type(type).kind);
-        const bool is_signed =
-            properties.category == NumericCategory::kSignedInteger;
-        const double upper = std::ldexp(
-            1.0, static_cast<int>(properties.bit_width) - (is_signed ? 1 : 0));
-        if (value >= upper || value < (is_signed ? -upper : 0.0))
-          return std::nullopt;
-        const auto magnitude = static_cast<std::uint64_t>(std::abs(value));
-        const auto bits = integer_constant_bits(
-            std::to_string(magnitude), value < 0, model_.type(type).kind);
-        if (bits) return ScalarConstant{type, *bits};
-      }
-      return std::nullopt;
-    }
-    return integer_case_literal(id, type);
   }
 
   std::optional<SwitchLabel> analyze_case_label(ExpressionId id,
@@ -2438,72 +2428,62 @@ class SemanticAnalyzer {
       bool is_negated_literal = false) {
     const Expression& expression =
         files_[current_file_.value]->storage.expression(id);
-    ExpressionState state{model_.error_type()};
+    return record_expression(
+        id, analyze_expression_value(expression, expected, is_negated_literal));
+  }
 
-    if (std::holds_alternative<InvalidExpression>(expression.data)) {
-      return record_expression(id, std::move(state));
-    }
-    if (const auto* identifier =
-            std::get_if<IdentifierExpression>(&expression.data)) {
-      state = analyze_identifier(*identifier, expression.range);
-    } else if (std::holds_alternative<SuperExpression>(expression.data)) {
-      state = analyze_super(expression.range);
-    } else if (const auto* literal =
-                   std::get_if<LiteralExpression>(&expression.data)) {
-      state = analyze_literal(*literal, expression.range, expected,
-                              is_negated_literal);
-    } else if (const auto* unary =
-                   std::get_if<UnaryExpression>(&expression.data)) {
-      state = analyze_unary(*unary, expression.range, expected);
-    } else if (const auto* update =
-                   std::get_if<UpdateExpression>(&expression.data)) {
-      state = analyze_update(*update, expression.range);
-    } else if (const auto* binary =
-                   std::get_if<BinaryExpression>(&expression.data)) {
-      state = analyze_binary(*binary, expression.range, expected);
-    } else if (const auto* test =
-                   std::get_if<TypeTestExpression>(&expression.data)) {
-      state = analyze_type_test(*test, expression.range);
-    } else if (const auto* cast =
-                   std::get_if<CheckedCastExpression>(&expression.data)) {
-      state = analyze_checked_cast(*cast, expression.range);
-    } else if (const auto* conversion =
-                   std::get_if<NumericConversionExpression>(&expression.data)) {
-      state = analyze_numeric_conversion(*conversion, expression.range);
-    } else if (const auto* assignment =
-                   std::get_if<AssignmentExpression>(&expression.data)) {
-      state = analyze_assignment(*assignment, expression.range);
-    } else if (const auto* member =
-                   std::get_if<MemberAccessExpression>(&expression.data)) {
-      state = analyze_member_access(*member, expression.range);
-    } else if (const auto* meta =
-                   std::get_if<MetaAccessExpression>(&expression.data)) {
-      state = analyze_meta_access(*meta, expression.range);
-    } else if (const auto* member =
-                   std::get_if<SafeMemberAccessExpression>(&expression.data)) {
-      state = analyze_safe_member_access(*member, expression.range);
-    } else if (const auto* coalesce =
-                   std::get_if<NullCoalesceExpression>(&expression.data)) {
-      state = analyze_null_coalesce(*coalesce, expression.range);
-    } else if (const auto* assertion =
-                   std::get_if<NullAssertExpression>(&expression.data)) {
-      state = analyze_null_assert(*assertion, expression.range);
-    } else if (const auto* call =
-                   std::get_if<CallExpression>(&expression.data)) {
-      state = analyze_call(*call, expression.range);
-    } else if (const auto* array =
-                   std::get_if<ArrayLiteralExpression>(&expression.data)) {
-      state = analyze_array_literal(*array, expression.range, expected);
-    } else if (const auto* index =
-                   std::get_if<IndexExpression>(&expression.data)) {
-      state = analyze_index(*index, expression.range);
-    } else {
-      const auto& parenthesized =
-          std::get<ParenthesizedExpression>(expression.data);
-      state = analyze_expression(parenthesized.expression, expected,
-                                 is_negated_literal);
-    }
-    return record_expression(id, std::move(state));
+  ExpressionState analyze_expression_value(const Expression& expression,
+                                           std::optional<TypeId> expected,
+                                           bool is_negated_literal) {
+    // Instantiate one dispatch branch per node type so recursive checking does
+    // not reserve stack space for every variant's result and temporaries.
+    return std::visit(
+        [&](const auto& node) -> ExpressionState {
+          using Node = std::decay_t<decltype(node)>;
+          if constexpr (std::is_same_v<Node, InvalidExpression>)
+            return ExpressionState{model_.error_type()};
+          else if constexpr (std::is_same_v<Node, IdentifierExpression>)
+            return analyze_identifier(node, expression.range);
+          else if constexpr (std::is_same_v<Node, SuperExpression>)
+            return analyze_super(expression.range);
+          else if constexpr (std::is_same_v<Node, LiteralExpression>)
+            return analyze_literal(node, expression.range, expected,
+                                   is_negated_literal);
+          else if constexpr (std::is_same_v<Node, UnaryExpression>)
+            return analyze_unary(node, expression.range, expected);
+          else if constexpr (std::is_same_v<Node, UpdateExpression>)
+            return analyze_update(node, expression.range);
+          else if constexpr (std::is_same_v<Node, BinaryExpression>)
+            return analyze_binary(node, expression.range, expected);
+          else if constexpr (std::is_same_v<Node, TypeTestExpression>)
+            return analyze_type_test(node, expression.range);
+          else if constexpr (std::is_same_v<Node, CheckedCastExpression>)
+            return analyze_checked_cast(node, expression.range);
+          else if constexpr (std::is_same_v<Node, NumericConversionExpression>)
+            return analyze_numeric_conversion(node, expression.range);
+          else if constexpr (std::is_same_v<Node, AssignmentExpression>)
+            return analyze_assignment(node, expression.range);
+          else if constexpr (std::is_same_v<Node, MemberAccessExpression>)
+            return analyze_member_access(node, expression.range);
+          else if constexpr (std::is_same_v<Node, MetaAccessExpression>)
+            return analyze_meta_access(node, expression.range);
+          else if constexpr (std::is_same_v<Node, SafeMemberAccessExpression>)
+            return analyze_safe_member_access(node, expression.range);
+          else if constexpr (std::is_same_v<Node, NullCoalesceExpression>)
+            return analyze_null_coalesce(node, expression.range);
+          else if constexpr (std::is_same_v<Node, NullAssertExpression>)
+            return analyze_null_assert(node, expression.range);
+          else if constexpr (std::is_same_v<Node, CallExpression>)
+            return analyze_call(node, expression.range);
+          else if constexpr (std::is_same_v<Node, ArrayLiteralExpression>)
+            return analyze_array_literal(node, expression.range, expected);
+          else if constexpr (std::is_same_v<Node, IndexExpression>)
+            return analyze_index(node, expression.range);
+          else if constexpr (std::is_same_v<Node, ParenthesizedExpression>)
+            return analyze_expression(node.expression, expected,
+                                      is_negated_literal);
+        },
+        expression.data);
   }
 
   ExpressionState analyze_identifier(const IdentifierExpression& identifier,
@@ -2849,7 +2829,7 @@ class SemanticAnalyzer {
         left.type == model_.bool_type() ||
         (is_short_circuit && mark_presence_test(left, binary.left));
     const NonNullSet right_base = active_non_null_;
-    if (is_short_circuit) {
+    if (is_short_circuit && !constant_context_) {
       const ConditionFacts facts = condition_facts(binary.left);
       add_non_null_facts(binary.operation == TokenKind::kAmpersandAmpersand
                              ? facts.when_true
@@ -2865,9 +2845,17 @@ class SemanticAnalyzer {
     const bool right_is_boolean =
         right.type == model_.bool_type() ||
         (is_short_circuit && mark_presence_test(right, binary.right));
-    if (is_short_circuit) {
+    if (is_short_circuit && !constant_context_) {
       active_non_null_ = intersect_symbols(right_base, active_non_null_);
     }
+    return finish_binary(binary, range, left, right, left_is_boolean,
+                         right_is_boolean);
+  }
+
+  ExpressionState finish_binary(const BinaryExpression& binary,
+                                SourceRange range, ExpressionState& left,
+                                ExpressionState& right, bool left_is_boolean,
+                                bool right_is_boolean) {
     const bool values = check_value(left, expression_range(binary.left)) &&
                         check_value(right, expression_range(binary.right));
     if (!values || left.type == model_.error_type() ||
@@ -3008,6 +2996,13 @@ class SemanticAnalyzer {
     const ExpressionState value =
         is_literal ? analyze_overload_argument(conversion.value)
                    : analyze_expression(conversion.value);
+    return finish_numeric_conversion(conversion, range, target, value,
+                                     is_literal);
+  }
+
+  ExpressionState finish_numeric_conversion(
+      const NumericConversionExpression& conversion, SourceRange range,
+      TypeId target, const ExpressionState& value, bool is_literal) {
     check_value(value, expression_range(conversion.value));
     if (value.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
@@ -4139,26 +4134,6 @@ class SemanticAnalyzer {
     return true;
   }
 
-  bool is_static_scalar_initializer(ExpressionId id) const {
-    const Expression& expression =
-        files_[current_file_.value]->storage.expression(id);
-    if (const auto* grouped =
-            std::get_if<ParenthesizedExpression>(&expression.data)) {
-      return is_static_scalar_initializer(grouped->expression);
-    }
-    if (const auto* conversion =
-            std::get_if<NumericConversionExpression>(&expression.data)) {
-      return is_numeric_literal_expression(conversion->value);
-    }
-    const auto symbol =
-        model_.file(current_file_).expressions.at(id.value).symbol;
-    if (symbol && model_.symbol(*symbol).kind == SymbolKind::kEnumCase)
-      return true;
-    const auto* literal = std::get_if<LiteralExpression>(&expression.data);
-    return literal != nullptr && literal->kind != LiteralKind::kString &&
-           literal->kind != LiteralKind::kNull;
-  }
-
   bool is_static_scalar_type(TypeId type) const {
     const TypeKind kind = model_.type(type).kind;
     return kind == TypeKind::kBool || kind == TypeKind::kChar ||
@@ -4183,6 +4158,17 @@ class SemanticAnalyzer {
     return state;
   }
 
+  void index_members() {
+    member_names_.resize(model_.files().size());
+    for (std::size_t i = 0; i < model_.files().size(); ++i) {
+      const auto& file = model_.file(FileId{i});
+      for (const auto symbol : file.fields)
+        member_names_[i][model_.symbol(symbol).name].push_back(symbol);
+      for (const auto symbol : file.functions)
+        member_names_[i][model_.symbol(symbol).name].push_back(symbol);
+    }
+  }
+
   std::vector<SymbolId> declared_members(FileId file_id,
                                          std::string_view name) const {
     const FileSemantics& file = model_.file(file_id);
@@ -4195,19 +4181,9 @@ class SemanticAnalyzer {
       }
       return matches;
     }
-    for (const SymbolId symbol_id : file.fields) {
-      const SemanticSymbol& symbol = model_.symbol(symbol_id);
-      if (symbol.name == name) {
-        matches.push_back(symbol_id);
-      }
-    }
-    for (const SymbolId symbol_id : file.functions) {
-      const SemanticSymbol& symbol = model_.symbol(symbol_id);
-      if (symbol.name == name) {
-        matches.push_back(symbol_id);
-      }
-    }
-    return matches;
+    const auto found = member_names_[file_id.value].find(name);
+    return found == member_names_[file_id.value].end() ? std::vector<SymbolId>{}
+                                                       : found->second;
   }
 
   std::vector<SymbolId> find_members(FileId file_id,
@@ -4537,6 +4513,8 @@ class SemanticAnalyzer {
 
   bool floating_literal_fits(std::string_view lexeme, TypeId type) const {
     const TypeKind kind = model_.type(type).kind;
+    if (constant_context_)
+      return scalar_literal(LiteralKind::kFloat, lexeme, kind).has_value();
     const char* const begin = lexeme.data();
     const char* const end = begin + lexeme.size();
     if (kind == TypeKind::kFloat32) {
@@ -4654,6 +4632,10 @@ class SemanticAnalyzer {
         files_[current_file_.value]->storage.expression(id);
     if (const auto* literal =
             std::get_if<LiteralExpression>(&expression.data)) {
+      if (constant_context_)
+        return scalar_literal(literal->kind, literal->lexeme,
+                              model_.type(target).kind, is_negated)
+            .has_value();
       if (literal->kind == LiteralKind::kInteger) {
         if (is_integer(target)) {
           return integer_literal_fits(literal->lexeme, target, is_negated);
@@ -4866,6 +4848,10 @@ class SemanticAnalyzer {
   bool has_implicit_receiver_{false};
   bool analyzing_base_initializer_{false};
   bool defer_default_numeric_literal_range_{false};
+  bool constant_context_{false};
+  std::map<std::string, std::pair<std::size_t, std::size_t>> constant_budgets_;
+  std::vector<std::map<std::string, std::vector<SymbolId>, std::less<>>>
+      member_names_;
   std::vector<TransferContext> transfers_;
   bool flow_reachable_{true};
 };

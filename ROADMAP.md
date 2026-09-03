@@ -73,9 +73,15 @@ exit audits. Build-responsiveness Stage 24 is also complete.
 Stage 26 is complete for value structs, including its approved source contract,
 frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
 and coordinated 26.4 exit audit. Native execution and source-free
-packages use artifact format 3, compiler ABI 4, and runtime ABI 2. The explicit
+packages introduced artifact format 3, compiler ABI 4, and runtime ABI 2. The explicit
 interface-override follow-up and Stage 27 switch implementation are complete,
 including the coordinated 27.4 exit audit on 2026-09-02.
+
+Stage 28 is complete, including its separately authorized
+[28.4 exit audit](docs/testing.md#stage-284-scalar-constant-exit-audit) on
+2026-09-02. Typed scalar evaluation, native/source-free integration, artifact
+format 4, dependency evolution, and all coordinated verification gates pass.
+No later stage is active or assigned.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -452,10 +458,69 @@ Exit criteria:
 - development, sanitizer, native/shared-tool, Rust, and editor checks pass,
   with user documentation separated from maintainer implementation records.
 
-## Beyond Stage 27
+## Stage 28: Compile-time scalar constants
 
-No stage beyond 27 is assigned. Completing switch does not schedule the rest of
-the backlog or freeze the Cloth 1.0 release scope.
+Status: **complete — coordinated 28.4 exit audit passed 2026-09-02**
+
+The [approved contract](docs/proposals/stage_28_scalar_constants.md) defines
+eligible scalar expressions, typing, evaluation, dependency cycles, resource limits,
+and the artifact transition. The user approved its concrete rules on 2026-09-02.
+The separate 28.2, 28.3, and 28.4 go-aheads were received on 2026-09-02.
+
+Objective: give every supported `static final` scalar field one verified
+compile-time value shared across checking, switch labels, native emission,
+and source-free packages, without introducing runtime initialization.
+
+Prerequisites satisfied: numeric typing/checked conversions, integer operators,
+static final ownership, enums, verified switches, and deterministic separate
+compilation. Full aggregate constants and optimizer folding are not prerequisites.
+
+Deliverables:
+
+1. **28.1 — Contract (complete).** Approve scalar/operator/conversion eligibility,
+   constant-context overflow and finite-float rules, short-circuiting,
+   forward references/cycles, limits, compatibility, and verification gates.
+2. **28.2 — Typed evaluation (complete).** Implement canonical typed scalar values,
+   checked evaluation, memoized dependency resolution, diagnostics/limits,
+   and the recorded unary-initializer correction. Gate new-form emission
+   until every downstream boundary is ready.
+3. **28.3 — Integration (complete).** Connect HIR/MIR verification, LLVM static globals,
+   switch references, imported constants, and the reviewed artifact transition
+   with coordinated Shuttle capability/receipt validation.
+4. **28.4 — Exit audit (complete).** Verify native whole/separate/source-free behavior,
+   target-independent scalar bits, malformed input/resource boundaries,
+   invalidation, preserved outputs, and serial/parallel determinism. Update
+   owning docs and pass compiler, Rust, shared-toolchain/native, and editor gates.
+
+Approved compatibility transition: artifact format **4** to encode negative signed
+integer constants; compiler ABI **4**, runtime ABI **2**, process protocol **2**, receipt
+schema **1**, and manifest schema **1** remain unchanged. Current format/version
+constants transition together in 28.3; older artifacts must be rebuilt.
+
+Non-goals: runtime static initialization, mutable/reference static fields,
+aggregate constants, enum metadata/payloads, compile-time function execution,
+new keywords/literals, inline expression switch labels, local constant propagation,
+runtime arithmetic-policy changes, optimizer folding, new targets, or unrelated
+Shuttle/editor work.
+
+Exit criteria:
+
+- every Stage 28 work item in both repositories is complete;
+- all accepted constant forms have the same verified type/value across checking,
+  native emission, artifacts, and source-free consumers;
+- evaluation preserves existing typing/conversion rules with the approved
+  constant-context failure policy and deterministic resource bounds;
+- the reviewed artifact change lands atomically across readers, writers, public
+  capability/receipt checks, fixtures, and docs; earlier artifacts require rebuilds;
+- constant/dependency edits, failures, and serial/parallel builds retain the
+  existing integrity, output-preservation, and deterministic-build contracts; and
+- development/sanitizer, shared native/protocol, Rust, and editor gates pass,
+  with implementation claims only in the owning implemented documentation.
+
+## Beyond Stage 28
+
+No stage beyond 28 is assigned. Completing scalar constant evaluation does not
+schedule the rest of the backlog or freeze the Cloth 1.0 release scope.
 
 The following candidates remain recorded without priority or order:
 
@@ -464,7 +529,7 @@ The following candidates remain recorded without priority or order:
 - a general constant-folding optimizer stage; and
 - immutable per-case enum metadata, after its constant-data prerequisites.
 
-These candidates follow completion of Stage 27 and their own prerequisites.
+These candidates follow completion of Stage 28 and their own prerequisites.
 Each candidate still requires its own stage charter, dependency review,
 non-goals, approved language or optimizer contract, concrete `TODO.md` items,
 and explicit implementation go-ahead. Inclusion here does not activate or

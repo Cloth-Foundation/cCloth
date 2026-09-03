@@ -1,0 +1,40 @@
+static final int32 hidden = 6 * 7;
+static final int64 Answer = hidden;
+static final int8 Minimum = int8(-128);
+static final uint64 Maximum = ~uint64(0);
+static final bool Safe = false && (1 / 0 == 0);
+static final char Letter = '\n';
+static final float32 Third = 1.0 / 3.0;
+static final float32 NegativeZero = -0.0;
+static final float32 Tiny = 0.000000000000000000000000000000000000000000001;
+static final float64 Wide = Third;
+static final int16 Shifted = (-123 << 2) + 7;
+static final uint64 Masked = (~uint64(0) >> 3) ^ 13;
+static final float64 Quotient = 1.0 / 3.0;
+static final float32 Rounded = 1.0 + 0.000000059604644775390625;
+static final float32 Underflow = Tiny / 2.0;
+
+static func Main() {
+  println(Answer);
+  println(Minimum);
+  println(Maximum);
+  println(Safe);
+  println(Letter == '\n');
+  float32 three = 3.0;
+  println(Third == 1.0 / three);
+  println(Wide == float64(Third));
+  println(NegativeZero == 0.0);
+  println(Tiny > 0.0);
+  switch (int64(-128)) {
+    case Minimum: { println("minimum"); }
+  }
+  int16 signedValue = -123;
+  uint64 unsignedValue = 0;
+  float64 wideThree = 3.0;
+  float32 halfUlp = 0.000000059604644775390625;
+  float32 tiny = Tiny;
+  println(Shifted == (signedValue << 2) + 7);
+  println(Masked == ((~unsignedValue >> 3) ^ 13));
+  println(Quotient == 1.0 / wideThree);
+  println(Rounded == 1.0 + halfUlp && Underflow == tiny / 2.0);
+}

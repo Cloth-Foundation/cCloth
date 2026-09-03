@@ -8,6 +8,7 @@
 #include "cloth/identity/package_identity.h"
 #include "cloth/sema/canonical_identity.h"
 #include "cloth/sema/numeric_types.h"
+#include "cloth/sema/scalar_constants.h"
 
 #include <algorithm>
 #include <charconv>
@@ -153,28 +154,6 @@ ImportedMemberKind imported_member_kind(SymbolKind kind) {
   return ImportedMemberKind::kFunction;
 }
 
-std::optional<ImportedLiteral> returned_literal(const MirBody& body) {
-  for (const MirBasicBlock& block : body.blocks) {
-    const auto* returned =
-        std::get_if<MirReturnTerminator>(&block.terminator.data);
-    if (returned == nullptr || !returned->value) {
-      continue;
-    }
-    for (const MirBasicBlock& candidate : body.blocks) {
-      for (const MirInstruction& instruction : candidate.instructions) {
-        if (instruction.result != returned->value) {
-          continue;
-        }
-        if (const auto* literal =
-                std::get_if<MirLiteralInstruction>(&instruction.data)) {
-          return ImportedLiteral{literal->kind, literal->lexeme};
-        }
-      }
-    }
-  }
-  return std::nullopt;
-}
-
 const AbiFileClass* find_abi_file(const AbiModule& abi, FileId id) {
   const auto file = std::ranges::find(abi.files, id, &AbiFileClass::file);
   return file == abi.files.end() ? nullptr : &*file;
@@ -260,33 +239,16 @@ ImportedMember import_member(SymbolId id, std::string_view owner,
         parameter.is_final});
   }
 
-  std::optional<ImportedLiteral> static_value;
+  std::optional<ImportedScalarConstant> static_value;
   if (symbol.kind == SymbolKind::kField && symbol.is_static) {
     const MirField* field = find_mir_field(mir_file, id);
-    if (field != nullptr && field->initializer) {
-      static_value = returned_literal(*field->initializer);
-      if (static_value && symbol.static_constant) {
-        const auto constant = *symbol.static_constant;
-        const TypeKind kind = semantics.type(constant.type).kind;
-        if (kind == TypeKind::kEnum) {
-          static_value = ImportedLiteral{LiteralKind::kEnum,
-                                         std::to_string(constant.bits)};
-        } else if (is_valid_integer_bits(constant.bits, kind)) {
-          const auto properties = *numeric_type_properties(kind);
-          const bool negative =
-              properties.category == NumericCategory::kSignedInteger &&
-              (constant.bits &
-               (std::uint64_t{1} << (properties.bit_width - 1))) != 0;
-          const std::uint64_t magnitude =
-              !negative ? constant.bits
-              : properties.bit_width == 64
-                  ? std::uint64_t{0} - constant.bits
-                  : (std::uint64_t{1} << properties.bit_width) - constant.bits;
-          static_value = ImportedLiteral{
-              LiteralKind::kInteger,
-              std::string{negative ? "-" : ""} + std::to_string(magnitude)};
-        }
-      }
+    if (field != nullptr && !field->initializer && field->static_constant &&
+        field->static_constant == symbol.static_constant &&
+        is_valid_scalar_constant(*field->static_constant, symbol.type,
+                                 semantics)) {
+      const auto constant = *field->static_constant;
+      static_value = ImportedScalarConstant{semantics.type(constant.type).kind,
+                                            constant.bits};
     }
   }
 
@@ -732,10 +694,9 @@ void verify_member(const ImportedFile& file, const ImportedMember& member,
       (!member.is_final || !member.static_value)) {
     issues.add(record, "static field is not a final scalar constant");
   }
-  if (member.static_value &&
-      (member.static_value->kind == LiteralKind::kString ||
-       member.static_value->kind == LiteralKind::kNull)) {
-    issues.add(record, "static field carries a non-scalar literal");
+  if (member.static_value && !is_valid_scalar_bits(member.static_value->kind,
+                                                   member.static_value->bits)) {
+    issues.add(record, "static field carries invalid scalar bits");
   }
   if (member.kind == ImportedMemberKind::kField && !member.is_static &&
       member.static_value) {
@@ -1528,6 +1489,17 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
   if (view.files.empty()) {
     issues.add("files", "package contains no owned file declarations");
   }
+  std::size_t constant_count = 0;
+  for (const auto& file : view.files) {
+    for (const auto& member : file.members) {
+      if (member.kind == ImportedMemberKind::kField && member.is_static &&
+          ++constant_count > kMaxStaticConstants) {
+        issues.add("package", "package exceeds 65536 static constants",
+                   ImportedPackageIssueCode::kLimitExceeded);
+        return issues.take();
+      }
+    }
+  }
 
   std::set<std::string> type_identities;
   std::map<std::string, const ImportedType*> types;
@@ -1607,21 +1579,20 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
         issues.add(record, "aggregate static constants are not supported");
       }
       const auto type = types.find(member.type_identity);
-      if (member.static_value && type != types.end() &&
-          (member.static_value->kind == LiteralKind::kEnum ||
-           type->second->kind == TypeKind::kEnum)) {
-        const std::string& text = member.static_value->lexeme;
-        std::uint32_t tag = 0;
-        const auto [end, error] =
-            std::from_chars(text.data(), text.data() + text.size(), tag);
-        const auto owner = std::ranges::find(view.files, member.type_identity,
-                                             &ImportedFile::identity);
-        if (member.static_value->kind != LiteralKind::kEnum ||
-            type->second->kind != TypeKind::kEnum || text.empty() ||
-            (text.size() > 1 && text.front() == '0') || error != std::errc{} ||
-            end != text.data() + text.size() || tag >= kMaxEnumCases ||
-            (owner != view.files.end() && tag >= owner->enum_cases.size())) {
-          issues.add(record, "static enum constant has an invalid type or tag");
+      if (member.static_value && type != types.end()) {
+        const auto value = *member.static_value;
+        if (value.kind != type->second->kind) {
+          issues.add(record, "static constant kind does not match its type");
+        }
+        if (type->second->kind == TypeKind::kEnum) {
+          const auto owner = std::ranges::find(view.files, member.type_identity,
+                                               &ImportedFile::identity);
+          if (value.kind != TypeKind::kEnum || value.bits >= kMaxEnumCases ||
+              (owner != view.files.end() &&
+               value.bits >= owner->enum_cases.size())) {
+            issues.add(record,
+                       "static enum constant has an invalid type or tag");
+          }
         }
       }
     }
@@ -1735,6 +1706,26 @@ std::vector<ImportedPackageIssue> verify_imported_package_closure(
     if (!issues.empty()) return issues;
   }
   IssueCollector issues;
+  std::map<std::string, const ImportedFile*> owners;
+  for (const auto* package : packages)
+    for (const auto& file : package->files)
+      owners.emplace(file.identity, &file);
+  for (const auto* package : packages) {
+    for (const auto& file : package->files) {
+      for (const auto& member : file.members) {
+        if (!member.static_value ||
+            member.static_value->kind != TypeKind::kEnum)
+          continue;
+        const auto owner = owners.find(member.type_identity);
+        if (owner == owners.end() ||
+            owner->second->kind != FileTypeKind::kEnum ||
+            member.static_value->bits >= owner->second->enum_cases.size())
+          issues.add(
+              member.identity,
+              "static enum constant disagrees with its owning declaration");
+      }
+    }
+  }
   verify_layout_graph(packages, true, issues);
   verify_override_contracts(packages, true, issues);
   return issues.take();

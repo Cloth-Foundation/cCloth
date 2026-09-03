@@ -303,8 +303,7 @@ void initialization(TestContext& test) {
       "Status State; func Read() {} Main() { Read(); State = Status.Ready; }",
       "Status State; Main() { while (false) { State = Status.Ready; } }",
       "final Status State; Main() { State = Status.Ready; State = "
-      "Status.Ready; }",
-      "static final Status A = Status.Ready; static final Status B = A;"};
+      "Status.Ready; }"};
   for (const auto& declaration : invalid) {
     cloth::Compilation compilation;
     add(compilation, "Status.co", "enum { Ready }");
@@ -418,15 +417,16 @@ void imported_constants(TestContext& test) {
       {"models", "1.0.0"}, result.semantics, result.mir, result.abi);
   test.expect(imported.is_valid(), "static enum export failed");
   if (!imported.view) return;
-  for (const std::string value : {"1", "65536", "01", "-1"}) {
+  for (const std::uint64_t value : {1ULL, 65536ULL, 0xffffffffffffffffULL}) {
     auto broken = *imported.view;
     for (auto& file : broken.files) {
       for (auto& member : file.members) {
-        if (member.static_value) member.static_value->lexeme = value;
+        if (member.static_value) member.static_value->bits = value;
       }
     }
-    test.expect(!cloth::verify_imported_package_view(broken).empty(),
-                "accepted invalid exported enum constant: " + value);
+    test.expect(
+        !cloth::verify_imported_package_view(broken).empty(),
+        "accepted invalid exported enum constant: " + std::to_string(value));
   }
 }
 }  // namespace

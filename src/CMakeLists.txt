@@ -31,9 +31,11 @@ add_library(cloth_compiler
     parser/expression_parser.cc
     parser/parser.cc
     sema/canonical_identity.cc
+    sema/constant_evaluator.cc
     sema/file_class_symbols.cc
     sema/field_initialization_analysis.cc
     sema/numeric_types.cc
+    sema/scalar_constants.cc
     sema/semantic_analyzer.cc
     sema/semantic_model.cc
     sema/visibility.cc

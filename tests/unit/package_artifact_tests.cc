@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -77,14 +78,21 @@ std::vector<std::uint8_t> replace_metadata(
 }
 
 cloth::PackageArtifact make_artifact(
-    cloth::PackageArtifactKind kind = cloth::PackageArtifactKind::kInterface) {
+    cloth::PackageArtifactKind kind = cloth::PackageArtifactKind::kInterface,
+    std::string_view source = kSource) {
   cloth::Compilation compilation;
   compilation.add_package_source(
       cloth::SourceFile::from_memory("relocated/source/Main.co",
-                                     std::string{kSource}),
+                                     std::string{source}),
       "sample", "", "1.2.3+fixture");
   cloth::DiagnosticEngine diagnostics;
   auto result = compilation.analyze(diagnostics);
+  if (!result.is_valid) {
+    std::string messages;
+    for (const auto& diagnostic : diagnostics.diagnostics())
+      messages += diagnostic.message + "\n";
+    throw std::runtime_error("artifact fixture failed: " + messages);
+  }
   auto imported = cloth::build_imported_package_view(
       {"sample", "1.2.3+fixture"}, result.semantics, result.mir, result.abi);
 
@@ -140,7 +148,7 @@ cloth::PackageArtifact make_artifact(
   return cloth::PackageArtifact{
       kind,
       std::move(compatibility),
-      {{"Main.co", cloth::sha256(kSource)}},
+      {{"Main.co", cloth::sha256(source)}},
       {{"core", {"core", "2.0.0"}, cloth::sha256("core-artifact")}},
       std::move(*imported.view),
       std::move(symbols),
@@ -198,11 +206,111 @@ void canonical_interface_round_trip(TestContext& test) {
               "22560baef8517f607064e20963034209d22"
               "abc9277e1728b27c985fa3846c504" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "8fb4fab3cce5aad2e18efeb038572418d0"
-              "f5c9481ea12257c9f518b6efaac3ec",
-      "canonical version-3 fixture: size=" + std::to_string(metadata.size()) +
+              "cf24c550514aad3270cb32f3f899f853eef"
+              "adbcdcf954f7d51f40ac60fe222a0",
+      "canonical version-4 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
+}
+
+void scalar_constants_round_trip(TestContext& test) {
+  auto artifact = make_artifact(cloth::PackageArtifactKind::kInterface, R"(
+    static final int8 I8 = -128;
+    static final int16 I16 = -32768;
+    static final int32 I32 = -2147483648;
+    static final int64 I64 = -9223372036854775808;
+    static final byte Byte = 255;
+    static final uint8 U8 = 255;
+    static final uint16 U16 = 65535;
+    static final uint32 U32 = 4294967295;
+    static final uint64 U64 = 18446744073709551615;
+    static final bool Bool = true;
+    static final char Char = '\0';
+    static final float32 F32 = -0.0;
+    static final float64 F64 = -0.0;
+    static func Main() {}
+  )");
+  for (int subnormal = 0; subnormal < 2; ++subnormal) {
+    if (subnormal) {
+      for (auto& member : artifact.imported.files[0].members)
+        if (member.static_value &&
+            (member.name == "F32" || member.name == "F64"))
+          member.static_value->bits = 1;
+    }
+    const auto encoded = cloth::write_package_artifact(artifact);
+    test.expect(encoded.is_valid(), "scalar artifact encode");
+    if (!encoded.artifact) continue;
+    const auto decoded = cloth::read_package_artifact(encoded.artifact->bytes);
+    test.expect(
+        decoded.is_valid() && decoded.artifact->imported == artifact.imported,
+        "scalar type/bits did not round trip exactly");
+    test.expect(encoded.artifact->bytes[8] == 4, "format-4 envelope");
+    const auto metadata = metadata_text(encoded.artifact->bytes);
+    test.expect(metadata.contains("\"value\":\"-9223372036854775808\"") &&
+                    metadata.contains("\"value\":\"18446744073709551615\""),
+                "mathematical signed/unsigned decimal encoding");
+    const std::pair<std::string_view, std::string_view> mutations[]{
+        {"-128", "+1"},
+        {"-128", "-0"},
+        {"-128", "01"},
+        {"-128", "-01"},
+        {"-128", " 1"},
+        {"-128", "1.0"},
+        {"-128", "-129"},
+        {"-128", "128"},
+        {"18446744073709551615", "18446744073709551616"},
+        {"18446744073709551615", "-1"},
+        {"-9223372036854775808", "-9223372036854775809"},
+        {subnormal ? "00000001" : "80000000", "7f800000"},
+        {subnormal ? "00000001" : "80000000", "7fc00000"},
+        {subnormal ? "00000001" : "80000000", "7F800000"},
+        {subnormal ? "00000001" : "80000000", "100000000"},
+        {subnormal ? "0000000000000001" : "8000000000000000",
+         "7ff0000000000000"},
+        {subnormal ? "0000000000000001" : "8000000000000000",
+         "7ff8000000000000"},
+    };
+    for (const auto& [before, after] : mutations) {
+      auto corrupt = metadata;
+      const auto needle = "\"value\":\"" + std::string{before} + "\"";
+      const auto replacement = "\"value\":\"" + std::string{after} + "\"";
+      const auto position = corrupt.find(needle);
+      test.expect(position != std::string::npos, "scalar mutation fixture");
+      if (position == std::string::npos) continue;
+      corrupt.replace(position, needle.size(), replacement);
+      test.expect(
+          !cloth::read_package_artifact(
+               replace_metadata(encoded.artifact->bytes, std::move(corrupt)))
+               .is_valid(),
+          "accepted noncanonical or out-of-range scalar: " +
+              std::string{after});
+    }
+    const std::pair<std::string_view, std::string_view> invalid_records[]{
+        {"\"kind\":\"boolean\",\"value\":true",
+         "\"kind\":\"boolean\",\"value\":1"},
+        {"\"kind\":\"boolean\",\"value\":true",
+         "\"kind\":\"integer\",\"value\":\"1\""},
+        {"\"kind\":\"character\",\"value\":\"0\"",
+         "\"kind\":\"character\",\"value\":\"256\""},
+        {"\"kind\":\"character\",\"value\":\"0\"",
+         "\"kind\":\"character\",\"value\":\"-1\""},
+        {"\"kind\":\"integer\",\"value\":\"-128\"",
+         "\"kind\":\"float32\",\"value\":\"00000000\""},
+    };
+    for (const auto& [before, after] : invalid_records) {
+      auto corrupt = metadata;
+      const auto position = corrupt.find(before);
+      test.expect(position != std::string::npos,
+                  "static record fixture: " + std::string{before});
+      if (position == std::string::npos) continue;
+      corrupt.replace(position, before.size(), after);
+      test.expect(
+          !cloth::read_package_artifact(
+               replace_metadata(encoded.artifact->bytes, std::move(corrupt)))
+               .is_valid(),
+          "accepted malformed re-signed static record");
+    }
+  }
 }
 
 void object_round_trip_and_compatibility(TestContext& test) {
@@ -274,6 +382,10 @@ void envelope_and_integrity_failures(TestContext& test) {
   broken[8] = 2;
   expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
                   "pre-aggregate format version was accepted");
+  broken = encoded.artifact->bytes;
+  broken[8] = 3;
+  expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
+                  "pre-constant format version was accepted");
   broken = encoded.artifact->bytes;
   broken[12] = 1;
   expect_rejected(std::move(broken),
@@ -467,6 +579,7 @@ int main() {
   const std::vector<TestCase> tests{
       {"SHA-256 vectors", sha256_vectors},
       {"canonical interface round trip", canonical_interface_round_trip},
+      {"scalar constant round trip", scalar_constants_round_trip},
       {"object round trip and compatibility",
        object_round_trip_and_compatibility},
       {"envelope and integrity failures", envelope_and_integrity_failures},

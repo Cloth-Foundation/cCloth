@@ -54,6 +54,11 @@ before declarations enter analysis or linking. Missing/spurious markers, final
 replacement, and forged replaced-class identities are rejected without adding
 artifact fields or changing physical calling conventions.
 
+Static values use `ImportedScalarConstant`: a scalar kind and canonical bits,
+interpreted through the member's canonical type identity. Extraction consumes
+verified MIR constant data, never a returned initializer literal. Restoration
+preserves exact IEEE bits and signed integer widths without source reparsing.
+
 Extraction runs the verifier before returning a view. A failed extraction has
 no partial view and reports deterministic record-scoped issues. Tests cover
 private metadata, constant values, nullable signatures, unrelated-type
@@ -68,10 +73,10 @@ names, wrong owners, noncontiguous tags, numeric/reference confusion, and
 invalid constants. External enum constant tags are checked against the loaded
 dependency declaration before consumer analysis.
 
-The version-3 `.cpa` reader/writer consumes and reconstructs this view. Its exact
+The version-4 `.cpa` reader/writer consumes and reconstructs this view. Its exact
 record schema, bounded canonical encoding, integrity checks, compatibility gate,
 and malformed-input policy are documented in
-[artifact schema v3](artifact_schema_v3.md). Stage 23.3 connects artifact
+[artifact schema v4](artifact_schema_v4.md). Stage 23.3 connects artifact
 dependency closure and direct-alias import visibility without reopening
 dependency source files.
 

@@ -11,6 +11,7 @@
 #include "cloth/source/source_file.h"
 
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <span>
 #include <vector>
@@ -88,6 +89,9 @@ class DeclarationPass {
   std::span<const Token> tokens_;
   DiagnosticEngine& diagnostics_;
   FileClassSymbols symbols_;
+  std::map<std::string_view, std::vector<std::size_t>, std::less<>>
+      member_names_;
+  std::vector<std::size_t> constructor_indices_;
   std::vector<ImportDecl> imports_;
   std::vector<MemberOutline> outlines_;
   std::optional<TypeSyntax> base_class_;

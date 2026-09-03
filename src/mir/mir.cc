@@ -1487,7 +1487,8 @@ MirModule lower_to_mir(const HirModule& hir, const SemanticModel& semantics) {
     file.fields.reserve(hir_file.fields.size());
     for (const HirField& hir_field : hir_file.fields) {
       std::optional<MirBody> initializer;
-      if (hir_field.initializer) {
+      if (hir_field.initializer &&
+          !semantics.symbol(hir_field.symbol).is_static) {
         const SourceRange range =
             hir.storage.expression(*hir_field.initializer).range;
         initializer =
@@ -1500,7 +1501,8 @@ MirModule lower_to_mir(const HirModule& hir, const SemanticModel& semantics) {
                 .lower_initializer(*hir_field.initializer,
                                    semantics.symbol(hir_field.symbol).type);
       }
-      file.fields.push_back(MirField{hir_field.symbol, std::move(initializer)});
+      file.fields.push_back(MirField{hir_field.symbol, std::move(initializer),
+                                     hir_field.static_constant});
     }
     file.functions.reserve(hir_file.functions.size());
     for (const HirCallable& function : hir_file.functions) {

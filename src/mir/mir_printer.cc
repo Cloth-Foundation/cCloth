@@ -145,6 +145,9 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
             output << "final ";
           }
           output << semantics.type(symbol.type).name;
+          if (field.static_constant) {
+            output << " [constant bits=" << field.static_constant->bits << "]";
+          }
           if (field.initializer) {
             output << " [initializer]\n";
             print_body(*field.initializer, output);

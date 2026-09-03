@@ -126,8 +126,8 @@ enum class IntrinsicKind {
   kPrintStruct,
 };
 
-// Integer bits are zero-extended to 64 bits from their declared width; enum
-// values are declaration-order tags. No host signed arithmetic is involved.
+// Canonical typed scalar value: zero-extended integer/IEEE bits, bool 0/1,
+// decoded byte-oriented char, or a nominal enum's declaration-order tag.
 struct ScalarConstant {
   TypeId type;
   std::uint64_t bits;
@@ -251,6 +251,7 @@ class SemanticModel {
 
  private:
   friend class SemanticAnalyzer;
+  friend class ConstantEvaluator;
 
   struct TypeName {
     std::string name;
