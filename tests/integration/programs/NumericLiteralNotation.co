@@ -1,0 +1,39 @@
+static final uint8 Binary = 0b1111_0000u8;
+static final uint16 Octal = 0o755u16;
+static final uint64 Hex = 0xFFFF_FFFF_FFFF_FFFF;
+static final int32 HexSuffixText = 0x1f32;
+static final int8 Minimum = -0x80i8;
+static final float32 Decimal32 = 1.25e2f32;
+static final float64 Decimal64 = 1E+3f64;
+static final float64 Zero = 0e999_999f64;
+
+static func Which(int8 value): int32 {
+  return 8;
+}
+
+static func Which(int64 value): int32 {
+  return 64;
+}
+
+static func Fold(): int32 {
+  return (0x10 + 0b10) * 1_0;
+}
+
+static func Main() {
+  println(Binary);
+  println(Octal);
+  println(Hex);
+  println(HexSuffixText);
+  println(Minimum);
+  println(Decimal32);
+  println(Decimal64);
+  println(Zero);
+  println(Fold());
+  println(Which(0b1i8));
+  println(int8::wrap(0x12Cu16));
+  println(uint8::sat(-0b1i16));
+  switch (0x3i64) {
+    case 0b11i8: { println("notation case"); }
+    default: { println("wrong case"); }
+  }
+}

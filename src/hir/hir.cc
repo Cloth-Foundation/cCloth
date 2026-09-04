@@ -21,9 +21,10 @@ std::string hir_literal_lexeme(const LiteralExpression& literal) {
   }
   const NumericLiteralSpelling spelling =
       parse_numeric_literal_spelling(literal.lexeme);
-  return std::string{spelling.error == NumericLiteralSpellingError::kNone
-                         ? spelling.core
-                         : literal.lexeme};
+  if (spelling.error == NumericLiteralSpellingError::kNone) {
+    return spelling.core;
+  }
+  return std::string{literal.lexeme};
 }
 
 }  // namespace
@@ -188,10 +189,13 @@ class Lowerer {
     } else if (std::holds_alternative<SuperExpression>(syntax.data)) {
       data = HirSuperExpression{};
     } else if (const auto* unary = std::get_if<UnaryExpression>(&syntax.data)) {
-      data = HirUnaryExpression{unary->operation, expression(unary->operand),
-                                semantics_.file(current_file_)
-                                    .expressions.at(unary->operand.value)
-                                    .is_presence_test};
+      const ExpressionSemantics& operand =
+          semantics_.file(current_file_).expressions.at(unary->operand.value);
+      if (semantic.type != semantics_.error_type() &&
+          operand.type != semantics_.error_type()) {
+        data = HirUnaryExpression{unary->operation, expression(unary->operand),
+                                  operand.is_presence_test};
+      }
     } else if (const auto* update =
                    std::get_if<UpdateExpression>(&syntax.data)) {
       data = HirUpdateExpression{update->operation, expression(update->operand),

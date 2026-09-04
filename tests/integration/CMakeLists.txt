@@ -8,6 +8,24 @@ set(CLOTH_INTEGRATION_ERRORS "${CMAKE_CURRENT_SOURCE_DIR}/errors")
 set(CLOTH_INTEGRATION_PROJECTS "${CMAKE_CURRENT_SOURCE_DIR}/projects")
 
 foreach(target IN ITEMS x86_64 wasm32)
+    add_test(NAME cloth_cli_check_numeric_literal_notation_${target}
+        COMMAND clothc --check --target=${target}
+            ${CLOTH_INTEGRATION_PROGRAMS}/NumericLiteralNotation.co)
+    set(numeric_literal_notation_ir
+        "${PROJECT_BINARY_DIR}/cloth-numeric-literal-notation-${target}.ll")
+    add_test(NAME cloth_cli_numeric_literal_notation_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${numeric_literal_notation_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/NumericLiteralNotation.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_numeric_literal_notation_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${numeric_literal_notation_ir})
+        set_tests_properties(cloth_numeric_literal_notation_verify_${target}
+            PROPERTIES
+                DEPENDS cloth_cli_numeric_literal_notation_llvm_${target})
+    endif()
     add_test(NAME cloth_cli_check_typed_numeric_literals_${target}
         COMMAND clothc --check --target=${target}
             ${CLOTH_INTEGRATION_PROGRAMS}/TypedNumericLiterals.co)
@@ -522,6 +540,12 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         OUTPUT "cloth typed numeric literals"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/TypedNumericLiterals.co
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/typed_numeric_literals.txt
+        EXACT
+    )
+    cloth_add_native_output_test(numeric_literal_notation
+        OUTPUT "cloth numeric literal notation"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NumericLiteralNotation.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/numeric_literal_notation.txt
         EXACT
     )
     cloth_add_native_output_test(integer_binary_data

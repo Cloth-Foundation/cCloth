@@ -59,8 +59,9 @@ authorized 30.4 exit audit on 2026-09-03. Stage 31.1 is complete for the
 approved MIR optimization contract. The separately authorized 31.2 scalar-fold
 and 31.3 CFG/integration checkpoints are also complete. Stage 31 is complete
 following its separately authorized 31.4 exit audit on 2026-09-04. Stage 32 is
-complete following its separately authorized 32.4 exit audit on 2026-09-04. No
-later stage is assigned or active.
+complete following its separately authorized 32.4 exit audit on 2026-09-04.
+Stage 33 is complete following its separately authorized 33.4 numeric-notation
+exit audit on 2026-09-04.
 
 ## Scheduled work
 
@@ -619,7 +620,72 @@ class override validation. Existing ABI and artifact versions are unchanged.
   formatting, nine editor tests per compiler, all 99 local Markdown link checks,
   and repository hygiene gates pass. Compatibility versions remain unchanged.
 
-  **Stage 32 is complete.** No later stage is assigned or active.
+  **Stage 32 is complete.** Stage 33 is tracked below.
+
+### Stage 33: Numeric literal notation
+
+- [x] **33.1 — Contract.** Approve
+  [numeric literal notation](docs/proposals/stage_33_numeric_literal_notation.md)
+  covering scientific notation, lowercase binary/octal/hexadecimal prefixes,
+  strict digit separators, Stage 32 suffix interaction, exact values, atomic
+  recovery, notation-free HIR, unchanged compatibility, tests, and non-goals.
+
+  Approved 2026-09-04. Exponents accept `e` and `E`; hexadecimal digits accept
+  both cases, while prefixes and suffixes remain lowercase. Underscores occur
+  singly between digits. Base literals are integers, scientific forms are
+  floating, leading zeroes remain decimal, and hexadecimal digit consumption
+  makes `0x1f32` an integer rather than a suffixed float. This checkpoint
+  changes documentation only.
+
+- [x] **33.2 — Frontend.** Implement a shared bounded spelling decoder, atomic
+  tokenization and recovery, syntax classification, exact radix/exponent value
+  checks, existing contextual and suffixed typing, canonical notation-free HIR
+  lowering, HIR verification, diagnostics, and focused unit/check tests.
+
+  Completed 2026-09-04. The shared decoder owns separator, radix, exponent,
+  suffix, and error classification. Exact scalar evaluation handles scientific
+  notation without host floating parsing; HIR accepts only canonical base-ten
+  integer or normalized coefficient/exponent text. The 14-case numeric unit
+  target and two target-specific frontend checks pass in both 226-test compiler
+  configurations. Downstream emission, package, editor, and user-documentation
+  claims remain deferred to 33.3. Compatibility versions are unchanged.
+
+- [x] **33.3 — Integration.** Complete static constants, MIR folding and
+  verification, x86-64/wasm32 LLVM and native behavior, whole/separate/source-
+  free packages, affected-only invalidation, Shuttle determinism, editor
+  support, and user-facing numeric/syntax documentation.
+
+  Completed 2026-09-04. Canonical notation values fold to exact MIR bits and
+  pass LLVM verification before and after O2 on both targets. Native and
+  four-package tests agree across whole-project, separate-package, and source-
+  free compilation; relocated serial/parallel artifacts match, affected-only
+  rebuilds reuse independent packages, and invalid edits preserve completed
+  outputs. Both compiler configurations pass 232/232 tests, including 31
+  public Shuttle toolchain and 28 native Shuttle cases. All 43 ordinary Rust
+  tests, Rust 1.85 checking, warning-denied Clippy, Rust/C++ formatting, 10
+  editor tests per compiler, and all 100 local Markdown link checks pass. User
+  numeric/syntax documentation is updated; compatibility versions remain
+  unchanged.
+
+- [x] **33.4 — Exit audit.** Complete radix boundaries, floating exact-value
+  boundaries, separators in every valid and invalid position, malformed token
+  families, extreme exponent/resource cases, HIR/MIR mutation coverage,
+  failed-output preservation, relocated determinism, and all compiler,
+  Rust/shared Shuttle, editor, formatting, documentation, link, and repository
+  gates.
+
+  Completed 2026-09-04. The 17-case numeric target covers all integer suffixes
+  across binary, octal, and hexadecimal extrema and failures; exact scientific
+  signed zero, ties, subnormals, finite extrema, near and extreme range errors;
+  strict separator positions; atomic source ordering; and prefix, separator,
+  exponent, and suffix bytes at the 4,096-byte limit. Both compiler
+  configurations pass 232/232 tests, including 31 public Shuttle toolchain and
+  28 native cases. All 43 ordinary Rust tests, Rust 1.85 checking,
+  warning-denied Clippy, Rust/C++ formatting, 10 editor tests per compiler, all
+  100 local Markdown target checks, and repository hygiene gates pass.
+  Compatibility versions remain unchanged.
+
+  **Stage 33 is complete.** No later stage is active.
 
 ## Unscheduled backlog
 

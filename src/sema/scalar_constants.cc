@@ -10,8 +10,10 @@
 #include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -213,24 +215,78 @@ ConstantBits pack(bool negative, Natural numerator, Natural denominator,
 ConstantBits decimal_float(std::string_view text, bool negative,
                            TypeKind type) {
   Natural numerator;
-  Natural denominator{1};
-  bool fractional = false;
-  bool digit = false;
-  for (char ch : text) {
-    if (ch == '.' && !fractional) {
-      fractional = true;
-      continue;
-    }
-    if (ch < '0' || ch > '9')
-      return std::unexpected(ConstantError::kInvalidLiteral);
-    digit = true;
+  std::size_t offset = 0;
+  std::size_t integer_digits = 0;
+  std::size_t fractional_digits = 0;
+  std::size_t significant_digits = 0;
+  bool nonzero = false;
+  const auto consume_digit = [&](char ch, bool fractional) {
     numerator = numerator.multiply(Natural{10});
     numerator.add(Natural{static_cast<std::uint64_t>(ch - '0')});
-    if (fractional) denominator = denominator.multiply(Natural{10});
+    nonzero = nonzero || ch != '0';
+    if (nonzero) ++significant_digits;
+    if (fractional)
+      ++fractional_digits;
+    else
+      ++integer_digits;
+  };
+  while (offset < text.size() && text[offset] >= '0' && text[offset] <= '9') {
+    consume_digit(text[offset++], false);
   }
-  if (!digit) return std::unexpected(ConstantError::kInvalidLiteral);
-  return pack(negative, std::move(numerator), std::move(denominator), 0, type,
-              true);
+  if (integer_digits == 0)
+    return std::unexpected(ConstantError::kInvalidLiteral);
+  if (offset < text.size() && text[offset] == '.') {
+    ++offset;
+    while (offset < text.size() && text[offset] >= '0' && text[offset] <= '9') {
+      consume_digit(text[offset++], true);
+    }
+    if (fractional_digits == 0)
+      return std::unexpected(ConstantError::kInvalidLiteral);
+  }
+
+  constexpr int kExponentLimit = 1000000;
+  int exponent = 0;
+  bool exponent_negative = false;
+  if (offset < text.size() && (text[offset] == 'e' || text[offset] == 'E')) {
+    ++offset;
+    if (offset < text.size() && (text[offset] == '+' || text[offset] == '-')) {
+      exponent_negative = text[offset++] == '-';
+    }
+    const std::size_t begin = offset;
+    while (offset < text.size() && text[offset] >= '0' && text[offset] <= '9') {
+      const int digit = text[offset++] - '0';
+      if (exponent > (kExponentLimit - digit) / 10) {
+        exponent = kExponentLimit;
+      } else {
+        exponent = exponent * 10 + digit;
+      }
+    }
+    if (offset == begin) return std::unexpected(ConstantError::kInvalidLiteral);
+  }
+  if (offset != text.size())
+    return std::unexpected(ConstantError::kInvalidLiteral);
+  if (numerator.zero())
+    return pack(negative, std::move(numerator), Natural{1}, 0, type, true);
+
+  if (exponent_negative) exponent = -exponent;
+  const auto fraction = static_cast<int>(fractional_digits);
+  const int decimal_exponent = exponent - fraction;
+  const auto order = static_cast<long long>(significant_digits) +
+                     static_cast<long long>(decimal_exponent);
+  if (order > 400) return std::unexpected(ConstantError::kNonFinite);
+  if (order < -400) return std::unexpected(ConstantError::kOutOfRange);
+
+  Natural power{1};
+  const int power_count =
+      decimal_exponent < 0 ? -decimal_exponent : decimal_exponent;
+  for (int index = 0; index < power_count; ++index) {
+    power = power.multiply(Natural{10});
+  }
+  if (decimal_exponent >= 0) {
+    numerator = numerator.multiply(power);
+    return pack(negative, std::move(numerator), Natural{1}, 0, type, true);
+  }
+  return pack(negative, std::move(numerator), std::move(power), 0, type, true);
 }
 
 struct Integer {

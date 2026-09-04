@@ -887,6 +887,7 @@ class HirVerifier {
               parse_numeric_literal_spelling(literal->lexeme);
           const bool has_suffix =
               spelling.suffix_kind != NumericLiteralSuffix::kNone;
+          const bool is_canonical = literal->lexeme == spelling.core;
           bool valid_type = false;
           bool valid_value = false;
           if (expression.type.value < semantics_.types().size()) {
@@ -894,7 +895,7 @@ class HirVerifier {
             valid_type = is_numeric_type(type);
             if (valid_type &&
                 spelling.error == NumericLiteralSpellingError::kNone &&
-                !has_suffix) {
+                !has_suffix && is_canonical) {
               valid_value = scalar_literal(literal->kind, spelling.core, type)
                                 .has_value();
               if (!valid_value && literal->kind == LiteralKind::kInteger) {
@@ -925,9 +926,11 @@ class HirVerifier {
             }
           }
           if (spelling.error != NumericLiteralSpellingError::kNone ||
-              has_suffix || !valid_type || !valid_value ||
+              has_suffix || !is_canonical || !valid_type || !valid_value ||
               (literal->kind == LiteralKind::kInteger &&
-               spelling.core_is_floating)) {
+               spelling.core_is_floating) ||
+              (literal->kind == LiteralKind::kFloat &&
+               !spelling.core_is_floating)) {
             report(expression.range,
                    "numeric literal has invalid canonical spelling or type");
           }

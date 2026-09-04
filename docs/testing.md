@@ -1,5 +1,101 @@
 # Cloth testing and diagnostic builds
 
+## Stage 33.4 numeric literal notation exit audit
+
+Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
+Both configurations pass all **232 CTests**, including **31 public compiler-
+protocol/toolchain and 28 native Shuttle cases** per compiler. All **43 ordinary
+Rust tests**, the Rust **1.85.0** minimum check, warning-denied Clippy, Rust and
+C++ formatting, **10 editor tests per compiler**, all **100 local Markdown
+target checks**, and repository whitespace gates pass.
+
+The focused numeric target now passes **17 cases**. Its exit matrix covers every
+integer suffix at binary, octal, and hexadecimal zero, signed minimum, maximum,
+and one-past boundaries; lowercase prefixes, both hexadecimal digit cases, and
+leading zeroes; and the hexadecimal `f32`/`f64` ambiguity. Scientific values
+cover `e`/`E`, signed exponents, integral and fractional mantissas, exact
+binary32/binary64 ties-to-even, signed zero, minimum subnormals, exact finite
+extrema, near and extreme underflow/overflow, and canonical scalar bits.
+
+Separator tests exercise every permitted digit run and every forbidden
+boundary. Invalid prefix, digit, exponent, separator, suffix, and identifier-tail
+candidates remain atomic and source ordered. The complete 4,096-byte source
+token is checked at and beyond the limit with suffix, prefix, exponent, and
+separator bytes included. Existing AST/HIR, forged-HIR, MIR, O2 LLVM,
+whole/separate/source-free, invalidation, output-preservation, and relocated
+serial/parallel matrices remain clean on x86-64 and wasm32.
+
+Artifact format **4**, compiler ABI **4**, runtime ABI **3**, process protocol
+**2**, receipt schema **1**, and manifest schema **1** remain unchanged.
+**Stage 33 is complete.**
+
+## Stage 33.3 numeric literal notation integration
+
+Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
+Both configurations pass all **232 CTests**, including **31 public compiler-
+protocol/toolchain and 28 native Shuttle cases** per compiler. All **43 ordinary
+Rust tests**, the Rust **1.85.0** minimum check, warning-denied Clippy, Rust and
+C++ formatting, **10 editor tests per compiler**, and all **100 local Markdown
+link checks** pass.
+
+Dedicated MIR coverage folds radix arithmetic, scientific `float32`/`float64`,
+and `wrap`/`sat` inputs to exact scalar bits, verifies the optimized module, and
+emits LLVM from it. Direct x86-64 and wasm32 output passes LLVM verification
+before and after O2. Native execution covers static constants, typed overloads,
+switch labels, conversions, and the hexadecimal `f32` ambiguity.
+
+The four-package Shuttle fixture agrees across whole-project, separate-package,
+and source-free execution. Relocated one-job and four-job builds with reversed
+dependency declarations produce identical x86-64/wasm32 interface artifacts
+and identical x86-64 native artifacts and executables. A notation-only edit
+rebuilds its package and consumer while reusing independent packages; an invalid
+base digit preserves completed artifacts and the executable without running it.
+
+VS Code highlights approved scientific, base-prefixed, separated, and suffixed
+forms atomically and rejects representative malformed atoms. User integer,
+floating-point, syntax, and getting-started documentation now describes the
+notation. Artifact format **4**, compiler ABI **4**, runtime ABI **3**, process
+protocol **2**, receipt schema **1**, and manifest schema **1** remain unchanged.
+At this checkpoint, 33.4 remained separately authorized; its completed audit is
+recorded above.
+
+## Stage 33.2 numeric literal notation frontend
+
+Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
+Both configurations pass all **226 CTests**, including **30 public compiler-
+protocol/toolchain and 26 native Shuttle cases** per compiler. The focused
+numeric-literal target passes all **14 cases**, and direct `--check` coverage
+accepts the new notation for both x86-64 and wasm32.
+
+One bounded decoder now classifies decimal, scientific, binary, octal, and
+hexadecimal spellings; validates strict separators and suffix interactions; and
+provides canonical values to semantic analysis, constant evaluation, HIR
+lowering, and verification. Integer radix conversion and scientific floating
+evaluation are exact and target-independent. Malformed candidates are consumed
+atomically with category-specific diagnostics, including missing digits,
+invalid bases, separator placement, suffix conflicts, and range failures.
+
+The AST retains source text while HIR retains only minimal base-ten integers or
+normalized coefficient/exponent floats. Focused mutation coverage rejects
+retained prefixes, separators, suffixes, and noncanonical or unrepresentable
+values. This checkpoint adds no downstream emission, package, editor, or user-
+documentation claim. Artifact format **4**, compiler ABI **4**, runtime ABI
+**3**, process protocol **2**, receipt schema **1**, and manifest schema **1**
+remain unchanged. The separately authorized 33.3 integration checkpoint is
+recorded above.
+
+## Stage 33.1 numeric literal notation contract
+
+Approved on 2026-09-04. This documentation-only checkpoint fixes scientific
+notation, lowercase binary/octal/hexadecimal prefixes, strict digit separators,
+case and hexadecimal-suffix ambiguity rules, exact value interpretation,
+atomic malformed recovery, notation-free canonical HIR, unchanged compatibility
+versions, verification requirements, and non-goals.
+
+It changed no compiler, runtime, Shuttle, editor, user-language documentation,
+or artifact implementation. The separately authorized 33.2 frontend checkpoint
+is recorded above.
+
 ## Stage 32.4 typed numeric literal exit audit
 
 Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
@@ -27,7 +123,7 @@ relocated serial/parallel determinism checks remain clean. Artifact format
 **4**, compiler ABI **4**, runtime ABI **3**, process protocol **2**, receipt
 schema **1**, and manifest schema **1** remain unchanged.
 
-**Stage 32 is complete.** No later stage is assigned or active.
+**Stage 32 is complete.** The completed Stage 33 audit is recorded above.
 
 ## Stage 32.3 typed numeric literal integration
 

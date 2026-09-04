@@ -31,21 +31,37 @@ enum class NumericLiteralSpellingError {
   kInvalidCore,
   kInvalidSuffix,
   kIntegerSuffixOnFloatingCore,
+  kMissingBaseDigits,
+  kInvalidBaseDigit,
+  kInvalidBasePrefix,
+  kUnknownBasePrefix,
+  kInvalidSeparator,
+  kMissingExponentDigits,
+  kFloatingSuffixOnNonDecimalCore,
+};
+
+enum class NumericLiteralBase {
+  kDecimal = 10,
+  kBinary = 2,
+  kOctal = 8,
+  kHexadecimal = 16,
 };
 
 struct NumericLiteralSpelling {
-  std::string_view core;
+  std::string core;
   std::string_view suffix;
-  NumericLiteralSuffix suffix_kind;
-  NumericLiteralSpellingError error;
-  bool core_is_floating;
-  bool is_floating;
+  NumericLiteralSuffix suffix_kind{NumericLiteralSuffix::kNone};
+  NumericLiteralSpellingError error{NumericLiteralSpellingError::kNone};
+  NumericLiteralBase base{NumericLiteralBase::kDecimal};
+  bool core_is_floating{false};
+  bool is_floating{false};
 };
 
-// Splits a complete decimal numeric token. This validates source spelling but
-// does not perform type-specific range checking.
+// Decodes a complete numeric token and returns its notation-free canonical
+// core. This validates source spelling but does not perform type-specific range
+// checking.
 [[nodiscard]] NumericLiteralSpelling parse_numeric_literal_spelling(
-    std::string_view spelling) noexcept;
+    std::string_view spelling);
 
 // Returns the canonical Cloth type name selected by a non-empty suffix.
 [[nodiscard]] std::string_view numeric_literal_suffix_type_name(

@@ -71,7 +71,7 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 31 | Deterministic target-independent MIR scalar and control-flow optimization |
 | 32 | Exact typed numeric literals with deterministic compiler and package integration |
 
-Stage 32 is the current completed language-surface baseline, and Stage 31 is the
+Stage 33 is the current completed language-surface baseline, and Stage 31 is the
 current completed optimizer baseline. Coordinated toolchain Stage 22 and
 separate-compilation Stage 23 are complete, including their cross-tool exit
 audits. Build-responsiveness Stage 24 is also complete.
@@ -748,10 +748,96 @@ unsuffixed behavior, HIR suffix erasure, verified canonical constants and MIR,
 x86-64/wasm32 LLVM verification, deterministic opaque package integration,
 editor and user documentation, and every existing quality gate.
 
-## Beyond Stage 32
+## Stage 33: Numeric literal notation
 
-Stage 32 is complete. No stage beyond 32 is assigned or active; the remaining
-backlog does not acquire priority or enter the Cloth 1.0 scope automatically.
+Status: **complete — 33.4 exit audit passed 2026-09-04**
+
+The [approved contract](docs/proposals/stage_33_numeric_literal_notation.md)
+adds scientific notation, lowercase binary/octal/hexadecimal integer prefixes,
+and strictly placed digit separators. These are alternate source spellings for
+existing numeric values and types.
+
+Objective: make large, small, and bit-oriented numeric values concise to write
+while preserving Cloth's exact typing, deterministic evaluation, checked
+numeric behavior, and opaque package boundary.
+
+Prerequisite: Stages 20, 28, 31, and 32.
+
+Deliverables:
+
+1. **33.1 — Contract (complete).** Freeze grammar, case rules, ambiguity,
+   exact value interpretation, typing, recovery, canonical representation,
+   compatibility, verification, and non-goals.
+2. **33.2 — Frontend (complete).** Implement one shared decoder, atomic lexing,
+   semantic checks, canonical HIR lowering and verification, diagnostics, and
+   focused unit/check coverage.
+3. **33.3 — Integration (complete).** Complete constants,
+   MIR/optimizer/LLVM, native and package behavior, Shuttle verification,
+   editor support, and user documentation.
+4. **33.4 — Exit audit (complete).** Close the full radix, exponent, separator,
+   malformed, exact-value, cross-target, package-determinism, and quality-gate
+   matrices.
+
+Accepted notation includes `1e3`, `1.5e-2`, `1e3f32`, `0b1010`, `0o755`,
+`0xFF`, `0xFFu16`, `1_000_000`, and `1.25e1_0`. Exponents accept `e` and `E`;
+hexadecimal digits accept `a`–`f` and `A`–`F`. Prefixes and Stage 32 suffixes
+remain lowercase. Underscores occur only singly between digits.
+
+Hexadecimal digits take precedence over suffix recognition, so `0x1f32` is a
+hexadecimal integer, not a floating literal. Floating suffixes are decimal-only;
+base-prefixed values use an explicit checked conversion when a floating result
+is intended. Leading zeroes never imply octal.
+
+The AST retains source spelling. HIR erases notation: integer magnitudes become
+minimal base-ten text, and floating magnitudes become an exact normalized
+coefficient/exponent form. Existing exact types and canonical scalar bits carry
+the value through constants, MIR, optimization, artifacts, and LLVM.
+
+Checkpoint 33.2 implements that frontend boundary with one bounded spelling
+decoder shared by lexing, semantic analysis, constant evaluation, HIR lowering,
+and HIR verification. Atomic malformed recovery has category-specific
+diagnostics; radix values and scientific forms use exact target-independent
+evaluation. A focused 14-case unit target and x86-64/wasm32 frontend checks pass
+inside both 226-test compiler configurations.
+
+Checkpoint 33.3 carries canonical values through static constants, MIR folding
+and verification, x86-64/wasm32 LLVM verification before and after O2, and
+native execution. A dedicated four-package fixture proves whole-project,
+separate-package, source-free, relocated serial/parallel, affected-only rebuild,
+and failed-output-preservation behavior. VS Code recognizes the approved forms
+and rejects malformed atoms, and the user documentation now owns the notation.
+Both compiler configurations pass all 232 tests, including 31 public Shuttle
+toolchain and 28 native Shuttle cases; all 10 editor tests pass per compiler.
+
+The separately authorized 33.4 audit expands the focused numeric target to 17
+cases. Every integer suffix is checked at binary, octal, and hexadecimal zero,
+minimum/maximum, and out-of-range boundaries. Scientific coverage verifies
+both exponent cases and signs, integral and fractional mantissas, signed zero,
+ties-to-even, subnormals, exact finite extrema, near and extreme range failures,
+strict separator placement, atomic source ordering, and complete-token resource
+accounting. Both 232-test compiler configurations and every coordinated quality
+gate pass.
+
+Artifact format **4**, compiler ABI **4**, runtime ABI **3**, process protocol
+**2**, receipt schema **1**, and manifest schema **1** remain unchanged. No
+runtime, protocol, manifest, scheduler, or Shuttle production feature is added.
+
+Non-goals include hexadecimal floating-point or binary-exponent notation,
+implicit octal, leading-dot/trailing-dot decimals, uppercase prefixes, new
+suffixes or types, arbitrary-precision or decimal primitives, user-defined
+units, new conversions or arithmetic, exceptions, optimizer controls, and
+unrelated tooling.
+
+The exit audit confirms exact compile-time/runtime agreement, canonical HIR and
+scalar bits, bounded deterministic malformed recovery, x86-64/wasm32 LLVM
+verification, whole/separate/source-free package equivalence, relocated
+serial/parallel determinism, editor and user documentation, and every existing
+quality gate.
+
+## Beyond Stage 33
+
+Stage 33 is complete. The remaining backlog does not acquire priority or enter
+the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 

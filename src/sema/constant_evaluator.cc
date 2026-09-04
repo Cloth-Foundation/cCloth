@@ -69,7 +69,8 @@ std::vector<ExpressionId> children(const ExpressionData& data) {
 }
 
 struct NumericLiteral {
-  LiteralExpression literal;
+  LiteralKind kind;
+  std::string lexeme;
   std::vector<TokenKind> signs;
   bool has_suffix;
 };
@@ -95,10 +96,8 @@ std::optional<NumericLiteral> numeric_literal(const AstStorage& storage,
       if (spelling.error != NumericLiteralSpellingError::kNone) {
         return std::nullopt;
       }
-      LiteralExpression canonical = *literal;
-      canonical.lexeme = spelling.core;
       return NumericLiteral{
-          canonical, std::move(signs),
+          literal->kind, spelling.core, std::move(signs),
           spelling.suffix_kind != NumericLiteralSuffix::kNone};
     } else {
       return std::nullopt;
@@ -368,8 +367,7 @@ class ConstantEvaluator {
       return std::nullopt;
     };
     if (const auto literal = numeric_literal(storage, id))
-      return result(scalar_signed_literal(literal->literal.kind,
-                                          literal->literal.lexeme, kind,
+      return result(scalar_signed_literal(literal->kind, literal->lexeme, kind,
                                           literal->signs));
     if (const auto* literal = std::get_if<LiteralExpression>(&syntax.data))
       return result(scalar_literal(literal->kind, literal->lexeme, kind));
@@ -388,9 +386,8 @@ class ConstantEvaluator {
             std::get_if<NumericConversionExpression>(&syntax.data)) {
       if (const auto literal = numeric_literal(storage, conversion->value);
           literal && !literal->has_suffix) {
-        return result(scalar_signed_literal(literal->literal.kind,
-                                            literal->literal.lexeme, kind,
-                                            literal->signs));
+        return result(scalar_signed_literal(literal->kind, literal->lexeme,
+                                            kind, literal->signs));
       }
       const auto operand = expression(node, conversion->value);
       return operand ? result(convert_scalar(

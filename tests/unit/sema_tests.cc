@@ -1595,7 +1595,7 @@ void overload_directed_numeric_literals(TestContext& test) {
           (literal->lexeme == "4294967295" && kind == cloth::TypeKind::kUint32);
       found_float32_literal =
           found_float32_literal ||
-          (literal->lexeme == "0.5" && kind == cloth::TypeKind::kFloat32);
+          (literal->lexeme == "5e-1" && kind == cloth::TypeKind::kFloat32);
     }
     if (const auto* call =
             std::get_if<cloth::HirCallExpression>(&expression.data);
@@ -2100,7 +2100,7 @@ void contextual_numeric_literals_and_widening(TestContext& test) {
         (literal->lexeme == "4294967295" && kind == cloth::TypeKind::kUint32);
     found_float32_half =
         found_float32_half ||
-        (literal->lexeme == "0.5" && kind == cloth::TypeKind::kFloat32);
+        (literal->lexeme == "5e-1" && kind == cloth::TypeKind::kFloat32);
   }
   test.expect(found_int64_ten && found_uint32_maximum && found_float32_half,
               "context did not determine numeric literal types");

@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <charconv>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -4609,25 +4608,7 @@ class SemanticAnalyzer {
 
   bool floating_literal_fits(std::string_view lexeme, TypeId type) const {
     const TypeKind kind = model_.type(type).kind;
-    if (constant_context_)
-      return scalar_literal(LiteralKind::kFloat, lexeme, kind).has_value();
-    const char* const begin = lexeme.data();
-    const char* const end = begin + lexeme.size();
-    if (kind == TypeKind::kFloat32) {
-      float value = 0.0F;
-      const auto parsed =
-          std::from_chars(begin, end, value, std::chars_format::general);
-      return parsed.ec == std::errc{} && parsed.ptr == end &&
-             std::isfinite(value);
-    }
-    if (kind == TypeKind::kFloat64) {
-      double value = 0.0;
-      const auto parsed =
-          std::from_chars(begin, end, value, std::chars_format::general);
-      return parsed.ec == std::errc{} && parsed.ptr == end &&
-             std::isfinite(value);
-    }
-    return false;
+    return scalar_literal(LiteralKind::kFloat, lexeme, kind).has_value();
   }
 
   std::optional<TypeId> common_numeric_type(TypeId left, TypeId right) const {
@@ -4820,55 +4801,9 @@ class SemanticAnalyzer {
       if (spelling.error != NumericLiteralSpellingError::kNone) {
         return false;
       }
-      if (constant_context_)
-        return scalar_literal(literal->kind, spelling.core,
-                              model_.type(target).kind, is_negated)
-            .has_value();
-      if (literal->kind == LiteralKind::kInteger) {
-        if (is_integer(target)) {
-          return integer_literal_fits(spelling.core, target, is_negated);
-        }
-        std::uint64_t value = 0;
-        const char* const begin = spelling.core.data();
-        const char* const end = begin + spelling.core.size();
-        const auto parsed = std::from_chars(begin, end, value);
-        return is_floating_point(target) && parsed.ec == std::errc{} &&
-               parsed.ptr == end;
-      }
-      if (literal->kind != LiteralKind::kFloat) {
-        return false;
-      }
-      if (is_floating_point(target)) {
-        return floating_literal_fits(spelling.core, target);
-      }
-      if (!is_integer(target)) {
-        return false;
-      }
-
-      double parsed_value = 0.0;
-      const char* const begin = spelling.core.data();
-      const char* const end = begin + spelling.core.size();
-      const auto parsed =
-          std::from_chars(begin, end, parsed_value, std::chars_format::general);
-      if (parsed.ec != std::errc{} || parsed.ptr != end ||
-          !std::isfinite(parsed_value)) {
-        return false;
-      }
-      long double value = static_cast<long double>(parsed_value);
-      if (is_negated) {
-        value = -value;
-      }
-      value = std::trunc(value);
-      const NumericTypeProperties properties =
-          *numeric_type_properties(model_.type(target).kind);
-      if (properties.category == NumericCategory::kUnsignedInteger) {
-        const long double upper =
-            std::ldexp(1.0L, static_cast<int>(properties.bit_width));
-        return value >= 0.0L && value < upper;
-      }
-      const long double upper =
-          std::ldexp(1.0L, static_cast<int>(properties.bit_width - 1));
-      return value >= -upper && value < upper;
+      return scalar_literal(literal->kind, spelling.core,
+                            model_.type(target).kind, is_negated)
+          .has_value();
     }
     if (const auto* unary = std::get_if<UnaryExpression>(&expression.data);
         unary != nullptr && (unary->operation == TokenKind::kPlus ||

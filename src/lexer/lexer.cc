@@ -350,38 +350,100 @@ Token Lexer::scan_identifier(std::size_t start, SourceLocation location) {
 }
 
 Token Lexer::scan_number(std::size_t start, SourceLocation location) {
-  while (is_digit(peek())) {
+  const bool base_candidate =
+      input_[start] == '0' &&
+      (peek() == 'b' || peek() == 'B' || peek() == 'o' || peek() == 'O' ||
+       peek() == 'x' || peek() == 'X');
+  if (base_candidate) {
     advance();
-  }
-
-  auto kind = TokenKind::kIntegerLiteral;
-  if (peek() == '.' && is_digit(peek(1))) {
-    kind = TokenKind::kFloatLiteral;
-    advance();
-    while (is_digit(peek())) {
+    while (is_identifier_continue(peek())) {
       advance();
+    }
+  } else {
+    while (is_digit(peek()) || peek() == '_') {
+      advance();
+    }
+    if (peek() == '.' && is_digit(peek(1))) {
+      advance();
+      while (is_digit(peek()) || peek() == '_') {
+        advance();
+      }
+    }
+    if (peek() == 'e' || peek() == 'E') {
+      advance();
+      if (peek() == '+' || peek() == '-') {
+        advance();
+      }
+      while (is_identifier_continue(peek())) {
+        advance();
+      }
+    } else {
+      while (is_identifier_continue(peek())) {
+        advance();
+      }
     }
   }
 
-  while (is_identifier_continue(peek())) {
-    advance();
-  }
-
-  const Token token = make_token(kind, start, location);
+  const Token token = make_token(TokenKind::kIntegerLiteral, start, location);
   const NumericLiteralSpelling spelling =
       parse_numeric_literal_spelling(token.lexeme);
-  if (spelling.error == NumericLiteralSpellingError::kInvalidSuffix) {
-    diagnostics_.error(token.range, "invalid numeric suffix '" +
-                                        std::string{spelling.suffix} + "'");
-  } else if (spelling.error ==
-             NumericLiteralSpellingError::kIntegerSuffixOnFloatingCore) {
-    diagnostics_.error(token.range, "integer suffix '" +
-                                        std::string{spelling.suffix} +
-                                        "' cannot be applied to a floating "
-                                        "literal");
+  switch (spelling.error) {
+    case NumericLiteralSpellingError::kNone:
+      break;
+    case NumericLiteralSpellingError::kInvalidCore:
+      diagnostics_.error(token.range, "invalid numeric literal '" +
+                                          std::string{token.lexeme} + "'");
+      break;
+    case NumericLiteralSpellingError::kInvalidSuffix:
+      diagnostics_.error(token.range, "invalid numeric suffix '" +
+                                          std::string{spelling.suffix} + "'");
+      break;
+    case NumericLiteralSpellingError::kIntegerSuffixOnFloatingCore:
+      diagnostics_.error(token.range, "integer suffix '" +
+                                          std::string{spelling.suffix} +
+                                          "' cannot be applied to a floating "
+                                          "literal");
+      break;
+    case NumericLiteralSpellingError::kMissingBaseDigits:
+      diagnostics_.error(token.range,
+                         "numeric base prefix requires digits in '" +
+                             std::string{token.lexeme} + "'");
+      break;
+    case NumericLiteralSpellingError::kInvalidBaseDigit:
+      diagnostics_.error(token.range,
+                         "invalid digit in base-" +
+                             std::to_string(static_cast<int>(spelling.base)) +
+                             " numeric literal '" + std::string{token.lexeme} +
+                             "'");
+      break;
+    case NumericLiteralSpellingError::kInvalidBasePrefix:
+      diagnostics_.error(token.range,
+                         "numeric base prefix must be lowercase in '" +
+                             std::string{token.lexeme} + "'");
+      break;
+    case NumericLiteralSpellingError::kUnknownBasePrefix:
+      diagnostics_.error(token.range, "unknown numeric base prefix in '" +
+                                          std::string{token.lexeme} + "'");
+      break;
+    case NumericLiteralSpellingError::kInvalidSeparator:
+      diagnostics_.error(token.range,
+                         "invalid digit separator in numeric literal '" +
+                             std::string{token.lexeme} + "'");
+      break;
+    case NumericLiteralSpellingError::kMissingExponentDigits:
+      diagnostics_.error(token.range, "numeric exponent requires digits in '" +
+                                          std::string{token.lexeme} + "'");
+      break;
+    case NumericLiteralSpellingError::kFloatingSuffixOnNonDecimalCore:
+      diagnostics_.error(token.range, "floating suffix '" +
+                                          std::string{spelling.suffix} +
+                                          "' cannot be applied to a "
+                                          "base-prefixed integer literal");
+      break;
   }
 
-  return Token{spelling.is_floating ? TokenKind::kFloatLiteral : kind,
+  return Token{spelling.is_floating ? TokenKind::kFloatLiteral
+                                    : TokenKind::kIntegerLiteral,
                token.lexeme, token.range};
 }
 

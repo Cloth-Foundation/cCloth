@@ -287,6 +287,55 @@ void scalar_operations_fold(TestContext& test) {
               "LLVM did not consume exact float32 constant bits");
 }
 
+void numeric_notation_folds_and_emits(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Notation.co", R"(
+    static func Radix(): int32 { return (0b1010 + 0o10) * 0x2; }
+    static func Scientific32(): float32 {
+      return 1.25e2f32 + 2.5e1f32;
+    }
+    static func Scientific64(): float64 { return 1e3f64 / 2e0f64; }
+    static func Wrapped(): int8 { return int8::wrap(0x12Cu16); }
+    static func Saturated(): uint8 { return uint8::sat(-0b1i16); }
+  )");
+  sources.compile();
+  test.expect(
+      sources.result && sources.result->is_valid,
+      "numeric notation fixture failed: " + messages(sources.diagnostics));
+  if (!sources.result || !sources.result->is_valid) {
+    return;
+  }
+
+  cloth::MirModule optimized = sources.result->mir;
+  cloth::optimize_mir(optimized, sources.result->semantics);
+  cloth::DiagnosticEngine mir_diagnostics;
+  test.expect(
+      cloth::verify_mir(optimized, sources.result->semantics, mir_diagnostics),
+      "numeric notation MIR failed verification: " + messages(mir_diagnostics));
+
+  expect_return_bits(test, optimized, sources.result->semantics, "Radix", 36);
+  expect_return_bits(test, optimized, sources.result->semantics, "Scientific32",
+                     UINT64_C(0x43160000));
+  expect_return_bits(test, optimized, sources.result->semantics, "Scientific64",
+                     UINT64_C(0x407f400000000000));
+  expect_return_bits(test, optimized, sources.result->semantics, "Wrapped", 44);
+  expect_return_bits(test, optimized, sources.result->semantics, "Saturated",
+                     0);
+
+  cloth::DiagnosticEngine llvm_diagnostics;
+  const auto llvm =
+      cloth::emit_llvm_ir(optimized, sources.result->abi,
+                          sources.result->semantics, llvm_diagnostics);
+  test.expect(llvm && !llvm_diagnostics.has_errors(),
+              "numeric notation MIR failed LLVM emission: " +
+                  messages(llvm_diagnostics));
+  test.expect(
+      llvm && llvm->text.contains("ret i32 36") &&
+          llvm->text.contains("bitcast (i32 1125515264 to float)") &&
+          llvm->text.contains("bitcast (i64 4647503709213818880 to double)"),
+      "LLVM did not retain folded numeric-notation values");
+}
+
 void scalar_boundaries_and_operators_fold(TestContext& test) {
   CompiledSources sources;
   sources.add("State.co", "enum { Ready, Done }");
@@ -829,6 +878,7 @@ void package_pipeline_is_consistent(TestContext& test) {
 int main() {
   const std::vector<TestCase> tests{
       {"scalar operations fold", scalar_operations_fold},
+      {"numeric notation folds and emits", numeric_notation_folds_and_emits},
       {"scalar boundaries and operators fold",
        scalar_boundaries_and_operators_fold},
       {"failing operations remain", failing_operations_remain},
