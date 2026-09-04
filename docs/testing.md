@@ -1,5 +1,103 @@
 # Cloth testing and diagnostic builds
 
+## Stage 30.4 integer conversion-mode exit audit
+
+Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.
+Both configurations pass all **200 CTests**, including **29 public
+compiler-protocol/toolchain and 24 native Shuttle cases** per compiler. All
+**43 ordinary Rust tests**, Rust **1.85.0**, Rust formatting, warning-denied
+Clippy, six editor checks per compiler, C++ formatting, and repository
+whitespace gates pass.
+
+The constant-layer matrix uses an independent signed-magnitude oracle across
+all **81 canonical integer source/target pairs**. It covers source extrema and
+every target boundary representable by the source: minimum, maximum, zero,
+adjacent, in-range, below-range, and above-range values. Both `wrap` and `sat`
+are checked for every vector.
+
+A generated Cloth program covers all **121 accepted source/target spelling
+pairs**, including `int`, `uint`, and `byte`. Each vector compares a required
+`static final` result with the same conversion applied to a runtime parameter.
+The program executes natively, and its x86-64 and wasm32 LLVM modules verify
+before and after O2. Direct fixtures also cover conversion results in locals,
+field initializers, call arguments, returns, and static constants, plus
+exactly-once argument evaluation. Existing checked conversion success and trap
+tests remain green.
+
+Shuttle fixtures run from distinct project roots and retain byte-identical
+serial/parallel x86-64 and wasm32 artifacts. Whole-project, separate-package,
+and source-free results agree; conversion edits preserve affected-only
+invalidation and unrelated reuse, while failed edits preserve completed
+artifacts and never launch stale output. Maintainer and public documentation
+now describe the same parser, semantic, HIR/MIR, LLVM, constant, and runtime
+contracts.
+
+Artifact format **4**, compiler ABI **4**, runtime ABI **3**, process protocol
+**2**, receipt schema **1**, and manifest schema **1** remain unchanged. No
+runtime helper, Shuttle production behavior, or test-only compiler switch was
+added.
+
+**Stage 30 is complete.** Later work requires a separately approved stage.
+
+## Stage 30.3 integer conversion lowering and integration checkpoint
+
+Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.
+Both configurations pass all **194 CTests**, including **29 public
+compiler-protocol/toolchain and 24 native Shuttle cases** per compiler. All
+**43 ordinary Rust tests**, Rust **1.85.0**, formatting, warning-denied Clippy,
+six editor checks per compiler, C++ formatting, and repository whitespace gates
+also pass.
+
+MIR retains wrapping and saturating conversions as distinct verified operations
+and rejects non-integer operands or invalid modes. LLVM lowering uses integer
+comparisons, selection, truncation, and signed or unsigned extension; it adds no
+runtime helper and verifies before and after optimization for x86-64 and wasm32.
+Direct native execution covers signed and unsigned narrowing, widening,
+cross-signedness boundaries, required constants, and exactly-once evaluation.
+
+Shuttle's public process boundary verifies matching whole, separate, and
+source-free package results. Serial and parallel builds produce deterministic
+x86-64 and wasm32 artifacts; edits rebuild affected packages while reusing
+unrelated ones, and invalid follow-up input preserves completed artifacts and
+native output. Shuttle continues to treat conversion object code and constants
+as opaque artifact content. Artifact format **4**, compiler ABI **4**, runtime
+ABI **3**, process protocol **2**, receipt schema **1**, and manifest schema
+**1** remain unchanged.
+
+User documentation now records checked, wrapping, and saturating conversion
+semantics in the integer, cast, meta-operation, and static-member references.
+
+**Stage 30.3 is complete.** At that checkpoint, Stage 30 remained active with
+the exhaustive 30.4 exit audit awaiting separate authorization.
+
+## Stage 30.2 integer conversion frontend and constant checkpoint
+
+Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.
+Both configurations pass all **188 CTests**, including the unchanged **28 public
+compiler-protocol and 22 native Shuttle cases** per compiler. All **43 ordinary
+Rust tests**, Rust 1.85 checking, Rust formatting, Clippy with warnings denied,
+and all six compiler-backed VS Code tests pass with each compiler. C++ formatting
+and both repository whitespace checks also pass.
+
+Parser, semantic, and HIR tests cover `Target::wrap(value)` and
+`Target::sat(value)`, contextual operation names, aliases, argument typing,
+malformed syntax, non-integer types, and unknown modes. Independent constant and
+HIR verification covers signed/unsigned crossings, 64-bit boundaries, invalid
+modes, incompatible types, and value-category corruption. Required static
+constants pass the complete compilation pipeline with canonical target bits.
+
+Runtime uses are valid through `--check`. At this checkpoint, ordinary
+compilation stopped before MIR with a stable diagnostic; the boundary was
+regression-tested and did not crash or silently use checked conversion lowering.
+The 30.3 checkpoint above supersedes that temporary boundary. Artifact format
+**4**, compiler ABI **4**, runtime ABI **3**,
+process protocol **2**, receipt schema **1**, and manifest schema **1** remain
+unchanged. User-facing language documentation remained deferred at this
+checkpoint until native runtime behavior was implemented.
+
+**Stage 30.2 is complete.** At that checkpoint, Stage 30 remained active with
+30.3 awaiting separate authorization.
+
 ## Stage 29.4 checked runtime arithmetic exit audit
 
 Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.

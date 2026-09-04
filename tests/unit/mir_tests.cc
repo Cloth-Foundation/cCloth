@@ -1195,6 +1195,78 @@ void checked_numeric_conversion_lowering(TestContext& test) {
       "invalid checked numeric conversion produced the wrong diagnostic");
 }
 
+void integer_conversion_mode_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("Modes.co", R"(
+    func Wrap(int64 value): uint16 { return uint16::wrap(value); }
+    func Saturate(int64 value): uint16 { return uint16::sat(value); }
+    func Same(int32 value): int32 { return int32::wrap(value); }
+  )");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "integer conversion modes failed MIR lowering");
+  const cloth::MirBody& wrap =
+      compilation.result->mir.files[0].functions[0].body;
+  const cloth::MirBody& saturate =
+      compilation.result->mir.files[0].functions[1].body;
+  const cloth::MirBody& same =
+      compilation.result->mir.files[0].functions[2].body;
+  test.expect(
+      body_has_conversion(wrap, cloth::MirConversionKind::kWrapInteger) &&
+          body_has_conversion(same, cloth::MirConversionKind::kWrapInteger),
+      "MIR did not retain wrapping conversion modes");
+  test.expect(
+      body_has_conversion(saturate, cloth::MirConversionKind::kSaturateInteger),
+      "MIR did not retain saturating conversion mode");
+
+  cloth::MirModule incompatible = compilation.result->mir;
+  bool corrupted = false;
+  for (cloth::MirBasicBlock& block :
+       incompatible.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      const auto* conversion =
+          std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+      if (conversion != nullptr &&
+          conversion->kind == cloth::MirConversionKind::kWrapInteger) {
+        instruction.type = compilation.result->semantics.string_type();
+        corrupted = true;
+      }
+    }
+  }
+  cloth::DiagnosticEngine incompatible_diagnostics;
+  test.expect(
+      corrupted &&
+          !cloth::verify_mir(incompatible, compilation.result->semantics,
+                             incompatible_diagnostics) &&
+          has_diagnostic(incompatible_diagnostics,
+                         "integer conversion mode consumes incompatible types"),
+      "MIR verifier accepted incompatible integer conversion metadata");
+
+  cloth::MirModule invalid_mode = compilation.result->mir;
+  corrupted = false;
+  for (cloth::MirBasicBlock& block :
+       invalid_mode.files[0].functions[1].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      auto* conversion =
+          std::get_if<cloth::MirConvertInstruction>(&instruction.data);
+      if (conversion != nullptr &&
+          conversion->kind == cloth::MirConversionKind::kSaturateInteger) {
+        conversion->kind = static_cast<cloth::MirConversionKind>(255);
+        corrupted = true;
+      }
+    }
+  }
+  cloth::DiagnosticEngine invalid_mode_diagnostics;
+  test.expect(
+      corrupted &&
+          !cloth::verify_mir(invalid_mode, compilation.result->semantics,
+                             invalid_mode_diagnostics) &&
+          has_diagnostic(invalid_mode_diagnostics,
+                         "conversion instruction has an invalid kind"),
+      "MIR verifier accepted an invalid integer conversion mode");
+}
+
 void nullable_narrowing_conversion(TestContext& test) {
   CompiledSources compilation;
   compilation.add("User.co", "string Name = \"Ada\";\n");
@@ -1838,6 +1910,7 @@ int main() {
        overload_directed_literal_lowering},
       {"checked numeric conversion lowering",
        checked_numeric_conversion_lowering},
+      {"integer conversion mode lowering", integer_conversion_mode_lowering},
       {"nullable narrowing conversion", nullable_narrowing_conversion},
       {"null ergonomics lowering", null_ergonomics_lowering},
       {"call receivers", call_receivers},

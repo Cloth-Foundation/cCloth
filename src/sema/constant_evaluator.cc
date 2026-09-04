@@ -113,6 +113,7 @@ std::optional<std::size_t> preflight_constant_expression(
         !std::holds_alternative<UnaryExpression>(data) &&
         !std::holds_alternative<BinaryExpression>(data) &&
         !std::holds_alternative<NumericConversionExpression>(data) &&
+        !std::holds_alternative<IntegerConversionExpression>(data) &&
         !std::holds_alternative<ParenthesizedExpression>(data))
       ineligible = expression.range;
     if (!ineligible) {
@@ -225,11 +226,13 @@ class ConstantEvaluator {
       const auto& expression = storage.expression(id);
       const auto& data = expression.data;
       const auto& state = semantics_.file(node.file).expressions[id.value];
-      bool eligible = std::holds_alternative<LiteralExpression>(data) ||
-                      std::holds_alternative<ParenthesizedExpression>(data) ||
-                      std::holds_alternative<UnaryExpression>(data) ||
-                      std::holds_alternative<BinaryExpression>(data) ||
-                      std::holds_alternative<NumericConversionExpression>(data);
+      bool eligible =
+          std::holds_alternative<LiteralExpression>(data) ||
+          std::holds_alternative<ParenthesizedExpression>(data) ||
+          std::holds_alternative<UnaryExpression>(data) ||
+          std::holds_alternative<BinaryExpression>(data) ||
+          std::holds_alternative<NumericConversionExpression>(data) ||
+          std::holds_alternative<IntegerConversionExpression>(data);
       if (std::holds_alternative<IdentifierExpression>(data) ||
           std::holds_alternative<MemberAccessExpression>(data)) {
         eligible = false;
@@ -379,6 +382,17 @@ class ConstantEvaluator {
       return operand ? result(convert_scalar(
                            operand->bits, semantics_.type(operand->type).kind,
                            kind))
+                     : std::nullopt;
+    }
+    if (const auto* conversion =
+            std::get_if<IntegerConversionExpression>(&syntax.data)) {
+      const auto operand = expression(node, conversion->value);
+      const IntegerConversionMode mode = conversion->operation == "wrap"
+                                             ? IntegerConversionMode::kWrap
+                                             : IntegerConversionMode::kSat;
+      return operand ? result(convert_integer_mode(
+                           operand->bits, semantics_.type(operand->type).kind,
+                           kind, mode))
                      : std::nullopt;
     }
     if (const auto* unary = std::get_if<UnaryExpression>(&syntax.data)) {

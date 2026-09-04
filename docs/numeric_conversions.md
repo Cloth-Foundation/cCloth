@@ -1,4 +1,4 @@
-# Numeric literals and widening
+# Numeric literals and conversions
 
 Stage 20.1 defines contextual numeric literals and lossless primitive numeric
 widening. These rules operate on values and are independent of target byte
@@ -108,7 +108,8 @@ Runtime values follow these rules:
   conversion is explicit.
 
 No checked conversion wraps, saturates, reinterprets bits, or converts a
-numeric value to `bool`. Those operations require distinct future APIs.
+numeric value to `bool`. Wrapping and saturation use the distinct integer-only
+forms below.
 
 A numeric literal expression is validated at compile time and adopts the
 destination type directly. Invalid constants are diagnostics rather than
@@ -125,3 +126,32 @@ already typed runtime value; literal conversions lower directly as target-typed
 constants. The LLVM backend emits the required range predicate before any
 truncating conversion and terminates through the runtime failure path when the
 predicate is false.
+
+## Wrapping and saturating integer conversion
+
+Stage 30 adds target-owned integer conversion modes without weakening checked
+conversion:
+
+```cloth
+int8 wrapped = int8::wrap(300);   // 44
+int8 limited = int8::sat(300);    // 127
+uint8 residue = uint8::wrap(-1);  // 255
+uint8 floor = uint8::sat(-1);     // 0
+```
+
+The target and operand must be non-nullable integer types. `int`, `uint`, and
+`byte` keep their normal aliases and widths. The argument is analyzed and
+evaluated exactly once without a target-type expectation.
+
+`Target::wrap(value)` computes the least nonnegative residue modulo the target
+width and interprets a signed target as two's-complement. `Target::sat(value)`
+clamps the mathematical source value to the target's inclusive range. Identity
+and in-range conversions are valid; neither form traps because of range.
+
+Static scalar constants use the same conversion routine and store only
+canonical target bits. HIR and MIR retain the explicit mode for runtime values.
+MIR uses `kWrapInteger` or `kSaturateInteger`; verification requires exact
+integer source/result types and a value result. LLVM wrapping uses truncation or
+signed/unsigned extension. Saturation uses signed/unsigned comparisons and
+selection before the required truncation or extension. Neither mode calls the
+checked-conversion runtime helper or introduces another runtime symbol.

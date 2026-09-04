@@ -108,6 +108,9 @@ class HirVerifier {
           } else if (const auto* conversion =
                          std::get_if<HirNumericConversionExpression>(&data)) {
             push(conversion->value);
+          } else if (const auto* conversion =
+                         std::get_if<HirIntegerConversionExpression>(&data)) {
+            push(conversion->value);
           } else if (const auto* group =
                          std::get_if<HirGroupedExpression>(&data)) {
             push(group->expression);
@@ -281,6 +284,21 @@ class HirVerifier {
             } else {
               work.push_back(conversion->value);
             }
+          } else if (const auto* conversion =
+                         std::get_if<HirIntegerConversionExpression>(&data)) {
+            work.push_back(conversion->value);
+            const HirExpression& operand =
+                hir_.storage.expression(conversion->value);
+            const bool valid_mode =
+                conversion->mode == IntegerConversionMode::kWrap ||
+                conversion->mode == IntegerConversionMode::kSat;
+            if (!valid_mode ||
+                !is_integer_type(semantics_.type(expression.type).kind) ||
+                !is_integer_type(semantics_.type(operand.type).kind) ||
+                expression.category != ValueCategory::kValue) {
+              report(expression.range,
+                     "integer conversion has inconsistent constant metadata");
+            }
           } else if (const auto* literal =
                          std::get_if<HirLiteralExpression>(&data)) {
             if (literal->kind != LiteralKind::kEnum &&
@@ -423,6 +441,14 @@ class HirVerifier {
       return operand ? result(convert_scalar(
                            operand->bits, semantics_.type(operand->type).kind,
                            kind))
+                     : std::nullopt;
+    }
+    if (const auto* conversion =
+            std::get_if<HirIntegerConversionExpression>(&data)) {
+      const auto operand = constant_expression(conversion->value);
+      return operand ? result(convert_integer_mode(
+                           operand->bits, semantics_.type(operand->type).kind,
+                           kind, conversion->mode))
                      : std::nullopt;
     }
     if (const auto* unary = std::get_if<HirUnaryExpression>(&data)) {
@@ -990,6 +1016,23 @@ class HirVerifier {
                      .kind))) {
           report(expression.range,
                  "numeric conversion has a non-numeric source or target");
+        }
+      } else if (const auto* conversion =
+                     std::get_if<HirIntegerConversionExpression>(
+                         &expression.data)) {
+        verify_expression(conversion->value, expression.range);
+        const bool valid_mode =
+            conversion->mode == IntegerConversionMode::kWrap ||
+            conversion->mode == IntegerConversionMode::kSat;
+        if (conversion->value.value < expressions.size() &&
+            (!valid_mode ||
+             !is_integer_type(semantics_.type(expression.type).kind) ||
+             !is_integer_type(
+                 semantics_.type(expressions[conversion->value.value].type)
+                     .kind) ||
+             expression.category != ValueCategory::kValue)) {
+          report(expression.range,
+                 "integer conversion has incompatible HIR metadata");
         }
       } else if (const auto* assignment =
                      std::get_if<HirAssignmentExpression>(&expression.data)) {

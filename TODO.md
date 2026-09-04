@@ -51,7 +51,11 @@ The separately authorized 28.2 evaluation, 28.3 integration, and
 [28.4 exit audit](docs/testing.md#stage-284-scalar-constant-exit-audit) are
 complete. Stage 29 is also complete following its separately authorized
 [29.4 exit audit](docs/testing.md#stage-294-checked-runtime-arithmetic-exit-audit)
-on 2026-09-03. No later stage is assigned or active.
+on 2026-09-03. Stage 30.1 is complete for the approved integer conversion-mode
+contract. The separately authorized 30.2 frontend and constant checkpoint is
+also complete. The separately authorized 30.3 lowering and integration
+checkpoint is complete. Stage 30 is complete following its separately
+authorized 30.4 exit audit on 2026-09-03.
 
 ## Scheduled work
 
@@ -426,6 +430,65 @@ class override validation. Existing ABI and artifact versions are unchanged.
   relocated package determinism, both 186-test compiler configurations, all Rust,
   shared Shuttle, editor, format, and repository gates pass.
 
+### Stage 30: Integer conversion modes
+
+- [x] **30.1 — Contract.** Approve
+  [integer conversion modes](docs/proposals/stage_30_integer_conversion_modes.md)
+  with `Target::wrap(value)` and `Target::sat(value)`, exact signedness and alias
+  rules, constant/runtime agreement, lowering, compatibility, tests, and
+  non-goals.
+
+  Approved 2026-09-03. Both names are contextual primitive meta operations, not
+  keywords. The argument is evaluated once without target contextual typing;
+  `wrap` uses mathematical modulo and target two's-complement interpretation,
+  while `sat` clamps to the target range. All compatibility versions remain
+  unchanged.
+
+- [x] **30.2 — Frontend and constants.** After a separate go-ahead, implement
+  parser/AST, semantic and HIR representation, exact diagnostics, required
+  constant evaluation, malformed-model rejection, and focused tests.
+
+  Completed 2026-09-03. Primitive-target parsing keeps `wrap` and `sat`
+  contextual, semantic analysis preserves the argument's independent type, HIR
+  carries the explicit mode, and required constants use exact signed/unsigned
+  conversion rules through 64-bit boundaries. Invalid syntax, types, modes, and
+  malformed HIR are rejected. Runtime uses pass frontend validation and stop
+  with a stable diagnostic before the 30.3 MIR boundary. Both 188-test compiler
+  configurations and all Rust, shared Shuttle, editor, formatting, and
+  repository gates pass.
+
+- [x] **30.3 — Lowering and integration.** After a separate go-ahead, implement
+  verified MIR/LLVM lowering without a runtime helper and cover native,
+  whole/separate/source-free packages, invalidation, and output preservation.
+
+  Completed 2026-09-03. MIR preserves and verifies each explicit conversion
+  mode. LLVM implements wrapping and saturation with target-independent integer
+  operations and no runtime helper. Direct native tests cover signed/unsigned,
+  narrowing, widening, boundaries, constants, and exactly-once evaluation.
+  Shuttle verifies whole, separate, and source-free equivalence, affected-only
+  invalidation, unrelated reuse, failure preservation, and deterministic x86-64
+  and wasm32 artifacts. Both compiler configurations pass all 194 CTests; the
+  shared Shuttle matrix contains 29 protocol/toolchain and 24 native cases, all
+  43 ordinary Rust tests pass, and the Rust 1.85, editor, formatting, Clippy, and
+  repository gates are green.
+
+- [x] **30.4 — Exit audit.** Complete every integer source/target and boundary
+  pair, relocated serial/parallel determinism, user/maintainer documentation,
+  and both compiler configurations plus Rust/shared Shuttle/editor gates.
+
+  Completed 2026-09-03. An independent constant oracle covers all 81 canonical
+  source/target pairs. Generated constant/runtime and x86-64/wasm32 LLVM tests
+  cover all 121 accepted spelling pairs, including `int`, `uint`, and `byte`,
+  across source extrema and every representable target minimum, maximum, zero,
+  adjacent, below-range, and above-range value. Runtime coverage includes
+  locals, fields, arguments, returns, static constants, and exactly-once
+  evaluation; checked conversion traps remain unchanged. Relocated
+  serial/parallel, whole, separate, and source-free package paths agree. Both
+  compiler configurations pass all 200 CTests, including 29 shared
+  protocol/toolchain and 24 native Shuttle cases; all 43 ordinary Rust tests,
+  Rust 1.85, editor, formatting, warning-denied Clippy, and repository gates
+  pass. Stage 30 is complete with every compatibility version unchanged.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -466,10 +529,9 @@ active stage without first updating `ROADMAP.md`.
 - Switch statements and enum exhaustiveness are complete under Stage 27 above.
   Pattern matching, destructuring, guards, ranges, and value-producing switch
   expressions remain deferred and require separate contracts.
-- Add wrapping and saturating conversions as explicit primitive meta operations
-  without changing the checked `NumericType(value)` contract. Their exact
-  spelling, signedness behavior, and integer/floating scope remain subject to a
-  future stage contract.
+- Design wrapping and saturating arithmetic separately from Stage 30's explicit
+  conversion modes. No arithmetic spelling is reserved by the conversion
+  contract.
 - Evaluate optional numeric literal suffixes as syntax ergonomics without
   changing contextual literal typing, default `int32`/`float64` inference,
   representability checks, or overload-resolution rules.

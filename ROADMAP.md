@@ -87,6 +87,10 @@ Stage 29 is complete following its separately authorized
 [29.4 exit audit](docs/testing.md#stage-294-checked-runtime-arithmetic-exit-audit)
 on 2026-09-03. Checked lowering, updates, package integration, runtime ABI 3,
 and all coordinated verification gates pass.
+Stage 30 is complete following its separately authorized
+[30.4 exit audit](docs/testing.md#stage-304-integer-conversion-mode-exit-audit)
+on 2026-09-03. The complete conversion matrix, target verification,
+documentation, package determinism, and all coordinated quality gates pass.
 
 ## Stage 21: Integer binary representation and byte order
 
@@ -560,14 +564,68 @@ Exit requires exact runtime/constant agreement, guards before invalid LLVM
 operations, exactly-once update/compound targets, coordinated compatibility and
 source-free behavior, deterministic builds, and all existing verification gates.
 
-## Beyond Stage 29
+## Stage 30: Integer conversion modes
 
-No stage beyond 29 is assigned or active. Completing checked runtime arithmetic
+Status: **complete — 30.4 exit audit passed on 2026-09-03**
+
+The [approved contract](docs/proposals/stage_30_integer_conversion_modes.md)
+defines `Target::wrap(value)` and `Target::sat(value)` as explicit integer-only
+primitive meta conversions. The target type owns the conversion range; ordinary
+`Target(value)` conversions remain checked.
+
+Objective: provide concise, deterministic out-of-range conversion modes without
+weakening Cloth's checked default or changing implicit conversion rules.
+
+Deliverables:
+
+1. **30.1 — Contract (complete).** Freeze syntax, signedness, aliases, constants,
+   lowering, compatibility, tests, and non-goals.
+2. **30.2 — Frontend and constants (complete).** Add parsing, semantic/HIR
+   representation, diagnostics, constant evaluation, and verifier coverage.
+3. **30.3 — Lowering and integration (complete).** Add verified MIR/LLVM
+   lowering and native, separate-package, source-free, and Shuttle coverage.
+4. **30.4 — Exit audit (complete).** Complete the conversion matrix,
+   documentation, determinism, and all compiler/toolchain quality gates.
+
+Artifact format **4**, compiler ABI **4**, runtime ABI **3**, process protocol
+**2**, receipt schema **1**, and manifest schema **1** remain unchanged. No new
+runtime helper or Shuttle protocol behavior is planned.
+
+Non-goals include wrapping/saturating arithmetic, floating-point modes, numeric
+suffixes, user-defined conversions, optimization, exceptions, and unrelated
+language or tooling work.
+
+Exit requires exact compile-time/runtime agreement across every integer
+source/target pair, verified target-independent lowering, preserved checked
+conversion behavior, deterministic package builds, and all existing gates.
+
+The 30.2 checkpoint completed on 2026-09-03. `--check` accepts typed runtime
+uses, and required scalar constants evaluate with target-independent integer
+semantics. At that checkpoint, ordinary compilation stopped before MIR rather
+than substitute checked conversion behavior or an unverified backend path.
+
+The 30.3 checkpoint completed on 2026-09-03. MIR retains the explicit mode and
+verifies integer operands. Target-independent LLVM lowering implements wrapping
+with truncation or signed/unsigned extension and saturation with comparisons and
+selection; it adds no runtime helper. Direct native execution and Shuttle's
+whole, separate, and source-free package paths agree, including deterministic
+cross-target artifacts and affected-only invalidation.
+
+The 30.4 exit audit completed on 2026-09-03. An independent constant oracle
+covers all 81 canonical integer source/target pairs. Generated compile-time,
+native, and optimized LLVM tests cover all 121 accepted type-spelling pairs,
+including `int`, `uint`, and `byte`, at source and target boundaries. Checked
+conversion behavior, exactly-once evaluation, every required expression
+context, relocated package determinism, documentation, and all development,
+sanitizer, Rust, editor, formatting, and repository gates pass.
+
+## Beyond Stage 30
+
+No stage beyond 30 is assigned or active. Scheduling integer conversion modes
 does not schedule the rest of the backlog or freeze the Cloth 1.0 release scope.
 
 The following candidates remain recorded without priority or order:
 
-- wrapping and saturating conversions as explicit primitive meta operations;
 - optional numeric literal suffixes;
 - a general constant-folding optimizer stage; and
 - immutable per-case enum metadata, after its constant-data prerequisites.

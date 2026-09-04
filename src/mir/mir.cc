@@ -710,6 +710,20 @@ class BodyBuilder {
           expression.type, expression.range,
           MirConvertInstruction{value, MirConversionKind::kCheckedNumeric});
     }
+    if (const auto* conversion =
+            std::get_if<HirIntegerConversionExpression>(&expression.data)) {
+      const HirExpression& value_syntax =
+          hir_.storage.expression(conversion->value);
+      const MirValueId value =
+          require_value(lower_expression(conversion->value), value_syntax.type,
+                        value_syntax.range);
+      const MirConversionKind kind =
+          conversion->mode == IntegerConversionMode::kWrap
+              ? MirConversionKind::kWrapInteger
+              : MirConversionKind::kSaturateInteger;
+      return emit_value(expression.type, expression.range,
+                        MirConvertInstruction{value, kind});
+    }
     if (const auto* assignment =
             std::get_if<HirAssignmentExpression>(&expression.data)) {
       return lower_assignment(*assignment, expression);

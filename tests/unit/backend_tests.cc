@@ -462,6 +462,45 @@ void checked_numeric_conversion_lowering(TestContext& test) {
               "constant floating-to-integer conversion was not folded");
 }
 
+void integer_conversion_mode_lowering(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Modes.co", R"(
+    func WrapNarrow(uint64 value): int8 { return int8::wrap(value); }
+    func WrapWide(int8 value): uint64 { return uint64::wrap(value); }
+    func SatSigned(int64 value): int8 { return int8::sat(value); }
+    func SatUnsigned(uint64 value): uint8 { return uint8::sat(value); }
+    func SatToUnsigned(int64 value): uint16 { return uint16::sat(value); }
+    func SatToSigned(uint64 value): int16 { return int16::sat(value); }
+    func SatWide(int8 value): int64 { return int64::sat(value); }
+    func SatUnsignedWide(uint8 value): int16 { return int16::sat(value); }
+  )");
+  sources.compile();
+
+  test.expect(sources.result->is_valid && sources.llvm.has_value(),
+              "integer conversion modes failed LLVM lowering");
+  test.expect(sources.contains(" = trunc i64 ") &&
+                  sources.contains(" = sext i8 ") &&
+                  sources.contains(" = zext i8 ") &&
+                  sources.contains(" = icmp slt i64 ") &&
+                  sources.contains(" = icmp sgt i64 ") &&
+                  sources.contains(" = icmp ugt i64 ") &&
+                  sources.contains(" = select i1 "),
+              "integer conversion modes use incomplete LLVM operations");
+  for (const auto& [name, parameter] :
+       {std::pair{"WrapNarrow", "uint64"}, std::pair{"WrapWide", "int8"},
+        std::pair{"SatSigned", "int64"}, std::pair{"SatUnsigned", "uint64"},
+        std::pair{"SatToUnsigned", "int64"}, std::pair{"SatToSigned", "uint64"},
+        std::pair{"SatWide", "int8"}, std::pair{"SatUnsignedWide", "uint8"}}) {
+    const std::string_view function = function_definition(
+        sources.llvm->text,
+        cloth::test::function_name("Modes", name, {parameter}));
+    test.expect(!function.empty() &&
+                    !function.contains(
+                        "call void @cloth_rt_require_numeric_conversion"),
+                std::string{name} + " unexpectedly uses the checked helper");
+  }
+}
+
 void object_construction(TestContext& test) {
   CompiledSources sources;
   sources.add("Model.co",
@@ -1164,6 +1203,7 @@ int main() {
        numeric_literal_and_widening_lowering},
       {"checked numeric conversion lowering",
        checked_numeric_conversion_lowering},
+      {"integer conversion mode lowering", integer_conversion_mode_lowering},
       {"object construction", object_construction},
       {"inherited type descriptors", inherited_type_descriptors},
       {"constructor chaining", constructor_chaining},

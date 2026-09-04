@@ -399,6 +399,9 @@ class BodyEmitter {
   void emit_conversion(const MirInstruction& instruction,
                        const MirConvertInstruction& conversion,
                        std::ostringstream& output);
+  void emit_integer_conversion(const MirInstruction& instruction,
+                               const MirConvertInstruction& conversion,
+                               std::ostringstream& output);
   void emit_checked_numeric_conversion(const MirInstruction& instruction,
                                        const MirConvertInstruction& conversion,
                                        std::ostringstream& output);
@@ -2541,6 +2544,11 @@ void BodyEmitter::emit_conversion(const MirInstruction& instruction,
     emit_checked_numeric_conversion(instruction, conversion, output);
     return;
   }
+  if (conversion.kind == MirConversionKind::kWrapInteger ||
+      conversion.kind == MirConversionKind::kSaturateInteger) {
+    emit_integer_conversion(instruction, conversion, output);
+    return;
+  }
   if (conversion.kind != MirConversionKind::kWidenNumeric) {
     values_.at(instruction.result->value) = value(conversion.value);
     return;
@@ -2570,6 +2578,122 @@ void BodyEmitter::emit_conversion(const MirInstruction& instruction,
   output << "  " << result_name(instruction) << " = " << operation << ' '
          << module_.llvm_type(source_type) << ' ' << value(conversion.value)
          << " to " << module_.llvm_type(instruction.type) << '\n';
+}
+
+void BodyEmitter::emit_integer_conversion(
+    const MirInstruction& instruction, const MirConvertInstruction& conversion,
+    std::ostringstream& output) {
+  const TypeId source_type = value_type(conversion.value);
+  const TypeKind source_kind = module_.semantics().type(source_type).kind;
+  const TypeKind target_kind = module_.semantics().type(instruction.type).kind;
+  const std::optional<NumericTypeProperties> source =
+      numeric_type_properties(source_kind);
+  const std::optional<NumericTypeProperties> target =
+      numeric_type_properties(target_kind);
+  if (!source || !target ||
+      source->category == NumericCategory::kFloatingPoint ||
+      target->category == NumericCategory::kFloatingPoint) {
+    module_.report(instruction.range,
+                   "invalid integer conversion mode reached LLVM lowering");
+    return;
+  }
+
+  const std::string operand = value(conversion.value);
+  const std::string source_llvm_type = module_.llvm_type(source_type);
+  const std::string target_llvm_type = module_.llvm_type(instruction.type);
+  if (conversion.kind == MirConversionKind::kWrapInteger) {
+    if (source->bit_width == target->bit_width) {
+      values_.at(instruction.result->value) = operand;
+      return;
+    }
+    const std::string_view operation =
+        source->bit_width > target->bit_width
+            ? "trunc"
+            : (source->category == NumericCategory::kSignedInteger ? "sext"
+                                                                   : "zext");
+    output << "  " << result_name(instruction) << " = " << operation << ' '
+           << source_llvm_type << ' ' << operand << " to " << target_llvm_type
+           << '\n';
+    return;
+  }
+  if (conversion.kind != MirConversionKind::kSaturateInteger) {
+    module_.report(instruction.range,
+                   "unknown integer conversion mode reached LLVM lowering");
+    return;
+  }
+
+  const auto compare = [this, &output, &source_llvm_type](
+                           std::string_view operation, std::string_view value,
+                           std::string_view bound) {
+    const std::string result = next_address();
+    output << "  " << result << " = icmp " << operation << ' '
+           << source_llvm_type << ' ' << value << ", " << bound << '\n';
+    return result;
+  };
+  const auto select = [this, &output, &source_llvm_type](
+                          std::string_view condition, std::string_view selected,
+                          std::string_view fallback) {
+    const std::string result = next_address();
+    output << "  " << result << " = select i1 " << condition << ", "
+           << source_llvm_type << ' ' << selected << ", " << source_llvm_type
+           << ' ' << fallback << '\n';
+    return result;
+  };
+  const auto unsigned_maximum = [](std::size_t width) {
+    return width == 64 ? std::numeric_limits<std::uint64_t>::max()
+                       : (std::uint64_t{1} << width) - 1;
+  };
+
+  std::string clamped = operand;
+  bool extend_signed = false;
+  if (source->category == NumericCategory::kSignedInteger &&
+      target->category == NumericCategory::kSignedInteger) {
+    extend_signed = true;
+    if (target->bit_width < source->bit_width) {
+      const std::uint64_t minimum_magnitude = std::uint64_t{1}
+                                              << (target->bit_width - 1);
+      const std::string minimum = "-" + std::to_string(minimum_magnitude);
+      const std::string maximum = std::to_string(minimum_magnitude - 1);
+      const std::string below = compare("slt", operand, minimum);
+      clamped = select(below, minimum, clamped);
+      const std::string above = compare("sgt", operand, maximum);
+      clamped = select(above, maximum, clamped);
+    }
+  } else if (source->category == NumericCategory::kUnsignedInteger &&
+             target->category == NumericCategory::kUnsignedInteger) {
+    if (target->bit_width < source->bit_width) {
+      const std::string maximum =
+          std::to_string(unsigned_maximum(target->bit_width));
+      const std::string above = compare("ugt", operand, maximum);
+      clamped = select(above, maximum, clamped);
+    }
+  } else if (source->category == NumericCategory::kSignedInteger) {
+    const std::string negative = compare("slt", operand, "0");
+    clamped = select(negative, "0", clamped);
+    if (target->bit_width < source->bit_width) {
+      const std::string maximum =
+          std::to_string(unsigned_maximum(target->bit_width));
+      const std::string above = compare("sgt", operand, maximum);
+      clamped = select(above, maximum, clamped);
+    }
+  } else if (target->bit_width <= source->bit_width) {
+    const std::uint64_t maximum =
+        (std::uint64_t{1} << (target->bit_width - 1)) - 1;
+    const std::string maximum_text = std::to_string(maximum);
+    const std::string above = compare("ugt", operand, maximum_text);
+    clamped = select(above, maximum_text, clamped);
+  }
+
+  if (source->bit_width == target->bit_width) {
+    values_.at(instruction.result->value) = clamped;
+    return;
+  }
+  const std::string_view operation = source->bit_width > target->bit_width
+                                         ? "trunc"
+                                         : (extend_signed ? "sext" : "zext");
+  output << "  " << result_name(instruction) << " = " << operation << ' '
+         << source_llvm_type << ' ' << clamped << " to " << target_llvm_type
+         << '\n';
 }
 
 void BodyEmitter::emit_checked_numeric_conversion(

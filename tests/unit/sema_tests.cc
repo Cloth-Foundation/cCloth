@@ -35,6 +35,9 @@ class AnalyzedCompilation {
   }
 
   void analyze() { result.emplace(compilation_.analyze(diagnostics)); }
+  void analyze_frontend() {
+    frontend.emplace(compilation_.analyze_frontend(diagnostics));
+  }
 
   [[nodiscard]] std::size_t error_count() const {
     std::size_t count = 0;
@@ -62,6 +65,7 @@ class AnalyzedCompilation {
 
   cloth::DiagnosticEngine diagnostics;
   std::optional<cloth::CompilationResult> result;
+  std::optional<cloth::FrontendResult> frontend;
 
  private:
   cloth::Compilation compilation_;
@@ -1700,6 +1704,98 @@ void explicit_numeric_conversions(TestContext& test) {
       "invalid explicit numeric conversions produced the wrong diagnostics");
 }
 
+void integer_conversion_modes(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Modes.co", R"(
+    static final int8 Wrapped = int8::wrap(300);
+    static final int8 Limited = int8::sat(300);
+    static final uint8 NegativeWrap = uint8::wrap(-1);
+    static final uint8 NegativeSat = uint8::sat(-1);
+    static final int8 UnsignedWrap = int8::wrap(uint8(255));
+    static final int8 UnsignedSat = int8::sat(uint8(255));
+    static final int AliasWrap = int::wrap(uint64(4294967295));
+    static final uint AliasSat = uint::sat(-1);
+    static final byte ByteSat = byte::sat(300);
+    func Runtime(int64 value): uint16 { return uint16::wrap(value); }
+    func Names(int32 wrap, int32 sat): int32 { return wrap + sat; }
+  )");
+  valid.analyze_frontend();
+  test.expect(valid.error_count() == 0 && valid.frontend->is_valid,
+              "valid integer conversion modes failed frontend analysis");
+
+  std::size_t conversions = 0;
+  bool retained_wrap = false;
+  bool retained_sat = false;
+  bool literal_kept_int32 = false;
+  for (const cloth::HirExpression& expression :
+       valid.frontend->hir.storage.expressions()) {
+    const auto* conversion =
+        std::get_if<cloth::HirIntegerConversionExpression>(&expression.data);
+    if (conversion == nullptr) {
+      continue;
+    }
+    ++conversions;
+    retained_wrap = retained_wrap ||
+                    conversion->mode == cloth::IntegerConversionMode::kWrap;
+    retained_sat =
+        retained_sat || conversion->mode == cloth::IntegerConversionMode::kSat;
+    const cloth::HirExpression& operand =
+        valid.frontend->hir.storage.expression(conversion->value);
+    if (const auto* literal =
+            std::get_if<cloth::HirLiteralExpression>(&operand.data)) {
+      literal_kept_int32 =
+          literal_kept_int32 ||
+          (literal->lexeme == "300" &&
+           operand.type == *valid.frontend->semantics.find_type("int32"));
+    }
+  }
+  test.expect(conversions == 10 && retained_wrap && retained_sat,
+              "integer conversion mode was not retained in HIR");
+  test.expect(literal_kept_int32,
+              "integer conversion target contextualized its argument");
+
+  const std::vector<std::pair<std::string_view, std::uint64_t>> constants{
+      {"Wrapped", 44},           {"Limited", 127},      {"NegativeWrap", 255},
+      {"NegativeSat", 0},        {"UnsignedWrap", 255}, {"UnsignedSat", 127},
+      {"AliasWrap", UINT32_MAX}, {"AliasSat", 0},       {"ByteSat", 255},
+  };
+  for (const auto& [name, expected] : constants) {
+    const auto symbol = std::ranges::find(valid.frontend->semantics.symbols(),
+                                          name, &cloth::SemanticSymbol::name);
+    test.expect(symbol != valid.frontend->semantics.symbols().end() &&
+                    symbol->static_constant &&
+                    symbol->static_constant->bits == expected,
+                "integer conversion constant has incorrect bits");
+  }
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadModes.co", R"(
+    func FloatTarget(): float32 { return float32::wrap(1); }
+    func BoolTarget(): bool { return bool::wrap(1); }
+    func FloatValue(): int8 { return int8::wrap(1.0); }
+    func Unknown(int32 value): int8 { return int8::clip(value); }
+  )");
+  invalid.analyze_frontend();
+  test.expect(
+      invalid.has_diagnostic(
+          "integer conversion target must be an integer; found 'float32'") &&
+          invalid.has_diagnostic(
+              "integer conversion target must be an integer; found 'bool'") &&
+          invalid.has_diagnostic(
+              "int8::wrap requires an integer value; found 'float64'") &&
+          invalid.has_diagnostic(
+              "integer type 'int8' has no conversion mode 'clip'"),
+      "invalid integer conversion modes produced the wrong diagnostics");
+
+  AnalyzedCompilation runtime;
+  runtime.add(
+      "Runtime.co",
+      "func Convert(int32 value): int8 { return int8::wrap(value); }\n");
+  runtime.analyze();
+  test.expect(runtime.error_count() == 0 && runtime.result->is_valid,
+              "runtime integer conversion failed complete analysis");
+}
+
 void no_matching_overload(TestContext& test) {
   AnalyzedCompilation compilation;
   compilation.add("Calls.co",
@@ -2882,6 +2978,7 @@ int main() {
       {"overload-directed numeric literals",
        overload_directed_numeric_literals},
       {"explicit numeric conversions", explicit_numeric_conversions},
+      {"integer conversion modes", integer_conversion_modes},
       {"no matching overload", no_matching_overload},
       {"invalid body retains signature", invalid_body_does_not_hide_signature},
       {"constructor binding", constructor_binding},

@@ -936,6 +936,15 @@ class MirVerifier {
             report(instruction.range,
                    "checked numeric conversion consumes incompatible types");
           }
+        } else if (conversion->kind == MirConversionKind::kWrapInteger ||
+                   conversion->kind == MirConversionKind::kSaturateInteger) {
+          if (source_type && *source_type != semantics_.error_type() &&
+              source_type->value < semantics_.types().size() &&
+              (!is_integer_type(semantics_.type(*source_type).kind) ||
+               !is_integer_type(semantics_.type(instruction.type).kind))) {
+            report(instruction.range,
+                   "integer conversion mode consumes incompatible types");
+          }
         } else if (conversion->kind == MirConversionKind::kWidenReference) {
           if (source_type &&
               !can_widen_reference(*source_type, instruction.type)) {
@@ -953,14 +962,19 @@ class MirVerifier {
             report(instruction.range,
                    "nullable widening consumes an incompatible value");
           }
-        } else if (source_type && *source_type != semantics_.error_type() &&
-                   source_type->value < semantics_.types().size()) {
-          const SemanticType& source = semantics_.type(*source_type);
-          if (source.kind != TypeKind::kNullable || !source.element_type ||
-              *source.element_type != instruction.type) {
-            report(instruction.range,
-                   "nullable narrowing consumes an incompatible value");
+        } else if (conversion->kind == MirConversionKind::kFromNullable) {
+          if (source_type && *source_type != semantics_.error_type() &&
+              source_type->value < semantics_.types().size()) {
+            const SemanticType& source = semantics_.type(*source_type);
+            if (source.kind != TypeKind::kNullable || !source.element_type ||
+                *source.element_type != instruction.type) {
+              report(instruction.range,
+                     "nullable narrowing consumes an incompatible value");
+            }
           }
+        } else {
+          report(instruction.range,
+                 "conversion instruction has an invalid kind");
         }
       }
     } else if (const auto* test =

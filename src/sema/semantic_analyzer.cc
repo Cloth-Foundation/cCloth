@@ -2461,6 +2461,8 @@ class SemanticAnalyzer {
             return analyze_checked_cast(node, expression.range);
           else if constexpr (std::is_same_v<Node, NumericConversionExpression>)
             return analyze_numeric_conversion(node, expression.range);
+          else if constexpr (std::is_same_v<Node, IntegerConversionExpression>)
+            return analyze_integer_conversion(node, expression.range);
           else if constexpr (std::is_same_v<Node, AssignmentExpression>)
             return analyze_assignment(node, expression.range);
           else if constexpr (std::is_same_v<Node, MemberAccessExpression>)
@@ -3029,6 +3031,40 @@ class SemanticAnalyzer {
     return ExpressionState{target, ValueCategory::kValue};
   }
 
+  ExpressionState analyze_integer_conversion(
+      const IntegerConversionExpression& conversion, SourceRange range) {
+    const TypeId target = resolve_type(conversion.target, current_file_);
+    const ExpressionState value = analyze_expression(conversion.value);
+    check_value(value, expression_range(conversion.value));
+    if (target == model_.error_type() || value.type == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+
+    bool valid = true;
+    if (!is_integer(target)) {
+      diagnostics_.error(
+          conversion.target.range,
+          "integer conversion target must be an integer; found '" +
+              type_name(target) + "'");
+      valid = false;
+    }
+    if (conversion.operation != "wrap" && conversion.operation != "sat") {
+      diagnostics_.error(range, "integer type '" + type_name(target) +
+                                    "' has no conversion mode '" +
+                                    std::string{conversion.operation} + "'");
+      valid = false;
+    }
+    if (!is_integer(value.type)) {
+      diagnostics_.error(range, std::string{conversion.target.name} +
+                                    "::" + std::string{conversion.operation} +
+                                    " requires an integer value; found '" +
+                                    type_name(value.type) + "'");
+      valid = false;
+    }
+    return ExpressionState{valid ? target : model_.error_type(),
+                           ValueCategory::kValue};
+  }
+
   bool check_runtime_type_operation(TypeId source, TypeId target,
                                     SourceRange range) {
     TypeId source_base = source;
@@ -3364,6 +3400,10 @@ class SemanticAnalyzer {
     }
     if (const auto* conversion =
             std::get_if<NumericConversionExpression>(&expression.data)) {
+      return expression_assigns_symbol(conversion->value, symbol);
+    }
+    if (const auto* conversion =
+            std::get_if<IntegerConversionExpression>(&expression.data)) {
       return expression_assigns_symbol(conversion->value, symbol);
     }
     if (const auto* assignment =

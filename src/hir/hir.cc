@@ -196,6 +196,15 @@ class Lowerer {
       if (semantic.type != semantics_.error_type()) {
         data = HirNumericConversionExpression{expression(conversion->value)};
       }
+    } else if (const auto* conversion =
+                   std::get_if<IntegerConversionExpression>(&syntax.data)) {
+      if (semantic.type != semantics_.error_type()) {
+        const IntegerConversionMode mode = conversion->operation == "wrap"
+                                               ? IntegerConversionMode::kWrap
+                                               : IntegerConversionMode::kSat;
+        data =
+            HirIntegerConversionExpression{expression(conversion->value), mode};
+      }
     } else if (const auto* assignment =
                    std::get_if<AssignmentExpression>(&syntax.data)) {
       data = HirAssignmentExpression{expression(assignment->target),

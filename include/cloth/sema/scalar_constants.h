@@ -54,6 +54,12 @@ using ConstantBits = std::expected<std::uint64_t, ConstantError>;
                                           bool negative = false);
 [[nodiscard]] ConstantBits convert_scalar(std::uint64_t bits, TypeKind source,
                                           TypeKind target);
+// Converts an integer by the explicit Stage 30 mode. The result is always the
+// canonical target-width bit pattern.
+[[nodiscard]] ConstantBits convert_integer_mode(std::uint64_t bits,
+                                                TypeKind source,
+                                                TypeKind target,
+                                                IntegerConversionMode mode);
 // Signs are in outermost-first source order. Only the innermost sign is part
 // of literal formation (allowing signed minima); every outer sign is checked.
 [[nodiscard]] ConstantBits scalar_signed_literal(

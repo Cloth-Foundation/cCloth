@@ -36,6 +36,10 @@ class ExpressionParser {
   [[nodiscard]] ExpressionId build_numeric_conversion(const Token& target,
                                                       ExpressionId value,
                                                       SourceLocation end);
+  [[nodiscard]] ExpressionId build_integer_conversion(const Token& target,
+                                                      const Token& operation,
+                                                      ExpressionId value,
+                                                      SourceLocation end);
   [[nodiscard]] ExpressionId parse_postfix_expression();
   [[nodiscard]] ExpressionId parse_primary_expression();
   [[nodiscard]] ExpressionId parse_atom_expression();
@@ -48,6 +52,7 @@ class ExpressionParser {
                                                      TokenKind operation,
                                                      ExpressionId right);
   [[nodiscard]] ExpressionId parse_numeric_conversion_expression();
+  [[nodiscard]] ExpressionId parse_integer_conversion_expression();
   [[nodiscard]] ExpressionId parse_call_expression(ExpressionId callee);
   [[nodiscard]] ExpressionId parse_array_literal_expression();
   [[nodiscard]] ExpressionId parse_index_expression(ExpressionId object);

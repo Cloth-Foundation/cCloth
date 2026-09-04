@@ -233,8 +233,13 @@ ExpressionId ExpressionParser::parse_primary_expression() {
   if (!at_limit()) {
     if (current().kind == TokenKind::kLeftParen)
       return parse_grouped_expression();
-    if (is_numeric_type_token(current().kind))
+    if (is_primitive_type(current().kind) && current_ + 1 < limit_ &&
+        tokens_[current_ + 1].kind == TokenKind::kColonColon) {
+      return parse_integer_conversion_expression();
+    }
+    if (is_numeric_type_token(current().kind)) {
       return parse_numeric_conversion_expression();
+    }
     if (current().kind == TokenKind::kLeftBracket)
       return parse_array_literal_expression();
   }
@@ -365,6 +370,63 @@ ExpressionId ExpressionParser::build_numeric_conversion(const Token& target,
   return add_expression(
       Expression{SourceRange{target.range.begin, end},
                  NumericConversionExpression{target_type, value}});
+}
+
+ExpressionId ExpressionParser::parse_integer_conversion_expression() {
+  const Token& target = advance();
+  advance();  // The caller established the `::` token.
+  if (current().kind != TokenKind::kIdentifier) {
+    diagnostics_.error(current().range,
+                       "expected integer conversion mode after '::'");
+    return make_invalid_expression(
+        SourceRange{target.range.begin, current().range.end});
+  }
+  const Token& operation = advance();
+  if (!match(TokenKind::kLeftParen)) {
+    diagnostics_.error(current().range,
+                       "expected '(' after integer conversion mode");
+    return make_invalid_expression(
+        SourceRange{target.range.begin, operation.range.end});
+  }
+
+  ExpressionId value{};
+  if (current().kind == TokenKind::kRightParen) {
+    value = make_invalid_expression(point_range(current().range.begin));
+    diagnostics_.error(current().range,
+                       "expected a value in integer conversion");
+  } else {
+    value = parse_expression();
+  }
+
+  if (match(TokenKind::kComma)) {
+    diagnostics_.error(tokens_[current_ - 1].range,
+                       "integer conversion requires exactly one value");
+    while (!at_limit() && current().kind != TokenKind::kRightParen) {
+      static_cast<void>(parse_expression());
+      if (!match(TokenKind::kComma)) {
+        break;
+      }
+    }
+  }
+
+  SourceLocation end = expression_range(value).end;
+  if (match(TokenKind::kRightParen)) {
+    end = tokens_[current_ - 1].range.end;
+  } else {
+    diagnostics_.error(current().range,
+                       "expected ')' after integer conversion");
+  }
+  return build_integer_conversion(target, operation, value, end);
+}
+
+ExpressionId ExpressionParser::build_integer_conversion(const Token& target,
+                                                        const Token& operation,
+                                                        ExpressionId value,
+                                                        SourceLocation end) {
+  const TypeSyntax target_type{target.lexeme, true, target.range};
+  return add_expression(Expression{
+      SourceRange{target.range.begin, end},
+      IntegerConversionExpression{target_type, operation.lexeme, value}});
 }
 
 ExpressionId ExpressionParser::parse_call_expression(ExpressionId callee) {

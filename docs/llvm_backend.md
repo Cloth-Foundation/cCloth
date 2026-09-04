@@ -70,6 +70,14 @@ signed types, the minimum/`-1` pair before emitting `sdiv`, `udiv`, `srem`, or
 `urem`. Leading-minus signed literals are resolved as literal values so the
 minimum remains constructible. Comparisons retain signedness from the semantic
 type. Floating-point operations use LLVM floating instructions.
+
+Explicit integer `wrap` conversion uses `trunc`, `sext`, or `zext` according to
+the verified source interpretation and target width; equal-width results reuse
+the original bit pattern. Integer `sat` conversion emits signed or unsigned
+boundary comparisons and `select` operations in the source domain before the
+required truncation or extension. These paths are host-width independent, emit
+no poison-producing speculative arithmetic, and call neither the checked
+conversion helper nor a new runtime symbol.
 Null-to-reference and managed-reference-to-`object` conversions disappear
 because all use opaque pointers.
 
@@ -194,6 +202,8 @@ LLVM conversion. Integer narrowing uses `trunc`, integer/floating conversion
 uses `sitofp`, `uitofp`, `fptosi`, or `fptoui`, and floating narrowing uses
 `fptrunc`. Floating-to-integer lowering first applies the matching `llvm.trunc`
 intrinsic so the range predicate follows Cloth's truncate-toward-zero contract.
+Wrapping and saturating integer conversions bypass this helper by construction;
+their verified LLVM sequences define a result for every source integer value.
 Checked integer arithmetic passes a validity predicate plus compiler-owned reason
 code to `cloth_rt_require_integer_arithmetic` before an invalid result can be
 observed. Reason `0` is overflow, `1` is division by zero, and `2` is remainder

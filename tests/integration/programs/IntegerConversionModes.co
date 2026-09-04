@@ -1,0 +1,68 @@
+static final int8 Wrapped = int8::wrap(300);
+static final int8 Limited = int8::sat(300);
+static final uint8 NegativeWrap = uint8::wrap(-1);
+static final uint8 NegativeSat = uint8::sat(-1);
+
+int32 Calls;
+int8 Converted = int8::wrap(300);
+
+IntegerConversionModes() {
+  Calls = 0;
+}
+
+func Next(): int32 {
+  Calls++;
+  return 300;
+}
+
+static func WrapSigned(int64 value): uint16 {
+  return uint16::wrap(value);
+}
+
+static func WrapUnsigned(uint64 value): int16 {
+  return int16::wrap(value);
+}
+
+static func SaturateSigned(int64 value): uint16 {
+  return uint16::sat(value);
+}
+
+static func SaturateUnsigned(uint64 value): int16 {
+  return int16::sat(value);
+}
+
+static func WidenWrap(int8 value): uint64 {
+  return uint64::wrap(value);
+}
+
+static func WidenSat(uint8 value): int16 {
+  return int16::sat(value);
+}
+
+static func Consume(int8 value): int8 {
+  return value;
+}
+
+static func Main() {
+  println(Wrapped);
+  println(Limited);
+  println(NegativeWrap);
+  println(NegativeSat);
+  println(WrapSigned(-1));
+  println(WrapUnsigned(65535));
+  println(SaturateSigned(-1));
+  println(SaturateSigned(70000));
+  println(SaturateUnsigned(65535));
+  println(WidenWrap(int8(-1)));
+  println(WidenSat(uint8(255)));
+  println(int8::sat(uint8(255)));
+  println(uint8::sat(int8(-1)));
+  println(int8::wrap(uint8(255)));
+  var modes = IntegerConversionModes();
+  println(int8::wrap(modes.Next()));
+  println(modes.Calls);
+  int8 local = int8::sat(300);
+  println(local);
+  println(modes.Converted);
+  println(Consume(int8::wrap(300)));
+}

@@ -345,6 +345,7 @@ array_literal
 primary_expression
     = identifier
     | "super"
+    | integer_conversion
     | numeric_conversion
     | integer_literal
     | float_literal
@@ -358,6 +359,15 @@ primary_expression
 
 numeric_conversion
     = numeric_type "(" expression ")" ;
+
+integer_conversion
+    = integer_type "::" ( "wrap" | "sat" )
+      "(" expression ")" ;
+
+integer_type
+    = "byte"
+    | "int" | "int8" | "int16" | "int32" | "int64"
+    | "uint" | "uint8" | "uint16" | "uint32" | "uint64" ;
 
 numeric_type
     = "byte"
@@ -483,9 +493,12 @@ The declaration pass enforces these rules separately from the grammar:
   from the expression's type.
 - `value is T` requires a non-null runtime-checkable target. `value as T?`
   requires a nullable target and yields `null` when the runtime type differs.
-- A static field must also be final, must have an initializer, and currently
-  accepts only a scalar literal or direct enum case initializer, optionally
-  parenthesized.
+- A static field must also be final, must have an eligible scalar constant
+  initializer, and is evaluated during compilation.
+- `IntegerType::wrap(value)` and `IntegerType::sat(value)` require one
+  non-nullable integer operand. They preserve the operand's independently
+  inferred type, return the named target type, and remain distinct from checked
+  `NumericType(value)` conversion.
 - `Main` must be declared `static`.
 
 Type checking, assignment-target validation, return checking, and overload

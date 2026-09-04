@@ -90,6 +90,11 @@ struct HirNumericConversionExpression {
   HirExpressionId value;
 };
 
+struct HirIntegerConversionExpression {
+  HirExpressionId value;
+  IntegerConversionMode mode;
+};
+
 struct HirAssignmentExpression {
   HirExpressionId target;
   TokenKind operation;
@@ -177,10 +182,11 @@ using HirExpressionData = std::variant<
     HirTypeExpression, HirSuperExpression, HirUnaryExpression,
     HirUpdateExpression, HirBinaryExpression, HirTypeTestExpression,
     HirCheckedCastExpression, HirNumericConversionExpression,
-    HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
-    HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
-    HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
-    HirStringMetaExpression, HirObjectMetaExpression, HirIntegerMetaExpression,
+    HirIntegerConversionExpression, HirAssignmentExpression,
+    HirMemberExpression, HirSafeMemberExpression, HirNullCoalesceExpression,
+    HirNullAssertExpression, HirCallExpression, HirArrayLiteralExpression,
+    HirIndexExpression, HirArrayLengthExpression, HirStringMetaExpression,
+    HirObjectMetaExpression, HirIntegerMetaExpression,
     HirIntegerMetaCallExpression, HirGroupedExpression>;
 
 struct HirExpression {

@@ -14,6 +14,7 @@
 #include <array>
 #include <cfenv>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -44,6 +45,9 @@ void error(TestContext& test, ConstantBits actual, ConstantError expected) {
       !actual && actual.error() == expected,
       "expected " + std::string{cloth::constant_error_message(expected)});
 }
+
+std::string messages(const cloth::DiagnosticEngine& diagnostics);
+void add(cloth::Compilation& compilation, std::string name, std::string text);
 
 void integer_values(TestContext& test) {
   using enum TypeKind;
@@ -283,6 +287,7 @@ void scalar_boundaries(TestContext& test) {
 
 void conversions(TestContext& test) {
   using enum TypeKind;
+  using enum cloth::IntegerConversionMode;
   bits(test, cloth::convert_scalar(16777217, kInt32, kFloat32), 0x4b800000);
   bits(test, cloth::convert_scalar(16777219, kInt32, kFloat32), 0x4b800002);
   bits(test, cloth::convert_scalar(UINT64_MAX, kUint64, kFloat64),
@@ -306,6 +311,211 @@ void conversions(TestContext& test) {
   error(test, cloth::convert_scalar(255, kInt8, kUint8),
         ConstantError::kOutOfRange);
   bits(test, cloth::scalar_literal(LiteralKind::kFloat, "-1.9", kInt8), 255);
+  bits(test, cloth::convert_integer_mode(300, kInt32, kInt8, kWrap), 44);
+  bits(test, cloth::convert_integer_mode(300, kInt32, kInt8, kSat), 127);
+  bits(test, cloth::convert_integer_mode(UINT32_MAX, kInt32, kUint8, kWrap),
+       255);
+  bits(test, cloth::convert_integer_mode(UINT32_MAX, kInt32, kUint8, kSat), 0);
+  bits(test, cloth::convert_integer_mode(255, kUint8, kInt8, kWrap), 255);
+  bits(test, cloth::convert_integer_mode(255, kUint8, kInt8, kSat), 127);
+  bits(test, cloth::convert_integer_mode(UINT64_MAX, kUint64, kInt64, kWrap),
+       UINT64_MAX);
+  bits(test, cloth::convert_integer_mode(UINT64_MAX, kUint64, kInt64, kSat),
+       INT64_MAX);
+  bits(test,
+       cloth::convert_integer_mode(UINT64_C(0x8000000000000000), kInt64,
+                                   kUint64, kWrap),
+       UINT64_C(0x8000000000000000));
+  bits(test,
+       cloth::convert_integer_mode(UINT64_C(0x8000000000000000), kInt64,
+                                   kUint64, kSat),
+       0);
+  error(test, cloth::convert_integer_mode(0, kFloat32, kInt8, kWrap),
+        ConstantError::kInvalidOperation);
+  error(test,
+        cloth::convert_integer_mode(
+            0, kInt32, kInt8, static_cast<cloth::IntegerConversionMode>(255)),
+        ConstantError::kInvalidOperation);
+}
+
+void integer_conversion_matrix(TestContext& test) {
+  using enum TypeKind;
+  using enum cloth::IntegerConversionMode;
+  struct IntegerType {
+    TypeKind kind;
+    std::string_view name;
+    bool is_signed;
+    unsigned width;
+  };
+  struct IntegerValue {
+    bool negative;
+    std::uint64_t magnitude;
+  };
+  constexpr std::array types{
+      IntegerType{kInt8, "int8", true, 8},
+      IntegerType{kInt16, "int16", true, 16},
+      IntegerType{kInt32, "int32", true, 32},
+      IntegerType{kInt64, "int64", true, 64},
+      IntegerType{kByte, "byte", false, 8},
+      IntegerType{kUint8, "uint8", false, 8},
+      IntegerType{kUint16, "uint16", false, 16},
+      IntegerType{kUint32, "uint32", false, 32},
+      IntegerType{kUint64, "uint64", false, 64},
+  };
+  const auto mask = [](unsigned width) {
+    return width == 64 ? UINT64_MAX : (std::uint64_t{1} << width) - 1;
+  };
+  const auto positive_maximum = [&mask](const IntegerType& type) {
+    return type.is_signed ? (std::uint64_t{1} << (type.width - 1)) - 1
+                          : mask(type.width);
+  };
+  const auto encode = [&mask, &positive_maximum](
+                          IntegerValue value,
+                          const IntegerType& type) -> ConstantBits {
+    if (value.negative) {
+      const std::uint64_t limit = std::uint64_t{1} << (type.width - 1);
+      if (!type.is_signed || value.magnitude == 0 || value.magnitude > limit) {
+        return std::unexpected(ConstantError::kOutOfRange);
+      }
+      return (std::uint64_t{0} - value.magnitude) & mask(type.width);
+    }
+    if (value.magnitude > positive_maximum(type)) {
+      return std::unexpected(ConstantError::kOutOfRange);
+    }
+    return value.magnitude;
+  };
+  const auto expected = [&mask](IntegerValue value, const IntegerType& target,
+                                cloth::IntegerConversionMode mode) {
+    const std::uint64_t target_mask = mask(target.width);
+    if (mode == kWrap) {
+      const std::uint64_t raw =
+          value.negative ? std::uint64_t{0} - value.magnitude : value.magnitude;
+      return raw & target_mask;
+    }
+    if (!target.is_signed) {
+      return value.negative ? std::uint64_t{0}
+                            : std::min(value.magnitude, target_mask);
+    }
+    const std::uint64_t minimum = std::uint64_t{1} << (target.width - 1);
+    if (!value.negative) return std::min(value.magnitude, minimum - 1);
+    if (value.magnitude >= minimum) return minimum;
+    return (std::uint64_t{0} - value.magnitude) & target_mask;
+  };
+
+  for (const IntegerType& source : types) {
+    for (const IntegerType& target : types) {
+      std::vector<IntegerValue> values;
+      const auto add = [&values, &encode, &source](IntegerValue value) {
+        if (!encode(value, source)) return;
+        if (std::ranges::none_of(values, [value](IntegerValue existing) {
+              return existing.negative == value.negative &&
+                     existing.magnitude == value.magnitude;
+            })) {
+          values.push_back(value);
+        }
+      };
+      const auto add_positive_boundary = [&add](std::uint64_t value) {
+        if (value > 0) add({false, value - 1});
+        add({false, value});
+        if (value != UINT64_MAX) add({false, value + 1});
+      };
+      add({false, 0});
+      add({false, 1});
+      add_positive_boundary(positive_maximum(source));
+      if (source.is_signed) {
+        const std::uint64_t minimum = std::uint64_t{1} << (source.width - 1);
+        add({true, 1});
+        add({true, minimum - 1});
+        add({true, minimum});
+      }
+      add_positive_boundary(positive_maximum(target));
+      if (target.is_signed) {
+        const std::uint64_t minimum = std::uint64_t{1} << (target.width - 1);
+        if (minimum != UINT64_MAX) add({true, minimum + 1});
+        if (minimum > 1) add({true, minimum - 1});
+        add({true, minimum});
+      } else {
+        add({true, 1});
+      }
+
+      for (const IntegerValue value : values) {
+        const ConstantBits source_bits = encode(value, source);
+        for (const auto mode : {kWrap, kSat}) {
+          const ConstantBits actual = cloth::convert_integer_mode(
+              *source_bits, source.kind, target.kind, mode);
+          const std::string description =
+              std::string{source.name} + " to " + std::string{target.name} +
+              (mode == kWrap ? " wrap" : " sat") + " value " +
+              (value.negative ? "-" : "") + std::to_string(value.magnitude);
+          test.expect(actual && *actual == expected(value, target, mode),
+                      description + " produced incorrect boundary bits");
+        }
+      }
+    }
+  }
+}
+
+void integer_conversion_constants(TestContext& test) {
+  cloth::Compilation compilation;
+  add(compilation, "Values.co", R"(
+    static final int8 Wrapped = int8::wrap(300);
+    static final int8 Limited = int8::sat(300);
+    static final uint8 NegativeWrap = uint8::wrap(-1);
+    static final uint8 NegativeSat = uint8::sat(-1);
+  )");
+  cloth::DiagnosticEngine diagnostics;
+  const auto valid = compilation.analyze_frontend(diagnostics);
+  test.expect(valid.is_valid, messages(diagnostics));
+  if (!valid.is_valid) {
+    return;
+  }
+
+  cloth::Compilation complete;
+  add(complete, "Complete.co", R"(
+    static final int8 Wrapped = int8::wrap(300);
+    static final int8 Limited = int8::sat(300);
+  )");
+  cloth::DiagnosticEngine complete_diagnostics;
+  test.expect(complete.analyze(complete_diagnostics).is_valid,
+              "constant-only modes failed complete lowering\n" +
+                  messages(complete_diagnostics));
+
+  std::optional<std::size_t> conversion_index;
+  const auto expressions = valid.hir.storage.expressions();
+  for (std::size_t index = 0; index < expressions.size(); ++index) {
+    if (std::holds_alternative<cloth::HirIntegerConversionExpression>(
+            expressions[index].data)) {
+      conversion_index = index;
+      break;
+    }
+  }
+  test.expect(conversion_index.has_value(),
+              "integer conversion constant is missing from HIR");
+  if (!conversion_index) {
+    return;
+  }
+
+  for (int mutation = 0; mutation < 4; ++mutation) {
+    auto hir = valid.hir;
+    auto& expression = const_cast<cloth::HirExpression&>(
+        hir.storage.expression(cloth::HirExpressionId{*conversion_index}));
+    auto& conversion =
+        std::get<cloth::HirIntegerConversionExpression>(expression.data);
+    if (mutation == 0) {
+      conversion.mode = static_cast<cloth::IntegerConversionMode>(255);
+    } else if (mutation == 1) {
+      expression.category = cloth::ValueCategory::kMutableLocation;
+    } else if (mutation == 2) {
+      expression.type = *valid.semantics.find_type("float32");
+    } else {
+      const_cast<cloth::HirExpression&>(
+          hir.storage.expression(conversion.value))
+          .type = *valid.semantics.find_type("float32");
+    }
+    cloth::DiagnosticEngine rejected;
+    test.expect(!cloth::verify_hir(hir, valid.semantics, rejected),
+                "HIR verifier accepted malformed integer conversion metadata");
+  }
 }
 
 std::string messages(const cloth::DiagnosticEngine& diagnostics) {
@@ -945,6 +1155,8 @@ int main() {
       {"floating vectors", floating_vectors},
       {"scalar width boundaries", scalar_boundaries},
       {"checked conversions", conversions},
+      {"integer conversion matrix", integer_conversion_matrix},
+      {"integer conversion constants", integer_conversion_constants},
       {"constant frontend", frontend},
       {"dependencies and lowering", dependencies_and_gates},
       {"constant claims", constant_claims},

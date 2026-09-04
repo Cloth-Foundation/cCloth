@@ -439,6 +439,43 @@ ConstantBits convert_scalar(std::uint64_t bits, TypeKind source,
   return integer_bits({value.negative, magnitude}, target);
 }
 
+ConstantBits convert_integer_mode(std::uint64_t bits, TypeKind source,
+                                  TypeKind target, IntegerConversionMode mode) {
+  if (!is_valid_integer_bits(bits, source) || !is_integer_type(target)) {
+    return std::unexpected(ConstantError::kInvalidOperation);
+  }
+  const Integer value = integer(bits, source);
+  const NumericTypeProperties target_properties =
+      *numeric_type_properties(target);
+  const std::uint64_t target_mask = mask(target_properties.bit_width);
+  if (mode == IntegerConversionMode::kWrap) {
+    const std::uint64_t result =
+        value.negative ? std::uint64_t{0} - value.magnitude : value.magnitude;
+    return result & target_mask;
+  }
+  if (mode != IntegerConversionMode::kSat) {
+    return std::unexpected(ConstantError::kInvalidOperation);
+  }
+
+  if (target_properties.category == NumericCategory::kUnsignedInteger) {
+    if (value.negative && value.magnitude != 0) {
+      return 0;
+    }
+    return std::min(value.magnitude, target_mask);
+  }
+
+  const std::uint64_t minimum_magnitude = std::uint64_t{1}
+                                          << (target_properties.bit_width - 1);
+  const std::uint64_t maximum = minimum_magnitude - 1;
+  if (!value.negative) {
+    return std::min(value.magnitude, maximum);
+  }
+  if (value.magnitude >= minimum_magnitude) {
+    return minimum_magnitude;
+  }
+  return (std::uint64_t{0} - value.magnitude) & target_mask;
+}
+
 ConstantBits scalar_signed_literal(LiteralKind literal, std::string_view text,
                                    TypeKind target,
                                    std::span<const TokenKind> signs) {

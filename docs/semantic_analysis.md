@@ -102,6 +102,12 @@ Literal operands are checked and committed to the target during semantic
 analysis. Runtime operands use checked conversion semantics; out-of-range
 integer results, non-finite floating-to-integer values, and finite
 `float64`-to-`float32` overflow trap rather than wrap.
+`IntegerType::wrap(value)` and `IntegerType::sat(value)` are distinct
+integer-only meta conversions. Their operands keep independently inferred
+types, and their results have the named target type. `wrap` applies modulo at
+the target width; `sat` clamps to the target range. Both forms are retained in
+HIR, are eligible in required scalar constant expressions, and evaluate their
+operand exactly once without a range failure.
 References are non-null by default. `T?` is a distinct nullable
 wrapper, `T` widens to `T?`, and `null` is assignable only to `T?`. Nullable
 qualifiers are invalid on primitive, enum, struct, and void types.

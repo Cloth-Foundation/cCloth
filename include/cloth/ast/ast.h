@@ -101,6 +101,17 @@ struct NumericConversionExpression {
   ExpressionId value;
 };
 
+enum class IntegerConversionMode {
+  kWrap,
+  kSat,
+};
+
+struct IntegerConversionExpression {
+  TypeSyntax target;
+  std::string_view operation;
+  ExpressionId value;
+};
+
 struct AssignmentExpression {
   ExpressionId target;
   TokenKind operation;
@@ -152,10 +163,11 @@ struct ParenthesizedExpression {
 using ExpressionData = std::variant<
     InvalidExpression, IdentifierExpression, LiteralExpression, SuperExpression,
     UnaryExpression, UpdateExpression, BinaryExpression, TypeTestExpression,
-    CheckedCastExpression, NumericConversionExpression, AssignmentExpression,
-    MemberAccessExpression, MetaAccessExpression, SafeMemberAccessExpression,
-    NullCoalesceExpression, NullAssertExpression, CallExpression,
-    ArrayLiteralExpression, IndexExpression, ParenthesizedExpression>;
+    CheckedCastExpression, NumericConversionExpression,
+    IntegerConversionExpression, AssignmentExpression, MemberAccessExpression,
+    MetaAccessExpression, SafeMemberAccessExpression, NullCoalesceExpression,
+    NullAssertExpression, CallExpression, ArrayLiteralExpression,
+    IndexExpression, ParenthesizedExpression>;
 
 struct Expression {
   SourceRange range;

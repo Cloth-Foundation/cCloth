@@ -8,6 +8,24 @@ set(CLOTH_INTEGRATION_ERRORS "${CMAKE_CURRENT_SOURCE_DIR}/errors")
 set(CLOTH_INTEGRATION_PROJECTS "${CMAKE_CURRENT_SOURCE_DIR}/projects")
 
 foreach(target IN ITEMS x86_64 wasm32)
+    add_test(NAME cloth_cli_check_integer_conversion_modes_${target}
+        COMMAND clothc --check --target=${target}
+            ${CLOTH_INTEGRATION_PROGRAMS}/IntegerConversionModes.co)
+    set(integer_conversion_ir
+        "${PROJECT_BINARY_DIR}/cloth-integer-conversions-${target}.ll")
+    add_test(NAME cloth_cli_integer_conversion_modes_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${integer_conversion_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/IntegerConversionModes.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_integer_conversion_modes_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${integer_conversion_ir})
+        set_tests_properties(cloth_integer_conversion_modes_verify_${target}
+            PROPERTIES
+                DEPENDS cloth_cli_integer_conversion_modes_llvm_${target})
+    endif()
     add_test(NAME cloth_cli_check_switch_${target}
         COMMAND clothc --check --target=${target}
             ${CLOTH_INTEGRATION_PROGRAMS}/Switch.co)
@@ -168,6 +186,40 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXACT
     )
     get_target_property(native_definitions clothc COMPILE_DEFINITIONS)
+    add_executable(cloth_integer_conversion_native_tests
+        integer_conversion_native_tests.cc)
+    target_link_libraries(cloth_integer_conversion_native_tests
+        PRIVATE cloth_compiler)
+    target_compile_definitions(cloth_integer_conversion_native_tests
+        PRIVATE ${native_definitions})
+    cloth_enable_warnings(cloth_integer_conversion_native_tests)
+    add_dependencies(cloth_integer_conversion_native_tests cloth_runtime)
+    foreach(target IN ITEMS x86_64 wasm32)
+        set(integer_conversion_matrix_ir
+            "${PROJECT_BINARY_DIR}/cloth-integer-conversion-matrix-${target}.ll")
+        add_test(NAME cloth_build_integer_conversion_matrix_llvm_${target}
+            COMMAND cloth_integer_conversion_native_tests llvm-${target}
+                ${integer_conversion_matrix_ir})
+        if(CLOTH_LLVM_OPT_EXECUTABLE)
+            add_test(NAME cloth_integer_conversion_matrix_verify_${target}
+                COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                    "-passes=verify,default<O2>,verify" -disable-output
+                    ${integer_conversion_matrix_ir})
+            set_tests_properties(
+                cloth_integer_conversion_matrix_verify_${target}
+                PROPERTIES DEPENDS
+                    cloth_build_integer_conversion_matrix_llvm_${target})
+        endif()
+    endforeach()
+    cloth_native_executable_path(integer_conversion_matrix_executable
+        "cloth integer conversion matrix")
+    add_test(NAME cloth_build_integer_conversion_matrix_native
+        COMMAND cloth_integer_conversion_native_tests native
+            "${integer_conversion_matrix_executable}")
+    add_test(NAME cloth_integer_conversion_matrix_native
+        COMMAND "${integer_conversion_matrix_executable}")
+    set_tests_properties(cloth_integer_conversion_matrix_native PROPERTIES
+        DEPENDS cloth_build_integer_conversion_matrix_native)
     add_executable(cloth_switch_native_tests switch_native_tests.cc)
     target_link_libraries(cloth_switch_native_tests PRIVATE cloth_compiler)
     target_compile_definitions(cloth_switch_native_tests PRIVATE ${native_definitions})
@@ -401,6 +453,12 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         OUTPUT "cloth checked integer updates"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/CheckedIntegerUpdates.co
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/checked_integer_updates.txt
+        EXACT
+    )
+    cloth_add_native_output_test(integer_conversion_modes
+        OUTPUT "cloth integer conversion modes"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerConversionModes.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/integer_conversion_modes.txt
         EXACT
     )
     cloth_add_native_failure_test(integer_overflow_failure

@@ -164,6 +164,13 @@ requires numeric source and target types. LLVM lowering performs the range
 check before integer truncation, signedness changes, floating-to-integer
 conversion, or finite `float64`-to-`float32` overflow.
 
+Stage 30 retains `IntegerType::wrap(value)` and `IntegerType::sat(value)` as
+dedicated HIR expressions and always lowers them to `kWrapInteger` or
+`kSaturateInteger`, including identity conversions. The MIR verifier requires
+integer source and target types, exact result metadata, and a value category.
+The explicit mode therefore survives until target-independent LLVM lowering;
+it is never replaced with `kCheckedNumeric`.
+
 Evaluation is left-to-right. Array element operands are evaluated before the
 array instruction, and indexed assignment evaluates the array and index before
 the assigned value. Compound assignment and increment/decrement lower through

@@ -1009,6 +1009,54 @@ void numeric_conversion_expressions(TestContext& test) {
       "malformed numeric conversions produced the wrong diagnostics");
 }
 
+void integer_conversion_modes(TestContext& test) {
+  const ParsedSource source{
+      "Modes.co",
+      "func Wrapped(): int8 { return int8::wrap(300); }\n"
+      "func Limited(int32 value): int8 { return int8::sat(value); }\n"
+      "func Names(int32 wrap, int32 sat): int32 { return wrap + sat; }\n"
+      "func Unknown(int32 value): int8 { return int8::clip(value); }\n"};
+  test.expect(error_count(source) == 0,
+              "integer conversion modes did not parse");
+
+  std::size_t conversions = 0;
+  bool found_wrap = false;
+  bool found_sat = false;
+  bool found_unknown = false;
+  for (const cloth::Expression& expression :
+       source.ast().storage.expressions()) {
+    const auto* conversion =
+        std::get_if<cloth::IntegerConversionExpression>(&expression.data);
+    if (conversion == nullptr) {
+      continue;
+    }
+    ++conversions;
+    found_wrap = found_wrap || (conversion->target.name == "int8" &&
+                                conversion->operation == "wrap");
+    found_sat = found_sat || (conversion->target.name == "int8" &&
+                              conversion->operation == "sat");
+    found_unknown = found_unknown || conversion->operation == "clip";
+  }
+  test.expect(conversions == 3 && found_wrap && found_sat && found_unknown,
+              "integer conversion syntax lost its dedicated AST node");
+
+  const ParsedSource malformed{
+      "MalformedModes.co",
+      "func Missing(int32 value): int8 { return int8::(value); }\n"
+      "func Empty(): int8 { return int8::wrap(); }\n"
+      "func Many(int32 value): int8 { return int8::sat(value, value); }\n"
+      "func NoCall(int32 value): int8 { return int8::wrap value; }\n"};
+  test.expect(
+      has_diagnostic(malformed,
+                     "expected integer conversion mode after '::'") &&
+          has_diagnostic(malformed, "expected a value in integer conversion") &&
+          has_diagnostic(malformed,
+                         "integer conversion requires exactly one value") &&
+          has_diagnostic(malformed,
+                         "expected '(' after integer conversion mode"),
+      "malformed integer conversions produced the wrong diagnostics");
+}
+
 void arrays(TestContext& test) {
   const ParsedSource source{"Arrays.co",
                             "int32[] Values = [1, 2, 3];\n"
@@ -1310,6 +1358,7 @@ int main() {
       {"meta queries", meta_queries},
       {"checked type expressions", checked_type_expressions},
       {"numeric conversion expressions", numeric_conversion_expressions},
+      {"integer conversion modes", integer_conversion_modes},
       {"arrays", arrays},
       {"nullable types", nullable_types},
       {"null-ergonomic expressions", null_ergonomic_expressions},

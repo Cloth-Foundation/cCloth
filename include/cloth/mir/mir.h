@@ -138,6 +138,8 @@ struct MirBinaryInstruction {
 enum class MirConversionKind {
   kWidenNumeric,
   kCheckedNumeric,
+  kWrapInteger,
+  kSaturateInteger,
   kWidenReference,
   kToNullable,
   kFromNullable,
