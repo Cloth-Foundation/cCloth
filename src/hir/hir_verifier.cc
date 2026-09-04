@@ -7,6 +7,7 @@
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/hir/hir.h"
+#include "cloth/lexer/literal.h"
 #include "cloth/sema/numeric_types.h"
 #include "cloth/sema/scalar_constants.h"
 #include "cloth/sema/semantic_model.h"
@@ -818,7 +819,40 @@ class HirVerifier {
 
   void verify_expressions() {
     const auto expressions = hir_.storage.expressions();
-    for (const HirExpression& expression : expressions) {
+    struct TransparentParent {
+      std::optional<std::size_t> expression;
+      bool flips_sign{false};
+      bool is_ambiguous{false};
+    };
+    std::vector<TransparentParent> transparent_parents(expressions.size());
+    const auto record_parent = [&](HirExpressionId child, std::size_t parent,
+                                   bool flips_sign) {
+      if (child.value >= transparent_parents.size()) {
+        return;
+      }
+      TransparentParent& edge = transparent_parents[child.value];
+      if (edge.expression) {
+        edge.is_ambiguous = true;
+        return;
+      }
+      edge.expression = parent;
+      edge.flips_sign = flips_sign;
+    };
+    for (std::size_t index = 0; index < expressions.size(); ++index) {
+      if (const auto* unary =
+              std::get_if<HirUnaryExpression>(&expressions[index].data);
+          unary != nullptr && (unary->operation == TokenKind::kPlus ||
+                               unary->operation == TokenKind::kMinus)) {
+        record_parent(unary->operand, index,
+                      unary->operation == TokenKind::kMinus);
+      } else if (const auto* grouped = std::get_if<HirGroupedExpression>(
+                     &expressions[index].data)) {
+        record_parent(grouped->expression, index, false);
+      }
+    }
+
+    for (std::size_t index = 0; index < expressions.size(); ++index) {
+      const HirExpression& expression = expressions[index];
       verify_type(expression.type, expression.range);
       if ((expression.category == ValueCategory::kMutableLocation ||
            expression.category == ValueCategory::kReadOnlyLocation) &&
@@ -847,6 +881,57 @@ class HirVerifier {
       }
       if (const auto* literal =
               std::get_if<HirLiteralExpression>(&expression.data)) {
+        if (literal->kind == LiteralKind::kInteger ||
+            literal->kind == LiteralKind::kFloat) {
+          const NumericLiteralSpelling spelling =
+              parse_numeric_literal_spelling(literal->lexeme);
+          const bool has_suffix =
+              spelling.suffix_kind != NumericLiteralSuffix::kNone;
+          bool valid_type = false;
+          bool valid_value = false;
+          if (expression.type.value < semantics_.types().size()) {
+            const TypeKind type = semantics_.type(expression.type).kind;
+            valid_type = is_numeric_type(type);
+            if (valid_type &&
+                spelling.error == NumericLiteralSpellingError::kNone &&
+                !has_suffix) {
+              valid_value = scalar_literal(literal->kind, spelling.core, type)
+                                .has_value();
+              if (!valid_value && literal->kind == LiteralKind::kInteger) {
+                bool is_negated = false;
+                bool valid_chain = true;
+                std::size_t current = index;
+                std::size_t depth = 0;
+                while (transparent_parents[current].expression &&
+                       depth++ < expressions.size()) {
+                  const TransparentParent& edge = transparent_parents[current];
+                  if (edge.is_ambiguous) {
+                    valid_chain = false;
+                    break;
+                  }
+                  is_negated = is_negated != edge.flips_sign;
+                  current = *edge.expression;
+                }
+                if (depth > expressions.size()) {
+                  valid_chain = false;
+                }
+                // A signed minimum retains its unsigned magnitude beneath the
+                // unary minus expression that gives it its final value.
+                valid_value =
+                    valid_chain && is_negated &&
+                    scalar_literal(literal->kind, spelling.core, type, true)
+                        .has_value();
+              }
+            }
+          }
+          if (spelling.error != NumericLiteralSpellingError::kNone ||
+              has_suffix || !valid_type || !valid_value ||
+              (literal->kind == LiteralKind::kInteger &&
+               spelling.core_is_floating)) {
+            report(expression.range,
+                   "numeric literal has invalid canonical spelling or type");
+          }
+        }
         if ((literal->kind == LiteralKind::kEnum ||
              (expression.type.value < semantics_.types().size() &&
               semantics_.type(expression.type).kind == TypeKind::kEnum)) &&

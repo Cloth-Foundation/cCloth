@@ -1,0 +1,40 @@
+static final int8 Signed8 = -128i8;
+static final int16 Signed16 = 32767i16;
+static final int32 Signed32 = 2147483647i32;
+static final int64 Signed64 = -9223372036854775808i64;
+static final uint8 Unsigned8 = 255u8;
+static final uint16 Unsigned16 = 65535u16;
+static final uint32 Unsigned32 = 4294967295u32;
+static final uint64 Unsigned64 = 18446744073709551615u64;
+static final float32 Float32 = 1f32;
+static final float64 Float64 = 1.25f64;
+
+static func Pick(int8 value): int32 { return 8; }
+static func Pick(int64 value): int32 { return 64; }
+static func Widen(): int64 { return 7i8; }
+
+static func Main() {
+  println(Signed8);
+  println(Signed16);
+  println(Signed32);
+  println(Signed64);
+  println(Unsigned8);
+  println(Unsigned16);
+  println(Unsigned32);
+  println(Unsigned64);
+  println(Float32 + 0.5f32);
+  println(Float64);
+
+  int16[] values = [1i8, 2i16];
+  println(values[0] + values[1]);
+  println(Pick(3i8));
+  println(Widen());
+  println(1i8 + 2i64);
+  switch (3i64) {
+    case 3i8: { println("typed case"); }
+    default: { println("wrong case"); }
+  }
+  println(int8(127i16));
+  println(int8::wrap(300i16));
+  println(uint8::sat(-1i16));
+}

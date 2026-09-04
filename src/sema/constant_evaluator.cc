@@ -4,6 +4,7 @@
 
 #include "cloth/sema/constant_evaluator.h"
 
+#include "cloth/lexer/literal.h"
 #include "cloth/sema/canonical_identity.h"
 #include "cloth/sema/numeric_types.h"
 #include "cloth/sema/scalar_constants.h"
@@ -70,6 +71,7 @@ std::vector<ExpressionId> children(const ExpressionData& data) {
 struct NumericLiteral {
   LiteralExpression literal;
   std::vector<TokenKind> signs;
+  bool has_suffix;
 };
 
 std::optional<NumericLiteral> numeric_literal(const AstStorage& storage,
@@ -87,10 +89,20 @@ std::optional<NumericLiteral> numeric_literal(const AstStorage& storage,
       id = unary->operand;
     } else if (const auto* literal = std::get_if<LiteralExpression>(&data);
                literal && (literal->kind == LiteralKind::kInteger ||
-                           literal->kind == LiteralKind::kFloat))
-      return NumericLiteral{*literal, std::move(signs)};
-    else
+                           literal->kind == LiteralKind::kFloat)) {
+      const NumericLiteralSpelling spelling =
+          parse_numeric_literal_spelling(literal->lexeme);
+      if (spelling.error != NumericLiteralSpellingError::kNone) {
+        return std::nullopt;
+      }
+      LiteralExpression canonical = *literal;
+      canonical.lexeme = spelling.core;
+      return NumericLiteral{
+          canonical, std::move(signs),
+          spelling.suffix_kind != NumericLiteralSuffix::kNone};
+    } else {
       return std::nullopt;
+    }
   }
 }
 
@@ -374,10 +386,12 @@ class ConstantEvaluator {
     }
     if (const auto* conversion =
             std::get_if<NumericConversionExpression>(&syntax.data)) {
-      if (const auto literal = numeric_literal(storage, conversion->value))
+      if (const auto literal = numeric_literal(storage, conversion->value);
+          literal && !literal->has_suffix) {
         return result(scalar_signed_literal(literal->literal.kind,
                                             literal->literal.lexeme, kind,
                                             literal->signs));
+      }
       const auto operand = expression(node, conversion->value);
       return operand ? result(convert_scalar(
                            operand->bits, semantics_.type(operand->type).kind,

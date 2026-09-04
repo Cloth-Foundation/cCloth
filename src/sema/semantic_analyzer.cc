@@ -2008,8 +2008,13 @@ class SemanticAnalyzer {
     const auto* literal =
         std::get_if<LiteralExpression>(&storage.expression(id).data);
     if (!literal || literal->kind != LiteralKind::kInteger) return std::nullopt;
-    const auto bits = integer_constant_bits(literal->lexeme, negative,
-                                            model_.type(type).kind);
+    const NumericLiteralSpelling spelling =
+        parse_numeric_literal_spelling(literal->lexeme);
+    if (spelling.error != NumericLiteralSpellingError::kNone) {
+      return std::nullopt;
+    }
+    const auto bits =
+        integer_constant_bits(spelling.core, negative, model_.type(type).kind);
     return bits ? std::optional{ScalarConstant{type, *bits}} : std::nullopt;
   }
 
@@ -2021,8 +2026,21 @@ class SemanticAnalyzer {
     const SourceRange range = expression_range(id);
     if (!check_value(state, range) || state.type == model_.error_type())
       return std::nullopt;
-    if (const auto literal = integer_case_literal(id, selector_type)) {
-      return SwitchLabel{*literal, range};
+    if (const auto literal = integer_case_literal(id, state.type)) {
+      if (literal->type == selector_type) {
+        return SwitchLabel{*literal, range};
+      }
+      const auto widened =
+          widen_integer_constant(literal->bits, model_.type(literal->type).kind,
+                                 model_.type(selector_type).kind);
+      if (widened) {
+        return SwitchLabel{ScalarConstant{selector_type, *widened}, range};
+      }
+      diagnostics_.error(range, "case constant of type '" +
+                                    type_name(literal->type) +
+                                    "' cannot be used for switch selector '" +
+                                    type_name(selector_type) + "'");
+      return std::nullopt;
     }
     const Expression& syntax =
         files_[current_file_.value]->storage.expression(ungroup(id));
@@ -2602,14 +2620,24 @@ class SemanticAnalyzer {
                                   SourceRange range,
                                   std::optional<TypeId> expected,
                                   bool is_negated) {
+    const NumericLiteralSpelling spelling =
+        parse_numeric_literal_spelling(literal.lexeme);
+    if ((literal.kind == LiteralKind::kInteger ||
+         literal.kind == LiteralKind::kFloat) &&
+        spelling.error != NumericLiteralSpellingError::kNone) {
+      return ExpressionState{model_.error_type()};
+    }
     switch (literal.kind) {
       case LiteralKind::kInteger: {
         TypeId type = *model_.find_type("int");
-        if (expected && is_integer(*expected)) {
+        if (spelling.suffix_kind != NumericLiteralSuffix::kNone) {
+          type = *model_.find_type(
+              numeric_literal_suffix_type_name(spelling.suffix_kind));
+        } else if (expected && is_integer(*expected)) {
           type = *expected;
         }
         if ((!defer_default_numeric_literal_range_ || expected) &&
-            !integer_literal_fits(literal.lexeme, type, is_negated)) {
+            !integer_literal_fits(spelling.core, type, is_negated)) {
           diagnostics_.error(
               range, "integer literal '" + std::string{is_negated ? "-" : ""} +
                          std::string{literal.lexeme} +
@@ -2620,11 +2648,14 @@ class SemanticAnalyzer {
       }
       case LiteralKind::kFloat: {
         TypeId type = *model_.find_type("float64");
-        if (expected && is_floating_point(*expected)) {
+        if (spelling.suffix_kind != NumericLiteralSuffix::kNone) {
+          type = *model_.find_type(
+              numeric_literal_suffix_type_name(spelling.suffix_kind));
+        } else if (expected && is_floating_point(*expected)) {
           type = *expected;
         }
         if ((!defer_default_numeric_literal_range_ || expected) &&
-            !floating_literal_fits(literal.lexeme, type)) {
+            !floating_literal_fits(spelling.core, type)) {
           diagnostics_.error(
               range, "floating literal '" + std::string{literal.lexeme} +
                          "' is out of range for '" + type_name(type) + "'");
@@ -2995,16 +3026,19 @@ class SemanticAnalyzer {
     }
 
     const bool is_literal = is_numeric_literal_expression(conversion.value);
+    const bool is_contextual_literal =
+        is_contextual_numeric_literal_expression(conversion.value);
     const ExpressionState value =
-        is_literal ? analyze_overload_argument(conversion.value)
-                   : analyze_expression(conversion.value);
+        is_contextual_literal ? analyze_overload_argument(conversion.value)
+                              : analyze_expression(conversion.value);
     return finish_numeric_conversion(conversion, range, target, value,
-                                     is_literal);
+                                     is_literal, is_contextual_literal);
   }
 
   ExpressionState finish_numeric_conversion(
       const NumericConversionExpression& conversion, SourceRange range,
-      TypeId target, const ExpressionState& value, bool is_literal) {
+      TypeId target, const ExpressionState& value, bool is_literal,
+      bool is_contextual_literal) {
     check_value(value, expression_range(conversion.value));
     if (value.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
@@ -3017,7 +3051,16 @@ class SemanticAnalyzer {
     }
 
     if (is_literal) {
-      if (!numeric_literal_conversion_fits(conversion.value, target)) {
+      bool fits = false;
+      if (is_contextual_literal) {
+        fits = numeric_literal_conversion_fits(conversion.value, target);
+      } else if (const auto constant =
+                     numeric_literal_expression_constant(conversion.value)) {
+        fits = convert_scalar(constant->bits, model_.type(constant->type).kind,
+                              model_.type(target).kind)
+                   .has_value();
+      }
+      if (!fits) {
         diagnostics_.error(
             range,
             "numeric literal is out of range for explicit conversion "
@@ -3025,8 +3068,10 @@ class SemanticAnalyzer {
                 type_name(target) + "'");
         return ExpressionState{model_.error_type()};
       }
-      static_cast<void>(
-          contextualize_numeric_conversion(conversion.value, target));
+      if (is_contextual_literal) {
+        static_cast<void>(
+            contextualize_numeric_conversion(conversion.value, target));
+      }
     }
     return ExpressionState{target, ValueCategory::kValue};
   }
@@ -3966,6 +4011,12 @@ class SemanticAnalyzer {
     }
 
     if (matches.empty()) {
+      for (const ExpressionId argument : call.arguments) {
+        if (is_numeric_literal_expression(argument) &&
+            !numeric_literal_expression_constant(argument)) {
+          invalidate_numeric_literal_expression(argument);
+        }
+      }
       diagnostics_.error(range, "no matching overload for call with " +
                                     std::to_string(arguments.size()) +
                                     " argument(s)");
@@ -4507,9 +4558,14 @@ class SemanticAnalyzer {
       if (literal->kind != LiteralKind::kInteger) {
         return std::nullopt;
       }
+      const NumericLiteralSpelling spelling =
+          parse_numeric_literal_spelling(literal->lexeme);
+      if (spelling.error != NumericLiteralSpellingError::kNone) {
+        return std::nullopt;
+      }
       std::uint64_t value = 0;
-      const char* const begin = literal->lexeme.data();
-      const char* const end = begin + literal->lexeme.size();
+      const char* const begin = spelling.core.data();
+      const char* const end = begin + spelling.core.size();
       const auto parsed = std::from_chars(begin, end, value);
       if (parsed.ec != std::errc{} || parsed.ptr != end) {
         return std::nullopt;
@@ -4637,18 +4693,105 @@ class SemanticAnalyzer {
     return false;
   }
 
+  bool is_contextual_numeric_literal_expression(ExpressionId id) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* literal =
+            std::get_if<LiteralExpression>(&expression.data)) {
+      if (literal->kind != LiteralKind::kInteger &&
+          literal->kind != LiteralKind::kFloat) {
+        return false;
+      }
+      const NumericLiteralSpelling spelling =
+          parse_numeric_literal_spelling(literal->lexeme);
+      return spelling.error == NumericLiteralSpellingError::kNone &&
+             spelling.suffix_kind == NumericLiteralSuffix::kNone;
+    }
+    if (const auto* unary = std::get_if<UnaryExpression>(&expression.data)) {
+      return (unary->operation == TokenKind::kPlus ||
+              unary->operation == TokenKind::kMinus) &&
+             is_contextual_numeric_literal_expression(unary->operand);
+    }
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return is_contextual_numeric_literal_expression(grouped->expression);
+    }
+    return false;
+  }
+
+  std::optional<ScalarConstant> numeric_literal_expression_constant(
+      ExpressionId id) const {
+    std::vector<TokenKind> signs;
+    for (;;) {
+      const Expression& expression =
+          files_[current_file_.value]->storage.expression(id);
+      if (const auto* grouped =
+              std::get_if<ParenthesizedExpression>(&expression.data)) {
+        id = grouped->expression;
+      } else if (const auto* unary =
+                     std::get_if<UnaryExpression>(&expression.data)) {
+        if (unary->operation != TokenKind::kPlus &&
+            unary->operation != TokenKind::kMinus) {
+          return std::nullopt;
+        }
+        signs.push_back(unary->operation);
+        id = unary->operand;
+      } else if (const auto* literal =
+                     std::get_if<LiteralExpression>(&expression.data);
+                 literal != nullptr &&
+                 (literal->kind == LiteralKind::kInteger ||
+                  literal->kind == LiteralKind::kFloat)) {
+        const NumericLiteralSpelling spelling =
+            parse_numeric_literal_spelling(literal->lexeme);
+        if (spelling.error != NumericLiteralSpellingError::kNone) {
+          return std::nullopt;
+        }
+        const TypeId type =
+            model_.file(current_file_).expressions.at(id.value).type;
+        if (type == model_.error_type()) {
+          return std::nullopt;
+        }
+        const ConstantBits bits = scalar_signed_literal(
+            literal->kind, spelling.core, model_.type(type).kind, signs);
+        return bits ? std::optional{ScalarConstant{type, *bits}} : std::nullopt;
+      } else {
+        return std::nullopt;
+      }
+    }
+  }
+
+  void invalidate_numeric_literal_expression(ExpressionId id) {
+    model_.mutable_file(current_file_).expressions.at(id.value).type =
+        model_.error_type();
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (const auto* unary = std::get_if<UnaryExpression>(&expression.data);
+        unary != nullptr && (unary->operation == TokenKind::kPlus ||
+                             unary->operation == TokenKind::kMinus)) {
+      invalidate_numeric_literal_expression(unary->operand);
+    } else if (const auto* grouped =
+                   std::get_if<ParenthesizedExpression>(&expression.data)) {
+      invalidate_numeric_literal_expression(grouped->expression);
+    }
+  }
+
   bool numeric_literal_expression_fits(ExpressionId id, TypeId target,
                                        bool is_negated = false) const {
     const Expression& expression =
         files_[current_file_.value]->storage.expression(id);
     if (const auto* literal =
             std::get_if<LiteralExpression>(&expression.data)) {
+      const NumericLiteralSpelling spelling =
+          parse_numeric_literal_spelling(literal->lexeme);
+      if (spelling.error != NumericLiteralSpellingError::kNone) {
+        return false;
+      }
       if (literal->kind == LiteralKind::kInteger && is_integer(target)) {
-        return integer_literal_fits(literal->lexeme, target, is_negated);
+        return integer_literal_fits(spelling.core, target, is_negated);
       }
       return literal->kind == LiteralKind::kFloat &&
              is_floating_point(target) &&
-             floating_literal_fits(literal->lexeme, target);
+             floating_literal_fits(spelling.core, target);
     }
     if (const auto* unary = std::get_if<UnaryExpression>(&expression.data);
         unary != nullptr && (unary->operation == TokenKind::kPlus ||
@@ -4672,17 +4815,22 @@ class SemanticAnalyzer {
         files_[current_file_.value]->storage.expression(id);
     if (const auto* literal =
             std::get_if<LiteralExpression>(&expression.data)) {
+      const NumericLiteralSpelling spelling =
+          parse_numeric_literal_spelling(literal->lexeme);
+      if (spelling.error != NumericLiteralSpellingError::kNone) {
+        return false;
+      }
       if (constant_context_)
-        return scalar_literal(literal->kind, literal->lexeme,
+        return scalar_literal(literal->kind, spelling.core,
                               model_.type(target).kind, is_negated)
             .has_value();
       if (literal->kind == LiteralKind::kInteger) {
         if (is_integer(target)) {
-          return integer_literal_fits(literal->lexeme, target, is_negated);
+          return integer_literal_fits(spelling.core, target, is_negated);
         }
         std::uint64_t value = 0;
-        const char* const begin = literal->lexeme.data();
-        const char* const end = begin + literal->lexeme.size();
+        const char* const begin = spelling.core.data();
+        const char* const end = begin + spelling.core.size();
         const auto parsed = std::from_chars(begin, end, value);
         return is_floating_point(target) && parsed.ec == std::errc{} &&
                parsed.ptr == end;
@@ -4691,15 +4839,15 @@ class SemanticAnalyzer {
         return false;
       }
       if (is_floating_point(target)) {
-        return floating_literal_fits(literal->lexeme, target);
+        return floating_literal_fits(spelling.core, target);
       }
       if (!is_integer(target)) {
         return false;
       }
 
       double parsed_value = 0.0;
-      const char* const begin = literal->lexeme.data();
-      const char* const end = begin + literal->lexeme.size();
+      const char* const begin = spelling.core.data();
+      const char* const end = begin + spelling.core.size();
       const auto parsed =
           std::from_chars(begin, end, parsed_value, std::chars_format::general);
       if (parsed.ec != std::errc{} || parsed.ptr != end ||
@@ -4741,7 +4889,7 @@ class SemanticAnalyzer {
   ExpressionState analyze_overload_argument(ExpressionId id) {
     const bool previous = defer_default_numeric_literal_range_;
     defer_default_numeric_literal_range_ =
-        previous || is_numeric_literal_expression(id);
+        previous || is_contextual_numeric_literal_expression(id);
     ExpressionState state = analyze_expression(id);
     defer_default_numeric_literal_range_ = previous;
     return state;
@@ -4755,7 +4903,7 @@ class SemanticAnalyzer {
         parameter == model_.error_type()) {
       return true;
     }
-    if (is_numeric_literal_expression(id)) {
+    if (is_contextual_numeric_literal_expression(id)) {
       if (!numeric_literal_expression_fits(id, parameter)) {
         return false;
       }
@@ -4781,6 +4929,9 @@ class SemanticAnalyzer {
 
   bool contextualize_numeric_expression(ExpressionId id, TypeId target,
                                         bool is_negated = false) {
+    if (!is_contextual_numeric_literal_expression(id)) {
+      return false;
+    }
     if (!numeric_literal_expression_fits(id, target, is_negated)) {
       return false;
     }

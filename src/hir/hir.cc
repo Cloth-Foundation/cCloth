@@ -4,12 +4,29 @@
 
 #include "cloth/hir/hir.h"
 
+#include "cloth/lexer/literal.h"
+
 #include <cstddef>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace cloth {
+namespace {
+
+std::string hir_literal_lexeme(const LiteralExpression& literal) {
+  if (literal.kind != LiteralKind::kInteger &&
+      literal.kind != LiteralKind::kFloat) {
+    return std::string{literal.lexeme};
+  }
+  const NumericLiteralSpelling spelling =
+      parse_numeric_literal_spelling(literal.lexeme);
+  return std::string{spelling.error == NumericLiteralSpellingError::kNone
+                         ? spelling.core
+                         : literal.lexeme};
+}
+
+}  // namespace
 
 StructReceiverMode struct_receiver_mode(const SemanticSymbol& callable,
                                         const SemanticModel& semantics) {
@@ -153,7 +170,15 @@ class Lowerer {
     HirExpressionData data = HirInvalidExpression{};
 
     if (const auto* literal = std::get_if<LiteralExpression>(&syntax.data)) {
-      data = HirLiteralExpression{literal->kind, std::string{literal->lexeme}};
+      const NumericLiteralSpelling spelling =
+          parse_numeric_literal_spelling(literal->lexeme);
+      if ((literal->kind != LiteralKind::kInteger &&
+           literal->kind != LiteralKind::kFloat) ||
+          (spelling.error == NumericLiteralSpellingError::kNone &&
+           semantic.type != semantics_.error_type())) {
+        data =
+            HirLiteralExpression{literal->kind, hir_literal_lexeme(*literal)};
+      }
     } else if (std::holds_alternative<IdentifierExpression>(syntax.data)) {
       if (semantic.category == ValueCategory::kType) {
         data = HirTypeExpression{semantic.type};

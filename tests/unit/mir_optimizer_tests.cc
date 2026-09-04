@@ -209,6 +209,11 @@ void scalar_operations_fold(TestContext& test) {
     static func Checked(): int32 { return int32(Small); }
     static func Wrapped(): int8 { return int8::wrap(Huge); }
     static func Saturated(): int8 { return int8::sat(Huge); }
+    static func TypedSigned(): int64 { return 1i8 + 2i64; }
+    static func TypedFloat(): float32 { return 1f32 + 0.5f32; }
+    static func TypedChecked(): int8 { return int8(127i16); }
+    static func TypedWrapped(): int8 { return int8::wrap(300i16); }
+    static func TypedSaturated(): uint8 { return uint8::sat(-1i16); }
   )");
   sources.compile();
   test.expect(sources.result && sources.result->is_valid,
@@ -244,6 +249,16 @@ void scalar_operations_fold(TestContext& test) {
                      255);
   expect_return_bits(test, optimized, sources.result->semantics, "Saturated",
                      127);
+  expect_return_bits(test, optimized, sources.result->semantics, "TypedSigned",
+                     3);
+  expect_return_bits(test, optimized, sources.result->semantics, "TypedFloat",
+                     UINT64_C(0x3fc00000));
+  expect_return_bits(test, optimized, sources.result->semantics, "TypedChecked",
+                     127);
+  expect_return_bits(test, optimized, sources.result->semantics, "TypedWrapped",
+                     44);
+  expect_return_bits(test, optimized, sources.result->semantics,
+                     "TypedSaturated", 0);
 
   cloth::MirModule twice = optimized;
   cloth::optimize_mir(twice, sources.result->semantics);
@@ -418,7 +433,7 @@ void failing_operations_remain(TestContext& test) {
 
 void source_free_constants_fold(TestContext& test) {
   CompiledSources producer;
-  producer.add_package("Constants.co", "static final int16 Value = 7;",
+  producer.add_package("Constants.co", "static final int16 Value = 7i16;",
                        "library", "1.0.0");
   producer.compile();
   test.expect(producer.result && producer.result->is_valid,
@@ -439,7 +454,7 @@ void source_free_constants_fold(TestContext& test) {
   consumer.add_imported(std::move(*exported.view));
   consumer.add_package("Use.co", R"(
     import dep::Constants;
-    static func Read(): int64 { return Constants.Value + 2; }
+    static func Read(): int64 { return Constants.Value + 2i8; }
   )",
                        "app", "1.0.0");
   consumer.compile();
@@ -464,7 +479,7 @@ void source_free_constants_fold(TestContext& test) {
 
 void verifier_rejects_malformed_constants(TestContext& test) {
   CompiledSources sources;
-  sources.add("Verify.co", "static func Value(): bool { return true; }");
+  sources.add("Verify.co", "static func Value(): int8 { return 1i8; }");
   sources.compile();
   test.expect(sources.result && sources.result->is_valid,
               "verifier fixture failed: " + messages(sources.diagnostics));
@@ -476,15 +491,16 @@ void verifier_rejects_malformed_constants(TestContext& test) {
       find_function(sources.result->mir, sources.result->semantics, "Value");
   auto* constant = std::get_if<cloth::MirScalarConstantInstruction>(
       &function->body.blocks[0].instructions[0].data);
-  test.expect(constant != nullptr, "valid bool did not become a MIR constant");
+  test.expect(constant != nullptr,
+              "valid typed literal did not become a MIR constant");
   if (constant == nullptr) {
     return;
   }
-  constant->value.bits = 2;
+  constant->value.bits = 256;
   cloth::DiagnosticEngine diagnostics;
   test.expect(!cloth::verify_mir(sources.result->mir, sources.result->semantics,
                                  diagnostics),
-              "MIR verifier accepted noncanonical bool bits");
+              "MIR verifier accepted noncanonical typed numeric bits");
   test.expect(
       messages(diagnostics)
           .contains("scalar constant has an invalid type or bit pattern"),

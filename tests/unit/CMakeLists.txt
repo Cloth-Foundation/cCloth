@@ -13,6 +13,7 @@ cloth_add_unit_test(cloth_identity_tests identity_tests.cc)
 cloth_add_unit_test(cloth_imported_package_tests imported_package_tests.cc)
 cloth_add_unit_test(cloth_package_artifact_tests package_artifact_tests.cc)
 cloth_add_unit_test(cloth_lexer_tests lexer_tests.cc)
+cloth_add_unit_test(cloth_numeric_literal_tests numeric_literal_tests.cc)
 cloth_add_unit_test(cloth_parser_tests parser_tests.cc)
 cloth_add_unit_test(cloth_project_tests project_tests.cc)
 target_compile_definitions(cloth_project_tests PRIVATE

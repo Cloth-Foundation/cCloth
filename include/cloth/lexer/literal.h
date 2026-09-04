@@ -12,6 +12,45 @@
 
 namespace cloth {
 
+enum class NumericLiteralSuffix {
+  kNone,
+  kInt8,
+  kInt16,
+  kInt32,
+  kInt64,
+  kUint8,
+  kUint16,
+  kUint32,
+  kUint64,
+  kFloat32,
+  kFloat64,
+};
+
+enum class NumericLiteralSpellingError {
+  kNone,
+  kInvalidCore,
+  kInvalidSuffix,
+  kIntegerSuffixOnFloatingCore,
+};
+
+struct NumericLiteralSpelling {
+  std::string_view core;
+  std::string_view suffix;
+  NumericLiteralSuffix suffix_kind;
+  NumericLiteralSpellingError error;
+  bool core_is_floating;
+  bool is_floating;
+};
+
+// Splits a complete decimal numeric token. This validates source spelling but
+// does not perform type-specific range checking.
+[[nodiscard]] NumericLiteralSpelling parse_numeric_literal_spelling(
+    std::string_view spelling) noexcept;
+
+// Returns the canonical Cloth type name selected by a non-empty suffix.
+[[nodiscard]] std::string_view numeric_literal_suffix_type_name(
+    NumericLiteralSuffix suffix) noexcept;
+
 [[nodiscard]] char decode_escape_character(char character) noexcept;
 
 [[nodiscard]] std::string decode_string_literal(std::string_view lexeme);

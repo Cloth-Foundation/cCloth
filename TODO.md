@@ -58,7 +58,9 @@ checkpoint is complete. Stage 30 is complete following its separately
 authorized 30.4 exit audit on 2026-09-03. Stage 31.1 is complete for the
 approved MIR optimization contract. The separately authorized 31.2 scalar-fold
 and 31.3 CFG/integration checkpoints are also complete. Stage 31 is complete
-following its separately authorized 31.4 exit audit on 2026-09-04.
+following its separately authorized 31.4 exit audit on 2026-09-04. Stage 32 is
+complete following its separately authorized 32.4 exit audit on 2026-09-04. No
+later stage is assigned or active.
 
 ## Scheduled work
 
@@ -549,8 +551,75 @@ class override validation. Existing ABI and artifact versions are unchanged.
   each pass all 215 CTests, including 29 shared protocol/toolchain and 24 native
   Shuttle cases. All 43 ordinary Rust tests, Rust 1.85, Clippy, Rust and C++
   formatting, six editor tests per compiler, documentation, and repository
-  gates pass. Compatibility versions remain unchanged; Stage 32 is not
-  assigned or active.
+  gates pass. Compatibility versions remain unchanged. No Stage 32 work was
+  part of this completed audit.
+
+### Stage 32: Typed numeric literals
+
+- [x] **32.1 — Contract.** Approve
+  [typed numeric literals](docs/proposals/stage_32_typed_numeric_literals.md)
+  with canonical lowercase width suffixes, exact initial typing, unchanged
+  unsuffixed behavior, range and recovery rules, suffix-free HIR data,
+  unchanged compatibility versions, tests, and explicit non-goals.
+
+  Approved 2026-09-04. The exact set is `i8`, `i16`, `i32`, `i64`, `u8`,
+  `u16`, `u32`, `u64`, `f32`, and `f64`. `int`, `uint`, and `float` add no
+  alias suffixes; distinct `byte` has no suffix. A suffix fixes the literal's
+  source type, after which existing widening, overload, conversion, constant,
+  optimizer, and package rules apply.
+
+- [x] **32.2 — Frontend.** Implement atomic numeric-suffix lexing, parser
+  literal classification, exact semantic typing and representability, signed
+  minima, deterministic malformed-suffix recovery, suffix-free HIR lowering,
+  HIR verification, and focused valid/invalid unit coverage.
+
+  Completed 2026-09-04. A shared decoder recognizes the ten canonical suffixes
+  and preserves malformed candidates as one diagnosed token. Semantic analysis
+  fixes suffixed source types while retaining unsuffixed contextual behavior;
+  widening, overloads, switches, checked conversions, signed minima, and static
+  constants use that exact type. HIR erases suffixes and verifies the canonical
+  boundary. The dedicated six-case unit target and all 216 development and
+  sanitizer CTests pass. Compatibility versions remain unchanged. Completing
+  32.2 does not authorize 32.3.
+
+- [x] **32.3 — Integration.** Complete static-constant and optimizer behavior,
+  assignment/return/array/operator/overload/switch/conversion coverage,
+  x86-64/wasm32 LLVM verification, whole/separate/source-free packages,
+  affected-only invalidation, Shuttle determinism, editor support, and
+  user-facing documentation.
+
+  Completed 2026-09-04. One end-to-end fixture covers every suffix plus exact
+  and widening assignments, returns, arrays, operators, overloads, switches,
+  checked conversion, `wrap`, `sat`, static constants, and native output.
+  Canonical typed constants fold through MIR and source-free packages; raw and
+  O2 x86-64/wasm32 LLVM verify. Shuttle proves whole/separate/source-free
+  equivalence, affected-only invalidation, failed-output preservation, and
+  relocated serial/parallel determinism. The editor and user documentation
+  expose the implemented syntax. Both compiler configurations pass all 224
+  CTests. Compatibility versions and Shuttle production code remain unchanged.
+  Completing 32.3 does not authorize 32.4.
+
+- [x] **32.4 — Exit audit.** Complete every suffix at zero, extrema, adjacent,
+  invalid category/case/width/tail, floating rounding, signed-zero, subnormal,
+  and range boundaries; verify malformed models, unchanged unsuffixed behavior,
+  failed-output preservation, relocated serial/parallel determinism, and all
+  compiler, Rust/shared Shuttle, editor, formatting, documentation, and
+  repository gates.
+
+  Completed 2026-09-04. The ten-case numeric unit target covers all suffixes at
+  zero and integer extrema/adjacent/out-of-range values; signed minima and
+  unsigned rejection; binary32/binary64 ties-to-even neighbors, signed zero,
+  minimum subnormals, finite extrema, underflow, and overflow; the complete
+  malformed suffix families; unchanged unsuffixed contexts; and the 4,096-byte
+  token boundary. HIR rejects retained suffixes, invalid cores/types, and
+  out-of-range canonical values; MIR rejects invalid typed bits. Invalid
+  overload recovery retains its original diagnostics. Both configurations pass
+  all 224 CTests, including 30 toolchain and 26 native Shuttle cases. All 43
+  ordinary Rust tests, Rust 1.85 checking, warning-denied Clippy, Rust/C++
+  formatting, nine editor tests per compiler, all 99 local Markdown link checks,
+  and repository hygiene gates pass. Compatibility versions remain unchanged.
+
+  **Stage 32 is complete.** No later stage is assigned or active.
 
 ## Unscheduled backlog
 
@@ -595,9 +664,6 @@ active stage without first updating `ROADMAP.md`.
 - Design wrapping and saturating arithmetic separately from Stage 30's explicit
   conversion modes. No arithmetic spelling is reserved by the conversion
   contract.
-- Evaluate optional numeric literal suffixes as syntax ergonomics without
-  changing contextual literal typing, default `int32`/`float64` inference,
-  representability checks, or overload-resolution rules.
 - Add floating-point bit representation and byte-order operations after the
   integer-only Stage 21 boundary is proven.
 - Align wider Unicode character literals/escapes and artifact constants across

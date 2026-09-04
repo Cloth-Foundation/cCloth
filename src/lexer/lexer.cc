@@ -4,6 +4,8 @@
 
 #include "cloth/lexer/lexer.h"
 
+#include "cloth/lexer/literal.h"
+
 #include <array>
 #include <cctype>
 #include <iomanip>
@@ -361,7 +363,26 @@ Token Lexer::scan_number(std::size_t start, SourceLocation location) {
     }
   }
 
-  return make_token(kind, start, location);
+  while (is_identifier_continue(peek())) {
+    advance();
+  }
+
+  const Token token = make_token(kind, start, location);
+  const NumericLiteralSpelling spelling =
+      parse_numeric_literal_spelling(token.lexeme);
+  if (spelling.error == NumericLiteralSpellingError::kInvalidSuffix) {
+    diagnostics_.error(token.range, "invalid numeric suffix '" +
+                                        std::string{spelling.suffix} + "'");
+  } else if (spelling.error ==
+             NumericLiteralSpellingError::kIntegerSuffixOnFloatingCore) {
+    diagnostics_.error(token.range, "integer suffix '" +
+                                        std::string{spelling.suffix} +
+                                        "' cannot be applied to a floating "
+                                        "literal");
+  }
+
+  return Token{spelling.is_floating ? TokenKind::kFloatLiteral : kind,
+               token.lexeme, token.range};
 }
 
 Token Lexer::scan_string(std::size_t start, SourceLocation location) {

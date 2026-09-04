@@ -1,5 +1,78 @@
 # Cloth testing and diagnostic builds
 
+## Stage 32.4 typed numeric literal exit audit
+
+Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
+Both configurations pass all **224 CTests**, including **30 public compiler-
+protocol/toolchain and 26 native Shuttle cases** per compiler. All **43 ordinary
+Rust tests**, the Rust **1.85.0** minimum check, warning-denied Clippy, Rust and
+C++ formatting, and **nine editor tests per compiler** pass. Local links are
+valid across all **99 Markdown files**, including all **38 user-documentation
+pages**.
+
+The expanded ten-case numeric target covers every suffix at zero and all
+integer minima, maxima, neighboring, and out-of-range values. It verifies
+signed minima, unsigned rejection, binary32/binary64 ties-to-even neighbors,
+signed zero, minimum subnormals, finite extrema, underflow and overflow, exact
+canonical bits, unchanged unsuffixed contexts, and the 4,096-byte token limit.
+Invalid category, case, width, repetition, alias, and identifier-tail suffixes
+are consumed atomically and diagnosed once in source order.
+
+HIR verification rejects retained suffixes, malformed cores, nonnumeric types,
+and out-of-range canonical values; invalid source recovery lowers invalid
+numeric expressions without verifier cascades. MIR verification rejects an
+invalid bit pattern derived from a typed literal. Existing x86-64/wasm32 LLVM,
+native execution, source-free package, invalidation, output-preservation, and
+relocated serial/parallel determinism checks remain clean. Artifact format
+**4**, compiler ABI **4**, runtime ABI **3**, process protocol **2**, receipt
+schema **1**, and manifest schema **1** remain unchanged.
+
+**Stage 32 is complete.** No later stage is assigned or active.
+
+## Stage 32.3 typed numeric literal integration
+
+Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
+Both configurations pass all **224 CTests**, including **30 public compiler-
+protocol/toolchain and 26 native Shuttle cases** per compiler. All **43 ordinary
+Rust tests**, warning-denied Clippy, Rust and C++ formatting, and **nine editor
+tests per compiler** pass.
+
+The integration fixture covers all ten suffixes plus static constants,
+assignment, return, array, operator, overload, switch, checked conversion,
+`wrap`, `sat`, and exact native output. Canonical typed constants and MIR folds
+survive source erasure; raw and O2 x86-64/wasm32 LLVM verify. Shuttle proves
+whole-project, separate-package, and source-free equivalence, affected-only
+invalidation, failed-output preservation, and relocated serial/parallel
+determinism without parsing source syntax. Artifact format **4**, compiler ABI
+**4**, runtime ABI **3**, process protocol **2**, receipt schema **1**, and
+manifest schema **1** remain unchanged. At this checkpoint Stage 32 remained
+active and 32.4 required separate authorization; the completed exit audit is
+recorded above.
+
+## Stage 32.2 typed numeric literal frontend
+
+Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
+Both configurations pass all **216 CTests**, including the new six-case typed
+numeric literal target and **29 public compiler-protocol/toolchain and 24 native
+Shuttle cases** per compiler.
+
+Focused coverage proves atomic recognition of all ten canonical suffixes,
+deterministic malformed-tail recovery, complete AST spelling, exact semantic
+types, unchanged unsuffixed defaults, lossless widening, overload and switch
+behavior, checked conversions, signed minima, static constant evaluation,
+suffix-free HIR lowering, and forged-HIR rejection. No runtime, MIR, LLVM,
+artifact, protocol, manifest, receipt, editor, or Shuttle production surface
+changed. At this checkpoint Stage 32 remained active and 32.3 required separate
+authorization; both later checkpoints are recorded above.
+
+## Stage 32.1 typed numeric literal contract
+
+Approved on 2026-09-04. This documentation-only checkpoint fixes the ten
+canonical suffixes, exact initial typing, representability and recovery rules,
+suffix-free HIR/MIR boundary, unchanged compatibility versions, verification
+matrix, and non-goals. It changes no compiler, runtime, Shuttle, editor, or
+artifact implementation. The later 32.2 frontend checkpoint is recorded above.
+
 ## Stage 31.4 MIR optimization exit audit
 
 Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
@@ -26,7 +99,7 @@ serial/parallel, and cross-target determinism cases remain clean. Artifact
 format **4**, compiler ABI **4**, runtime ABI **3**, process protocol **2**,
 receipt schema **1**, and manifest schema **1** remain unchanged.
 
-**Stage 31 is complete.** Stage 32 is not assigned or active.
+**Stage 31 is complete.** The current successor status is recorded above.
 
 ## Stage 31.3 MIR CFG and integration checkpoint
 

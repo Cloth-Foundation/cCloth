@@ -68,10 +68,13 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 28 | Typed scalar constants, format-4 artifacts, and source-free constant values |
 | 29 | Checked runtime integer arithmetic and deterministic terminal failures |
 | 30 | Explicit wrapping and saturating integer conversions with verified lowering |
+| 31 | Deterministic target-independent MIR scalar and control-flow optimization |
+| 32 | Exact typed numeric literals with deterministic compiler and package integration |
 
-Stage 30 is the current completed language baseline. Coordinated toolchain Stage
-22 and separate-compilation Stage 23 are complete, including their cross-tool
-exit audits. Build-responsiveness Stage 24 is also complete.
+Stage 32 is the current completed language-surface baseline, and Stage 31 is the
+current completed optimizer baseline. Coordinated toolchain Stage 22 and
+separate-compilation Stage 23 are complete, including their cross-tool exit
+audits. Build-responsiveness Stage 24 is also complete.
 
 Stage 26 is complete for value structs, including its approved source contract,
 frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
@@ -671,14 +674,87 @@ SSA worklist, and input-order-independent function output pass. Raw and
 optimized x86-64/wasm32 LLVM pass verification before and after O2, and all
 compiler, Shuttle, editor, formatting, and repository gates pass.
 
-## Beyond Stage 31
+## Stage 32: Typed numeric literals
 
-No stage beyond 31 is assigned or active. Scheduling MIR optimization does not
-schedule the rest of the backlog or freeze the Cloth 1.0 release scope.
+Status: **complete — 32.4 exit audit passed 2026-09-04**
+
+The [approved contract](docs/proposals/stage_32_typed_numeric_literals.md)
+defines lowercase, width-explicit suffixes for existing decimal integer and
+floating literals. A suffix fixes the literal's initial type while preserving
+all existing widening, conversion, arithmetic, overload, constant, optimizer,
+and package rules.
+
+Objective: let source code state an exact primitive numeric literal type without
+introducing a conversion expression or weakening contextual unsuffixed
+literals.
+
+Prerequisite: Stages 20, 28, 30, and 31.
+
+Deliverables:
+
+1. **32.1 — Contract (complete).** Freeze canonical suffixes, exact typing,
+   representability, token boundaries and recovery, downstream
+   canonicalization, compatibility, verification, and non-goals.
+2. **32.2 — Frontend (complete).** Implement lexing, parsing, semantic typing,
+   HIR canonicalization, diagnostics, and focused model tests.
+3. **32.3 — Integration (complete).** Complete constants,
+   MIR/optimizer/LLVM, package and Shuttle behavior, editor support, and user
+   documentation.
+4. **32.4 — Exit audit (complete).** Close boundary and invalid-syntax
+   matrices, cross-target/package determinism, documentation, and all quality
+   gates.
+
+Canonical suffixes are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`,
+`f32`, and `f64`. They are part of the numeric token and select an exact
+existing type. `int`, `uint`, and `float` add no aliases; `byte` remains a
+distinct type with no suffix. Unsuffixed behavior is unchanged.
+
+The 32.2 frontend uses one shared numeric-spelling decoder across lexing,
+semantic analysis, constant evaluation, HIR lowering, and verification. The
+AST retains complete source spelling; HIR receives only the canonical decimal
+core and exact existing type. Focused tests cover all ten suffixes, malformed
+atomic recovery, exact and widening use, overloads, switches, checked
+conversions, static constants, and forged HIR rejection. Both compiler
+configurations pass all 216 CTests.
+
+The 32.3 integration carries exact typed values through static constants,
+canonical MIR folding, x86-64/wasm32 LLVM verification before and after O2,
+and native execution. Public Shuttle fixtures prove whole-project,
+separate-package, and source-free equivalence; affected-only invalidation;
+failed-output preservation; and relocated serial/parallel determinism without
+a production Shuttle or compatibility change. The VS Code grammar and user
+language documentation cover the implemented syntax. Both compiler
+configurations pass all 224 CTests.
+
+The 32.4 audit covers zero, signed minima, unsigned zero, neighboring integer
+limits, and out-of-range values for every suffix. Floating coverage checks
+binary32/binary64 ties-to-even neighbors, signed zero, minimum subnormals,
+finite extrema, underflow, and overflow. Invalid category, case, width,
+repetition, alias, and identifier-tail spellings are atomic and source ordered;
+the 4,096-byte limit includes suffix bytes. HIR and MIR reject malformed
+canonical values without adding recovery diagnostics to invalid source.
+
+Artifact format **4**, compiler ABI **4**, runtime ABI **3**, process protocol
+**2**, receipt schema **1**, and manifest schema **1** remain unchanged. No
+runtime, backend, or Shuttle configuration surface is added.
+
+Non-goals include new literal bases, exponent notation, digit separators,
+uppercase or alias suffixes, a `byte` suffix, new numeric types, user-defined
+suffixes, implicit narrowing, new arithmetic/conversion behavior, aggregate
+constants, exceptions, and unrelated tooling.
+
+Exit requires the complete suffix/range/diagnostic matrix, unchanged
+unsuffixed behavior, HIR suffix erasure, verified canonical constants and MIR,
+x86-64/wasm32 LLVM verification, deterministic opaque package integration,
+editor and user documentation, and every existing quality gate.
+
+## Beyond Stage 32
+
+Stage 32 is complete. No stage beyond 32 is assigned or active; the remaining
+backlog does not acquire priority or enter the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 
-- optional numeric literal suffixes;
 - immutable per-case enum metadata, after its constant-data prerequisites; and
 - recoverable exceptions after their object/runtime ABI contract is approved.
 
