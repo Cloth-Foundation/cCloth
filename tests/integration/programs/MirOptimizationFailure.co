@@ -1,0 +1,3 @@
+static func Main() {
+  println((1 + 1) / (2 - 2));
+}

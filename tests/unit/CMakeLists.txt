@@ -22,6 +22,7 @@ cloth_add_unit_test(cloth_sema_tests sema_tests.cc)
 cloth_add_unit_test(cloth_override_tests override_tests.cc)
 cloth_add_unit_test(cloth_shuttle_protocol_tests shuttle_protocol_tests.cc)
 cloth_add_unit_test(cloth_mir_tests mir_tests.cc)
+cloth_add_unit_test(cloth_mir_optimizer_tests mir_optimizer_tests.cc)
 
 add_executable(cloth_runtime_tests runtime_tests.cc)
 target_link_libraries(cloth_runtime_tests PRIVATE cloth_runtime)

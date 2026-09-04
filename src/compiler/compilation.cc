@@ -11,6 +11,7 @@
 #include "cloth/identity/package_identity.h"
 #include "cloth/lexer/lexer.h"
 #include "cloth/mir/mir.h"
+#include "cloth/mir/mir_optimizer.h"
 #include "cloth/mir/mir_verifier.h"
 #include "cloth/parser/parser.h"
 #include "cloth/parser/syntax_facts.h"
@@ -507,6 +508,10 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
       mir.files.push_back(std::move(imported));
     }
     mir_is_valid = verify_mir(mir, frontend.semantics, diagnostics);
+    if (mir_is_valid) {
+      optimize_mir(mir, frontend.semantics);
+      mir_is_valid = verify_mir(mir, frontend.semantics, diagnostics);
+    }
     if (mir_is_valid) {
       auto lowered =
           lower_to_abi(mir, frontend.semantics, target_, diagnostics);

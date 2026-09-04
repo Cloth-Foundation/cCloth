@@ -67,8 +67,9 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 27 | Scoped switch statements, exhaustive enum handling, and deterministic package evolution |
 | 28 | Typed scalar constants, format-4 artifacts, and source-free constant values |
 | 29 | Checked runtime integer arithmetic and deterministic terminal failures |
+| 30 | Explicit wrapping and saturating integer conversions with verified lowering |
 
-Stage 29 is the current completed language baseline. Coordinated toolchain Stage
+Stage 30 is the current completed language baseline. Coordinated toolchain Stage
 22 and separate-compilation Stage 23 are complete, including their cross-tool
 exit audits. Build-responsiveness Stage 24 is also complete.
 
@@ -619,16 +620,67 @@ conversion behavior, exactly-once evaluation, every required expression
 context, relocated package determinism, documentation, and all development,
 sanitizer, Rust, editor, formatting, and repository gates pass.
 
-## Beyond Stage 30
+## Stage 31: MIR optimization
 
-No stage beyond 30 is assigned or active. Scheduling integer conversion modes
-does not schedule the rest of the backlog or freeze the Cloth 1.0 release scope.
+Status: **complete — 31.4 exit audit passed on 2026-09-04**
+
+The [approved contract](docs/proposals/stage_31_mir_optimization.md) defines an
+always-on, target-independent MIR optimizer between verified MIR lowering and
+ABI lowering. Optimization must preserve every observable source behavior,
+runtime failure, diagnostic, and evaluation-order guarantee.
+
+Objective: establish Cloth's deterministic optimization boundary and fold
+provably constant scalar work without changing language correctness or exposing
+backend-specific controls.
+
+Prerequisite: Stage 30.
+
+Deliverables:
+
+1. **31.1 — Contract (complete).** Freeze the pipeline boundary, canonical MIR
+   constants, scalar lattice, failure preservation, CFG cleanup,
+   compatibility, verification, resource behavior, and non-goals.
+2. **31.2 — Scalar folds (complete).** Add canonical MIR constants and
+   deterministic scalar propagation/folding with verifier, backend, and
+   focused coverage.
+3. **31.3 — CFG and integration (complete).** Add phi propagation, constant
+   branch/switch selection, canonical unreachable-block compaction,
+   production-pipeline and package integration.
+4. **31.4 — Exit audit (complete).** Complete equivalence, failure,
+   idempotence, stress, package determinism, documentation, and all coordinated
+   quality gates.
+
+Artifact format **4**, compiler ABI **4**, runtime ABI **3**, process protocol
+**2**, receipt schema **1**, and manifest schema **1** remain unchanged. The
+compiler executable digest provides normal cross-version artifact invalidation;
+no optimizer setting enters public compatibility data.
+
+Non-goals include numeric suffixes, aggregate constants, compile-time user
+functions, inlining, interprocedural propagation, common-subexpression
+elimination, loop/vector optimization, LLVM pass controls, public optimization
+levels, debug information, exceptions, new targets, and unrelated tooling.
+
+Exit requires exact baseline/optimized behavior, verified and idempotent MIR,
+bounded deterministic analysis, x86-64/wasm32 verification, opaque Shuttle
+integration, relocated package determinism, and every existing quality gate.
+
+The 31.4 exit audit completed on 2026-09-04. Exact raw/optimized native output,
+error text, status, and side effects agree; scalar boundaries, failure
+preservation, structural idempotence, malformed output rejection, a 16,384-node
+SSA worklist, and input-order-independent function output pass. Raw and
+optimized x86-64/wasm32 LLVM pass verification before and after O2, and all
+compiler, Shuttle, editor, formatting, and repository gates pass.
+
+## Beyond Stage 31
+
+No stage beyond 31 is assigned or active. Scheduling MIR optimization does not
+schedule the rest of the backlog or freeze the Cloth 1.0 release scope.
 
 The following candidates remain recorded without priority or order:
 
 - optional numeric literal suffixes;
-- a general constant-folding optimizer stage; and
-- immutable per-case enum metadata, after its constant-data prerequisites.
+- immutable per-case enum metadata, after its constant-data prerequisites; and
+- recoverable exceptions after their object/runtime ABI contract is approved.
 
 These candidates follow completion of their prerequisites and approved stages.
 Each candidate still requires its own stage charter, dependency review,

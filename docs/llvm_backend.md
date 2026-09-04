@@ -103,6 +103,13 @@ body. Floating globals use exact integer-bitcast constants, preserving signed
 zero and subnormals without host floating-point parsing. This creates no startup
 callable or GC root; the physical static-field ABI is unchanged.
 
+Stage 31.2 canonical MIR constants use the same exact representation. Integer,
+boolean, character, and enum values lower directly from canonical bits;
+`float32` and `float64` values lower through exact `i32`/`i64` constant
+bitcasts. The backend never reparses or invents source text for an optimized
+value. Stage 31.3 makes optimized, post-verification MIR the backend's only
+production input; a second MIR verification runs before ABI lowering.
+
 Each field initializer becomes an internal LLVM helper taking the new object as
 its receiver. An allocating constructor entry allocates the verified
 most-derived class size, installs that class's descriptor, executes the

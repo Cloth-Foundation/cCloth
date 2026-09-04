@@ -915,13 +915,14 @@ void static_members(TestContext& test) {
                   "(i32 %arg"),
               "static function gained a receiver parameter");
   test.expect(sources.contains(
-                  "load i32, ptr @" +
-                  cloth::test::static_field_name("Statics", "Version") + "") &&
-                  sources.contains("call i32 @" +
-                                   cloth::test::function_name(
-                                       "Statics", "Twice", {"int32"}) +
-                                   "(i32 %v"),
+                  "call i32 @" +
+                  cloth::test::function_name("Statics", "Twice", {"int32"}) +
+                  "(i32 12)"),
               "unqualified static call did not use receiver-free ABI");
+  test.expect(
+      !sources.contains("load i32, ptr @" +
+                        cloth::test::static_field_name("Statics", "Version")),
+      "verified static constant was not propagated into its call");
   test.expect(
       sources.contains("call i32 @" +
                        cloth::test::function_name("Statics", "Main") + "()"),
@@ -1101,7 +1102,7 @@ void print_and_native_entry_point(TestContext& test) {
               "string print intrinsic was not lowered");
   test.expect(sources.contains("call void @cloth_rt_print_i32(i32 7)"),
               "int32 print intrinsic was not lowered");
-  test.expect(sources.contains("zext i1 true to i8") &&
+  test.expect(sources.contains("zext i1 1 to i8") &&
                   sources.contains("call void @cloth_rt_print_bool(i8 %addr"),
               "bool print intrinsic was not lowered with its ABI width");
   test.expect(sources.contains("call void @cloth_rt_print_char(i32 67)"),

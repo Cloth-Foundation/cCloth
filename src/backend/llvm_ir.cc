@@ -352,6 +352,8 @@ class BodyEmitter {
   void emit_field_initializers(std::ostringstream& output);
   void emit_instruction(const MirInstruction& instruction,
                         std::ostringstream& output);
+  void emit_scalar_constant(const MirInstruction& instruction,
+                            const MirScalarConstantInstruction& constant);
   void emit_literal(const MirInstruction& instruction,
                     const MirLiteralInstruction& literal,
                     std::ostringstream& output);
@@ -1969,6 +1971,9 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* literal =
                  std::get_if<MirLiteralInstruction>(&instruction.data)) {
     emit_literal(instruction, *literal, output);
+  } else if (const auto* constant =
+                 std::get_if<MirScalarConstantInstruction>(&instruction.data)) {
+    emit_scalar_constant(instruction, *constant);
   } else if (const auto* load =
                  std::get_if<MirLoadSymbolInstruction>(&instruction.data)) {
     emit_load_symbol(instruction, *load, output);
@@ -2042,6 +2047,23 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
     emit_field_initializers(output);
   } else if (std::holds_alternative<MirInvalidInstruction>(instruction.data)) {
     module_.report(instruction.range, "invalid MIR reached LLVM lowering");
+  }
+}
+
+void BodyEmitter::emit_scalar_constant(
+    const MirInstruction& instruction,
+    const MirScalarConstantInstruction& constant) {
+  const TypeKind type = module_.semantics().type(instruction.type).kind;
+  if (type == TypeKind::kFloat32) {
+    values_.at(instruction.result->value) =
+        "bitcast (i32 " +
+        std::to_string(static_cast<std::uint32_t>(constant.value.bits)) +
+        " to float)";
+  } else if (type == TypeKind::kFloat64) {
+    values_.at(instruction.result->value) =
+        "bitcast (i64 " + std::to_string(constant.value.bits) + " to double)";
+  } else {
+    values_.at(instruction.result->value) = std::to_string(constant.value.bits);
   }
 }
 

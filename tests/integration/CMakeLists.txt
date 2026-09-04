@@ -225,6 +225,69 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
     target_compile_definitions(cloth_switch_native_tests PRIVATE ${native_definitions})
     cloth_enable_warnings(cloth_switch_native_tests)
     add_dependencies(cloth_switch_native_tests cloth_runtime)
+
+    add_executable(cloth_mir_optimizer_native_tests
+        mir_optimizer_native_tests.cc)
+    target_link_libraries(cloth_mir_optimizer_native_tests
+        PRIVATE cloth_compiler)
+    target_compile_definitions(cloth_mir_optimizer_native_tests
+        PRIVATE ${native_definitions})
+    cloth_enable_warnings(cloth_mir_optimizer_native_tests)
+    add_dependencies(cloth_mir_optimizer_native_tests cloth_runtime)
+    foreach(pipeline IN ITEMS raw optimized)
+        foreach(target IN ITEMS x86_64 wasm32)
+            set(optimizer_ir
+                "${PROJECT_BINARY_DIR}/cloth-mir-${pipeline}-${target}.ll")
+            add_test(NAME cloth_build_mir_${pipeline}_llvm_${target}
+                COMMAND cloth_mir_optimizer_native_tests ${pipeline}
+                    llvm-${target}
+                    ${CLOTH_INTEGRATION_PROGRAMS}/MirOptimization.co
+                    ${optimizer_ir})
+            if(CLOTH_LLVM_OPT_EXECUTABLE)
+                add_test(NAME cloth_mir_${pipeline}_verify_${target}
+                    COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                        "-passes=verify,default<O2>,verify" -disable-output
+                        ${optimizer_ir})
+                set_tests_properties(cloth_mir_${pipeline}_verify_${target}
+                    PROPERTIES DEPENDS
+                        cloth_build_mir_${pipeline}_llvm_${target})
+            endif()
+        endforeach()
+        foreach(program IN ITEMS success failure)
+            if(program STREQUAL "success")
+                set(optimizer_source
+                    ${CLOTH_INTEGRATION_PROGRAMS}/MirOptimization.co)
+            else()
+                set(optimizer_source
+                    ${CLOTH_INTEGRATION_PROGRAMS}/MirOptimizationFailure.co)
+            endif()
+            cloth_native_executable_path(optimizer_executable
+                "cloth mir ${pipeline} ${program}")
+            set(mir_${pipeline}_${program} ${optimizer_executable})
+            add_test(NAME cloth_build_mir_${pipeline}_${program}
+                COMMAND cloth_mir_optimizer_native_tests ${pipeline} native
+                    ${optimizer_source} "${optimizer_executable}")
+        endforeach()
+    endforeach()
+    add_test(NAME cloth_mir_baseline_success
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=${mir_raw_success}"
+            "-DCLOTH_COMPARE_PROGRAM=${mir_optimized_success}"
+            "-DCLOTH_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/mir_optimization.txt"
+            -DCLOTH_EXACT_OUTPUT=ON
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/RunProgram.cmake)
+    set_tests_properties(cloth_mir_baseline_success PROPERTIES
+        DEPENDS "cloth_build_mir_raw_success;cloth_build_mir_optimized_success")
+    add_test(NAME cloth_mir_baseline_failure
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=${mir_raw_failure}"
+            "-DCLOTH_COMPARE_PROGRAM=${mir_optimized_failure}"
+            "-DCLOTH_EXPECTED_ERROR=cloth runtime error: integer division by zero"
+            -DCLOTH_EXACT_ERROR=ON
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/RunProgram.cmake)
+    set_tests_properties(cloth_mir_baseline_failure PROPERTIES
+        DEPENDS "cloth_build_mir_raw_failure;cloth_build_mir_optimized_failure")
+
     foreach(mode IN ITEMS stress exhaustive default default_only tables)
         cloth_native_executable_path(switch_executable "cloth switch ${mode}")
         add_test(NAME cloth_build_switch_${mode}

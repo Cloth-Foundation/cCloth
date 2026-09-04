@@ -9,6 +9,7 @@
 #include "cloth/sema/semantic_model.h"
 
 #include <cstddef>
+#include <iomanip>
 #include <ostream>
 #include <variant>
 
@@ -56,7 +57,8 @@ void print_terminator(const MirTerminator& terminator, std::ostream& output) {
   }
 }
 
-void print_body(const MirBody& body, std::ostream& output) {
+void print_body(const MirBody& body, const SemanticModel& semantics,
+                std::ostream& output) {
   for (std::size_t index = 0; index < body.blocks.size(); ++index) {
     const MirBasicBlock& block = body.blocks[index];
     output << "|  |- bb" << index;
@@ -66,6 +68,24 @@ void print_body(const MirBody& body, std::ostream& output) {
     output << ": " << block.instructions.size() << " instruction(s), ";
     print_terminator(block.terminator, output);
     output << '\n';
+    for (const MirInstruction& instruction : block.instructions) {
+      const auto* constant =
+          std::get_if<MirScalarConstantInstruction>(&instruction.data);
+      if (constant == nullptr || !instruction.result) {
+        continue;
+      }
+      output << "|  |  |- %" << instruction.result->value << " = constant "
+             << "type#" << constant->value.type.value;
+      if (constant->value.type.value < semantics.types().size()) {
+        output << '(' << semantics.type(constant->value.type).name << ')';
+      }
+      const auto flags = output.flags();
+      const char fill = output.fill();
+      output << " 0x" << std::hex << std::setfill('0') << std::setw(16)
+             << constant->value.bits << '\n';
+      output.flags(flags);
+      output.fill(fill);
+    }
   }
 }
 
@@ -100,7 +120,7 @@ void print_callable(const MirCallable& callable, const SemanticModel& semantics,
   if (callable.struct_receiver == StructReceiverMode::kConstruction)
     output << " [construction receiver]";
   output << '\n';
-  print_body(callable.body, output);
+  print_body(callable.body, semantics, output);
 }
 
 }  // namespace
@@ -150,7 +170,7 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
           }
           if (field.initializer) {
             output << " [initializer]\n";
-            print_body(*field.initializer, output);
+            print_body(*field.initializer, semantics, output);
           } else {
             output << '\n';
           }

@@ -22,6 +22,25 @@ execute_process(
     ERROR_VARIABLE program_error
 )
 
+if(DEFINED CLOTH_COMPARE_PROGRAM)
+    execute_process(
+        COMMAND "${CLOTH_COMPARE_PROGRAM}" ${CLOTH_PROGRAM_ARGUMENTS}
+        TIMEOUT "${CLOTH_PROGRAM_TIMEOUT}"
+        RESULT_VARIABLE comparison_result
+        OUTPUT_VARIABLE comparison_output
+        ERROR_VARIABLE comparison_error
+    )
+    if(NOT "${program_result}" STREQUAL "${comparison_result}" OR
+       NOT program_output STREQUAL comparison_output OR
+       NOT program_error STREQUAL comparison_error)
+        message(FATAL_ERROR
+            "programs produced different status or streams\n"
+            "first: ${program_result}\n${program_output}${program_error}\n"
+            "second: ${comparison_result}\n"
+            "${comparison_output}${comparison_error}")
+    endif()
+endif()
+
 if(DEFINED CLOTH_EXPECTED)
     if(NOT "${program_result}" STREQUAL "0")
         message(FATAL_ERROR

@@ -1,5 +1,81 @@
 # Cloth testing and diagnostic builds
 
+## Stage 31.4 MIR optimization exit audit
+
+Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.
+Both configurations pass all **215 CTests**, including **29 public
+compiler-protocol/toolchain and 24 native Shuttle cases** per compiler. All
+**43 ordinary Rust tests**, Rust **1.85.0**, warning-denied Clippy, Rust and C++
+formatting, six editor support tests per compiler, documentation, and
+repository whitespace gates pass.
+
+The audit compares internal raw and production-optimized pipelines without a
+public optimization switch. Native fixtures have byte-for-byte identical
+standard output and error, the same process status, and the same side-effect
+counts; failing constant division preserves the exact runtime failure. Focused
+tests cover every scalar boundary and eligible operator, static and imported
+constants, arguments, returns, loops, phis, branches, and switches. They also
+prove structural fixed-point idempotence, stable function output across source
+insertion order, malformed optimized-MIR rejection, and an iterative
+16,384-node SSA worklist.
+
+Raw and optimized x86-64 and wasm32 LLVM modules verify before and after the O2
+pipeline. Existing Shuttle whole-project, separate-package, source-free,
+affected-only invalidation, failed-output preservation, relocated
+serial/parallel, and cross-target determinism cases remain clean. Artifact
+format **4**, compiler ABI **4**, runtime ABI **3**, process protocol **2**,
+receipt schema **1**, and manifest schema **1** remain unchanged.
+
+**Stage 31 is complete.** Stage 32 is not assigned or active.
+
+## Stage 31.3 MIR CFG and integration checkpoint
+
+Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.
+Both configurations pass all **201 CTests**, including the focused MIR
+optimizer suite and the shared Shuttle protocol/native package suites.
+
+Focused coverage proves executable-edge phi propagation, constant branch and
+integer/enum switch selection, unreachable-effect removal, stable dense block
+and value compaction, post-pass MIR verification, and repeated-pass
+idempotence. Production compilation now runs the optimizer between two MIR
+verification passes and before ABI lowering. A package fixture proves that
+whole-project and source-free dependency compilation fold the same imported
+constant and emit the same optimized app function body. Existing Shuttle tests
+exercise affected-only invalidation, failed-output preservation,
+serial/parallel scheduling, source-free execution, and native package builds
+through the public compiler boundary.
+
+Artifact format **4**, compiler ABI **4**, runtime ABI **3**, process protocol
+**2**, receipt schema **1**, and manifest schema **1** remain unchanged.
+
+**Stage 31.3 is complete.** Stage 31 remains active with its 31.4 exit audit
+awaiting separate authorization.
+
+## Stage 31.2 MIR scalar-fold checkpoint
+
+Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.
+Both configurations pass all **201 CTests**, including the new focused MIR
+optimizer suite and the existing shared Shuttle protocol/native tests.
+
+The focused suite covers canonical integer, boolean, character, enum,
+`float32`, and `float64` values; unary/binary operations; widening, checked,
+wrapping, and saturating conversions; verified source-owned and source-free
+imported static constants; deterministic typed hexadecimal MIR printing; exact
+LLVM floating bitcasts; and repeated scalar optimization. Overflow, division by
+zero, invalid shifts, failed checked conversion, and non-finite floating
+results retain their runtime MIR. Malformed canonical bits are rejected by the
+post-pass MIR verifier.
+
+At the close of this checkpoint, the optimizer was not yet in the production
+compilation path. Phi propagation, CFG cleanup, default-pipeline integration,
+and coordinated package behavior were assigned to the separately authorized
+31.3 checkpoint. Artifact format **4**, compiler ABI **4**, runtime ABI **3**,
+process protocol **2**, receipt schema **1**, and manifest schema **1** remained
+unchanged.
+
+**Stage 31.2 completed with 31.3 still awaiting separate authorization.** The
+current Stage 31 status is recorded above.
+
 ## Stage 30.4 integer conversion-mode exit audit
 
 Verified on Windows on 2026-09-03 with development and ASan/UBSan compilers.

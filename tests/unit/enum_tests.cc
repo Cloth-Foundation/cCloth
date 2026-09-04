@@ -239,8 +239,10 @@ void invalid_ir(TestContext& test) {
   test.expect(!cloth::verify_hir(broken_hir, result.semantics, hir_diagnostics),
               "HIR accepted arithmetic on enum values");
 
+  const cloth::MirModule raw_mir =
+      cloth::lower_to_mir(result.hir, result.semantics);
   for (int mutation = 0; mutation < 4; ++mutation) {
-    auto broken = result.mir;
+    auto broken = raw_mir;
     bool changed = false;
     for (auto& file : broken.files) {
       for (auto& function : file.functions) {

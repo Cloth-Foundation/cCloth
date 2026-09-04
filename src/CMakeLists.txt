@@ -24,6 +24,7 @@ add_library(cloth_compiler
     lexer/literal.cc
     lexer/token.cc
     mir/mir.cc
+    mir/mir_optimizer.cc
     mir/mir_printer.cc
     mir/mir_verifier.cc
     parser/declaration_pass.cc

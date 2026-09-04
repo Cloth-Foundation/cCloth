@@ -37,7 +37,13 @@ class CompiledSources {
         cloth::SourceFile::from_memory(std::move(path), std::move(text)));
   }
 
-  void compile() { result.emplace(compilation_.analyze(diagnostics)); }
+  void compile() {
+    result.emplace(compilation_.analyze(diagnostics));
+    if (result->is_valid) {
+      // MIR lowering tests inspect the pre-optimization representation.
+      result->mir = cloth::lower_to_mir(result->hir, result->semantics);
+    }
+  }
 
   [[nodiscard]] bool has_diagnostic(std::string_view text) const {
     for (const cloth::Diagnostic& diagnostic : diagnostics.diagnostics()) {

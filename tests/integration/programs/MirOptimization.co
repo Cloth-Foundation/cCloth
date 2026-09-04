@@ -1,0 +1,32 @@
+static func Touch(int32[] calls): bool {
+  calls[0]++;
+  return true;
+}
+
+static func Consume(int64 value) {
+  println(value);
+}
+
+static func Main(): int32 {
+  int32[] calls = [0];
+  bool skippedAnd = false && Touch(calls);
+  bool skippedOr = true || Touch(calls);
+  if (false) {
+    Touch(calls);
+    println(99);
+  }
+  switch (2) {
+    case 1: { Consume(10); }
+    case 2: { Consume((1 + 2) * 3); }
+    default: { Consume(30); }
+  }
+  int32 sum = 0;
+  for (int32 i = 0; i < 4; i++) {
+    sum += i;
+  }
+  println(calls[0]);
+  println(skippedAnd);
+  println(skippedOr);
+  println(sum);
+  return 0;
+}

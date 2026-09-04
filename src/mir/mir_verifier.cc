@@ -1193,6 +1193,14 @@ class MirVerifier {
         verify_value_type(incoming.value, instruction.type, value_types,
                           instruction.range);
       }
+    } else if (const auto* constant = std::get_if<MirScalarConstantInstruction>(
+                   &instruction.data)) {
+      require_result(instruction);
+      if (!is_valid_scalar_constant(constant->value, instruction.type,
+                                    semantics_)) {
+        report(instruction.range,
+               "scalar constant has an invalid type or bit pattern");
+      }
     } else if (const auto* literal =
                    std::get_if<MirLiteralInstruction>(&instruction.data)) {
       require_result(instruction);

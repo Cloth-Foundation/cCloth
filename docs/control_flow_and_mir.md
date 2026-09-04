@@ -171,6 +171,28 @@ integer source and target types, exact result metadata, and a value category.
 The explicit mode therefore survives until target-independent LLVM lowering;
 it is never replaced with `kCheckedNumeric`.
 
+Stage 31.2 adds a canonical MIR scalar-constant instruction containing an exact
+`TypeId` and canonical bits. A bounded, deterministic per-body worklist folds
+scalar literals, verified `static final` loads, supported unary/binary
+operations, numeric conversions, `wrap`, and `sat` by reusing the Stage 28-30
+constant evaluator. Failed evaluation—including overflow, a zero divisor, an
+invalid shift, a failed checked conversion, or a non-finite floating
+result—leaves the runtime instruction unchanged and emits no diagnostic.
+
+Canonical constants cover booleans, characters, integers, finite floating
+values, and nominal enum tags. MIR verification checks exact result type,
+canonical bits, and enum ownership. The MIR summary prints their type identity
+and fixed-width hexadecimal bits.
+
+Stage 31.3 extends propagation across executable CFG edges. Equal constants
+from every executable predecessor fold a phi; constant boolean branches and
+integer or enum switches become direct jumps. Stable compaction removes blocks
+that are no longer reachable, drops dead phi inputs, aliases single-input phis,
+and remaps all surviving block and value references densely in original order.
+The production compiler verifies raw MIR, runs this optimizer to a fixed point,
+verifies the compacted result, and then lowers ABI. Direct `lower_to_mir` calls
+remain available to internal tests that need the raw baseline.
+
 Evaluation is left-to-right. Array element operands are evaluated before the
 array instruction, and indexed assignment evaluates the array and index before
 the assigned value. Compound assignment and increment/decrement lower through

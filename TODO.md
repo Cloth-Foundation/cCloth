@@ -55,7 +55,10 @@ on 2026-09-03. Stage 30.1 is complete for the approved integer conversion-mode
 contract. The separately authorized 30.2 frontend and constant checkpoint is
 also complete. The separately authorized 30.3 lowering and integration
 checkpoint is complete. Stage 30 is complete following its separately
-authorized 30.4 exit audit on 2026-09-03.
+authorized 30.4 exit audit on 2026-09-03. Stage 31.1 is complete for the
+approved MIR optimization contract. The separately authorized 31.2 scalar-fold
+and 31.3 CFG/integration checkpoints are also complete. Stage 31 is complete
+following its separately authorized 31.4 exit audit on 2026-09-04.
 
 ## Scheduled work
 
@@ -489,6 +492,66 @@ class override validation. Existing ABI and artifact versions are unchanged.
   Rust 1.85, editor, formatting, warning-denied Clippy, and repository gates
   pass. Stage 30 is complete with every compatibility version unchanged.
 
+### Stage 31: MIR optimization
+
+- [x] **31.1 — Contract.** Approve
+  [MIR optimization](docs/proposals/stage_31_mir_optimization.md) with an
+  always-on post-verification/pre-ABI boundary, canonical typed scalar
+  constants, exact semantic preservation, deterministic folding and CFG rules,
+  unchanged compatibility versions, resource bounds, tests, and non-goals.
+
+  Approved 2026-09-03. Optimization consumes verified MIR, keeps runtime
+  failures at runtime, introduces no public switch, and verifies its result
+  before ABI lowering. Folded values use exact typed bits instead of synthesized
+  source lexemes. The separately authorized 31.2 implementation is complete.
+
+- [x] **31.2 — Scalar folds.** Add the canonical MIR scalar-constant
+  instruction, verifier/printer/LLVM support, deterministic scalar lattice,
+  successful folding of the approved pure operations, unchanged failure paths,
+  imported constant propagation, and focused malformed-model tests.
+
+  Completed 2026-09-03. The bounded per-body worklist reuses the Stage 28-30
+  scalar evaluator and folds literals, verified static constants, unary and
+  binary scalar operations, numeric conversions, `wrap`, and `sat`. Invalid or
+  failing evaluations retain their original runtime MIR without diagnostics.
+  Canonical constants verify exact types/bits, print deterministically, and
+  lower to LLVM with exact floating bitcasts. Development and sanitizer builds
+  each pass all 201 CTests. Production-pipeline and CFG integration were
+  completed by the separately authorized 31.3 checkpoint.
+
+- [x] **31.3 — CFG and integration.** Add equal-constant phi propagation,
+  constant branch/switch selection, canonical block/value compaction,
+  fixed-point idempotence, default-pipeline integration, and whole,
+  separate-package, source-free, invalidation, and failure-preservation tests.
+
+  Completed 2026-09-03. Executable-edge propagation resolves equal reachable
+  phis and constant branch/switch successors. Stable compaction removes
+  unreachable blocks and single-incoming phis, then rebuilds every block/value
+  reference and count in source order. The production pipeline verifies raw
+  MIR, optimizes it, verifies the result, and only then lowers ABI. Whole and
+  source-free package compilations produce the same optimized app body;
+  existing Shuttle invalidation, failure-preservation, serial/parallel, and
+  native package paths pass with both compiler configurations. Development and
+  sanitizer builds each pass all 201 CTests. Compatibility versions remain
+  unchanged.
+
+- [x] **31.4 — Exit audit.** Complete baseline/optimized equivalence,
+  failure-text/status, scalar boundary, side-effect, stress, malformed-model,
+  x86-64/wasm32, relocated determinism, documentation, and both compiler
+  configurations plus Rust/shared Shuttle/editor/repository gates.
+
+  Completed 2026-09-04. Raw and optimized native programs have identical
+  output, error text, status, and side-effect counts, including preserved
+  divide-by-zero failure. Boundary/operator, call/return, loop/phi,
+  branch/switch, malformed post-pass, structural idempotence, stable
+  input-order, and 16,384-node worklist cases pass. Raw and optimized x86-64
+  and wasm32 LLVM verify before and after O2. Development and sanitizer builds
+  each pass all 215 CTests, including 29 shared protocol/toolchain and 24 native
+  Shuttle cases. All 43 ordinary Rust tests, Rust 1.85, Clippy, Rust and C++
+  formatting, six editor tests per compiler, documentation, and repository
+  gates pass. Compatibility versions remain unchanged; Stage 32 is not
+  assigned or active.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -551,12 +614,6 @@ active stage without first updating `ROADMAP.md`.
 
 ### Optimization
 
-- Add a general constant-folding optimizer stage after the language semantics
-  it consumes are stable. Folding must preserve evaluation order, overflow and
-  trap behavior, floating-point rounding, diagnostics, and target-independent
-  results; it is not required for language correctness. Stage 28's required
-  scalar evaluation does not schedule this optimizer or impose its stricter
-  constant-context failures on ordinary runtime expressions.
 - Add ability to make full qualified name calls.
 
 ### Nullability
@@ -577,6 +634,8 @@ active stage without first updating `ROADMAP.md`.
   identity.
 - Extend `for (... in ...)` beyond arrays only after defining the required
   range, binding, destructuring, async, or iterable contracts independently.
+- Allow multidimensional array types (`object[][][]`).
+- Allow setting default array size `object[:3]` (from 0 to 2, or 3 spots).
 
 ### Strings, formatting, and representation
 
