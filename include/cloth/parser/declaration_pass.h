@@ -67,6 +67,8 @@ class DeclarationPass {
       std::string_view declaration_name);
   [[nodiscard]] std::optional<TokenIndexRange> locate_body(
       std::string_view declaration_name);
+  [[nodiscard]] std::vector<TypeSyntax> parse_throws_clause(
+      bool& has_explicit_throws);
 
   void parse_field();
   void parse_function();

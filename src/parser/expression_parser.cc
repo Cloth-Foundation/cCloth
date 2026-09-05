@@ -138,6 +138,9 @@ bool ExpressionParser::match(TokenKind kind) noexcept {
 
 ExpressionId ExpressionParser::parse_unary_expression() {
   const TokenKind kind = current().kind;
+  if (kind == TokenKind::kKwThrow) {
+    return parse_throw_expression();
+  }
   if (kind == TokenKind::kPlusPlus || kind == TokenKind::kMinusMinus ||
       kind == TokenKind::kBang || kind == TokenKind::kMinus ||
       kind == TokenKind::kPlus || kind == TokenKind::kTilde) {
@@ -150,6 +153,22 @@ ExpressionId ExpressionParser::parse_unary_expression() {
     return build_unary_expression(operation, operand);
   }
   return parse_postfix_expression();
+}
+
+ExpressionId ExpressionParser::parse_throw_expression() {
+  const Token& keyword = advance();
+  if (at_limit() || current().kind == TokenKind::kSemicolon ||
+      current().kind == TokenKind::kComma ||
+      current().kind == TokenKind::kRightParen ||
+      current().kind == TokenKind::kRightBracket ||
+      current().kind == TokenKind::kRightBrace) {
+    diagnostics_.error(current().range, "expected expression after 'throw'");
+    return make_invalid_expression(keyword.range);
+  }
+  const ExpressionId operand = parse_expression();
+  return add_expression(Expression{
+      SourceRange{keyword.range.begin, expression_range(operand).end},
+      ThrowExpression{operand}});
 }
 
 ExpressionId ExpressionParser::build_unary_expression(const Token& operation,

@@ -99,6 +99,7 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
                          const TargetDataLayout& target) {
   switch (semantic_type.kind) {
     case TypeKind::kError:
+    case TypeKind::kBottom:
       return make_type_layout(type, AbiTypeKind::kInvalid, 0, 0, 1);
     case TypeKind::kStruct:
       return make_type_layout(type, AbiTypeKind::kAggregate, 0, 0, 1);
@@ -107,6 +108,7 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
     case TypeKind::kNull:
     case TypeKind::kString:
     case TypeKind::kObject:
+    case TypeKind::kErrorClass:
     case TypeKind::kFileClass:
     case TypeKind::kInterface:
     case TypeKind::kArray:
@@ -147,6 +149,20 @@ AbiLinkage lower_linkage(Visibility visibility) noexcept {
                                            : AbiLinkage::kInternal;
 }
 
+std::optional<SymbolId> core_error_message_symbol(
+    const SemanticModel& semantics) {
+  const auto found = std::ranges::find_if(
+      semantics.symbols(), [](const SemanticSymbol& symbol) {
+        return symbol.kind == SymbolKind::kField && !symbol.file &&
+               symbol.name == "Message";
+      });
+  if (found == semantics.symbols().end()) {
+    return std::nullopt;
+  }
+  return SymbolId{
+      static_cast<std::size_t>(found - semantics.symbols().begin())};
+}
+
 struct FileLayout {
   AbiClassLayout storage;
   std::vector<std::uint64_t> references;
@@ -180,6 +196,24 @@ std::optional<FileLayout> lower_file_layout(
     alignment = std::max(alignment, base.storage.alignment);
     fields = base.storage.fields;
     references = base.references;
+  } else if (semantic.kind == FileTypeKind::kError) {
+    const std::optional<SymbolId> message =
+        core_error_message_symbol(semantics);
+    if (!message) {
+      return fail("compiler Error.Message field is unavailable");
+    }
+    const AbiTypeLayout& type = types.at(semantics.string_type().value);
+    const auto aligned = checked_align(offset, type.storage.alignment);
+    const auto end =
+        aligned ? checked_add(*aligned, type.storage.size) : std::nullopt;
+    if (!aligned || !end) {
+      return fail("compiler Error.Message layout overflows the target");
+    }
+    fields.push_back(
+        AbiFieldLayout{*message, semantics.string_type(), *aligned});
+    references.push_back(*aligned);
+    offset = *end;
+    alignment = std::max(alignment, type.storage.alignment);
   }
   std::size_t instance_count = 0;
   for (const MirField& field : file.fields) {
@@ -249,7 +283,8 @@ AbiTypeDescriptor lower_type_descriptor(
   std::ranges::sort(interfaces, {},
                     &AbiTypeDescriptor::InterfaceDispatch::interface_id);
   return AbiTypeDescriptor{
-      AbiHeapObjectKind::kFileClass,
+      file.kind == FileTypeKind::kError ? AbiHeapObjectKind::kError
+                                        : AbiHeapObjectKind::kFileClass,
       parent_file,
       class_symbol.name,
       layout.size,
@@ -257,10 +292,11 @@ AbiTypeDescriptor lower_type_descriptor(
       std::move(reference_offsets),
       file.virtual_functions,
       std::move(interfaces),
-      file.kind == FileTypeKind::kClass
+      (file.kind == FileTypeKind::kClass || file.kind == FileTypeKind::kError)
           ? mangle_canonical_identity(canonical_member_identity(
                 file.identity, CanonicalMemberKind::kDescriptor, ""))
-          : std::string{}};
+          : std::string{},
+      file.kind == FileTypeKind::kError && !parent_file};
 }
 
 AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
@@ -271,10 +307,14 @@ AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
   const bool struct_owner = file.kind == FileTypeKind::kStruct;
   const TypeId return_type = constructor ? file.type : symbol.type;
   const TypeKind result_kind = semantics.type(return_type).kind;
+  const bool uses_error_abi =
+      callable_uses_error_abi(callable.symbol, semantics);
   const AbiReturnMode return_mode =
-      result_kind == TypeKind::kStruct ? AbiReturnMode::kIndirect
-      : result_kind == TypeKind::kVoid ? AbiReturnMode::kVoid
-                                       : AbiReturnMode::kDirect;
+      uses_error_abi && result_kind != TypeKind::kVoid
+          ? AbiReturnMode::kIndirect
+      : result_kind == TypeKind::kStruct ? AbiReturnMode::kIndirect
+      : result_kind == TypeKind::kVoid   ? AbiReturnMode::kVoid
+                                         : AbiReturnMode::kDirect;
   AbiReceiverMode receiver_mode = AbiReceiverMode::kNone;
   std::vector<AbiParameter> parameters;
   parameters.reserve(callable.parameters.size() + 2);
@@ -312,7 +352,8 @@ AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
       std::move(parameters),
       initializer ? lower_linkage(symbol.visibility) : AbiLinkage::kInternal,
       return_mode,
-      receiver_mode};
+      receiver_mode,
+      uses_error_abi};
 }
 
 }  // namespace

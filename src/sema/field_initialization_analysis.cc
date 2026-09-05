@@ -162,6 +162,9 @@ class FieldInitializationAnalyzer {
             std::get_if<LocalVariableStatement>(&statement.data)) {
       if (local->initializer) {
         analyze_expression(*local->initializer, flow.assignments, false);
+        if (is_bottom_expression(*local->initializer)) {
+          flow.can_fall_through = false;
+        }
       }
       return flow;
     }
@@ -185,6 +188,10 @@ class FieldInitializationAnalyzer {
                   tracked_field_index(assignment->target)) {
             analyze_expression(assignment->target, flow.assignments, true);
             analyze_expression(assignment->value, flow.assignments, false);
+            if (is_bottom_expression(expression_statement->expression)) {
+              flow.can_fall_through = false;
+              return flow;
+            }
             assign_field(*field, expression_range(assignment->target),
                          flow.assignments, inside_loop);
             return flow;
@@ -193,10 +200,17 @@ class FieldInitializationAnalyzer {
       }
       analyze_expression(expression_statement->expression, flow.assignments,
                          false);
+      if (is_bottom_expression(expression_statement->expression)) {
+        flow.can_fall_through = false;
+      }
       return flow;
     }
     if (const auto* if_statement = std::get_if<IfStatement>(&statement.data)) {
       analyze_expression(if_statement->condition, flow.assignments, false);
+      if (is_bottom_expression(if_statement->condition)) {
+        flow.can_fall_through = false;
+        return flow;
+      }
       FlowState then_flow =
           analyze_block(if_statement->then_block, flow, inside_loop);
       FlowState else_flow =
@@ -208,6 +222,10 @@ class FieldInitializationAnalyzer {
     if (const auto* while_statement =
             std::get_if<WhileStatement>(&statement.data)) {
       analyze_expression(while_statement->condition, flow.assignments, false);
+      if (is_bottom_expression(while_statement->condition)) {
+        flow.can_fall_through = false;
+        return flow;
+      }
       transfers_.push_back(FieldTransferContext{true, FlowState{{}, false}});
       static_cast<void>(analyze_block(while_statement->body, flow, true));
       if (is_true_literal(while_statement->condition))
@@ -219,6 +237,10 @@ class FieldInitializationAnalyzer {
     if (const auto* for_statement =
             std::get_if<ForEachStatement>(&statement.data)) {
       analyze_expression(for_statement->iterable, flow.assignments, false);
+      if (is_bottom_expression(for_statement->iterable)) {
+        flow.can_fall_through = false;
+        return flow;
+      }
       transfers_.push_back(FieldTransferContext{true, FlowState{{}, false}});
       static_cast<void>(analyze_block(for_statement->body, flow, true));
       flow = merge_flows(std::move(flow), std::move(transfers_.back().breaks));
@@ -234,14 +256,26 @@ class FieldInitializationAnalyzer {
                 std::get_if<LocalVariableStatement>(&initializer.data)) {
           if (local->initializer) {
             analyze_expression(*local->initializer, flow.assignments, false);
+            if (is_bottom_expression(*local->initializer)) {
+              flow.can_fall_through = false;
+              return flow;
+            }
           }
         } else if (const auto* expression =
                        std::get_if<ExpressionStatement>(&initializer.data)) {
           analyze_expression(expression->expression, flow.assignments, false);
+          if (is_bottom_expression(expression->expression)) {
+            flow.can_fall_through = false;
+            return flow;
+          }
         }
       }
       if (for_statement->condition) {
         analyze_expression(*for_statement->condition, flow.assignments, false);
+        if (is_bottom_expression(*for_statement->condition)) {
+          flow.can_fall_through = false;
+          return flow;
+        }
       }
       for (const ExpressionId update : for_statement->updates) {
         analyze_expression(update, flow.assignments, false);
@@ -257,6 +291,10 @@ class FieldInitializationAnalyzer {
     }
     if (const auto* selection = std::get_if<SwitchStatement>(&statement.data)) {
       analyze_expression(selection->selector, flow.assignments, false);
+      if (is_bottom_expression(selection->selector)) {
+        flow.can_fall_through = false;
+        return flow;
+      }
       const auto& switches = semantics_.file(file_id_).switches;
       const auto checked = switches.find(id.value);
       FlowState join = flow;
@@ -298,6 +336,12 @@ class FieldInitializationAnalyzer {
            literal->lexeme == "true";
   }
 
+  bool is_bottom_expression(ExpressionId id) const {
+    const auto& expressions = semantics_.file(file_id_).expressions;
+    return id.value < expressions.size() &&
+           expressions[id.value].type == semantics_.bottom_type();
+  }
+
   FlowState merge_flows(FlowState left, FlowState right) const {
     if (!left.can_fall_through) {
       return right;
@@ -328,6 +372,10 @@ class FieldInitializationAnalyzer {
     if (std::holds_alternative<InvalidExpression>(expression.data) ||
         std::holds_alternative<SuperExpression>(expression.data) ||
         std::holds_alternative<LiteralExpression>(expression.data)) {
+      return;
+    }
+    if (const auto* thrown = std::get_if<ThrowExpression>(&expression.data)) {
+      analyze_expression(thrown->operand, assignments, false);
       return;
     }
     if (const auto* unary = std::get_if<UnaryExpression>(&expression.data)) {

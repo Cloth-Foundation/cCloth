@@ -35,6 +35,8 @@ struct MemberSymbol {
   bool is_static{false};
   bool is_override{false};
   bool is_abstract{false};
+  std::vector<TypeSyntax> throws_types{};
+  bool has_explicit_throws{false};
 };
 
 class FileClassSymbols {

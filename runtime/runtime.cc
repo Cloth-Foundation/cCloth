@@ -36,6 +36,11 @@ struct ClothString {
   bool owns_data;
 };
 
+struct ClothError {
+  ClothObjectHeader header;
+  void* message;
+};
+
 struct ClothArray {
   ClothObjectHeader header;
   void* data;
@@ -62,6 +67,9 @@ constexpr std::size_t kInitialAllocationIndexCapacity = 64;
 constexpr char kStringTypeName[] = "string";
 constexpr char kArrayTypeName[] = "Array";
 constexpr char kArrayMetaTypeName[] = "array";
+constexpr char kErrorTypeName[] = "Error";
+constexpr char kDivisionByZeroTypeName[] = "DivisionByZero";
+constexpr std::uint64_t kErrorReferenceOffsets[]{offsetof(ClothError, message)};
 constexpr ClothTypeDescriptor kStringTypeDescriptor{
     ClothHeapObjectKind::kString,
     nullptr,
@@ -109,6 +117,11 @@ bool collection_in_progress = false;
 
 bool is_power_of_two(std::uint64_t value) noexcept {
   return value != 0 && (value & (value - 1)) == 0;
+}
+
+bool is_user_object_kind(ClothHeapObjectKind kind) noexcept {
+  return kind == ClothHeapObjectKind::kFileClass ||
+         kind == ClothHeapObjectKind::kError;
 }
 
 std::size_t native_size(std::uint64_t value,
@@ -274,12 +287,11 @@ void validate_type_descriptor(const ClothTypeDescriptor* type) noexcept {
   if (type == nullptr) {
     runtime_failure("object type descriptor is null");
   }
-  if (type->kind != ClothHeapObjectKind::kFileClass) {
+  if (!is_user_object_kind(type->kind)) {
     runtime_failure("object type descriptor has the wrong kind");
   }
   if (type->parent != nullptr &&
-      (type->parent == type ||
-       type->parent->kind != ClothHeapObjectKind::kFileClass ||
+      (type->parent == type || type->parent->kind != type->kind ||
        type->parent->size > type->size ||
        type->parent->alignment > type->alignment ||
        type->parent->virtual_function_count > type->virtual_function_count)) {
@@ -405,6 +417,7 @@ void mark_reachable_objects() noexcept {
     }
     switch (header.type->kind) {
       case ClothHeapObjectKind::kFileClass:
+      case ClothHeapObjectKind::kError:
         for (std::uint64_t index = 0; index < header.type->reference_count;
              ++index) {
           void* reference = nullptr;
@@ -451,6 +464,7 @@ void destroy_managed_object(ClothAllocation* allocation) noexcept {
   }
   switch (header.type->kind) {
     case ClothHeapObjectKind::kFileClass:
+    case ClothHeapObjectKind::kError:
       break;
     case ClothHeapObjectKind::kString: {
       auto& string = *static_cast<ClothString*>(allocation->object);
@@ -690,6 +704,34 @@ void write_float(Float value) noexcept {
 
 }  // namespace
 
+extern "C" const ClothTypeDescriptor cloth_rt_error_type{
+    ClothHeapObjectKind::kError,
+    nullptr,
+    kErrorTypeName,
+    sizeof(kErrorTypeName) - 1,
+    sizeof(ClothError),
+    alignof(ClothError),
+    kErrorReferenceOffsets,
+    1,
+    nullptr,
+    0,
+    nullptr,
+    0};
+
+extern "C" const ClothTypeDescriptor cloth_rt_division_by_zero_type{
+    ClothHeapObjectKind::kError,
+    &cloth_rt_error_type,
+    kDivisionByZeroTypeName,
+    sizeof(kDivisionByZeroTypeName) - 1,
+    sizeof(ClothError),
+    alignof(ClothError),
+    kErrorReferenceOffsets,
+    1,
+    nullptr,
+    0,
+    nullptr,
+    0};
+
 extern "C" void* cloth_rt_alloc(const ClothTypeDescriptor* type) noexcept {
   validate_type_descriptor(type);
   collect_before_allocation(type->size);
@@ -828,7 +870,7 @@ extern "C" std::uint8_t cloth_rt_object_is_kind(const void* value,
   if (value == nullptr) {
     return 0;
   }
-  if (kind > static_cast<std::uint64_t>(ClothHeapObjectKind::kArray)) {
+  if (kind > static_cast<std::uint64_t>(ClothHeapObjectKind::kError)) {
     runtime_failure("invalid heap object kind");
   }
   const ClothObjectHeader& object = require_object(value);
@@ -845,7 +887,7 @@ extern "C" std::uint8_t cloth_rt_object_is_type(
   const ClothTypeDescriptor* slow = current;
   const ClothTypeDescriptor* fast = current;
   while (current != nullptr) {
-    if (current->kind != ClothHeapObjectKind::kFileClass) {
+    if (!is_user_object_kind(current->kind)) {
       return 0;
     }
     validate_type_descriptor(current);
@@ -1087,6 +1129,46 @@ extern "C" void cloth_rt_require_integer_arithmetic(
     default:
       runtime_failure("invalid integer arithmetic failure code");
   }
+}
+
+extern "C" void* cloth_rt_make_division_by_zero() noexcept {
+  void* message = cloth_rt_string_literal(nullptr, 0);
+  ClothGcRootFrame frame{};
+  void** roots[]{&message};
+  cloth_rt_gc_push_frame(&frame, roots, 1);
+  auto* error =
+      static_cast<ClothError*>(cloth_rt_alloc(&cloth_rt_division_by_zero_type));
+  error->message = message;
+  cloth_rt_gc_pop_frame(&frame);
+  return error;
+}
+
+extern "C" std::int32_t cloth_rt_report_error(const void* value) noexcept {
+  const ClothObjectHeader& object = require_object(value);
+  validate_type_descriptor(object.type);
+  if (object.type->kind != ClothHeapObjectKind::kError) {
+    runtime_failure("error reporter received a non-error object");
+  }
+  const auto& error = *static_cast<const ClothError*>(value);
+  constexpr std::string_view kPrefix = "cloth error: ";
+  static_cast<void>(std::fwrite(kPrefix.data(), 1, kPrefix.size(), stderr));
+  static_cast<void>(std::fwrite(
+      error.header.type->name, 1,
+      native_size(error.header.type->name_size, "error type name is too large"),
+      stderr));
+  if (error.message != nullptr) {
+    const ClothString& message = require_string(error.message);
+    if (message.byte_size != 0) {
+      constexpr std::string_view kSeparator = ": ";
+      static_cast<void>(
+          std::fwrite(kSeparator.data(), 1, kSeparator.size(), stderr));
+      static_cast<void>(
+          std::fwrite(message.data, 1, message.byte_size, stderr));
+    }
+  }
+  static_cast<void>(std::fputc('\n', stderr));
+  static_cast<void>(std::fflush(stderr));
+  return 1;
 }
 
 extern "C" void cloth_rt_print(const void* value) noexcept {

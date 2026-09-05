@@ -142,7 +142,7 @@ void arithmetic_and_control_flow(TestContext& test) {
 void checked_integer_arithmetic(TestContext& test) {
   CompiledSources sources;
   sources.add("Arithmetic.co", R"(
-    func Signed(int32 left, int32 right): int32 {
+    func Signed(int32 left, int32 right): int32 throws DivisionByZero {
       int32 sum = left + right;
       int32 difference = sum - right;
       int32 product = difference * right;
@@ -150,7 +150,7 @@ void checked_integer_arithmetic(TestContext& test) {
       int32 remainder = product % right;
       return -quotient + remainder;
     }
-    func Unsigned(uint8 left, uint8 right): uint8 {
+    func Unsigned(uint8 left, uint8 right): uint8 throws DivisionByZero {
       uint8 sum = left + right;
       uint8 difference = sum - right;
       uint8 product = difference * right;
@@ -169,12 +169,12 @@ void checked_integer_arithmetic(TestContext& test) {
   const auto add_width = [&](std::string_view name, std::string_view type) {
     widths += "func " + std::string{name} + "(" + std::string{type} +
               " left, " + std::string{type} + " right): " + std::string{type} +
-              " {\n" + "  " + std::string{type} + " sum = left + right;\n" +
-              "  " + std::string{type} + " difference = sum - right;\n" + "  " +
-              std::string{type} + " product = difference * right;\n" + "  " +
-              std::string{type} + " quotient = product / right;\n" + "  " +
-              std::string{type} + " remainder = product % right;\n" +
-              "  return -remainder;\n}\n";
+              " throws DivisionByZero {\n" + "  " + std::string{type} +
+              " sum = left + right;\n" + "  " + std::string{type} +
+              " difference = sum - right;\n" + "  " + std::string{type} +
+              " product = difference * right;\n" + "  " + std::string{type} +
+              " quotient = product / right;\n" + "  " + std::string{type} +
+              " remainder = product % right;\n" + "  return -remainder;\n}\n";
   };
   for (const auto& [name, type] :
        {std::pair{"S8", "int8"}, std::pair{"S16", "int16"},
@@ -295,7 +295,8 @@ void checked_integer_updates(TestContext& test) {
       TargetArray(values)[Index()] *= Right();
       return values[0];
     }
-    static func Compounds(int32 value, int32 divisor): int32 {
+    static func Compounds(int32 value, int32 divisor): int32
+        throws DivisionByZero {
       value += 1;
       value -= 1;
       value *= 2;

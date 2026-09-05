@@ -1,5 +1,116 @@
 # Cloth testing and diagnostic builds
 
+## Stage 34.4 typed error exit audit
+
+Verified on Windows on 2026-09-05 with development and ASan/UBSan compilers.
+Both configurations pass all **249 CTests**, including the expanded **18-case**
+typed-error target and, per compiler, all **32 public Shuttle toolchain cases**
+and **30 native Shuttle cases**. All **43 ordinary Rust tests**, the Rust
+**1.85.0** minimum check, warning-denied Clippy, Rust and C++ formatting,
+**12 editor grammar/compiler checks per compiler**, all local Markdown targets,
+and repository whitespace gates pass.
+
+The audit covers direct, derived, abstract, and sealed errors; constructors and
+fields; casts and nullability; zero, one, multiple, base-covered, malformed,
+and inaccessible effect sets; recursive private inference; dynamic contract
+narrowing; bottom-aware throw contexts; and source-ordered diagnostics. Forged
+HIR, MIR error edges, throwing-call result metadata, and ABI state are rejected.
+
+Throwing void, scalar, object, array, enum, and struct success paths verify on
+x86-64 and wasm32 before and after O2 and execute natively. Explicit error
+messages, integer division/remainder failures, failed construction, stable
+terminal status, compiler-known descriptor identity, precise error/message
+tracing, and malformed runtime inputs are covered. The audit found and fixed
+explicit imports of user error types being mistaken for core-type conflicts and
+a constructor field-analysis crash on `throw`; `throw` now contributes proper
+non-fallthrough flow without weakening normal-path field initialization.
+
+Format-5 artifacts preserve error kinds, ancestry, effects, and physical ABI.
+Whole, separate, and source-free packages agree; relocated serial/parallel
+artifacts remain deterministic. A typed-error API edit rebuilds only its package
+and consumers, while an invalid effect declaration preserves completed
+artifacts and the executable and never runs stale output. Compatibility remains
+artifact format **5**, compiler ABI **5**, runtime ABI **4**, process protocol
+**2**, receipt schema **1**, and manifest schema **1**.
+
+**Stage 34 is complete.**
+
+## Stage 34.3 typed error lowering and integration
+
+Verified on Windows on 2026-09-05 with development and ASan/UBSan compilers.
+Both configurations pass all **241 CTests**, including the **15-case** focused
+typed-error target and, per compiler, all **32 public compiler-protocol/toolchain
+and 29 native Shuttle cases**. All **43 ordinary Rust tests**, the Rust
+**1.85.0** minimum check, warning-denied Clippy, Rust formatting, C++ formatting,
+**12 editor grammar/compiler checks**, all local Markdown targets, and
+repository whitespace checks pass.
+
+Typed errors now lower through explicit MIR success/error control flow and a
+target-neutral result/error ABI. Propagation preserves GC roots and skips every
+success-path store after failure; throwing constructors publish no failed
+object. Compiler-known `Error` and `DivisionByZero` descriptors, stable native
+reporting, and throwing `Main` wrappers are implemented without host exception
+handling. Integer division and remainder by zero now propagate
+`DivisionByZero`; the other checked runtime failures retain their existing
+terminal contracts.
+
+Artifact format **5**, compiler ABI **5**, and runtime ABI **4** preserve error
+kinds, inheritance, throws sets, physical signatures, object code, and runtime
+requirements. Whole-project, separate-package, and source-free programs agree.
+Relocated serial/parallel Shuttle builds produce equal x86-64 and wasm32
+artifacts, and native success and uncaught-error behavior is deterministic.
+Process protocol **2**, receipt schema **1**, and manifest schema **1** remain
+unchanged. VS Code recognizes the three typed-error keywords, and the user
+reference documents declarations, effects, propagation, reporting, and the
+division-by-zero boundary.
+
+Checkpoint 34.3 is complete. The separately authorized 34.4 audit is recorded
+above.
+
+## Stage 34.2 typed error frontend and interfaces
+
+Verified on Windows on 2026-09-05 with development and ASan/UBSan compilers.
+Both configurations pass all **233 CTests**. The dedicated typed-error target
+passes **15 cases** covering lexical and parser contracts, class-like error
+hierarchies, compiler-known errors, constructors, visibility, nullability,
+throw expressions, lazy coalescing, bottom-aware flow, explicit public effects,
+recursive private inference, constructor and field effects, override/interface
+narrowing and intersection, diagnostics, malformed HIR, and the native gate.
+
+The frontend now carries canonical error kinds and throws sets through verified
+HIR. Legal long binary and unary expressions use bounded semantic work stacks,
+so the existing nesting contract remains clean under sanitizers. Invalid source
+does not cascade into internal-verifier diagnostics.
+
+This checkpoint deliberately stops before MIR/native propagation. Typed-error
+source is available through `clothc --check`; a native build reports that typed
+error lowering is not yet available. Artifact format **4**, compiler ABI **4**,
+runtime ABI **3**, process protocol **2**, receipt schema **1**, and manifest
+schema **1** remain unchanged. No runtime, artifact format, Shuttle fixture,
+editor, or user-documentation changes are part of 34.2.
+
+## Stage 34.1 typed error contract
+
+Approved on 2026-09-04. This documentation-only checkpoint freezes file-wide
+`error` types, the compiler-provided `Error` root and `DivisionByZero`, throw
+expressions, typed throws sets, explicit public contracts, deterministic private
+inference, ordinary-call propagation, failed construction, inheritance and
+interface compatibility, entry-point reporting, and division-by-zero migration.
+
+The planned implementation uses a target-neutral result/error channel rather
+than C++ exceptions, LLVM personalities, platform unwinding, or source-visible
+sentinels. It targets artifact format **5**, compiler ABI **5**, and runtime ABI
+**4** while retaining process protocol **2**, receipt schema **1**, and manifest
+schema **1**. Active repository constants remain format 4, compiler ABI 4, and
+runtime ABI 3 until a separately authorized implementation checkpoint performs
+the coordinated transition.
+
+No compiler, runtime, Shuttle, editor, artifact, or user-language documentation
+behavior changes in 34.1. Existing Stage 33 verification remains authoritative.
+All **101 local Markdown target checks** and repository whitespace gates pass.
+Checkpoints 34.2 and 34.3 and the separately authorized 34.4 audit are recorded
+above.
+
 ## Stage 33.4 numeric literal notation exit audit
 
 Verified on Windows on 2026-09-04 with development and ASan/UBSan compilers.

@@ -1,4 +1,4 @@
-static func Main() {
+static func Main() throws DivisionByZero {
   int32 value = 42;
   int32 divisor = 0;
   println(value / divisor);

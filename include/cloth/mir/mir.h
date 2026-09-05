@@ -36,6 +36,13 @@ struct MirInvalidInstruction {
                          const MirInvalidInstruction&) = default;
 };
 
+// A typed value that exists only in an unreachable block created while
+// structurally lowering a bottom-typed expression.
+struct MirPoisonInstruction {
+  friend bool operator==(const MirPoisonInstruction&,
+                         const MirPoisonInstruction&) = default;
+};
+
 struct MirLiteralInstruction {
   LiteralKind kind;
   std::string lexeme;
@@ -277,12 +284,25 @@ struct MirCallInstruction {
   std::optional<FileId> interface_file{};
   std::optional<std::size_t> interface_slot{};
   StructReceiverMode struct_receiver{StructReceiverMode::kNone};
+  // Throwing calls write success through this storage and return a nullable
+  // Error through error_result. Neither ID is a source-visible Cloth value.
+  std::optional<MirValueId> success_storage{};
+  std::optional<MirValueId> error_result{};
 
   friend bool operator==(const MirCallInstruction&,
                          const MirCallInstruction&) = default;
 };
 
+struct MirLoadCallResultInstruction {
+  MirValueId storage;
+
+  friend bool operator==(const MirLoadCallResultInstruction&,
+                         const MirLoadCallResultInstruction&) = default;
+};
+
 struct MirInitializeFieldsInstruction {
+  bool lowered_inline{false};
+
   friend bool operator==(const MirInitializeFieldsInstruction&,
                          const MirInitializeFieldsInstruction&) = default;
 };
@@ -303,17 +323,18 @@ struct MirPhiInstruction {
 };
 
 using MirInstructionData = std::variant<
-    MirInvalidInstruction, MirLiteralInstruction, MirScalarConstantInstruction,
-    MirLoadSymbolInstruction, MirDeclareLocalInstruction,
-    MirStoreSymbolInstruction, MirLoadMemberInstruction,
-    MirStoreMemberInstruction, MirLoadStorageInstruction,
-    MirStoreStorageInstruction, MirArrayLiteralInstruction,
-    MirArrayLoadInstruction, MirArrayStoreInstruction,
-    MirArrayLengthInstruction, MirStringMetaInstruction,
-    MirObjectMetaInstruction, MirIntegerWriteInstruction,
-    MirIntegerReadInstruction, MirUnaryInstruction, MirBinaryInstruction,
-    MirConvertInstruction, MirIsNonNullInstruction, MirNullAssertInstruction,
-    MirTypeTestInstruction, MirCheckedCastInstruction, MirCallInstruction,
+    MirInvalidInstruction, MirPoisonInstruction, MirLiteralInstruction,
+    MirScalarConstantInstruction, MirLoadSymbolInstruction,
+    MirDeclareLocalInstruction, MirStoreSymbolInstruction,
+    MirLoadMemberInstruction, MirStoreMemberInstruction,
+    MirLoadStorageInstruction, MirStoreStorageInstruction,
+    MirArrayLiteralInstruction, MirArrayLoadInstruction,
+    MirArrayStoreInstruction, MirArrayLengthInstruction,
+    MirStringMetaInstruction, MirObjectMetaInstruction,
+    MirIntegerWriteInstruction, MirIntegerReadInstruction, MirUnaryInstruction,
+    MirBinaryInstruction, MirConvertInstruction, MirIsNonNullInstruction,
+    MirNullAssertInstruction, MirTypeTestInstruction, MirCheckedCastInstruction,
+    MirCallInstruction, MirLoadCallResultInstruction,
     MirInitializeFieldsInstruction, MirPhiInstruction>;
 
 struct MirInstruction {
@@ -370,6 +391,13 @@ struct MirReturnTerminator {
                          const MirReturnTerminator&) = default;
 };
 
+struct MirErrorTerminator {
+  MirValueId error;
+
+  friend bool operator==(const MirErrorTerminator&,
+                         const MirErrorTerminator&) = default;
+};
+
 struct MirUnreachableTerminator {
   friend bool operator==(const MirUnreachableTerminator&,
                          const MirUnreachableTerminator&) = default;
@@ -381,8 +409,8 @@ struct MirTrapTerminator {
 
 using MirTerminatorData =
     std::variant<MirJumpTerminator, MirBranchTerminator, MirSwitchTerminator,
-                 MirReturnTerminator, MirUnreachableTerminator,
-                 MirTrapTerminator>;
+                 MirReturnTerminator, MirErrorTerminator,
+                 MirUnreachableTerminator, MirTrapTerminator>;
 
 struct MirTerminator {
   SourceRange range;

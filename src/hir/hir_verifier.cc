@@ -8,6 +8,7 @@
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/hir/hir.h"
 #include "cloth/lexer/literal.h"
+#include "cloth/sema/canonical_identity.h"
 #include "cloth/sema/numeric_types.h"
 #include "cloth/sema/scalar_constants.h"
 #include "cloth/sema/semantic_model.h"
@@ -35,6 +36,7 @@ class HirVerifier {
 
   bool run() {
     if (!verify_constant_limits()) return false;
+    verify_error_contracts();
     verify_expressions();
     verify_statements();
     verify_blocks();
@@ -51,6 +53,83 @@ class HirVerifier {
   }
 
  private:
+  bool is_error_subtype(TypeId subtype, TypeId supertype) const {
+    if (subtype == supertype) {
+      return true;
+    }
+    if (subtype.value >= semantics_.types().size() ||
+        supertype.value >= semantics_.types().size()) {
+      return false;
+    }
+    const SemanticType& subtype_info = semantics_.type(subtype);
+    const SemanticType& supertype_info = semantics_.type(supertype);
+    if (subtype_info.kind != TypeKind::kErrorClass ||
+        supertype_info.kind != TypeKind::kErrorClass) {
+      return false;
+    }
+    if (supertype == semantics_.error_root_type()) {
+      return true;
+    }
+    if (!subtype_info.file || !supertype_info.file) {
+      return false;
+    }
+    std::optional<FileId> current =
+        semantics_.file(*subtype_info.file).base_file;
+    for (std::size_t depth = 0; current && depth < semantics_.files().size();
+         ++depth) {
+      if (*current == *supertype_info.file) {
+        return true;
+      }
+      current = semantics_.file(*current).base_file;
+    }
+    return false;
+  }
+
+  void verify_error_contracts() {
+    for (const SemanticSymbol& symbol : semantics_.symbols()) {
+      if (!symbol.is_valid) {
+        continue;
+      }
+      const bool is_callable = symbol.kind == SymbolKind::kFunction ||
+                               symbol.kind == SymbolKind::kConstructor;
+      if (!is_callable &&
+          (!symbol.thrown_types.empty() || symbol.has_explicit_throws)) {
+        report(symbol.range, "non-callable symbol carries a throws contract");
+        continue;
+      }
+      if (!is_callable) {
+        continue;
+      }
+      if (symbol.visibility == Visibility::kPublic &&
+          !symbol.thrown_types.empty() && !symbol.has_explicit_throws) {
+        report(symbol.range, "public callable has an inferred throws contract");
+      }
+      std::string previous_identity;
+      for (std::size_t index = 0; index < symbol.thrown_types.size(); ++index) {
+        const TypeId type = symbol.thrown_types[index];
+        if (type.value >= semantics_.types().size() ||
+            semantics_.type(type).kind != TypeKind::kErrorClass) {
+          report(symbol.range, "throws contract contains a non-error type");
+          continue;
+        }
+        const std::string identity = canonical_type_identity(type, semantics_);
+        if (index != 0 && !(previous_identity < identity)) {
+          report(symbol.range,
+                 "throws contract is duplicated or not canonically ordered");
+        }
+        previous_identity = identity;
+        for (std::size_t other = 0; other < index; ++other) {
+          if (is_error_subtype(type, symbol.thrown_types[other]) ||
+              is_error_subtype(symbol.thrown_types[other], type)) {
+            report(symbol.range,
+                   "throws contract contains a redundant error type");
+            break;
+          }
+        }
+      }
+    }
+  }
+
   bool verify_constant_limits() {
     std::map<std::string, std::pair<std::size_t, std::size_t>> budgets;
     for (const auto& file : hir_.files) {
@@ -490,6 +569,9 @@ class HirVerifier {
   }
 
   void verify_value_binding(TypeId expected, TypeId actual, SourceRange range) {
+    if (actual == semantics_.bottom_type()) {
+      return;
+    }
     if ((is_struct(expected) || is_struct(actual)) && expected != actual) {
       report(range, "struct value binding lost nominal identity");
     }
@@ -966,8 +1048,22 @@ class HirVerifier {
       } else if (std::holds_alternative<HirSuperExpression>(expression.data)) {
         if (expression.type == semantics_.error_type() ||
             expression.type.value >= semantics_.types().size() ||
-            semantics_.type(expression.type).kind != TypeKind::kFileClass) {
+            (semantics_.type(expression.type).kind != TypeKind::kFileClass &&
+             semantics_.type(expression.type).kind != TypeKind::kErrorClass)) {
           report(expression.range, "super expression has no base-class type");
+        }
+      } else if (const auto* thrown =
+                     std::get_if<HirThrowExpression>(&expression.data)) {
+        verify_expression(thrown->operand, expression.range);
+        verify_type(thrown->error_type, expression.range);
+        if (expression.type != semantics_.bottom_type() ||
+            expression.category != ValueCategory::kValue ||
+            thrown->operand.value >= expressions.size() ||
+            thrown->error_type.value >= semantics_.types().size() ||
+            expressions[thrown->operand.value].type != thrown->error_type ||
+            semantics_.type(thrown->error_type).kind != TypeKind::kErrorClass) {
+          report(expression.range,
+                 "throw expression has incompatible HIR metadata");
         }
       } else if (const auto* unary =
                      std::get_if<HirUnaryExpression>(&expression.data)) {
@@ -1306,12 +1402,26 @@ class HirVerifier {
     const auto& selector = hir_.storage.expression(selection.selector);
     const auto& type = semantics_.type(selection.selector_type);
     const bool is_enum = type.kind == TypeKind::kEnum;
+    const bool is_bottom = type.kind == TypeKind::kBottom;
     if (selector.type != selection.selector_type ||
-        (!is_enum && !is_integer_type(type.kind)) ||
+        (!is_bottom && !is_enum && !is_integer_type(type.kind)) ||
         (selector.category != ValueCategory::kValue &&
          selector.category != ValueCategory::kMutableLocation &&
          selector.category != ValueCategory::kReadOnlyLocation)) {
       report(range, "switch has an invalid selector type or value category");
+      return;
+    }
+    if (is_bottom) {
+      if (selection.arms.empty() || selection.arms.size() > kMaxSwitchArms) {
+        report(range, "switch has an invalid arm count");
+      }
+      for (const HirSwitchArm& arm : selection.arms) {
+        verify_block(arm.body, arm.range);
+        if (!arm.labels.empty()) {
+          report(arm.range,
+                 "bottom-typed switch retains unreachable value labels");
+        }
+      }
       return;
     }
     std::size_t enum_size = 0;

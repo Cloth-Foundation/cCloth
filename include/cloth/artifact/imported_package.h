@@ -80,6 +80,7 @@ struct ImportedMember {
   Visibility visibility;
   std::string type_identity;
   std::vector<ImportedParameter> parameters;
+  std::vector<std::string> thrown_type_identities;
   ImportedSourceLocation location;
   bool is_final;
   bool is_static;
@@ -131,6 +132,7 @@ struct ImportedTypeDescriptor {
   std::vector<std::string> virtual_function_identities;
   std::vector<ImportedInterfaceDispatch> interfaces;
   std::string mangled_name;
+  bool parent_is_error_root{false};
 
   friend bool operator==(const ImportedTypeDescriptor&,
                          const ImportedTypeDescriptor&) = default;
@@ -172,6 +174,7 @@ struct ImportedCallableAbi {
   AbiReceiverMode receiver_mode = AbiReceiverMode::kNone;
   AbiReturnMode initializer_return_mode = AbiReturnMode::kVoid;
   AbiReceiverMode initializer_receiver_mode = AbiReceiverMode::kNone;
+  bool uses_error_abi{false};
 
   friend bool operator==(const ImportedCallableAbi&,
                          const ImportedCallableAbi&) = default;
@@ -275,7 +278,8 @@ struct ImportedPackageResult {
 [[nodiscard]] std::string imported_callable_signature(
     AbiReturnMode return_mode, AbiReceiverMode receiver_mode,
     std::string_view return_type,
-    std::span<const ImportedAbiParameter> parameters);
+    std::span<const ImportedAbiParameter> parameters,
+    bool uses_error_abi = false);
 
 }  // namespace cloth
 

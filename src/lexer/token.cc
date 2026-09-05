@@ -150,6 +150,12 @@ std::string_view token_kind_name(TokenKind kind) noexcept {
       return "sealed";
     case TokenKind::kKwEnum:
       return "enum";
+    case TokenKind::kKwError:
+      return "error";
+    case TokenKind::kKwThrow:
+      return "throw";
+    case TokenKind::kKwThrows:
+      return "throws";
     case TokenKind::kKwTrait:
       return "trait";
     case TokenKind::kKwLet:

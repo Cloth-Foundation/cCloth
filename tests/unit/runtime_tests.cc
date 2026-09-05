@@ -29,6 +29,12 @@ struct TestNode {
   void* second;
 };
 
+struct TestError {
+  const ClothTypeDescriptor* type;
+  void* runtime_state;
+  void* message;
+};
+
 struct InlineValue {
   std::uint32_t tag;
   void* first;
@@ -48,6 +54,38 @@ int runtime_failure_scenario(std::string_view scenario) {
   }
   if (scenario == "invalid_integer_arithmetic_reason") {
     cloth_rt_require_integer_arithmetic(0, UINT8_MAX);
+  }
+  constexpr std::string_view kPlainName = "Plain";
+  const ClothTypeDescriptor plain_type{ClothHeapObjectKind::kFileClass,
+                                       nullptr,
+                                       kPlainName.data(),
+                                       kPlainName.size(),
+                                       sizeof(TestNode),
+                                       alignof(TestNode),
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       0,
+                                       nullptr,
+                                       0};
+  if (scenario == "report_non_error") {
+    static_cast<void>(cloth_rt_report_error(cloth_rt_alloc(&plain_type)));
+  }
+  constexpr std::string_view kInvalidErrorName = "InvalidError";
+  const ClothTypeDescriptor invalid_error_type{ClothHeapObjectKind::kError,
+                                               &plain_type,
+                                               kInvalidErrorName.data(),
+                                               kInvalidErrorName.size(),
+                                               sizeof(TestError),
+                                               alignof(TestError),
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
+  if (scenario == "invalid_error_parent") {
+    static_cast<void>(cloth_rt_alloc(&invalid_error_type));
   }
   std::uint64_t offsets[]{0, sizeof(void*)};
   ClothArrayElementLayout layout{2 * sizeof(void*), alignof(void*), offsets, 2};
@@ -388,6 +426,26 @@ int main(int argc, char** argv) {
               "object metadata queries leaked managed strings");
   cloth_rt_gc_pop_frame(&object_frame);
 
+  ClothGcRootFrame error_frame{};
+  void* error = cloth_rt_make_division_by_zero();
+  void** error_roots[]{&error};
+  cloth_rt_gc_push_frame(&error_frame, error_roots, 1);
+  test.expect(
+      cloth_rt_object_is_kind(error, static_cast<std::uint64_t>(
+                                         ClothHeapObjectKind::kError)) == 1 &&
+          cloth_rt_object_is_type(error, &cloth_rt_division_by_zero_type) ==
+              1 &&
+          cloth_rt_object_is_type(error, &cloth_rt_error_type) == 1,
+      "compiler-known error descriptors have the wrong runtime identity");
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 2,
+              "error tracing did not retain its managed message");
+  error = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "error and message were not reclaimed together");
+  cloth_rt_gc_pop_frame(&error_frame);
+
   const std::uint64_t peak_before = cloth_rt_gc_peak_live_bytes();
   static_cast<void>(cloth_rt_alloc(&node_type));
   test.expect(cloth_rt_gc_peak_live_bytes() >= peak_before &&
@@ -400,7 +458,7 @@ int main(int argc, char** argv) {
               "explicit collection diagnostics were not updated");
 
   if (test.failures() == 0) {
-    std::cout << "8 tests passed\n";
+    std::cout << "9 tests passed\n";
     return 0;
   }
   return 1;

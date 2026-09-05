@@ -52,6 +52,9 @@ void print_terminator(const MirTerminator& terminator, std::ostream& output) {
     if (return_terminator->value) {
       output << " %" << return_terminator->value->value;
     }
+  } else if (const auto* error =
+                 std::get_if<MirErrorTerminator>(&terminator.data)) {
+    output << "error %" << error->error.value;
   } else {
     output << "unreachable";
   }
@@ -130,6 +133,7 @@ void print_mir_summary(const MirModule& mir, const SemanticModel& semantics,
   for (const MirFileClass& file : mir.files) {
     const FileSemantics& file_semantics = semantics.file(file.file);
     output << (file_semantics.kind == FileTypeKind::kEnum        ? "Enum "
+               : file_semantics.kind == FileTypeKind::kError     ? "Error "
                : file_semantics.kind == FileTypeKind::kStruct    ? "Struct "
                : file_semantics.kind == FileTypeKind::kInterface ? "Interface "
                                                                  : "FileClass ")

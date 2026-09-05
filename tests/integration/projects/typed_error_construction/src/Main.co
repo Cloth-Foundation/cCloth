@@ -1,0 +1,7 @@
+import Box;
+import Failure;
+
+static func Main() throws Failure {
+  Box value = Box("not published", true);
+  println(value.Value);
+}

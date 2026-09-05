@@ -1,0 +1,15 @@
+error {
+  TypedErrorPropagation(string message): Error(message) {}
+
+  static func Leaf(): int32 throws TypedErrorPropagation {
+    throw TypedErrorPropagation("propagated");
+  }
+
+  static func Forward(): int32 throws TypedErrorPropagation {
+    return Leaf();
+  }
+
+  static func Main(): int32 throws TypedErrorPropagation {
+    return Forward();
+  }
+}

@@ -354,6 +354,7 @@ std::string_view visibility_text(Visibility value) {
 std::string_view file_kind_name(FileTypeKind value) {
   return value == FileTypeKind::kStruct  ? "struct"
          : value == FileTypeKind::kEnum  ? "enum"
+         : value == FileTypeKind::kError ? "error"
          : value == FileTypeKind::kClass ? "class"
                                          : "interface";
 }
@@ -624,6 +625,10 @@ std::optional<JsonValue> encode_member_declaration(
   for (const ImportedParameter& parameter : member.parameters) {
     parameters.push_back(encode_parameter(parameter));
   }
+  JsonValue::Array thrown_types;
+  for (const std::string& type : member.thrown_type_identities) {
+    thrown_types.push_back(json_identity(type));
+  }
   JsonValue static_value;
   if (member.static_value) {
     const auto type = types.find(member.type_identity);
@@ -650,6 +655,7 @@ std::optional<JsonValue> encode_member_declaration(
        member.virtual_slot ? json_integer(*member.virtual_slot) : JsonValue{}},
       {"static", JsonValue{member.is_static}},
       {"static_value", std::move(static_value)},
+      {"throws", JsonValue{std::move(thrown_types)}},
       {"type", json_identity(member.type_identity)},
       {"visibility", json_string(visibility_text(member.visibility))}}};
 }
@@ -682,9 +688,12 @@ JsonValue encode_descriptor(const ImportedTypeDescriptor& descriptor) {
       {"display_name", json_string(descriptor.display_name)},
       {"id", json_identity(descriptor.identity)},
       {"interfaces", JsonValue{std::move(interfaces)}},
-      {"kind", json_string("file_class")},
+      {"kind", json_string(descriptor.kind == AbiHeapObjectKind::kError
+                               ? "error"
+                               : "file_class")},
       {"mangled_name", json_string(descriptor.mangled_name)},
       {"parent", json_optional_identity(descriptor.parent_identity)},
+      {"parent_is_error_root", JsonValue{descriptor.parent_is_error_root}},
       {"reference_offsets", JsonValue{std::move(references)}},
       {"size", json_integer(descriptor.size)},
       {"virtual_functions",
@@ -732,6 +741,7 @@ JsonValue encode_callable_abi(const ImportedCallableAbi& callable) {
   }
   return JsonValue{JsonValue::Object{
       {"calling_convention", json_string("c")},
+      {"error_abi", JsonValue{callable.uses_error_abi}},
       {"initializer", std::move(initializer)},
       {"kind", json_string(callable_kind_name(callable.kind))},
       {"linkage", json_string(linkage_name(callable.linkage))},
@@ -1185,14 +1195,15 @@ MetadataDecoder::decode_dependencies(const JsonValue& value) {
 
 std::optional<TypeKind> parse_type_kind(std::string_view value) {
   constexpr std::array kinds{
-      TypeKind::kError,     TypeKind::kVoid,      TypeKind::kNull,
-      TypeKind::kBool,      TypeKind::kChar,      TypeKind::kByte,
-      TypeKind::kInt8,      TypeKind::kInt16,     TypeKind::kInt32,
-      TypeKind::kInt64,     TypeKind::kUint8,     TypeKind::kUint16,
-      TypeKind::kUint32,    TypeKind::kUint64,    TypeKind::kFloat32,
-      TypeKind::kFloat64,   TypeKind::kString,    TypeKind::kObject,
-      TypeKind::kFileClass, TypeKind::kInterface, TypeKind::kEnum,
-      TypeKind::kArray,     TypeKind::kNullable,  TypeKind::kStruct};
+      TypeKind::kError,      TypeKind::kVoid,      TypeKind::kNull,
+      TypeKind::kBool,       TypeKind::kChar,      TypeKind::kByte,
+      TypeKind::kInt8,       TypeKind::kInt16,     TypeKind::kInt32,
+      TypeKind::kInt64,      TypeKind::kUint8,     TypeKind::kUint16,
+      TypeKind::kUint32,     TypeKind::kUint64,    TypeKind::kFloat32,
+      TypeKind::kFloat64,    TypeKind::kString,    TypeKind::kObject,
+      TypeKind::kErrorClass, TypeKind::kFileClass, TypeKind::kInterface,
+      TypeKind::kEnum,       TypeKind::kArray,     TypeKind::kNullable,
+      TypeKind::kStruct};
   const auto kind = std::ranges::find_if(kinds, [&](TypeKind candidate) {
     return type_kind_name(candidate) == value;
   });
@@ -1304,6 +1315,7 @@ std::optional<FileTypeKind> parse_file_kind(std::string_view value) {
   if (value == "interface") return FileTypeKind::kInterface;
   if (value == "enum") return FileTypeKind::kEnum;
   if (value == "struct") return FileTypeKind::kStruct;
+  if (value == "error") return FileTypeKind::kError;
   return std::nullopt;
 }
 
@@ -1475,10 +1487,11 @@ std::optional<ImportedFile> MetadataDecoder::decode_file_declaration(
                                           std::move(*case_location)});
   }
   const NominalKind nominal_kind =
-      *kind == FileTypeKind::kStruct  ? NominalKind::kStruct
-      : *kind == FileTypeKind::kEnum  ? NominalKind::kEnum
-      : *kind == FileTypeKind::kClass ? NominalKind::kClass
-                                      : NominalKind::kInterface;
+      *kind == FileTypeKind::kStruct ? NominalKind::kStruct
+      : *kind == FileTypeKind::kEnum ? NominalKind::kEnum
+      : (*kind == FileTypeKind::kClass || *kind == FileTypeKind::kError)
+          ? NominalKind::kClass
+          : NominalKind::kInterface;
   const NominalIdentity nominal{package, *source_package, *name, nominal_kind};
   ImportedTypeDescriptor descriptor{AbiHeapObjectKind::kFileClass,
                                     {},
@@ -1521,7 +1534,7 @@ std::optional<ImportedMember> MetadataDecoder::decode_member_declaration(
       object(value,
              {"abstract", "base_constructor", "final", "id", "kind", "location",
               "name", "override", "overridden", "owner", "parameters", "record",
-              "slot", "static", "static_value", "type", "visibility"},
+              "slot", "static", "static_value", "throws", "type", "visibility"},
              kRecord);
   if (fields == nullptr) return std::nullopt;
   const auto abstract = boolean(fields->at("abstract"), kRecord);
@@ -1564,6 +1577,8 @@ std::optional<ImportedMember> MetadataDecoder::decode_member_declaration(
     if (!parameter) return std::nullopt;
     parameters.push_back(std::move(*parameter));
   }
+  auto thrown_types = identity_array(fields->at("throws"), kRecord);
+  if (!thrown_types) return std::nullopt;
   std::optional<ImportedScalarConstant> static_value;
   if (!is_null(fields->at("static_value"))) {
     const auto type_kind = type_kinds.find(*type);
@@ -1583,6 +1598,7 @@ std::optional<ImportedMember> MetadataDecoder::decode_member_declaration(
                         *visibility,
                         std::move(*type),
                         std::move(parameters),
+                        std::move(*thrown_types),
                         std::move(*location),
                         *final,
                         *is_static,
@@ -1713,14 +1729,16 @@ std::optional<ImportedAbiParameter> MetadataDecoder::decode_abi_parameter(
 std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
     const JsonValue& value) {
   constexpr std::string_view kRecord = "layouts.callable";
-  const auto* fields = object(
-      value,
-      {"calling_convention", "initializer", "kind", "linkage", "mangled_name",
-       "member", "parameters", "receiver_mode", "return_mode", "return_type"},
-      kRecord);
+  const auto* fields =
+      object(value,
+             {"calling_convention", "error_abi", "initializer", "kind",
+              "linkage", "mangled_name", "member", "parameters",
+              "receiver_mode", "return_mode", "return_type"},
+             kRecord);
   if (fields == nullptr) return std::nullopt;
   const std::string* calling_convention =
       text(fields->at("calling_convention"), kRecord);
+  const auto uses_error_abi = boolean(fields->at("error_abi"), kRecord);
   const std::string* kind_text = text(fields->at("kind"), kRecord);
   const std::string* linkage_text = text(fields->at("linkage"), kRecord);
   const std::string* mangled = text(fields->at("mangled_name"), kRecord);
@@ -1738,9 +1756,10 @@ std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
       linkage_text == nullptr ? std::nullopt : parse_linkage(*linkage_text);
   const JsonValue::Array* parameter_values =
       array(fields->at("parameters"), kRecord);
-  if (calling_convention == nullptr || *calling_convention != "c" || !kind ||
-      !linkage || mangled == nullptr || !member || !return_type ||
-      !return_mode || !receiver_mode || parameter_values == nullptr) {
+  if (calling_convention == nullptr || *calling_convention != "c" ||
+      !uses_error_abi || !kind || !linkage || mangled == nullptr || !member ||
+      !return_type || !return_mode || !receiver_mode ||
+      parameter_values == nullptr) {
     issue(std::string{kRecord}, "callable ABI is invalid");
     return std::nullopt;
   }
@@ -1821,17 +1840,19 @@ std::optional<ImportedCallableAbi> MetadataDecoder::decode_callable(
                              *return_mode,
                              *receiver_mode,
                              initializer_return_mode,
-                             initializer_receiver_mode};
+                             initializer_receiver_mode,
+                             *uses_error_abi};
 }
 
 std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
     const JsonValue& value) {
   constexpr std::string_view kRecord = "layouts.descriptor";
-  const auto* fields = object(
-      value,
-      {"alignment", "display_name", "id", "interfaces", "kind", "mangled_name",
-       "parent", "reference_offsets", "size", "virtual_functions"},
-      kRecord);
+  const auto* fields =
+      object(value,
+             {"alignment", "display_name", "id", "interfaces", "kind",
+              "mangled_name", "parent", "parent_is_error_root",
+              "reference_offsets", "size", "virtual_functions"},
+             kRecord);
   if (fields == nullptr) return std::nullopt;
   const auto alignment = integer(fields->at("alignment"), kRecord);
   const std::string* display = text(fields->at("display_name"), kRecord);
@@ -1839,6 +1860,8 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
   const std::string* kind = text(fields->at("kind"), kRecord);
   const std::string* mangled = text(fields->at("mangled_name"), kRecord);
   auto parent = optional_identity(fields->at("parent"), kRecord);
+  const auto parent_is_error_root =
+      boolean(fields->at("parent_is_error_root"), kRecord);
   const auto size = integer(fields->at("size"), kRecord);
   auto virtuals = identity_array(fields->at("virtual_functions"), kRecord);
   const JsonValue::Array* reference_values =
@@ -1846,8 +1869,9 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
   const JsonValue::Array* interface_values =
       array(fields->at("interfaces"), kRecord);
   if (!alignment || display == nullptr || !id || kind == nullptr ||
-      *kind != "file_class" || mangled == nullptr || !parent || !size ||
-      !virtuals || reference_values == nullptr || interface_values == nullptr) {
+      (*kind != "file_class" && *kind != "error") || mangled == nullptr ||
+      !parent || !parent_is_error_root || !size || !virtuals ||
+      reference_values == nullptr || interface_values == nullptr) {
     issue(std::string{kRecord}, "descriptor ABI is invalid");
     return std::nullopt;
   }
@@ -1876,7 +1900,9 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
     interfaces.push_back(ImportedInterfaceDispatch{
         std::move(*interface_identity), *interface_id, std::move(*functions)});
   }
-  return ImportedTypeDescriptor{AbiHeapObjectKind::kFileClass,
+  return ImportedTypeDescriptor{*kind == "error"
+                                    ? AbiHeapObjectKind::kError
+                                    : AbiHeapObjectKind::kFileClass,
                                 std::move(*id),
                                 std::move(*parent),
                                 *display,
@@ -1885,7 +1911,8 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
                                 std::move(references),
                                 std::move(*virtuals),
                                 std::move(interfaces),
-                                *mangled};
+                                *mangled,
+                                *parent_is_error_root};
 }
 
 std::optional<ImportedClassAbi> MetadataDecoder::decode_layout(
@@ -2373,8 +2400,11 @@ std::vector<ArtifactIssue> verify_package_artifact(
   std::map<std::string, std::string, std::less<>> expected_signatures;
   for (const ImportedFile& file : artifact.imported.files) {
     if (file.abi.descriptor && !file.abi.descriptor->mangled_name.empty()) {
-      expected_signatures.emplace(file.abi.descriptor->identity,
-                                  "descriptor:file_class");
+      expected_signatures.emplace(
+          file.abi.descriptor->identity,
+          file.abi.descriptor->kind == AbiHeapObjectKind::kError
+              ? "descriptor:error"
+              : "descriptor:file_class");
       expected_definitions.emplace(file.abi.descriptor->identity,
                                    ArtifactSymbolKind::kDescriptor);
     }
@@ -2398,7 +2428,8 @@ std::vector<ArtifactIssue> verify_package_artifact(
             callable.member_identity,
             imported_callable_signature(
                 callable.return_mode, callable.receiver_mode,
-                callable.return_type_identity, callable.parameters));
+                callable.return_type_identity, callable.parameters,
+                callable.uses_error_abi));
         expected_definitions.emplace(callable.member_identity,
                                      ArtifactSymbolKind::kCallable);
       }
@@ -2411,7 +2442,7 @@ std::vector<ArtifactIssue> verify_package_artifact(
                   callable.initializer_return_mode,
                   callable.initializer_receiver_mode,
                   *callable.initializer_return_type_identity,
-                  callable.initializer_parameters));
+                  callable.initializer_parameters, callable.uses_error_abi));
         }
         expected_definitions.emplace(
             *callable.initializer_identity,

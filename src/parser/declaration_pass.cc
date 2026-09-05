@@ -53,7 +53,8 @@ bool looks_like_file_type_declaration(std::span<const Token> tokens,
          (tokens[index].kind == TokenKind::kKwClass ||
           tokens[index].kind == TokenKind::kKwInterface ||
           tokens[index].kind == TokenKind::kKwEnum ||
-          tokens[index].kind == TokenKind::kKwStruct);
+          tokens[index].kind == TokenKind::kKwStruct ||
+          tokens[index].kind == TokenKind::kKwError);
 }
 
 bool looks_like_function_declaration(std::span<const Token> tokens,
@@ -371,6 +372,38 @@ std::optional<TokenIndexRange> DeclarationPass::locate_body(
   return TokenIndexRange{body_begin, current_};
 }
 
+std::vector<TypeSyntax> DeclarationPass::parse_throws_clause(
+    bool& has_explicit_throws) {
+  std::vector<TypeSyntax> types;
+  if (!match(TokenKind::kKwThrows)) {
+    return types;
+  }
+  has_explicit_throws = true;
+  if (!can_start_type(current().kind)) {
+    diagnostics_.error(current().range,
+                       "expected an error type after 'throws'");
+    is_valid_ = false;
+    return types;
+  }
+  do {
+    std::optional<TypeSyntax> type = parse_type();
+    if (type) {
+      types.push_back(*type);
+    }
+    if (current().kind != TokenKind::kComma) {
+      break;
+    }
+    advance();
+    if (!can_start_type(current().kind)) {
+      diagnostics_.error(current().range,
+                         "expected an error type after ',' in throws clause");
+      is_valid_ = false;
+      break;
+    }
+  } while (!at_end());
+  return types;
+}
+
 void DeclarationPass::parse_field() {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
   const std::size_t begin = current_;
@@ -505,6 +538,9 @@ void DeclarationPass::parse_function() {
   if (match(TokenKind::kColon)) {
     return_type = parse_type();
   }
+  bool has_explicit_throws = false;
+  std::vector<TypeSyntax> throws_types =
+      parse_throws_clause(has_explicit_throws);
 
   std::optional<TokenIndexRange> body;
   bool has_abstract_terminator = false;
@@ -542,6 +578,8 @@ void DeclarationPass::parse_function() {
   symbol.is_override = is_override;
   symbol.is_abstract = is_abstract;
   symbol.is_final = is_final;
+  symbol.throws_types = std::move(throws_types);
+  symbol.has_explicit_throws = has_explicit_throws;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kFunction, symbol_index,
                                     begin, std::nullopt, std::nullopt, body,
@@ -553,6 +591,9 @@ void DeclarationPass::parse_constructor() {
   const std::size_t begin = current_;
   const Token& name = advance();
   auto parameters = parse_parameters(name.lexeme);
+  bool has_explicit_throws = false;
+  std::vector<TypeSyntax> throws_types =
+      parse_throws_clause(has_explicit_throws);
   std::optional<TokenIndexRange> initializer;
   if (match(TokenKind::kColon)) {
     const std::size_t initializer_begin = current_;
@@ -601,6 +642,8 @@ void DeclarationPass::parse_constructor() {
                       std::move(parameters),
                       std::nullopt,
                       declaration_valid};
+  symbol.throws_types = std::move(throws_types);
+  symbol.has_explicit_throws = has_explicit_throws;
   const std::size_t symbol_index = add_symbol(std::move(symbol));
   outlines_.push_back(MemberOutline{DeclarationKind::kConstructor, symbol_index,
                                     begin, std::nullopt, initializer, body,
@@ -735,16 +778,19 @@ void DeclarationPass::parse_file_type_declaration() {
   const bool is_enum = !is_interface && match(TokenKind::kKwEnum);
   const bool is_struct =
       !is_interface && !is_enum && match(TokenKind::kKwStruct);
-  if (!is_interface && !is_enum && !is_struct && !match(TokenKind::kKwClass)) {
+  const bool is_error =
+      !is_interface && !is_enum && !is_struct && match(TokenKind::kKwError);
+  if (!is_interface && !is_enum && !is_struct && !is_error &&
+      !match(TokenKind::kKwClass)) {
     diagnostics_.error(current().range,
-                       "expected 'class' or 'interface' after file type "
-                       "modifiers");
+                       "expected a file type after declaration modifiers");
     is_valid_ = false;
     return;
   }
   file_type_kind_ = is_struct      ? FileTypeKind::kStruct
                     : is_enum      ? FileTypeKind::kEnum
                     : is_interface ? FileTypeKind::kInterface
+                    : is_error     ? FileTypeKind::kError
                                    : FileTypeKind::kClass;
   if ((is_interface || is_enum || is_struct) &&
       (class_is_abstract_ || class_is_sealed_)) {

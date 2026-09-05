@@ -31,6 +31,7 @@ class ExpressionParser {
   bool match(TokenKind kind) noexcept;
 
   [[nodiscard]] ExpressionId parse_unary_expression();
+  [[nodiscard]] ExpressionId parse_throw_expression();
   [[nodiscard]] ExpressionId build_unary_expression(const Token& operation,
                                                     ExpressionId operand);
   [[nodiscard]] ExpressionId build_numeric_conversion(const Token& target,

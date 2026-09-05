@@ -85,18 +85,17 @@ semantic analysis, typed HIR, control-flow MIR, a verified target ABI, and an
 LLVM IR backend. The implemented language includes path-derived packages and
 imports, functions and constructors, structured control flow, arrays, strings,
 explicit nullability, managed objects, single inheritance, abstract and sealed
-types, interfaces, [named value enums](docs/enums.md), overriding, class and interface dispatch, covariant
-managed-reference returns, capitalization-based constructor visibility, and
-`super` calls. Structured control flow includes array iteration and classical
-`for` loops, with arithmetic compound assignment and prefix/postfix numeric
-updates. Numeric values use contextual literals, lossless implicit widening,
-overload-directed literal typing, and checked explicit `NumericType(value)`
-conversion. Fixed-width integers also provide bitwise and checked shift
-operators plus explicit little-endian and big-endian `byte[]` meta operations.
-
-[Value structs](docs/structs.md) are available for parsing, type checking, and
-typed HIR through `--check`. Their native lowering and artifact support are
-still in development.
+types, interfaces, [named value enums](docs/enums.md),
+[value structs](docs/structs.md), overriding, class and interface dispatch,
+covariant managed-reference returns, capitalization-based constructor
+visibility, and `super` calls. Structured control flow includes `switch`, array
+iteration, and classical `for` loops, with arithmetic compound assignment and
+prefix/postfix numeric updates. Numeric values use contextual and explicitly
+typed literals, lossless implicit widening, checked explicit conversions, and
+`wrap`/`sat` integer conversion modes. Fixed-width integers also provide
+bitwise and checked shift operators plus explicit little-endian and big-endian
+`byte[]` meta operations. Typed errors provide declared `throws` contracts and
+automatic propagation without `try`/`catch` syntax.
 
 The backend emits LLVM IR for x86-64 and wasm32 layouts. Native executable
 generation currently targets x86-64 and uses LLVM `llc` plus the configured C++

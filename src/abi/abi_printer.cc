@@ -42,6 +42,9 @@ void print_callable(const AbiCallable& callable, const SemanticModel& semantics,
   if (symbol.is_final) {
     output << ", final";
   }
+  if (callable.uses_error_abi) {
+    output << ", error ABI";
+  }
   output << "]\n";
   output << "|  |- ABI " << callable.mangled_name << '(';
   for (std::size_t index = 0; index < callable.parameters.size(); ++index) {

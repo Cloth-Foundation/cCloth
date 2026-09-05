@@ -21,6 +21,7 @@ target_compile_definitions(cloth_project_tests PRIVATE
 )
 cloth_add_unit_test(cloth_sema_tests sema_tests.cc)
 cloth_add_unit_test(cloth_override_tests override_tests.cc)
+cloth_add_unit_test(cloth_typed_error_tests typed_error_tests.cc)
 cloth_add_unit_test(cloth_shuttle_protocol_tests shuttle_protocol_tests.cc)
 cloth_add_unit_test(cloth_mir_tests mir_tests.cc)
 cloth_add_unit_test(cloth_mir_optimizer_tests mir_optimizer_tests.cc)
@@ -50,6 +51,18 @@ foreach(scenario IN ITEMS integer_overflow integer_division_by_zero
             "-DCLOTH_EXPECTED_ERROR=integer"
             -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 endforeach()
+add_test(NAME cloth_runtime_report_non_error
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=report_non_error"
+        "-DCLOTH_EXPECTED_ERROR=error reporter received a non-error object"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+add_test(NAME cloth_runtime_invalid_error_parent
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=invalid_error_parent"
+        "-DCLOTH_EXPECTED_ERROR=object type descriptor has an invalid parent"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 
 cloth_finalize_tests(LABEL unit)
 

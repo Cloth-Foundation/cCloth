@@ -227,13 +227,13 @@ void imported_aggregates(TestContext& test) {
     const bool native = target.pointer.size == 8;
     const std::string_view digest =
         native
-            ? "46ded18c458a4ea50e51a8ca8cafea580be32cdb8080d99554bcc943517e806c"
-            : "7252df88c66d3a6b36d23f5e4a94b1d5f67fecde3656ac7c0fd7485e047c3ec"
-              "3";
+            ? "cce3c3e27d64088c2f3c045b61261019430de2447e1c8941adb6932de785196f"
+            : "44649d1e355f0af49e2c824cb3bf97ca06411c3e5f2f81769e8a1d5fef7fb2d"
+              "6";
     test.expect(
-        encoded.artifact->bytes.size() == (native ? 30464U : 30462U) &&
+        encoded.artifact->bytes.size() == (native ? 30668U : 30666U) &&
             cloth::artifact_digest_hex(encoded.artifact->digest) == digest,
-        "aggregate format-4 fixture " + target.target_name +
+        "aggregate format-5 fixture " + target.target_name +
             ": size=" + std::to_string(encoded.artifact->bytes.size()) +
             " digest=" + cloth::artifact_digest_hex(encoded.artifact->digest));
     const auto decoded = cloth::read_package_artifact(encoded.artifact->bytes);

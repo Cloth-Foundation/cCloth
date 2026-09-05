@@ -25,6 +25,20 @@ void print_parameters(const SemanticSymbol& symbol,
   output << ')';
 }
 
+void print_throws(const SemanticSymbol& symbol, const SemanticModel& semantics,
+                  std::ostream& output) {
+  if (symbol.thrown_types.empty()) {
+    return;
+  }
+  output << " throws ";
+  for (std::size_t index = 0; index < symbol.thrown_types.size(); ++index) {
+    if (index != 0) {
+      output << ", ";
+    }
+    output << semantics.type(symbol.thrown_types[index]).name;
+  }
+}
+
 }  // namespace
 
 void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
@@ -35,6 +49,7 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
     output << (file_semantics.kind == FileTypeKind::kStruct      ? "Struct "
                : file_semantics.kind == FileTypeKind::kEnum      ? "Enum "
                : file_semantics.kind == FileTypeKind::kInterface ? "Interface "
+               : file_semantics.kind == FileTypeKind::kError     ? "Error "
                                                                  : "FileClass ")
            << class_symbol.name << " : "
            << semantics.type(class_symbol.type).name << " ["
@@ -77,6 +92,7 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
               semantics.symbol(file.functions.at(reference.index).symbol);
           output << "|- Function " << symbol.name;
           print_parameters(symbol, semantics, output);
+          print_throws(symbol, semantics, output);
           output << ": " << semantics.type(symbol.type).name << " ["
                  << visibility_name(symbol.visibility);
           if (symbol.is_static) {
@@ -106,6 +122,7 @@ void print_hir_summary(const HirModule& hir, const SemanticModel& semantics,
               semantics.symbol(file.constructors.at(reference.index).symbol);
           output << "|- Constructor " << symbol.name;
           print_parameters(symbol, semantics, output);
+          print_throws(symbol, semantics, output);
           const HirCallable& constructor =
               file.constructors.at(reference.index);
           if (constructor.initializer) {

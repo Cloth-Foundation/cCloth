@@ -76,7 +76,7 @@ dependency declaration before consumer analysis.
 The version-4 `.cpa` reader/writer consumes and reconstructs this view. Its exact
 record schema, bounded canonical encoding, integrity checks, compatibility gate,
 and malformed-input policy are documented in
-[artifact schema v4](artifact_schema_v4.md). Stage 23.3 connects artifact
+[artifact schema v5](artifact_schema_v5.md). Stage 23.3 connects artifact
 dependency closure and direct-alias import visibility without reopening
 dependency source files.
 

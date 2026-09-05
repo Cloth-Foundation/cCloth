@@ -11,6 +11,7 @@ enum class ClothHeapObjectKind : std::uint64_t {
   kFileClass = 0,
   kString = 1,
   kArray = 2,
+  kError = 3,
 };
 
 struct ClothInterfaceDispatch {
@@ -58,6 +59,9 @@ inline constexpr std::uint8_t kClothIntegerRemainderByZero = 2;
 
 extern "C" {
 
+extern const ClothTypeDescriptor cloth_rt_error_type;
+extern const ClothTypeDescriptor cloth_rt_division_by_zero_type;
+
 [[nodiscard]] void* cloth_rt_alloc(const ClothTypeDescriptor* type) noexcept;
 void cloth_rt_gc_push_frame(ClothGcRootFrame* frame, void*** roots,
                             std::uint64_t root_count) noexcept;
@@ -104,6 +108,8 @@ void cloth_rt_require_numeric_conversion(std::uint8_t valid) noexcept;
 void cloth_rt_require_shift_count(std::uint8_t valid) noexcept;
 void cloth_rt_require_integer_arithmetic(std::uint8_t valid,
                                          std::uint8_t reason) noexcept;
+[[nodiscard]] void* cloth_rt_make_division_by_zero() noexcept;
+[[nodiscard]] std::int32_t cloth_rt_report_error(const void* error) noexcept;
 void cloth_rt_print(const void* string) noexcept;
 void cloth_rt_print_char(std::uint32_t value) noexcept;
 void cloth_rt_print_i8(std::int8_t value) noexcept;

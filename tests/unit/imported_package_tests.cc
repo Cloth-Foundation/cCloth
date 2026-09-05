@@ -27,14 +27,21 @@ struct PackageGraph {
       compilation.add_package_source(
           cloth::SourceFile::from_memory(
               prefix + "/models/Base.co",
+              "import Failure;\n"
               "int32 Count;\n"
               "static final int64 Version = 12;\n"
               "Base(int32 count) { Count = count; }\n"
               "base() { Count = 0; }\n"
               "func Read(): int32 { return Count; }\n"
+              "func Fallible(): int32 throws Failure { return Count; }\n"
               "func hidden(): int32 { return Count; }\n"
               "func Maybe(Base? value): Base? { return value; }\n"
               "func Many(Base?[] values): Base?[] { return values; }\n"),
+          "models", "", "1.2.3");
+      compilation.add_package_source(
+          cloth::SourceFile::from_memory(
+              prefix + "/models/Failure.co",
+              "error { Failure(string message): Error(message) {} }\n"),
           "models", "", "1.2.3");
       compilation.add_package_source(
           cloth::SourceFile::from_memory(prefix + "/models/geometry/Shape.co",
@@ -46,11 +53,15 @@ struct PackageGraph {
           cloth::SourceFile::from_memory(
               prefix + "/app/Derived.co",
               "import dep::Base;\n"
+              "import dep::Failure;\n"
               "import dep.geometry::Shape;\n"
               "class : Base is Shape {\n"
               "  Derived(int32 count): Base(count) {}\n"
               "  override func Read(): int32 { return super.Read(); }\n"
               "  override func Size(): int32 { return Read(); }\n"
+              "  static func Call(Base value): int32 throws Failure {\n"
+              "    return value.Fallible();\n"
+              "  }\n"
               "}\n"),
           "app", "", "0.4.0");
     };
@@ -119,7 +130,7 @@ void owns_declarations_and_static_values(TestContext& test) {
               "valid package view was rejected: " + issue_text(imported));
   if (!imported.view) return;
 
-  test.expect(imported.view->files.size() == 2 &&
+  test.expect(imported.view->files.size() == 3 &&
                   find_file(*imported.view, "Derived") == nullptr,
               "package view retained a consumer-owned declaration");
   test.expect(std::ranges::none_of(imported.view->types,
@@ -193,6 +204,29 @@ void retains_inheritance_interfaces_and_abi(TestContext& test) {
               derived->identity,
       "constructor selection or initializer ABI was lost");
 
+  auto models = build_models(graph);
+  test.expect(models.is_valid(),
+              "error dependency view failed: " + issue_text(models));
+  if (!models.view) return;
+  const cloth::ImportedFile* failure = find_file(*models.view, "Failure");
+  const cloth::ImportedFile* base = find_file(*models.view, "Base");
+  const cloth::ImportedMember* fallible =
+      base == nullptr ? nullptr : find_member(*base, "Fallible");
+  const auto fallible_abi =
+      base == nullptr || fallible == nullptr
+          ? std::vector<cloth::ImportedCallableAbi>::const_iterator{}
+          : std::ranges::find(base->abi.callables, fallible->identity,
+                              &cloth::ImportedCallableAbi::member_identity);
+  test.expect(
+      failure != nullptr && failure->kind == cloth::FileTypeKind::kError &&
+          failure->abi.descriptor &&
+          failure->abi.descriptor->kind == cloth::AbiHeapObjectKind::kError &&
+          failure->abi.descriptor->parent_is_error_root && base != nullptr &&
+          fallible != nullptr && fallible->thrown_type_identities.size() == 1 &&
+          fallible_abi != base->abi.callables.end() &&
+          fallible_abi->uses_error_abi,
+      "error ancestry, throws set, or throwing ABI was lost");
+
   auto broken_dispatch = *imported.view;
   ++broken_dispatch.files[0].abi.descriptor->interfaces[0].interface_id;
   test.expect(!cloth::verify_imported_package_view(broken_dispatch).empty(),
@@ -222,7 +256,7 @@ void remains_owned_after_compilation_destruction(TestContext& test) {
   test.expect(base != nullptr &&
                   base->nominal_identity.package.version == "1.2.3" &&
                   read != nullptr && read->location.path == "Base.co" &&
-                  read->location.line == 5,
+                  read->location.line == 6,
               "imported view retained source-backed or compilation-owned data");
 }
 
@@ -287,11 +321,15 @@ void compiles_against_imported_declarations_without_dependency_sources(
       cloth::SourceFile::from_memory(
           "isolated/app/Derived.co",
           "import dep::Base;\n"
+          "import dep::Failure;\n"
           "import dep.geometry::Shape;\n"
           "class : Base is Shape {\n"
           "  Derived(int32 count): Base(count) {}\n"
           "  override func Read(): int32 { return super.Read(); }\n"
           "  override func Size(): int32 { return Read(); }\n"
+          "  static func Call(Base value): int32 throws Failure {\n"
+          "    return value.Fallible();\n"
+          "  }\n"
           "}\n"),
       "app", "", "0.4.0");
   cloth::DiagnosticEngine diagnostics;
@@ -304,9 +342,10 @@ void compiles_against_imported_declarations_without_dependency_sources(
   test.expect(result.is_valid,
               "isolated consumer compilation failed: " + errors);
   if (!result.is_valid) return;
-  test.expect(result.hir.files.size() == 1 && result.mir.files.size() == 3 &&
+  test.expect(result.hir.files.size() == 1 && result.mir.files.size() == 4 &&
                   result.mir.files[1].is_imported_declaration &&
-                  result.mir.files[2].is_imported_declaration,
+                  result.mir.files[2].is_imported_declaration &&
+                  result.mir.files[3].is_imported_declaration,
               "dependency declarations leaked into source-owned HIR or bodies");
   auto isolated_app = cloth::build_imported_package_view(
       {"app", "0.4.0"}, result.semantics, result.mir, result.abi);
@@ -323,6 +362,7 @@ void compiles_against_imported_declarations_without_dependency_sources(
               "isolated consumer LLVM emission failed");
   if (!llvm) return;
   test.expect(llvm->text.contains(" = external constant") &&
+                  llvm->text.contains("declare ptr @") &&
                   llvm->text.contains("declare void @") &&
                   llvm->text.contains("define "),
               "consumer did not emit dependency declarations and owned code");

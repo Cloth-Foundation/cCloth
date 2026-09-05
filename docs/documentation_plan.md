@@ -45,7 +45,7 @@ historical specifications stay in this repository's engineering documentation.
 | `garbage_collection.md`, `native_runtime.md` | Memory and runtime failures |
 | `shuttle_and_compiler.md` | Compiler and Shuttle guides |
 | `canonical_identity.md`, `imported_package_views.md` | Package identity and dependency boundaries |
-| `artifact_schema_v4.md`, `data_layout_and_abi.md`, `llvm_backend.md` | Tooling compatibility and target limits |
+| `artifact_schema_v5.md`, `data_layout_and_abi.md`, `llvm_backend.md` | Tooling compatibility and target limits |
 | `artifact_schema_v1.md`, `artifact_schema_v2.md` | Historical formats; no standalone learner pages |
 | `testing.md`, `proposals/` | Verification and conflict resolution; no public stage/audit pages |
 
@@ -64,7 +64,7 @@ checked-in example project. These supplement, rather than replace, `docs/`.
   struct output, and aggregate reference tracing follow their dedicated contracts.
 - Static members now include direct enum-case constants, as specified in
   `enums.md` and `grammar.md`.
-- Artifact compatibility follows v4 / compiler ABI 4 / runtime ABI 3; process
+- Artifact compatibility follows v5 / compiler ABI 5 / runtime ABI 4; process
   protocol 2 and manifest schema 1 are separate contracts.
 - Shuttle searches `PATH` only when `--compiler` is omitted. An explicit compiler
   argument is a filesystem path, as confirmed in `shuttle/src/compiler.rs`.

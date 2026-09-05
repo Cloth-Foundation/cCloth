@@ -54,6 +54,7 @@ struct LoadedArtifact {
 struct EntrySelection {
   std::string mangled_name;
   bool returns_int32;
+  bool uses_error_abi;
 };
 
 class PrivateOutputDirectory {
@@ -421,12 +422,14 @@ void add_owned_symbols(
       if (member.is_abstract) abstract.insert(member.identity);
     }
     if (file.abi.descriptor && !file.abi.descriptor->mangled_name.empty()) {
-      out.emplace(file.abi.descriptor->mangled_name,
-                  ArtifactSymbol{file.abi.descriptor->mangled_name,
-                                 file.abi.descriptor->identity,
-                                 ArtifactSymbolRole::kDefinition,
-                                 ArtifactSymbolKind::kDescriptor,
-                                 "descriptor:file_class"});
+      out.emplace(
+          file.abi.descriptor->mangled_name,
+          ArtifactSymbol{
+              file.abi.descriptor->mangled_name, file.abi.descriptor->identity,
+              ArtifactSymbolRole::kDefinition, ArtifactSymbolKind::kDescriptor,
+              file.abi.descriptor->kind == AbiHeapObjectKind::kError
+                  ? "descriptor:error"
+                  : "descriptor:file_class"});
     }
     for (const ImportedStaticFieldAbi& field : file.abi.static_fields) {
       if (field.linkage != AbiLinkage::kExternal) continue;
@@ -440,7 +443,8 @@ void add_owned_symbols(
     for (const ImportedCallableAbi& callable : file.abi.callables) {
       const std::string signature = imported_callable_signature(
           callable.return_mode, callable.receiver_mode,
-          callable.return_type_identity, callable.parameters);
+          callable.return_type_identity, callable.parameters,
+          callable.uses_error_abi);
       if (callable.linkage == AbiLinkage::kExternal &&
           !abstract.contains(callable.member_identity)) {
         out.emplace(
@@ -453,15 +457,15 @@ void add_owned_symbols(
           callable.initializer_linkage == AbiLinkage::kExternal) {
         out.emplace(
             callable.initializer_mangled_name,
-            ArtifactSymbol{callable.initializer_mangled_name,
-                           *callable.initializer_identity,
-                           ArtifactSymbolRole::kDefinition,
-                           ArtifactSymbolKind::kConstructorInitializer,
-                           imported_callable_signature(
-                               callable.initializer_return_mode,
-                               callable.initializer_receiver_mode,
-                               *callable.initializer_return_type_identity,
-                               callable.initializer_parameters)});
+            ArtifactSymbol{
+                callable.initializer_mangled_name,
+                *callable.initializer_identity, ArtifactSymbolRole::kDefinition,
+                ArtifactSymbolKind::kConstructorInitializer,
+                imported_callable_signature(
+                    callable.initializer_return_mode,
+                    callable.initializer_receiver_mode,
+                    *callable.initializer_return_type_identity,
+                    callable.initializer_parameters, callable.uses_error_abi)});
       }
     }
   }
@@ -524,16 +528,27 @@ std::expected<EntrySelection, std::string> select_entry(
         std::ranges::find(file->abi.callables, member.identity,
                           &ImportedCallableAbi::member_identity);
     if (callable == file->abi.callables.end() ||
-        callable->linkage != AbiLinkage::kExternal ||
-        !callable->parameters.empty()) {
+        callable->linkage != AbiLinkage::kExternal) {
+      continue;
+    }
+    const bool returns_int32 = member.type_identity == int32_type;
+    const bool valid_error_result =
+        callable->uses_error_abi && returns_int32 &&
+        callable->parameters.size() == 1 &&
+        callable->parameters.front().kind == AbiParameterKind::kResult &&
+        callable->parameters.front().type_identity == int32_type &&
+        callable->parameters.front().passing == AbiPassingMode::kResultPointer;
+    if (callable->uses_error_abi && returns_int32
+            ? !valid_error_result
+            : !callable->parameters.empty()) {
       continue;
     }
     if (selected) {
       return std::unexpected(
           "native program has more than one eligible 'Main' function");
     }
-    selected = EntrySelection{callable->mangled_name,
-                              member.type_identity == int32_type};
+    selected = EntrySelection{callable->mangled_name, returns_int32,
+                              callable->uses_error_abi};
   }
   if (selected) return *selected;
   return std::unexpected(
@@ -544,15 +559,43 @@ std::expected<EntrySelection, std::string> select_entry(
 
 LlvmIrModule entry_wrapper(const EntrySelection& entry,
                            const ArtifactCompatibility& compatibility) {
-  const std::string return_type = entry.returns_int32 ? "i32" : "void";
+  const std::string return_type = entry.uses_error_abi  ? "ptr"
+                                  : entry.returns_int32 ? "i32"
+                                                        : "void";
   std::ostringstream output;
   output << "; Cloth entry wrapper\nsource_filename = \"cloth-entry\"\n"
          << "target datalayout = \"" << compatibility.target.llvm_data_layout
          << "\"\n"
          << "target triple = \"" << compatibility.native->target_triple
          << "\"\n\ndeclare " << return_type << " @" << entry.mangled_name
-         << "()\n\ndefine i32 @main() {\nentry:\n";
-  if (entry.returns_int32) {
+         << '(';
+  if (entry.uses_error_abi && entry.returns_int32) output << "ptr";
+  output << ")\n";
+  if (entry.uses_error_abi) {
+    output << "declare i32 @cloth_rt_report_error(ptr)\n";
+  }
+  output << "\ndefine i32 @main() {\nentry:\n";
+  if (entry.uses_error_abi) {
+    if (entry.returns_int32) {
+      output << "  %entry.result = alloca i32, align 4\n";
+    }
+    output << "  %entry.error = call ptr @" << entry.mangled_name << '(';
+    if (entry.returns_int32) output << "ptr %entry.result";
+    output << ")\n"
+           << "  %entry.failed = icmp ne ptr %entry.error, null\n"
+           << "  br i1 %entry.failed, label %error, label %success\n"
+           << "error:\n"
+           << "  %error.status = call i32 @cloth_rt_report_error(ptr "
+              "%entry.error)\n"
+           << "  ret i32 %error.status\n"
+           << "success:\n";
+    if (entry.returns_int32) {
+      output << "  %exit.code = load i32, ptr %entry.result, align 4\n"
+             << "  ret i32 %exit.code\n";
+    } else {
+      output << "  ret i32 0\n";
+    }
+  } else if (entry.returns_int32) {
     output << "  %result = call i32 @" << entry.mangled_name
            << "()\n  ret i32 %result\n";
   } else {

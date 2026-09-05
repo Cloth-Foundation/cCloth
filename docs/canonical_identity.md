@@ -20,7 +20,7 @@ filesystem enumeration order do not participate in canonical identity. Source
 names and `::typeName` remain unchanged; version-qualified identity is not a new
 source namespace or display spelling.
 
-## ABI revision 4 encoding
+## ABI revision 5 encoding
 
 `component(bytes)` is an unsigned little-endian 64-bit byte length followed by
 the exact bytes. A list is an unsigned little-endian 64-bit element count
@@ -37,9 +37,14 @@ Nominal identity is this ordered sequence:
 6. `component("class")`, `component("interface")`, `component("enum")`, or
    `component("struct")`.
 
-Struct nominal identity is retained through native lowering and artifact format 4.
+Struct nominal identity is retained through native lowering and artifact format 5.
 Struct constructors use the ordinary `constructor` domain without a companion
 initializer or descriptor symbol.
+
+Error files use the class nominal tag, while their semantic error kind and
+ancestry remain explicit in format-5 declarations and descriptors. The
+compiler-known `Error` and `DivisionByZero` types use primitive-domain identity
+because they have no source package or file owner.
 
 Primitive identity is `component("primitive")` followed by a component
 containing the canonical primitive name. `int`, `uint`, and `float` resolve to
@@ -69,10 +74,10 @@ member name. Return types and modifiers are checked signature information, not
 overload discriminators. Constructor source spelling is preserved independently
 of the owner identity.
 
-Native Cloth symbols are `_C4` followed by lowercase hexadecimal encoded member
+Native Cloth symbols are `_C5` followed by lowercase hexadecimal encoded member
 identity bytes. The encoding is injective and never truncates names to a hash.
-Revision 4 retains the canonical identity encoding and adds the aggregate calling
-contract. Previous compiler-ABI names and artifacts must be rebuilt.
+Revision 5 retains the canonical identity encoding and adds the typed-error
+calling contract. Previous compiler-ABI names and artifacts must be rebuilt.
 All direct and protocol paths use the same encoding. There is no ABI compatibility with
 previous compiler builds. Internal field-initializer helper names remain
 module-local implementation details, not persistent ABI symbols.

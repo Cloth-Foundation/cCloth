@@ -59,7 +59,7 @@ function(cloth_add_native_output_test name)
 endfunction()
 
 function(cloth_add_native_failure_test name)
-    cmake_parse_arguments(ARG "EXACT" "OUTPUT;SOURCE;ERROR" "" ${ARGN})
+    cmake_parse_arguments(ARG "EXACT" "OUTPUT;SOURCE;SOURCE_ROOT;ERROR" "" ${ARGN})
     if(NOT ARG_OUTPUT OR NOT ARG_SOURCE OR NOT ARG_ERROR)
         message(FATAL_ERROR
             "cloth_add_native_failure_test requires OUTPUT, SOURCE, and ERROR"
@@ -67,10 +67,12 @@ function(cloth_add_native_failure_test name)
     endif()
 
     cloth_native_executable_path(executable "${ARG_OUTPUT}")
-    add_test(
-        NAME cloth_cli_build_${name}
-        COMMAND clothc "--build=${executable}" "${ARG_SOURCE}"
-    )
+    set(compile_command clothc "--build=${executable}")
+    if(ARG_SOURCE_ROOT)
+        list(APPEND compile_command "--source-root=${ARG_SOURCE_ROOT}")
+    endif()
+    list(APPEND compile_command "${ARG_SOURCE}")
+    add_test(NAME cloth_cli_build_${name} COMMAND ${compile_command})
     set(check_command
         ${CMAKE_COMMAND}
         "-DCLOTH_PROGRAM=${executable}"

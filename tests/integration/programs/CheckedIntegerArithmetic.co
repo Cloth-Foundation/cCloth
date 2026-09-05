@@ -1,4 +1,4 @@
-static func Main() {
+static func Main() throws DivisionByZero {
   int8 int8Minimum = -128;
   int8 int8Maximum = 127;
   int8 int8Zero = 0;

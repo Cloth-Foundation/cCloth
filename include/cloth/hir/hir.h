@@ -56,6 +56,11 @@ struct HirTypeExpression {
 
 struct HirSuperExpression {};
 
+struct HirThrowExpression {
+  HirExpressionId operand;
+  TypeId error_type;
+};
+
 struct HirUnaryExpression {
   TokenKind operation;
   HirExpressionId operand;
@@ -74,6 +79,7 @@ struct HirBinaryExpression {
   HirExpressionId right;
   bool left_is_presence_test{false};
   bool right_is_presence_test{false};
+  bool may_divide_by_zero{false};
 };
 
 struct HirTypeTestExpression {
@@ -99,6 +105,7 @@ struct HirAssignmentExpression {
   HirExpressionId target;
   TokenKind operation;
   HirExpressionId value;
+  bool may_divide_by_zero{false};
 };
 
 struct HirMemberExpression {
@@ -179,14 +186,14 @@ struct HirGroupedExpression {
 
 using HirExpressionData = std::variant<
     HirInvalidExpression, HirLiteralExpression, HirSymbolExpression,
-    HirTypeExpression, HirSuperExpression, HirUnaryExpression,
-    HirUpdateExpression, HirBinaryExpression, HirTypeTestExpression,
-    HirCheckedCastExpression, HirNumericConversionExpression,
-    HirIntegerConversionExpression, HirAssignmentExpression,
-    HirMemberExpression, HirSafeMemberExpression, HirNullCoalesceExpression,
-    HirNullAssertExpression, HirCallExpression, HirArrayLiteralExpression,
-    HirIndexExpression, HirArrayLengthExpression, HirStringMetaExpression,
-    HirObjectMetaExpression, HirIntegerMetaExpression,
+    HirTypeExpression, HirSuperExpression, HirThrowExpression,
+    HirUnaryExpression, HirUpdateExpression, HirBinaryExpression,
+    HirTypeTestExpression, HirCheckedCastExpression,
+    HirNumericConversionExpression, HirIntegerConversionExpression,
+    HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
+    HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
+    HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
+    HirStringMetaExpression, HirObjectMetaExpression, HirIntegerMetaExpression,
     HirIntegerMetaCallExpression, HirGroupedExpression>;
 
 struct HirExpression {

@@ -1,0 +1,10 @@
+import Failure;
+
+class {
+  string Value;
+
+  Box(string value, bool fail) throws Failure {
+    if (fail) { throw Failure("constructor"); }
+    Value = value;
+  }
+}

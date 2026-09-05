@@ -64,6 +64,10 @@ struct IdentifierExpression {
 
 struct SuperExpression {};
 
+struct ThrowExpression {
+  ExpressionId operand;
+};
+
 struct LiteralExpression {
   LiteralKind kind;
   std::string_view lexeme;
@@ -162,8 +166,8 @@ struct ParenthesizedExpression {
 
 using ExpressionData = std::variant<
     InvalidExpression, IdentifierExpression, LiteralExpression, SuperExpression,
-    UnaryExpression, UpdateExpression, BinaryExpression, TypeTestExpression,
-    CheckedCastExpression, NumericConversionExpression,
+    ThrowExpression, UnaryExpression, UpdateExpression, BinaryExpression,
+    TypeTestExpression, CheckedCastExpression, NumericConversionExpression,
     IntegerConversionExpression, AssignmentExpression, MemberAccessExpression,
     MetaAccessExpression, SafeMemberAccessExpression, NullCoalesceExpression,
     NullAssertExpression, CallExpression, ArrayLiteralExpression,
@@ -312,6 +316,8 @@ struct FunctionDecl {
   bool is_override{false};
   bool is_abstract{false};
   bool is_final{false};
+  std::vector<TypeSyntax> throws_types{};
+  bool has_explicit_throws{false};
 };
 
 struct ConstructorInitializer {
@@ -329,6 +335,8 @@ struct ConstructorDecl {
   BlockId body;
   SourceRange range;
   bool is_valid{true};
+  std::vector<TypeSyntax> throws_types{};
+  bool has_explicit_throws{false};
 };
 
 enum class DeclarationKind {
@@ -366,6 +374,7 @@ enum class FileTypeKind {
   kInterface,
   kEnum,
   kStruct,
+  kError,
 };
 
 inline constexpr std::size_t kMaxEnumCases = 65536;

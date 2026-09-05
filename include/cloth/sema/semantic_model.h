@@ -13,10 +13,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cloth {
@@ -59,6 +61,7 @@ struct IntegerMetaOperation {
 
 enum class TypeKind {
   kError,
+  kBottom,
   kVoid,
   kNull,
   kBool,
@@ -76,6 +79,7 @@ enum class TypeKind {
   kFloat64,
   kString,
   kObject,
+  kErrorClass,
   kFileClass,
   kInterface,
   kArray,
@@ -103,6 +107,7 @@ enum class SymbolKind {
   kEnum,
   kEnumCase,
   kStruct,
+  kError,
 };
 
 enum class IntrinsicKind {
@@ -148,6 +153,70 @@ struct SwitchSemantics {
   bool is_exhaustive{false};
 };
 
+// Most symbols cannot throw. Keep the uncommon error set out of the symbol's
+// inline storage so large field/local tables do not pay for an empty vector.
+class ErrorTypeSet {
+ public:
+  ErrorTypeSet() = default;
+  ErrorTypeSet(const ErrorTypeSet& other) {
+    if (other.types_) {
+      types_ = std::make_unique<std::vector<TypeId>>(*other.types_);
+    }
+  }
+  ErrorTypeSet& operator=(const ErrorTypeSet& other) {
+    if (this == &other) {
+      return *this;
+    }
+    types_ = other.types_ ? std::make_unique<std::vector<TypeId>>(*other.types_)
+                          : nullptr;
+    return *this;
+  }
+  ErrorTypeSet(ErrorTypeSet&&) noexcept = default;
+  ErrorTypeSet& operator=(ErrorTypeSet&&) noexcept = default;
+
+  ErrorTypeSet& operator=(std::vector<TypeId> types) {
+    types_ = types.empty()
+                 ? nullptr
+                 : std::make_unique<std::vector<TypeId>>(std::move(types));
+    return *this;
+  }
+
+  [[nodiscard]] bool empty() const noexcept { return values().empty(); }
+  [[nodiscard]] std::size_t size() const noexcept { return values().size(); }
+  [[nodiscard]] const TypeId& operator[](std::size_t index) const {
+    return values()[index];
+  }
+  [[nodiscard]] auto begin() const noexcept { return values().begin(); }
+  [[nodiscard]] auto end() const noexcept { return values().end(); }
+
+  void push_back(TypeId type) {
+    if (!types_) {
+      types_ = std::make_unique<std::vector<TypeId>>();
+    }
+    types_->push_back(type);
+  }
+
+  [[nodiscard]] std::span<const TypeId> span() const noexcept {
+    return values();
+  }
+
+  friend bool operator==(const ErrorTypeSet& left, const ErrorTypeSet& right) {
+    return left.values() == right.values();
+  }
+  friend bool operator==(const ErrorTypeSet& left,
+                         const std::vector<TypeId>& right) {
+    return left.values() == right;
+  }
+
+ private:
+  [[nodiscard]] const std::vector<TypeId>& values() const noexcept {
+    static const std::vector<TypeId> kEmpty;
+    return types_ ? *types_ : kEmpty;
+  }
+
+  std::unique_ptr<std::vector<TypeId>> types_;
+};
+
 struct SemanticSymbol {
   SymbolKind kind;
   std::string name;
@@ -168,6 +237,8 @@ struct SemanticSymbol {
   std::optional<SymbolId> overridden_symbol{};
   std::optional<std::uint32_t> enum_tag{};
   std::optional<ScalarConstant> static_constant{};
+  ErrorTypeSet thrown_types{};
+  bool has_explicit_throws{false};
 };
 
 enum class ValueCategory {
@@ -189,6 +260,7 @@ struct ExpressionSemantics {
   bool is_base_qualified{false};
   std::optional<FileId> interface_dispatch{};
   std::optional<IntegerMetaOperation> integer_meta_operation{};
+  bool may_divide_by_zero{false};
 };
 
 struct InterfaceImplementation {
@@ -231,6 +303,10 @@ class SemanticModel {
   SemanticModel();
 
   [[nodiscard]] TypeId error_type() const noexcept;
+  [[nodiscard]] TypeId bottom_type() const noexcept;
+  [[nodiscard]] TypeId error_root_type() const noexcept;
+  [[nodiscard]] TypeId nullable_error_root_type() const noexcept;
+  [[nodiscard]] TypeId division_by_zero_type() const noexcept;
   [[nodiscard]] TypeId void_type() const noexcept;
   [[nodiscard]] TypeId null_type() const noexcept;
   [[nodiscard]] TypeId bool_type() const noexcept;
@@ -274,6 +350,10 @@ class SemanticModel {
   std::vector<SemanticSymbol> symbols_;
   std::vector<FileSemantics> files_;
   TypeId error_type_{0};
+  TypeId bottom_type_{0};
+  TypeId error_root_type_{0};
+  TypeId nullable_error_root_type_{0};
+  TypeId division_by_zero_type_{0};
   TypeId void_type_{0};
   TypeId null_type_{0};
   TypeId bool_type_{0};
@@ -283,6 +363,8 @@ class SemanticModel {
 
 [[nodiscard]] std::string_view type_kind_name(TypeKind kind) noexcept;
 [[nodiscard]] std::string_view symbol_kind_name(SymbolKind kind) noexcept;
+[[nodiscard]] bool callable_uses_error_abi(SymbolId symbol,
+                                           const SemanticModel& semantics);
 [[nodiscard]] std::optional<std::uint32_t> enum_constant_tag(
     std::string_view text, TypeId type, const SemanticModel& semantics);
 

@@ -13,9 +13,13 @@ std::string canonical_type_identity(TypeId type, const SemanticModel& semantics,
                                     TypeIdentityMode mode) {
   const SemanticType& value = semantics.type(type);
   if (value.kind == TypeKind::kFileClass ||
+      (value.kind == TypeKind::kErrorClass && value.file) ||
       value.kind == TypeKind::kInterface || value.kind == TypeKind::kEnum ||
       value.kind == TypeKind::kStruct) {
     return canonical_nominal_identity(semantics.file(*value.file).identity);
+  }
+  if (value.kind == TypeKind::kErrorClass) {
+    return canonical_primitive_identity(value.name);
   }
   if (value.kind == TypeKind::kArray || value.kind == TypeKind::kNullable) {
     const std::string element =

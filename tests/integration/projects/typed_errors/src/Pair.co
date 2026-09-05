@@ -1,0 +1,5 @@
+struct {
+  int32 Value;
+
+  Pair(int32 value) { Value = value; }
+}

@@ -251,6 +251,9 @@ std::vector<MirValueId> instruction_value_uses(
       uses.push_back(*call->receiver);
     }
     uses.insert(uses.end(), call->arguments.begin(), call->arguments.end());
+  } else if (const auto* load =
+                 std::get_if<MirLoadCallResultInstruction>(&instruction.data)) {
+    uses.push_back(load->storage);
   }
   return uses;
 }
@@ -275,6 +278,9 @@ std::vector<MirValueId> terminator_value_uses(const MirTerminator& terminator) {
   if (const auto* returned = std::get_if<MirReturnTerminator>(&terminator.data);
       returned != nullptr && returned->value) {
     return {*returned->value};
+  }
+  if (const auto* error = std::get_if<MirErrorTerminator>(&terminator.data)) {
+    return {error->error};
   }
   if (const auto* selection =
           std::get_if<MirSwitchTerminator>(&terminator.data))
@@ -311,7 +317,8 @@ class BodyEmitter {
   BodyEmitter(ModuleEmitter& module, const MirBody& body,
               const AbiFileClass& file, TypeId return_type,
               std::string receiver, bool is_constructor,
-              bool allocates_constructor, const AbiCallable* callable);
+              bool allocates_constructor, const AbiCallable* callable,
+              bool uses_error_abi = false);
 
   [[nodiscard]] std::string emit();
 
@@ -424,6 +431,9 @@ class BodyEmitter {
                            std::ostringstream& output);
   void emit_call(const MirInstruction& instruction,
                  const MirCallInstruction& call, std::ostringstream& output);
+  void emit_load_call_result(const MirInstruction& instruction,
+                             const MirLoadCallResultInstruction& load,
+                             std::ostringstream& output);
   void emit_phi(const MirInstruction& instruction, const MirPhiInstruction& phi,
                 std::ostringstream& output);
   void emit_terminator(const MirTerminator& terminator, bool is_reachable,
@@ -450,6 +460,7 @@ class BodyEmitter {
   bool is_constructor_;
   bool allocates_constructor_;
   const AbiCallable* callable_;
+  bool uses_error_abi_;
   std::vector<std::string> values_;
   std::vector<TypeId> value_types_;
   std::vector<SymbolId> storage_symbols_;
@@ -471,6 +482,7 @@ class BodyEmitter {
     std::string name;
   };
   std::vector<ArgumentSlot> argument_slots_;
+  std::vector<bool> call_result_storage_;
   std::vector<MirValueId> aggregate_phis_;
 };
 
@@ -508,7 +520,8 @@ class ModuleEmitter {
           type_descriptor_global_name(FileId{index});
     }
     for (const AbiFileClass& file : abi_.files) {
-      if (file.kind == FileTypeKind::kClass) {
+      if (file.kind == FileTypeKind::kClass ||
+          file.kind == FileTypeKind::kError) {
         if (owns(file)) {
           add_type_descriptor(file.file, *file.type_descriptor);
         } else {
@@ -520,6 +533,7 @@ class ModuleEmitter {
     }
     for (std::size_t index = 0; index < mir_.files.size(); ++index) {
       if (abi_.files[index].kind == FileTypeKind::kClass ||
+          abi_.files[index].kind == FileTypeKind::kError ||
           abi_.files[index].kind == FileTypeKind::kStruct) {
         if (owns(abi_.files[index])) {
           emit_file(mir_.files[index], abi_.files[index]);
@@ -542,7 +556,13 @@ class ModuleEmitter {
            << "target triple = \"" << abi_.target.target_name << "\"\n\n"
            << "declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1)\n"
            << "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n"
+           << "@cloth_rt_error_type = external constant { i64, ptr, ptr, i64, "
+              "i64, i64, ptr, i64, ptr, i64, ptr, i64 }\n"
+           << "@cloth_rt_division_by_zero_type = external constant { i64, ptr, "
+              "ptr, i64, i64, i64, ptr, i64, ptr, i64, ptr, i64 }\n"
            << "declare ptr @cloth_rt_alloc(ptr)\n"
+           << "declare ptr @cloth_rt_make_division_by_zero()\n"
+           << "declare i32 @cloth_rt_report_error(ptr)\n"
            << "declare void @cloth_rt_gc_push_frame(ptr, ptr, i64)\n"
            << "declare void @cloth_rt_gc_pop_frame(ptr)\n"
            << "declare ptr @cloth_rt_string_literal(ptr, i64)\n"
@@ -819,6 +839,12 @@ class ModuleEmitter {
     return is_aggregate(type) ? "void" : llvm_type(type);
   }
 
+  std::string parameter_type(const AbiParameter& parameter) const {
+    return parameter.passing == AbiPassingMode::kDirect
+               ? llvm_type(parameter.type)
+               : "ptr";
+  }
+
   std::string array_element_layout(TypeId type) {
     const std::string name =
         "@.cloth.array.element." + std::to_string(type.value);
@@ -967,7 +993,8 @@ class ModuleEmitter {
     const std::string parent_global =
         descriptor.parent_file
             ? type_descriptor_global_name(*descriptor.parent_file)
-            : "null";
+        : descriptor.parent_is_error_root ? "@cloth_rt_error_type"
+                                          : "null";
     std::ostringstream global;
     global << descriptor_global
            << " = constant { i64, ptr, ptr, i64, i64, i64, ptr, i64, "
@@ -1008,21 +1035,26 @@ class ModuleEmitter {
     if (callable.linkage != AbiLinkage::kExternal) {
       return;
     }
-    definitions_ << "declare " << return_type(callable.return_type) << " @"
-                 << callable.mangled_name << '(';
+    definitions_ << "declare "
+                 << (callable.uses_error_abi
+                         ? "ptr"
+                         : return_type(callable.return_type))
+                 << " @" << callable.mangled_name << '(';
     for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
       if (index != 0) {
         definitions_ << ", ";
       }
-      definitions_ << llvm_type(callable.parameters[index].type);
+      definitions_ << parameter_type(callable.parameters[index]);
     }
     definitions_ << ")\n";
     if (callable.kind == AbiCallableKind::kConstructor &&
         callable.initializer_linkage == AbiLinkage::kExternal) {
-      definitions_ << "declare void @" << callable.initializer_mangled_name
-                   << "(ptr";
+      definitions_ << "declare " << (callable.uses_error_abi ? "ptr" : "void")
+                   << " @" << callable.initializer_mangled_name << "(ptr";
       for (const AbiParameter& parameter : callable.parameters) {
-        definitions_ << ", " << llvm_type(parameter.type);
+        if (parameter.kind != AbiParameterKind::kResult) {
+          definitions_ << ", " << llvm_type(parameter.type);
+        }
       }
       definitions_ << ")\n";
     }
@@ -1114,13 +1146,20 @@ class ModuleEmitter {
     const SemanticSymbol& field_symbol = semantics_.symbol(field->symbol);
     const std::string name =
         field_initializer_name(class_symbol.name, field_symbol.name);
-    definitions_ << "define internal " << return_type(field->type) << " @"
+    const bool uses_error_abi =
+        std::ranges::any_of(body.blocks, [](const MirBasicBlock& block) {
+          return std::holds_alternative<MirErrorTerminator>(
+              block.terminator.data);
+        });
+    definitions_ << "define internal "
+                 << (uses_error_abi ? "ptr" : return_type(field->type)) << " @"
                  << name
-                 << (is_aggregate(field->type)
+                 << (uses_error_abi || is_aggregate(field->type)
                          ? "(ptr %result, ptr %receiver) {\n"
                          : "(ptr %receiver) {\n")
-                 << BodyEmitter{*this,       body,  file,  field->type,
-                                "%receiver", false, false, nullptr}
+                 << BodyEmitter{*this,       body,        file,
+                                field->type, "%receiver", false,
+                                false,       nullptr,     uses_error_abi}
                         .emit()
                  << "}\n\n";
   }
@@ -1132,11 +1171,13 @@ class ModuleEmitter {
                  << (callable.initializer_linkage == AbiLinkage::kInternal
                          ? "internal "
                          : "")
-                 << "void @" << callable.initializer_mangled_name
-                 << "(ptr %self";
+                 << (callable.uses_error_abi ? "ptr @" : "void @")
+                 << callable.initializer_mangled_name << "(ptr %self";
     for (const AbiParameter& parameter : callable.parameters) {
-      definitions_ << ", " << llvm_type(parameter.type) << " %arg"
-                   << parameter.symbol->value;
+      if (parameter.kind == AbiParameterKind::kExplicit) {
+        definitions_ << ", " << llvm_type(parameter.type) << " %arg"
+                     << parameter.symbol->value;
+      }
     }
     definitions_ << ") {\n"
                  << BodyEmitter{*this,   mir_callable.body,
@@ -1157,14 +1198,16 @@ class ModuleEmitter {
     } else {
       definitions_ << "define ";
     }
-    definitions_ << return_type(callable.return_type) << " @"
-                 << callable.mangled_name << '(';
+    definitions_ << (callable.uses_error_abi
+                         ? "ptr"
+                         : return_type(callable.return_type))
+                 << " @" << callable.mangled_name << '(';
     for (std::size_t index = 0; index < callable.parameters.size(); ++index) {
       if (index != 0) {
         definitions_ << ", ";
       }
       const AbiParameter& parameter = callable.parameters[index];
-      definitions_ << llvm_type(parameter.type) << ' ';
+      definitions_ << parameter_type(parameter) << ' ';
       if (parameter.kind == AbiParameterKind::kResult) {
         definitions_ << "%result";
       } else if (parameter.kind == AbiParameterKind::kReceiver) {
@@ -1206,7 +1249,30 @@ class ModuleEmitter {
     const TypeKind return_kind = semantics_.type(entry->return_type).kind;
     definitions_ << "define i32 @main() {\n"
                  << "entry:\n";
-    if (return_kind == TypeKind::kVoid) {
+    if (entry->uses_error_abi) {
+      if (return_kind != TypeKind::kVoid) {
+        definitions_ << "  %entry.result = alloca i32, align 4\n";
+      }
+      definitions_ << "  %entry.error = call ptr @" << entry->mangled_name
+                   << '(';
+      if (return_kind != TypeKind::kVoid) {
+        definitions_ << "ptr %entry.result";
+      }
+      definitions_ << ")\n"
+                   << "  %entry.failed = icmp ne ptr %entry.error, null\n"
+                   << "  br i1 %entry.failed, label %error, label %success\n"
+                   << "error:\n"
+                   << "  %error.status = call i32 @cloth_rt_report_error(ptr "
+                      "%entry.error)\n"
+                   << "  ret i32 %error.status\n"
+                   << "success:\n";
+      if (return_kind == TypeKind::kVoid) {
+        definitions_ << "  ret i32 0\n";
+      } else {
+        definitions_ << "  %exit_code = load i32, ptr %entry.result, align 4\n"
+                     << "  ret i32 %exit_code\n";
+      }
+    } else if (return_kind == TypeKind::kVoid) {
       definitions_ << "  call void @" << entry->mangled_name << "()\n"
                    << "  ret i32 0\n";
     } else {
@@ -1241,7 +1307,7 @@ BodyEmitter::BodyEmitter(ModuleEmitter& module, const MirBody& body,
                          const AbiFileClass& file, TypeId return_type,
                          std::string receiver, bool is_constructor,
                          bool allocates_constructor,
-                         const AbiCallable* callable)
+                         const AbiCallable* callable, bool uses_error_abi)
     : module_(module),
       body_(body),
       file_(file),
@@ -1250,8 +1316,11 @@ BodyEmitter::BodyEmitter(ModuleEmitter& module, const MirBody& body,
       is_constructor_(is_constructor),
       allocates_constructor_(allocates_constructor),
       callable_(callable),
+      uses_error_abi_(callable != nullptr ? callable->uses_error_abi
+                                          : uses_error_abi),
       values_(body.value_count),
-      value_types_(body.value_count, module.semantics().error_type()) {
+      value_types_(body.value_count, module.semantics().error_type()),
+      call_result_storage_(body.value_count, false) {
   successors_.reserve(body.blocks.size());
   predecessors_.resize(body.blocks.size());
   for (std::size_t index = 0; index < body.blocks.size(); ++index) {
@@ -1317,6 +1386,34 @@ void BodyEmitter::prepare_values() {
             std::holds_alternative<MirPhiInstruction>(instruction.data))
           aggregate_phis_.push_back(*instruction.result);
       }
+      if (const auto* call =
+              std::get_if<MirCallInstruction>(&instruction.data)) {
+        if (call->success_storage) {
+          const std::size_t index = call->success_storage->value;
+          if (index >= values_.size() ||
+              call->callable.value >= module_.semantics().symbols().size()) {
+            module_.report(instruction.range,
+                           "MIR call result storage exceeds its body table");
+          } else {
+            const SemanticSymbol& symbol =
+                module_.semantics().symbol(call->callable);
+            values_[index] = "%call.result." + std::to_string(index);
+            value_types_[index] = symbol.type;
+            call_result_storage_[index] = true;
+          }
+        }
+        if (call->error_result) {
+          const std::size_t index = call->error_result->value;
+          if (index >= values_.size()) {
+            module_.report(instruction.range,
+                           "MIR call error result exceeds its body table");
+          } else {
+            values_[index] = "%v" + std::to_string(index);
+            value_types_[index] =
+                module_.semantics().nullable_error_root_type();
+          }
+        }
+      }
     }
   }
 }
@@ -1379,6 +1476,13 @@ void BodyEmitter::collect_gc_roots() {
         gc_value_root_count_ += module_.abi()
                                     .types.at(instruction.type.value)
                                     .reference_offsets.size();
+      }
+      if (const auto* call = std::get_if<MirCallInstruction>(&instruction.data);
+          call != nullptr && call->error_result &&
+          call->error_result->value < gc_value_roots_.size() &&
+          !gc_value_roots_[call->error_result->value]) {
+        gc_value_roots_[call->error_result->value] = true;
+        ++gc_value_root_count_;
       }
     }
   }
@@ -1457,6 +1561,12 @@ void BodyEmitter::analyze_gc_liveness() {
           instruction.result->value < gc_value_roots_.size() &&
           gc_value_roots_[instruction.result->value]) {
         block_definitions[block_index].values[instruction.result->value] = true;
+      }
+      if (const auto* call = std::get_if<MirCallInstruction>(&instruction.data);
+          call != nullptr && call->error_result &&
+          call->error_result->value < value_count &&
+          gc_value_roots_[call->error_result->value]) {
+        block_definitions[block_index].values[call->error_result->value] = true;
       }
     }
     for (const MirValueId use : terminator_value_uses(block.terminator)) {
@@ -1540,6 +1650,12 @@ void BodyEmitter::analyze_gc_liveness() {
           gc_value_roots_[instruction.result->value]) {
         live.values[instruction.result->value] = false;
       }
+      if (const auto* call = std::get_if<MirCallInstruction>(&instruction.data);
+          call != nullptr && call->error_result &&
+          call->error_result->value < gc_value_roots_.size() &&
+          gc_value_roots_[call->error_result->value]) {
+        live.values[call->error_result->value] = false;
+      }
       if (!std::holds_alternative<MirPhiInstruction>(instruction.data)) {
         for (const MirValueId use : instruction_value_uses(instruction)) {
           add_value(live, use);
@@ -1575,7 +1691,8 @@ bool BodyEmitter::has_struct_receiver() const {
 }
 
 bool BodyEmitter::is_managed_constructor() const {
-  return is_constructor_ && file_.kind == FileTypeKind::kClass;
+  return is_constructor_ && (file_.kind == FileTypeKind::kClass ||
+                             file_.kind == FileTypeKind::kError);
 }
 
 bool BodyEmitter::is_aggregate_parameter(SymbolId symbol) const {
@@ -1721,7 +1838,12 @@ void BodyEmitter::emit_prologue(std::ostringstream& output) {
   }
   for (std::size_t index = 0; index < value_types_.size(); ++index) {
     const MirValueId id{index};
-    if (module_.is_aggregate(value_type(id))) {
+    if (call_result_storage_[index]) {
+      allocate(value_type(id), value(id));
+      if (module_.has_references(value_type(id))) {
+        zero_root(value_type(id), value(id), output);
+      }
+    } else if (module_.is_aggregate(value_type(id))) {
       allocate(value_type(id), value(id));
     } else if (gc_value_roots_[index]) {
       output << "  " << gc_value_address(id) << " = alloca ptr, align "
@@ -1795,6 +1917,12 @@ void BodyEmitter::emit_prologue(std::ostringstream& output) {
       else
         roots.push_back(gc_value_address(id));
     }
+    for (std::size_t index = 0; index < call_result_storage_.size(); ++index) {
+      if (call_result_storage_[index] &&
+          module_.has_references(value_type(MirValueId{index}))) {
+        append(value_type(MirValueId{index}), value(MirValueId{index}));
+      }
+    }
     for (const auto& slot : argument_slots_) append(slot.type, slot.name);
     for (std::size_t index = 0; index < roots.size(); ++index) {
       output << "  %gc.root." << index << " = getelementptr [" << root_count
@@ -1816,15 +1944,20 @@ void BodyEmitter::emit_prologue(std::ostringstream& output) {
 
 void BodyEmitter::emit_gc_value_root(const MirInstruction& instruction,
                                      std::ostringstream& output) const {
-  if (!instruction.result ||
-      instruction.result->value >= gc_value_roots_.size() ||
-      !gc_value_roots_[instruction.result->value] ||
-      module_.is_aggregate(instruction.type)) {
-    return;
+  const auto store = [&](std::optional<MirValueId> result) {
+    if (!result || result->value >= gc_value_roots_.size() ||
+        !gc_value_roots_[result->value] ||
+        module_.is_aggregate(value_type(*result))) {
+      return;
+    }
+    output << "  store ptr " << value(*result) << ", ptr "
+           << gc_value_address(*result) << ", align "
+           << module_.pointer_alignment() << '\n';
+  };
+  store(instruction.result);
+  if (const auto* call = std::get_if<MirCallInstruction>(&instruction.data)) {
+    store(call->error_result);
   }
-  output << "  store ptr " << value(*instruction.result) << ", ptr "
-         << gc_value_address(*instruction.result) << ", align "
-         << module_.pointer_alignment() << '\n';
 }
 
 void BodyEmitter::emit_gc_block_entry_clears(std::size_t block,
@@ -1891,6 +2024,11 @@ void BodyEmitter::emit_gc_dead_roots(std::size_t block,
   }
   if (instruction.result) {
     request_value_clear(*instruction.result);
+  }
+  if (const auto* call = std::get_if<MirCallInstruction>(&instruction.data)) {
+    if (call->error_result) {
+      request_value_clear(*call->error_result);
+    }
   }
 
   for (std::size_t index = 0; index < clear_values.size(); ++index) {
@@ -2042,12 +2180,33 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* call =
                  std::get_if<MirCallInstruction>(&instruction.data)) {
     emit_call(instruction, *call, output);
+  } else if (const auto* load =
+                 std::get_if<MirLoadCallResultInstruction>(&instruction.data)) {
+    emit_load_call_result(instruction, *load, output);
   } else if (std::holds_alternative<MirInitializeFieldsInstruction>(
                  instruction.data)) {
-    emit_field_initializers(output);
+    if (!std::get<MirInitializeFieldsInstruction>(instruction.data)
+             .lowered_inline) {
+      emit_field_initializers(output);
+    }
+  } else if (std::holds_alternative<MirPoisonInstruction>(instruction.data)) {
+    if (instruction.result) {
+      values_.at(instruction.result->value) = "poison";
+    }
   } else if (std::holds_alternative<MirInvalidInstruction>(instruction.data)) {
     module_.report(instruction.range, "invalid MIR reached LLVM lowering");
   }
+}
+
+void BodyEmitter::emit_load_call_result(
+    const MirInstruction& instruction, const MirLoadCallResultInstruction& load,
+    std::ostringstream& output) {
+  if (load.storage.value >= call_result_storage_.size() ||
+      !call_result_storage_[load.storage.value]) {
+    module_.report(instruction.range, "call result load has no result storage");
+    return;
+  }
+  load_value(instruction, value(load.storage), output);
 }
 
 void BodyEmitter::emit_scalar_constant(
@@ -2953,10 +3112,20 @@ void BodyEmitter::emit_type_condition(std::string_view result,
     output << "  " << raw << " = call i8 @cloth_rt_object_is_kind(ptr "
            << value(source) << ", i64 "
            << static_cast<std::uint64_t>(ClothHeapObjectKind::kString) << ")\n";
-  } else if (type.kind == TypeKind::kFileClass && type.file) {
+  } else if ((type.kind == TypeKind::kFileClass ||
+              type.kind == TypeKind::kErrorClass) &&
+             type.file) {
     output << "  " << raw << " = call i8 @cloth_rt_object_is_type(ptr "
            << value(source) << ", ptr "
            << module_.type_descriptor_global(*type.file) << ")\n";
+  } else if (target == module_.semantics().error_root_type() ||
+             target == module_.semantics().division_by_zero_type()) {
+    output << "  " << raw << " = call i8 @cloth_rt_object_is_type(ptr "
+           << value(source) << ", ptr "
+           << (target == module_.semantics().error_root_type()
+                   ? "@cloth_rt_error_type"
+                   : "@cloth_rt_division_by_zero_type")
+           << ")\n";
   } else if (type.kind == TypeKind::kInterface && type.file) {
     const FileSemantics& interface_file = module_.semantics().file(*type.file);
     if (!interface_file.interface_id) {
@@ -3065,6 +3234,53 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     }
     return;
   }
+  if (!symbol.file && symbol.kind == SymbolKind::kConstructor) {
+    if (symbol.name == "Error" && call.kind == MirCallKind::kBaseConstructor &&
+        !instruction.result && !call.error_result &&
+        call.arguments.size() <= 1) {
+      const auto field = std::ranges::find_if(
+          module_.semantics().symbols(), [](const SemanticSymbol& candidate) {
+            return candidate.kind == SymbolKind::kField && !candidate.file &&
+                   candidate.name == "Message";
+          });
+      const std::size_t field_index = static_cast<std::size_t>(
+          field - module_.semantics().symbols().begin());
+      const AbiFieldLayout* layout =
+          field == module_.semantics().symbols().end()
+              ? nullptr
+              : module_.find_field(SymbolId{field_index});
+      if (layout == nullptr) {
+        module_.report(instruction.range,
+                       "compiler Error.Message has no ABI layout");
+        return;
+      }
+      std::string message;
+      if (call.arguments.empty()) {
+        const std::string bytes = module_.add_string_literal("");
+        message = next_address();
+        output << "  " << message << " = call ptr @cloth_rt_string_literal(ptr "
+               << bytes << ", i64 0)\n";
+      } else {
+        message = value(call.arguments.front());
+      }
+      const std::string address = next_address();
+      output << "  " << address << " = getelementptr i8, ptr " << receiver_
+             << ", i64 " << layout->offset << "\n"
+             << "  store ptr " << message << ", ptr " << address << ", align "
+             << module_.pointer_alignment() << "\n";
+      return;
+    }
+    if (symbol.name == "DivisionByZero" &&
+        call.kind == MirCallKind::kConstructor && instruction.result &&
+        !call.error_result && call.arguments.empty()) {
+      output << "  " << result_name(instruction)
+             << " = call ptr @cloth_rt_make_division_by_zero()\n";
+      return;
+    }
+    module_.report(instruction.range,
+                   "invalid compiler error constructor reached LLVM lowering");
+    return;
+  }
   const AbiCallable* callable = module_.find_callable(call.callable);
   if (callable == nullptr) {
     module_.report(instruction.range, "call has no ABI declaration");
@@ -3093,10 +3309,15 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
                      "invalid base constructor call reached LLVM lowering");
       return;
     }
-    output << "  call void @" << callable->initializer_mangled_name << "(ptr "
-           << receiver_;
+    if (call.error_result) {
+      output << "  " << value(*call.error_result) << " = ";
+    } else {
+      output << "  ";
+    }
+    output << "call " << (callable->uses_error_abi ? "ptr" : "void") << " @"
+           << callable->initializer_mangled_name << "(ptr " << receiver_;
     for (std::size_t index = 0; index < call.arguments.size(); ++index) {
-      const TypeId type = callable->parameters.at(index).type;
+      const TypeId type = symbol.parameter_types.at(index);
       output << ", " << module_.llvm_type(type) << ' ' << arguments[index];
     }
     output << ")\n";
@@ -3157,15 +3378,24 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
            << *call.interface_slot << ")\n";
     target = function;
   }
-  if (instruction.result && callable->return_mode != AbiReturnMode::kIndirect) {
+  if (call.error_result) {
+    output << "  " << value(*call.error_result) << " = ";
+  } else if (instruction.result &&
+             callable->return_mode != AbiReturnMode::kIndirect) {
     output << "  " << result_name(instruction) << " = ";
   } else {
     output << "  ";
   }
-  output << "call " << module_.return_type(callable->return_type) << ' '
-         << target << '(';
+  output << "call "
+         << (callable->uses_error_abi
+                 ? "ptr"
+                 : module_.return_type(callable->return_type))
+         << ' ' << target << '(';
   bool needs_comma = false;
-  if (callable->return_mode == AbiReturnMode::kIndirect) {
+  if (call.success_storage) {
+    output << "ptr " << value(*call.success_storage);
+    needs_comma = true;
+  } else if (callable->return_mode == AbiReturnMode::kIndirect) {
     output << "ptr " << result_name(instruction);
     needs_comma = true;
   }
@@ -3316,15 +3546,31 @@ void BodyEmitter::emit_terminator(const MirTerminator& terminator,
     }
   } else if (std::holds_alternative<MirTrapTerminator>(terminator.data)) {
     output << "  call void @llvm.trap()\n  unreachable\n";
-  } else if (const auto* return_terminator =
-                 std::get_if<MirReturnTerminator>(&terminator.data)) {
-    if (return_terminator->value && module_.is_aggregate(return_type_))
-      copy_value(return_type_, "%result", value(*return_terminator->value),
-                 output);
+  } else if (const auto* error =
+                 std::get_if<MirErrorTerminator>(&terminator.data)) {
     if (is_reachable) {
       emit_gc_epilogue(output);
     }
-    if (is_constructor_) {
+    output << "  ret ptr " << value(error->error) << '\n';
+  } else if (const auto* return_terminator =
+                 std::get_if<MirReturnTerminator>(&terminator.data)) {
+    if (uses_error_abi_) {
+      if (is_constructor_ && allocates_constructor_) {
+        output << "  store ptr %self, ptr %result, align "
+               << module_.pointer_alignment() << '\n';
+      } else if (return_terminator->value) {
+        store_value(return_type_, "%result", *return_terminator->value, output);
+      }
+    } else if (return_terminator->value && module_.is_aggregate(return_type_)) {
+      copy_value(return_type_, "%result", value(*return_terminator->value),
+                 output);
+    }
+    if (is_reachable) {
+      emit_gc_epilogue(output);
+    }
+    if (uses_error_abi_) {
+      output << "  ret ptr null\n";
+    } else if (is_constructor_) {
       output << (allocates_constructor_ ? "  ret ptr %self\n" : "  ret void\n");
     } else if (module_.is_aggregate(return_type_)) {
       output << "  ret void\n";
@@ -3412,6 +3658,13 @@ std::size_t BodyEmitter::gc_root_count() const noexcept {
                  .reference_offsets.size();
   for (const auto& slot : argument_slots_)
     count += module_.abi().types.at(slot.type.value).reference_offsets.size();
+  for (std::size_t index = 0; index < call_result_storage_.size(); ++index) {
+    if (call_result_storage_[index]) {
+      count += module_.abi()
+                   .types.at(value_type(MirValueId{index}).value)
+                   .reference_offsets.size();
+    }
+  }
   if (has_struct_receiver())
     count += module_.abi()
                  .types.at(module_.semantics().file(file_.file).type.value)

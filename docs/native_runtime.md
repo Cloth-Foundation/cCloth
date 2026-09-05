@@ -15,7 +15,9 @@ those parent links. Stage 16.5 adds immutable virtual-function tables to
 file-class descriptors; generated code performs the dispatch directly. Stage
 18 adds sorted interface dispatch tables and checked interface lookup without
 changing the managed-reference representation. Stage 29.2 adds the checked
-integer-arithmetic guard and advances the runtime ABI to 3.
+integer-arithmetic guard and advances the runtime ABI to 3. Stage 34.3 adds
+managed error descriptors, `DivisionByZero` construction, and terminal error
+reporting under runtime ABI 4.
 
 ## Source contract
 
@@ -43,8 +45,9 @@ static func Main(): int32 { ... }
 
 Capitalization makes `Main` public. It takes no explicit parameters. Omitting
 the return type or explicitly returning `void` produces process status zero;
-returning `int32` supplies the process status. An LLVM `main` adapter invokes
-the receiver-free Cloth function directly.
+returning `int32` supplies the process status. A `Main` that declares `throws`
+uses the error ABI; its LLVM adapter reports a non-null error and returns the
+reporter's nonzero status. Successful completion retains the ordinary status.
 
 ## Runtime ABI
 
@@ -77,6 +80,8 @@ cloth_rt_require_receiver(reference)
 cloth_rt_require_non_null(reference)
 cloth_rt_require_numeric_conversion(valid)
 cloth_rt_require_integer_arithmetic(valid, reason)
+cloth_rt_make_division_by_zero() -> error
+cloth_rt_report_error(error) -> int32
 cloth_rt_print(string)
 cloth_rt_print_{i8,i16,i32,i64}(signed integer)
 cloth_rt_print_{u8,u16,u32,u64}(unsigned integer)
@@ -98,8 +103,11 @@ count. It also records a sorted interface table whose entries contain an
 interface identity, function table, and contract slot count. Allocation rejects
 inconsistent tables, duplicate or unsorted identities, null function slots,
 and derived descriptors that lose inherited interface metadata. Runtime
-strings and arrays begin with the same managed header while remaining opaque to
-generated LLVM IR. A literal string borrows
+Error descriptors use the same managed header, layout checks, parent links,
+reference maps, and collector traversal as file classes. The runtime owns the
+root `Error` and derived `DivisionByZero` descriptors; `Error.Message` is a
+managed string reference. Runtime strings and arrays begin with the same
+managed header while remaining opaque to generated LLVM IR. A literal string borrows
 immutable program-lifetime bytes. A concatenated string owns its separately
 allocated bytes. Both cache byte and Unicode scalar lengths; collection reclaims
 owned payloads together with their managed headers.
@@ -148,14 +156,20 @@ predicate is false. The runtime does not perform the conversion or define
 wrapping behavior; source and target types remain explicit in MIR.
 
 `cloth_rt_require_integer_arithmetic` returns without side effects for a true
-predicate. A false predicate terminates with `integer arithmetic overflow`,
-`integer division by zero`, or `integer remainder by zero` according to the
-compiler-owned reason code. Generated code performs the fixed-width operation;
-the helper centralizes deterministic failure reporting rather than recomputing
-arithmetic in C++.
+predicate. Generated code still uses its overflow reason before a fixed-width
+operation that cannot produce a valid result. The older division/remainder
+reason values remain runtime-ABI inputs, but Stage 34.3 lowering routes an
+executed zero divisor through `cloth_rt_make_division_by_zero` and the explicit
+error channel instead.
 
-Runtime contract violations write a concise message to standard error and
-terminate the process. There is no recovery or exception ABI yet.
+`cloth_rt_report_error` validates the managed error, writes its stable type and
+optional UTF-8 `Message` to standard error, and returns a nonzero status. It is
+called only by the generated native entry adapter. Cloth functions propagate
+the same rooted error reference without invoking the reporter.
+
+Runtime contract violations outside the typed-error model write a concise
+message to standard error and terminate the process. Typed errors use no host
+exception or unwinding ABI; Stage 34 intentionally adds no local recovery.
 
 ## Native toolchain pipeline
 
@@ -181,7 +195,8 @@ LLVM IR emission but does not yet have a WebAssembly runtime or linker path.
 Stage 15 completes the first universal managed-reference contract. Primitive
 boxing, reified array casts, string indexing, slicing, iteration, formatting,
 normalization, interning, root-slot reuse,
-optimization levels, debug information, command-line arguments, exceptions, and platform
+optimization levels, debug information, command-line arguments, local error
+handling, foreign exceptions, and platform
 packaging remain future work. These features should extend the runtime and
 toolchain boundaries without changing existing source contracts.
 

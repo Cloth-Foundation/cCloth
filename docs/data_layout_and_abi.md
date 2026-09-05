@@ -200,7 +200,7 @@ convention so LLVM and non-Cloth tooling have a stable interoperability point.
 
 ## Mangling
 
-ABI revision 4 uses `_C4` followed by hexadecimal canonical symbol identity.
+ABI revision 5 uses `_C5` followed by hexadecimal canonical symbol identity.
 Identity includes the exact manifest package version (or a distinct standalone
 owner), source namespace, file kind/stem, member kind/name, and overload parameter
 types. Return types are omitted because Cloth does not overload on a return
@@ -216,12 +216,28 @@ The ABI verifier reconstructs canonical layouts and signatures from MIR and the
 semantic model, checks target validity and field bounds, and rejects duplicate
 mangled names.
 
+## Typed error calling convention
+
+A callable whose verified declaration or inherited slot may throw returns a
+nullable `Error` reference physically. A non-void logical result is written to
+a leading compiler-owned result pointer only on success. Throwing `void`
+returns only the error reference. Nonthrowing callables retain direct, void, or
+aggregate-indirect returns as appropriate.
+
+Overrides and interface implementations retain the throwing physical ABI when
+their selected contract may throw, even when the implementation narrows its
+semantic effect set to empty. ABI verification compares declarations, slots,
+constructor initializers, parameters, and MIR calls before LLVM emission. The
+complete persistent encoding is specified by
+[artifact format 5](artifact_schema_v5.md).
+
 ## LLVM boundary
 
 The Stage 5 backend translates this model to an LLVM data-layout string, opaque
 pointer types, function types, and linkage. It does not recompute Cloth field
-offsets or symbol names independently. Runtime allocation, collector
-safepoints, exception behavior, and platform object-file emission remain
-outside the Stage 4 contract. Stage 6 supplies the initial runtime and native
+offsets or symbol names independently. Typed errors use explicit return and
+result channels rather than LLVM exception handling. Runtime allocation,
+collector safepoints, and platform object-file emission remain outside the
+layout contract. Stage 6 supplies the initial runtime and native
 object pipeline. See [llvm_backend.md](llvm_backend.md) and
 [native_runtime.md](native_runtime.md).

@@ -37,12 +37,14 @@ class BodyBuilder {
  public:
   BodyBuilder(const HirModule& hir, const SemanticModel& semantics, FileId file,
               SourceRange range, TypeId return_type,
-              bool suppress_self_virtual_dispatch)
+              bool suppress_self_virtual_dispatch,
+              bool inline_field_initializers)
       : hir_(hir),
         semantics_(semantics),
         file_(file),
         return_type_(return_type),
         suppress_self_virtual_dispatch_(suppress_self_virtual_dispatch),
+        inline_field_initializers_(inline_field_initializers),
         body_{range, MirBlockId{0}, {}, 0} {
     body_.entry = add_block(true);
     current_block_ = body_.entry;
@@ -89,14 +91,17 @@ class BodyBuilder {
         }
         arguments.push_back(value);
       }
-      emit_void(initializer->range,
-                MirCallInstruction{MirCallKind::kBaseConstructor,
-                                   MirDispatchKind::kDirect, true,
-                                   initializer->constructor, std::nullopt,
-                                   std::move(arguments)});
+      static_cast<void>(emit_call_instruction(
+          semantics_.void_type(), initializer->range,
+          MirCallInstruction{
+              MirCallKind::kBaseConstructor, MirDispatchKind::kDirect, true,
+              initializer->constructor, std::nullopt, std::move(arguments)}));
     }
     emit_void(hir_.storage.block(block).range,
-              MirInitializeFieldsInstruction{});
+              MirInitializeFieldsInstruction{inline_field_initializers_});
+    if (inline_field_initializers_) {
+      lower_field_initializers();
+    }
     return lower_callable(block);
   }
 
@@ -171,6 +176,10 @@ class BodyBuilder {
     return emit_value(semantics_.error_type(), range, MirInvalidInstruction{});
   }
 
+  MirValueId poison_value(TypeId type, SourceRange range) {
+    return emit_value(type, range, MirPoisonInstruction{});
+  }
+
   MirValueId require_value(std::optional<MirValueId> value, TypeId,
                            SourceRange range) {
     if (value) {
@@ -188,6 +197,9 @@ class BodyBuilder {
     if (actual == expected || actual == semantics_.error_type() ||
         expected == semantics_.error_type()) {
       return value;
+    }
+    if (actual == semantics_.bottom_type()) {
+      return poison_value(expected, range);
     }
     const SemanticType& target = semantics_.type(expected);
     if (can_widen_numeric(semantics_.type(actual).kind, target.kind)) {
@@ -231,8 +243,8 @@ class BodyBuilder {
   bool is_non_null_reference(TypeId type) const {
     const TypeKind kind = semantics_.type(type).kind;
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
-           kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
-           kind == TypeKind::kArray;
+           kind == TypeKind::kErrorClass || kind == TypeKind::kFileClass ||
+           kind == TypeKind::kInterface || kind == TypeKind::kArray;
   }
 
   bool can_widen_reference(TypeId source, TypeId target) const {
@@ -245,6 +257,7 @@ class BodyBuilder {
     const SemanticType& source_type = semantics_.type(source);
     const SemanticType& target_type = semantics_.type(target);
     if ((source_type.kind == TypeKind::kFileClass ||
+         source_type.kind == TypeKind::kErrorClass ||
          source_type.kind == TypeKind::kInterface) &&
         source_type.file && target_type.kind == TypeKind::kInterface &&
         target_type.file) {
@@ -253,8 +266,17 @@ class BodyBuilder {
       return std::ranges::find(interfaces, *target_type.file) !=
              interfaces.end();
     }
-    if (source_type.kind != TypeKind::kFileClass || !source_type.file ||
-        target_type.kind != TypeKind::kFileClass || !target_type.file) {
+    if ((source_type.kind != TypeKind::kFileClass &&
+         source_type.kind != TypeKind::kErrorClass) ||
+        (target_type.kind != TypeKind::kFileClass &&
+         target_type.kind != TypeKind::kErrorClass)) {
+      return false;
+    }
+    if (target == semantics_.error_root_type() &&
+        source_type.kind == TypeKind::kErrorClass) {
+      return true;
+    }
+    if (!source_type.file || !target_type.file) {
       return false;
     }
     std::optional<FileId> current =
@@ -293,6 +315,34 @@ class BodyBuilder {
       const HirStatement& statement = hir_.storage.statement(statement_id);
       ensure_current(statement.range);
       lower_statement(statement);
+    }
+  }
+
+  void lower_field_initializers() {
+    const HirFileClass& file = hir_.files.at(file_.value);
+    for (const HirField& field : file.fields) {
+      const SemanticSymbol& symbol = semantics_.symbol(field.symbol);
+      if (symbol.is_static || !field.initializer) {
+        continue;
+      }
+      const HirExpression& initializer =
+          hir_.storage.expression(*field.initializer);
+      MirValueId value = require_value(lower_expression(*field.initializer),
+                                       initializer.type, initializer.range);
+      value = coerce(value, symbol.type, initializer.range);
+      if (semantics_.file(file_).kind == FileTypeKind::kStruct) {
+        emit_void(initializer.range,
+                  MirStoreStorageInstruction{
+                      MirStoragePath{semantics_.file(file_).self_symbol,
+                                     std::nullopt,
+                                     std::nullopt,
+                                     {field.symbol}},
+                      value});
+      } else {
+        const MirValueId self = emit_self(initializer.range);
+        emit_void(initializer.range,
+                  MirStoreMemberInstruction{self, field.symbol, value});
+      }
     }
   }
 
@@ -620,6 +670,15 @@ class BodyBuilder {
         std::holds_alternative<HirSuperExpression>(expression.data)) {
       return invalid_value(expression.range);
     }
+    if (const auto* thrown =
+            std::get_if<HirThrowExpression>(&expression.data)) {
+      const HirExpression& operand = hir_.storage.expression(thrown->operand);
+      MirValueId error = require_value(lower_expression(thrown->operand),
+                                       operand.type, operand.range);
+      error = coerce(error, semantics_.error_root_type(), operand.range);
+      terminate(MirErrorTerminator{error}, expression.range);
+      return poison_value(semantics_.bottom_type(), expression.range);
+    }
     if (const auto* unary = std::get_if<HirUnaryExpression>(&expression.data)) {
       if (unary->operation == TokenKind::kMinus) {
         const std::optional<NumericTypeProperties> properties =
@@ -676,6 +735,10 @@ class BodyBuilder {
           left = coerce(left, *common, expression.range);
           right = coerce(right, *common, expression.range);
         }
+      }
+      if (binary->may_divide_by_zero) {
+        return lower_checked_division(binary->operation, expression.type,
+                                      expression.range, left, right);
       }
       return emit_value(expression.type, expression.range,
                         MirBinaryInstruction{left, binary->operation, right});
@@ -1072,8 +1135,15 @@ class BodyBuilder {
           *operation != TokenKind::kShiftRight) {
         value = coerce(value, location.type, value_syntax.range);
       }
-      value = emit_value(location.type, expression.range,
-                         MirBinaryInstruction{current, *operation, value});
+      if (assignment.may_divide_by_zero) {
+        value = require_value(
+            lower_checked_division(*operation, location.type, expression.range,
+                                   current, value),
+            location.type, expression.range);
+      } else {
+        value = emit_value(location.type, expression.range,
+                           MirBinaryInstruction{current, *operation, value});
+      }
     }
     store_location(location, value, expression.range);
     return value;
@@ -1368,12 +1438,102 @@ class BodyBuilder {
                                    call.interface_dispatch,
                                    interface_slot,
                                    call.struct_receiver};
-    if (expression.type == semantics_.void_type()) {
-      emit_void(expression.range, std::move(instruction));
+    return emit_call_instruction(expression.type, expression.range,
+                                 std::move(instruction));
+  }
+
+  std::optional<MirValueId> emit_call_instruction(
+      TypeId result_type, SourceRange range, MirCallInstruction instruction) {
+    if (!callable_uses_error_abi(instruction.callable, semantics_)) {
+      if (result_type == semantics_.void_type()) {
+        emit_void(range, std::move(instruction));
+        return std::nullopt;
+      }
+      return emit_value(result_type, range, std::move(instruction));
+    }
+
+    ensure_current(range);
+    if (result_type != semantics_.void_type()) {
+      instruction.success_storage = MirValueId{value_types_.size()};
+      value_types_.push_back(result_type);
+    }
+    instruction.error_result = MirValueId{value_types_.size()};
+    value_types_.push_back(semantics_.nullable_error_root_type());
+    const std::optional<MirValueId> success_storage =
+        instruction.success_storage;
+    const MirValueId error = *instruction.error_result;
+    body_.blocks[current_block_->value].instructions.push_back(MirInstruction{
+        std::nullopt, semantics_.void_type(), range, std::move(instruction)});
+
+    const MirValueId failed = emit_value(semantics_.bool_type(), range,
+                                         MirIsNonNullInstruction{error});
+    const bool reachable = current_is_reachable();
+    const MirBlockId error_block = add_block(reachable);
+    const MirBlockId success_block = add_block(reachable);
+    terminate(MirBranchTerminator{failed, error_block, success_block}, range);
+
+    current_block_ = error_block;
+    const MirValueId nonnull_error = emit_value(
+        semantics_.error_root_type(), range, MirNullAssertInstruction{error});
+    terminate(MirErrorTerminator{nonnull_error}, range);
+    current_block_ = success_block;
+    if (!success_storage) {
       return std::nullopt;
     }
-    return emit_value(expression.type, expression.range,
-                      std::move(instruction));
+    return emit_value(result_type, range,
+                      MirLoadCallResultInstruction{*success_storage});
+  }
+
+  std::optional<MirValueId> lower_checked_division(TokenKind operation,
+                                                   TypeId result_type,
+                                                   SourceRange range,
+                                                   MirValueId left,
+                                                   MirValueId right) {
+    const TypeId operand_type = value_type(right);
+    const MirValueId zero = emit_value(
+        operand_type, range,
+        MirScalarConstantInstruction{ScalarConstant{operand_type, 0}});
+    const MirValueId nonzero =
+        emit_value(semantics_.bool_type(), range,
+                   MirBinaryInstruction{right, TokenKind::kBangEqual, zero});
+    const bool reachable = current_is_reachable();
+    const MirBlockId success_block = add_block(reachable);
+    const MirBlockId error_block = add_block(reachable);
+    terminate(MirBranchTerminator{nonzero, success_block, error_block}, range);
+
+    current_block_ = error_block;
+    const std::optional<SymbolId> constructor = division_by_zero_constructor();
+    if (!constructor) {
+      return invalid_value(range);
+    }
+    const MirValueId error = require_value(
+        emit_call_instruction(semantics_.division_by_zero_type(), range,
+                              MirCallInstruction{MirCallKind::kConstructor,
+                                                 MirDispatchKind::kDirect,
+                                                 false,
+                                                 *constructor,
+                                                 std::nullopt,
+                                                 {}}),
+        semantics_.division_by_zero_type(), range);
+    terminate(
+        MirErrorTerminator{coerce(error, semantics_.error_root_type(), range)},
+        range);
+
+    current_block_ = success_block;
+    return emit_value(result_type, range,
+                      MirBinaryInstruction{left, operation, right});
+  }
+
+  std::optional<SymbolId> division_by_zero_constructor() const {
+    for (std::size_t index = 0; index < semantics_.symbols().size(); ++index) {
+      const SemanticSymbol& symbol = semantics_.symbols()[index];
+      if (symbol.kind == SymbolKind::kConstructor && !symbol.file &&
+          symbol.type == semantics_.division_by_zero_type() &&
+          symbol.parameter_types.empty()) {
+        return SymbolId{index};
+      }
+    }
+    return std::nullopt;
   }
 
   std::optional<MirValueId> lower_short_circuit(
@@ -1467,6 +1627,7 @@ class BodyBuilder {
   FileId file_;
   TypeId return_type_;
   bool suppress_self_virtual_dispatch_;
+  bool inline_field_initializers_;
   MirBody body_;
   std::vector<TypeId> value_types_;
   std::vector<bool> terminated_;
@@ -1481,9 +1642,14 @@ MirCallable lower_callable(const HirModule& hir, const SemanticModel& semantics,
   const TypeId return_type = symbol.kind == SymbolKind::kConstructor
                                  ? semantics.void_type()
                                  : symbol.type;
-  BodyBuilder builder{hir,         semantics,
-                      file,        range,
-                      return_type, symbol.kind == SymbolKind::kConstructor};
+  BodyBuilder builder{hir,
+                      semantics,
+                      file,
+                      range,
+                      return_type,
+                      symbol.kind == SymbolKind::kConstructor,
+                      symbol.kind == SymbolKind::kConstructor &&
+                          callable_uses_error_abi(callable.symbol, semantics)};
   MirBody body =
       symbol.is_abstract ? builder.lower_abstract()
       : symbol.kind == SymbolKind::kConstructor
@@ -1533,7 +1699,8 @@ MirModule lower_to_mir(const HirModule& hir, const SemanticModel& semantics) {
                         hir_file.file,
                         range,
                         semantics.symbol(hir_field.symbol).type,
-                        true}
+                        true,
+                        false}
                 .lower_initializer(*hir_field.initializer,
                                    semantics.symbol(hir_field.symbol).type);
       }

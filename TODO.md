@@ -61,7 +61,8 @@ and 31.3 CFG/integration checkpoints are also complete. Stage 31 is complete
 following its separately authorized 31.4 exit audit on 2026-09-04. Stage 32 is
 complete following its separately authorized 32.4 exit audit on 2026-09-04.
 Stage 33 is complete following its separately authorized 33.4 numeric-notation
-exit audit on 2026-09-04.
+exit audit on 2026-09-04. Stage 34 is complete following its separately
+authorized 34.4 typed-error exit audit on 2026-09-05.
 
 ## Scheduled work
 
@@ -685,7 +686,87 @@ class override validation. Existing ABI and artifact versions are unchanged.
   100 local Markdown target checks, and repository hygiene gates pass.
   Compatibility versions remain unchanged.
 
-  **Stage 33 is complete.** No later stage is active.
+  **Stage 33 is complete.** Stage 34 is tracked below.
+
+### Stage 34: Typed errors
+
+- [x] **34.1 — Contract.** Approve
+  [typed errors](docs/proposals/stage_34_typed_errors.md) covering file-wide
+  error declarations, the compiler-known `Error` root and `DivisionByZero`,
+  throw expressions, typed public throws sets, private inference, automatic
+  propagation, constructor failure, inheritance/interface rules, portable ABI,
+  compatibility, diagnostics, verification, and non-goals.
+
+  Approved 2026-09-04. Calls retain ordinary syntax; Cloth adds no `try`,
+  `catch`, `recover`, or `finally`. Public functions and constructors explicitly
+  declare errors after the return type or parameter list, while private
+  lowercase callables may infer their minimal transitive set. `throw` is an
+  expression with an internal bottom type, so `T? ?? throw E()` produces
+  non-null `T`. The planned implementation targets artifact format 5, compiler
+  ABI 5, and runtime ABI 4 with an explicit portable result/error channel.
+  Active compatibility constants and production behavior remain unchanged in
+  this documentation-only checkpoint. All 101 local Markdown target checks and
+  repository whitespace gates pass.
+
+- [x] **34.2 — Frontend and interfaces.** Implement `error`, `throw`, and
+  `throws`; error declarations and inheritance; parser/AST; semantic error-set
+  validation and deterministic private fixed-point inference; bottom/null flow;
+  constructor, override, interface, imported-call, and `Main` contracts; HIR;
+  verification; diagnostics; and focused frontend tests.
+
+  Completed 2026-09-05. The compiler recognizes and verifies typed errors
+  through HIR, including class-like error inheritance, the compiler-provided
+  `Error` and `DivisionByZero` types, explicit public throws sets, deterministic
+  private inference, constructor/field/call effects, bottom-aware flow, and
+  narrowing override/interface contracts. Native typed-error compilation stops
+  at a targeted gate; imported typed-error metadata remains coupled to the
+  34.3 artifact transition. Artifact/compiler/runtime versions remain 4/4/3,
+  and Shuttle fixtures, editor support, and user documentation are unchanged.
+  The focused target passes all 15 cases; development and ASan/UBSan each pass
+  all 233 CTests.
+
+- [x] **34.3 — Lowering and integration.** Implement verified MIR error edges,
+  the result/error calling convention, GC-safe propagation and failed-
+  construction cleanup, compiler-known descriptors, terminal reporting,
+  integer division/remainder migration, artifact/compiler/runtime compatibility
+  transitions, x86-64/wasm32 LLVM and native behavior, source-free packages,
+  Shuttle determinism and preservation, editor support, and user documentation.
+
+  Completed 2026-09-05. MIR represents error completion and throwing-call
+  success/error edges; ABI 5 returns nullable errors and writes non-void results
+  through result pointers. LLVM propagation retains GC roots, failed
+  construction never publishes an object, and `Main` reports uncaught errors.
+  Runtime ABI 4 provides compiler-known error descriptors and reporting;
+  integer division and remainder by zero now produce `DivisionByZero`.
+  Artifact format 5 preserves error kinds, bases, throws sets, and physical
+  signatures for source-free consumers. Native x86-64, verified x86-64/wasm32,
+  deterministic Shuttle, editor, and user-documentation coverage pass. Both
+  compiler configurations pass all 241 CTests; the focused target passes all
+  15 cases, Shuttle passes 32 protocol/toolchain and 29 native cases, all 43
+  ordinary Rust tests, the Rust 1.85.0 check, warning-denied Clippy, all 12
+  relevant editor checks, local Markdown targets, and repository whitespace
+  checks pass.
+
+- [x] **34.4 — Exit audit.** Complete error declaration, throw-expression,
+  effect-set, constructor, override/interface, malformed-state, runtime output,
+  division-by-zero, cross-target, package-determinism, and every compiler,
+  Rust/shared Shuttle, editor, formatting, documentation, link, and repository
+  quality matrix.
+
+  Completed 2026-09-05. The audit expanded the focused target to 18 cases and
+  closed imports, constructor field-flow, forged HIR/MIR/ABI, runtime error
+  identity/tracing/rejection, every supported throwing success shape, failed
+  construction, x86-64/wasm32 LLVM before and after O2, exact native behavior,
+  and typed-error-specific Shuttle invalidation and failed-output preservation.
+  It found and fixed user error imports being mistaken for core-type conflicts
+  and a constructor-analysis crash on `throw`. Both compiler configurations
+  pass all 249 CTests, including 32 public Shuttle toolchain cases and 30 native
+  cases. All 43 ordinary Rust tests, Rust 1.85 checking, warning-denied Clippy,
+  Rust/C++ formatting, 12 editor checks per compiler, local Markdown targets,
+  and repository whitespace gates pass. Compatibility remains 5/5/4.
+
+  **Stage 34 is complete.** Further work requires a separately proposed and
+  approved stage.
 
 ## Unscheduled backlog
 
@@ -736,14 +817,6 @@ active stage without first updating `ROADMAP.md`.
   lexer, scalar decoding, and emission. Current literal/artifact handling is
   byte-oriented despite `char` having 32-bit storage; Stage 28 preserves that
   boundary rather than implicitly expanding the character language.
-- Design recoverable exceptions, including syntax, control flow, unwinding,
-  runtime representation, and a stable exception ABI. Preserve the proposed
-  file-wide nominal form `error { Name() {} }`, constructed like a class with
-  implicit inheritance from a universal `Error` type. Decide whether that base
-  is compiler-provided or standard-library-owned. When the exception model is
-  implemented, migrate division-by-zero failure to its approved constructed
-  error; until then Stage 29's deterministic terminal failure remains normative.
-
 ### Optimization
 
 - Add ability to make full qualified name calls.

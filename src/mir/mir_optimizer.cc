@@ -673,6 +673,9 @@ void remap_instruction(MirInstruction& instruction,
     for (MirValueId& argument : call->arguments) {
       remap_value(argument, aliases, values);
     }
+  } else if (auto* load =
+                 std::get_if<MirLoadCallResultInstruction>(&instruction.data)) {
+    remap_value(load->storage, aliases, values);
   } else if (auto* phi = std::get_if<MirPhiInstruction>(&instruction.data)) {
     for (MirPhiIncoming& incoming : phi->incoming) {
       remap_value(incoming.value, aliases, values);
@@ -711,6 +714,8 @@ void remap_terminator(MirTerminator& terminator,
   } else if (auto* returned =
                  std::get_if<MirReturnTerminator>(&terminator.data)) {
     remap_optional_value(returned->value, aliases, values);
+  } else if (auto* error = std::get_if<MirErrorTerminator>(&terminator.data)) {
+    remap_value(error->error, aliases, values);
   }
 }
 
@@ -801,12 +806,18 @@ void compact_body(MirBody& body) {
     }
     for (const MirInstruction& instruction :
          body.blocks[block_index].instructions) {
-      if (!instruction.result ||
-          instruction.result->value >= value_ids.size() ||
-          aliases[instruction.result->value]) {
-        continue;
+      const auto add = [&](std::optional<MirValueId> value) {
+        if (value && value->value < value_ids.size() &&
+            !aliases[value->value]) {
+          value_ids[value->value] = MirValueId{value_count++};
+        }
+      };
+      add(instruction.result);
+      if (const auto* call =
+              std::get_if<MirCallInstruction>(&instruction.data)) {
+        add(call->success_storage);
+        add(call->error_result);
       }
-      value_ids[instruction.result->value] = MirValueId{value_count++};
     }
   }
 
@@ -839,6 +850,16 @@ void compact_body(MirBody& body) {
       if (instruction.result && instruction.result->value < value_ids.size() &&
           value_ids[instruction.result->value]) {
         instruction.result = *value_ids[instruction.result->value];
+      }
+      if (auto* call = std::get_if<MirCallInstruction>(&instruction.data)) {
+        if (call->success_storage &&
+            call->success_storage->value < value_ids.size()) {
+          call->success_storage = value_ids[call->success_storage->value];
+        }
+        if (call->error_result &&
+            call->error_result->value < value_ids.size()) {
+          call->error_result = value_ids[call->error_result->value];
+        }
       }
       remap_instruction(instruction, aliases, value_ids);
       if (auto* phi = std::get_if<MirPhiInstruction>(&instruction.data)) {

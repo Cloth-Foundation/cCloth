@@ -146,15 +146,19 @@ class Lowerer {
       std::optional<HirConstructorInitializer> initializer;
       const SemanticSymbol& symbol =
           semantics_.symbol(semantic_file.constructors[index]);
-      if (constructor.initializer && symbol.base_constructor) {
+      if (symbol.base_constructor) {
         std::vector<HirExpressionId> arguments;
-        arguments.reserve(constructor.initializer->arguments.size());
-        for (const ExpressionId argument : constructor.initializer->arguments) {
-          arguments.push_back(expression(argument));
+        SourceRange range = constructor.range;
+        if (constructor.initializer) {
+          arguments.reserve(constructor.initializer->arguments.size());
+          for (const ExpressionId argument :
+               constructor.initializer->arguments) {
+            arguments.push_back(expression(argument));
+          }
+          range = constructor.initializer->range;
         }
         initializer = HirConstructorInitializer{*symbol.base_constructor,
-                                                std::move(arguments),
-                                                constructor.initializer->range};
+                                                std::move(arguments), range};
       }
       file.constructors.push_back(HirCallable{
           semantic_file.constructors[index], std::move(initializer),
@@ -188,6 +192,16 @@ class Lowerer {
       }
     } else if (std::holds_alternative<SuperExpression>(syntax.data)) {
       data = HirSuperExpression{};
+    } else if (const auto* thrown =
+                   std::get_if<ThrowExpression>(&syntax.data)) {
+      const TypeId error_type = semantics_.file(current_file_)
+                                    .expressions.at(thrown->operand.value)
+                                    .type;
+      if (semantic.type == semantics_.bottom_type() &&
+          error_type.value < semantics_.types().size() &&
+          semantics_.type(error_type).kind == TypeKind::kErrorClass) {
+        data = HirThrowExpression{expression(thrown->operand), error_type};
+      }
     } else if (const auto* unary = std::get_if<UnaryExpression>(&syntax.data)) {
       const ExpressionSemantics& operand =
           semantics_.file(current_file_).expressions.at(unary->operand.value);
@@ -204,10 +218,12 @@ class Lowerer {
                    std::get_if<BinaryExpression>(&syntax.data)) {
       const FileSemantics& file = semantics_.file(current_file_);
       data = HirBinaryExpression{
-          expression(binary->left), binary->operation,
+          expression(binary->left),
+          binary->operation,
           expression(binary->right),
           file.expressions.at(binary->left.value).is_presence_test,
-          file.expressions.at(binary->right.value).is_presence_test};
+          file.expressions.at(binary->right.value).is_presence_test,
+          semantic.may_divide_by_zero};
     } else if (const auto* test =
                    std::get_if<TypeTestExpression>(&syntax.data)) {
       if (semantic.type != semantics_.error_type() && semantic.checked_type) {
@@ -236,9 +252,9 @@ class Lowerer {
       }
     } else if (const auto* assignment =
                    std::get_if<AssignmentExpression>(&syntax.data)) {
-      data = HirAssignmentExpression{expression(assignment->target),
-                                     assignment->operation,
-                                     expression(assignment->value)};
+      data = HirAssignmentExpression{
+          expression(assignment->target), assignment->operation,
+          expression(assignment->value), semantic.may_divide_by_zero};
     } else if (const auto* member =
                    std::get_if<MemberAccessExpression>(&syntax.data)) {
       if (semantic.symbol &&

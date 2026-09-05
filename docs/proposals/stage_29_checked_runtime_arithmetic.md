@@ -234,9 +234,11 @@ error {
 }
 ```
 
-That future stage must decide whether `Error` is compiler-provided or defined by
-the standard library, and must define `throw`, propagation, catching, unwinding,
-allocation, ABI, and the exact division-error type. Stage 29 neither reserves the
-`error` keyword nor introduces those semantics. Until that contract is approved
-and implemented, division by zero uses the terminal runtime failure specified
-above; it must never reach an invalid LLVM division.
+The approved [Stage 34 typed-error contract](stage_34_typed_errors.md) supersedes
+that provisional direction. It selects a compiler-provided `Error` root,
+`DivisionByZero`, typed automatic propagation through an explicit portable
+result/error ABI, and no catching or platform unwinding. Stage 29 itself neither
+reserves the keywords nor introduces those semantics. Until the separately
+authorized Stage 34 lowering checkpoint is implemented, division by zero uses
+the terminal runtime failure specified above; it must never reach an invalid
+LLVM division.

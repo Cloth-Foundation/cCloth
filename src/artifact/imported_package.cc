@@ -45,8 +45,9 @@ class IssueCollector {
 };
 
 bool is_nominal(TypeKind kind) {
-  return kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
-         kind == TypeKind::kEnum || kind == TypeKind::kStruct;
+  return kind == TypeKind::kFileClass || kind == TypeKind::kErrorClass ||
+         kind == TypeKind::kInterface || kind == TypeKind::kEnum ||
+         kind == TypeKind::kStruct;
 }
 
 bool is_structural(TypeKind kind) {
@@ -128,6 +129,7 @@ CanonicalMemberKind canonical_member_kind(const SemanticSymbol& symbol) {
     case SymbolKind::kEnum:
     case SymbolKind::kEnumCase:
     case SymbolKind::kStruct:
+    case SymbolKind::kError:
       break;
   }
   return CanonicalMemberKind::kFunction;
@@ -149,6 +151,7 @@ ImportedMemberKind imported_member_kind(SymbolKind kind) {
     case SymbolKind::kEnum:
     case SymbolKind::kEnumCase:
     case SymbolKind::kStruct:
+    case SymbolKind::kError:
       break;
   }
   return ImportedMemberKind::kFunction;
@@ -173,6 +176,12 @@ std::string member_identity(SymbolId id, const SemanticModel& semantics) {
   const SemanticSymbol& symbol = semantics.symbol(id);
   return canonical_symbol_identity(symbol, semantics,
                                    canonical_member_kind(symbol));
+}
+
+std::string layout_field_identity(SymbolId id, const SemanticModel& semantics) {
+  const SemanticSymbol& symbol = semantics.symbol(id);
+  return symbol.file ? member_identity(id, semantics)
+                     : canonical_primitive_identity("Error.Message");
 }
 
 std::string file_identity(FileId id, const SemanticModel& semantics) {
@@ -252,6 +261,12 @@ ImportedMember import_member(SymbolId id, std::string_view owner,
     }
   }
 
+  std::vector<std::string> thrown_types;
+  thrown_types.reserve(symbol.thrown_types.size());
+  for (const TypeId type : symbol.thrown_types) {
+    thrown_types.push_back(canonical_type_identity(type, semantics));
+  }
+
   return ImportedMember{
       member_identity(id, semantics),
       std::string{owner},
@@ -260,6 +275,7 @@ ImportedMember import_member(SymbolId id, std::string_view owner,
       symbol.visibility,
       canonical_type_identity(symbol.type, semantics),
       std::move(parameters),
+      std::move(thrown_types),
       import_location(symbol, path),
       symbol.is_final,
       symbol.is_static,
@@ -269,9 +285,10 @@ ImportedMember import_member(SymbolId id, std::string_view owner,
       symbol.overridden_symbol ? std::optional<std::string>{member_identity(
                                      *symbol.overridden_symbol, semantics)}
                                : std::nullopt,
-      symbol.base_constructor ? std::optional<std::string>{member_identity(
-                                    *symbol.base_constructor, semantics)}
-                              : std::nullopt,
+      symbol.base_constructor && semantics.symbol(*symbol.base_constructor).file
+          ? std::optional<std::string>{member_identity(*symbol.base_constructor,
+                                                       semantics)}
+          : std::nullopt,
       std::move(static_value)};
 }
 
@@ -288,10 +305,11 @@ ImportedCallableAbi import_callable(const AbiCallable& callable,
   std::optional<std::string> initializer_identity;
   std::optional<std::string> initializer_return_type;
   std::vector<ImportedAbiParameter> initializer_parameters;
-  const bool class_constructor =
+  const bool managed_constructor =
       callable.kind == AbiCallableKind::kConstructor &&
-      semantics.file(*symbol.file).kind == FileTypeKind::kClass;
-  if (class_constructor) {
+      (semantics.file(*symbol.file).kind == FileTypeKind::kClass ||
+       semantics.file(*symbol.file).kind == FileTypeKind::kError);
+  if (managed_constructor) {
     initializer_identity = canonical_symbol_identity(
         symbol, semantics, CanonicalMemberKind::kConstructorInitializer);
     initializer_return_type =
@@ -318,7 +336,9 @@ ImportedCallableAbi import_callable(const AbiCallable& callable,
       callable.return_mode,
       callable.receiver_mode,
       AbiReturnMode::kVoid,
-      class_constructor ? AbiReceiverMode::kReference : AbiReceiverMode::kNone};
+      managed_constructor ? AbiReceiverMode::kReference
+                          : AbiReceiverMode::kNone,
+      callable.uses_error_abi};
 }
 
 ImportedClassAbi import_class_abi(const AbiFileClass& file,
@@ -328,7 +348,7 @@ ImportedClassAbi import_class_abi(const AbiFileClass& file,
   fields.reserve(file.layout.fields.size());
   for (const AbiFieldLayout& field : file.layout.fields) {
     fields.push_back(ImportedFieldLayout{
-        member_identity(field.symbol, semantics),
+        layout_field_identity(field.symbol, semantics),
         canonical_type_identity(field.type, semantics), field.offset});
   }
 
@@ -358,7 +378,8 @@ ImportedClassAbi import_class_abi(const AbiFileClass& file,
         file.type_descriptor->reference_offsets,
         symbol_identities(file.type_descriptor->virtual_functions, semantics),
         std::move(interfaces),
-        file.type_descriptor->mangled_name};
+        file.type_descriptor->mangled_name,
+        file.type_descriptor->parent_is_error_root};
   }
 
   std::vector<ImportedStaticFieldAbi> static_fields;
@@ -511,12 +532,14 @@ AbiTypeLayout expected_type_layout(const ImportedType& type,
       return make(AbiTypeKind::kAggregate, 0, type.storage.size,
                   type.storage.alignment);
     case TypeKind::kError:
+    case TypeKind::kBottom:
       return make(AbiTypeKind::kInvalid, 0, 0, 1);
     case TypeKind::kVoid:
       return make(AbiTypeKind::kVoid, 0, 0, 1);
     case TypeKind::kNull:
     case TypeKind::kString:
     case TypeKind::kObject:
+    case TypeKind::kErrorClass:
     case TypeKind::kFileClass:
     case TypeKind::kInterface:
     case TypeKind::kArray:
@@ -554,7 +577,16 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
                  IssueCollector& issues) {
   const std::string record = "type " + mangle_canonical_identity(type.identity);
   std::string expected_identity;
-  if (is_nominal(type.kind)) {
+  const bool compiler_error =
+      type.kind == TypeKind::kErrorClass && !type.nominal_identity;
+  if (compiler_error) {
+    if (type.element_identity || (type.display_name != "Error" &&
+                                  type.display_name != "DivisionByZero")) {
+      issues.add(record, "compiler error type record is malformed");
+      return;
+    }
+    expected_identity = canonical_primitive_identity(type.display_name);
+  } else if (is_nominal(type.kind)) {
     if (!type.nominal_identity || type.element_identity ||
         !valid_nominal_identity(*type.nominal_identity)) {
       issues.add(record, "nominal type record is malformed");
@@ -654,6 +686,20 @@ void verify_member(const ImportedFile& file, const ImportedMember& member,
       issues.add(record, "parameter record is invalid");
     }
   }
+  for (const std::string& thrown_type : member.thrown_type_identities) {
+    const auto type = types.find(thrown_type);
+    if (type == types.end() || type->second->kind != TypeKind::kErrorClass) {
+      issues.add(record, "throws contract contains a non-error type");
+    }
+  }
+  if (!std::ranges::is_sorted(member.thrown_type_identities) ||
+      std::adjacent_find(member.thrown_type_identities.begin(),
+                         member.thrown_type_identities.end()) !=
+          member.thrown_type_identities.end() ||
+      (member.kind == ImportedMemberKind::kField &&
+       !member.thrown_type_identities.empty())) {
+    issues.add(record, "throws contract is not canonical");
+  }
   const auto parameters = parameter_type_identities(member, types);
   if (!parameters ||
       member.identity != canonical_member_identity(
@@ -669,8 +715,9 @@ void verify_member(const ImportedFile& file, const ImportedMember& member,
   }
   if (member.kind == ImportedMemberKind::kFunction) {
     if (member.is_override &&
-        (file.kind != FileTypeKind::kClass || member.is_static ||
-         member.visibility != Visibility::kPublic)) {
+        ((file.kind != FileTypeKind::kClass &&
+          file.kind != FileTypeKind::kError) ||
+         member.is_static || member.visibility != Visibility::kPublic)) {
       issues.add(record, "override requires a public class instance function");
     }
     if (member.overridden_identity && !member.is_override) {
@@ -731,16 +778,22 @@ void verify_class_abi(
     const ImportedTypeDescriptor& descriptor = *abi.descriptor;
     const std::string descriptor_identity = canonical_member_identity(
         file.nominal_identity, CanonicalMemberKind::kDescriptor, "");
-    if (descriptor.kind != AbiHeapObjectKind::kFileClass ||
+    const AbiHeapObjectKind expected_kind = file.kind == FileTypeKind::kError
+                                                ? AbiHeapObjectKind::kError
+                                                : AbiHeapObjectKind::kFileClass;
+    const bool expected_error_root =
+        file.kind == FileTypeKind::kError && !file.base_identity;
+    if (descriptor.kind != expected_kind ||
         descriptor.identity != descriptor_identity ||
         descriptor.display_name !=
             nominal_display_name(file.nominal_identity) ||
         descriptor.size != abi.size || descriptor.alignment != abi.alignment ||
-        descriptor.parent_identity != file.base_identity) {
+        descriptor.parent_identity != file.base_identity ||
+        descriptor.parent_is_error_root != expected_error_root) {
       issues.add(record, "descriptor does not match the owning file layout");
     }
     const std::string expected_descriptor_name =
-        file.kind == FileTypeKind::kClass
+        (file.kind == FileTypeKind::kClass || file.kind == FileTypeKind::kError)
             ? mangle_canonical_identity(descriptor_identity)
             : std::string{};
     if (descriptor.mangled_name != expected_descriptor_name) {
@@ -908,7 +961,9 @@ void verify_class_abi(
       continue;
     }
     const AbiReturnMode return_mode =
-        returned->second->kind == TypeKind::kVoid     ? AbiReturnMode::kVoid
+        callable.uses_error_abi && returned->second->kind != TypeKind::kVoid
+            ? AbiReturnMode::kIndirect
+        : returned->second->kind == TypeKind::kVoid   ? AbiReturnMode::kVoid
         : returned->second->kind == TypeKind::kStruct ? AbiReturnMode::kIndirect
                                                       : AbiReturnMode::kDirect;
     const bool has_receiver = !constructor && !declaration.is_static;
@@ -941,6 +996,10 @@ void verify_class_abi(
         callable.receiver_mode != receiver_mode) {
       issues.add(record,
                  "callable physical signature disagrees with declarations");
+    }
+    if (!declaration.thrown_type_identities.empty() &&
+        !callable.uses_error_abi) {
+      issues.add(record, "throwing declaration lacks the error ABI");
     }
   }
 
@@ -1023,7 +1082,10 @@ void verify_override_contracts(
                               &ImportedParameter::type_identity);
   };
   for (const auto& [identity, file] : files) {
-    if (file->kind != FileTypeKind::kClass) continue;
+    if (file->kind != FileTypeKind::kClass &&
+        file->kind != FileTypeKind::kError) {
+      continue;
+    }
     const std::string record = "overrides " + file->logical_path;
     std::vector<const ImportedFile*> bases;
     std::vector<std::string> pending_interfaces =
@@ -1141,7 +1203,8 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
     }
   }
   for (const auto& [id, type] : types) {
-    if (require_owners && is_nominal(type->kind) && !files.contains(id)) {
+    if (require_owners && is_nominal(type->kind) && type->nominal_identity &&
+        !files.contains(id)) {
       issues.add("closure",
                  "nominal type has no declaration in dependency closure");
       return;
@@ -1216,6 +1279,17 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
           alignment = std::max(alignment, base->second->abi.alignment);
           fields = base->second->abi.fields;
         }
+      } else if (file.kind == FileTypeKind::kError) {
+        const std::string string_identity =
+            canonical_primitive_identity("string");
+        const auto string_type = types.find(string_identity);
+        if (string_type == types.end()) {
+          fail("compiler Error.Message type is absent");
+          return;
+        }
+        fields.push_back({canonical_primitive_identity("Error.Message"),
+                          string_identity, offset});
+        offset += target.pointer.size;
       }
       std::map<std::string, const ImportedMember*> members;
       for (const auto& member : file.members)
@@ -1341,6 +1415,7 @@ ImportedPackageResult build_imported_package_view(
     const SemanticSymbol& symbol = semantics.symbol(symbol_id);
     add_type(symbol.type);
     for (const TypeId parameter : symbol.parameter_types) add_type(parameter);
+    for (const TypeId thrown : symbol.thrown_types) add_type(thrown);
   };
   for (const FileId file_id : owned_files) {
     const FileSemantics& file = semantics.file(file_id);
@@ -1545,6 +1620,7 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
             (file.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
              : file.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
              : file.kind == FileTypeKind::kInterface ? TypeKind::kInterface
+             : file.kind == FileTypeKind::kError     ? TypeKind::kErrorClass
                                                      : TypeKind::kFileClass)) {
       issues.add(record, "owning nominal type is absent or has the wrong kind");
     }
@@ -1608,7 +1684,10 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
     }
     if (file.base_identity) {
       const auto base = types.find(*file.base_identity);
-      if (base == types.end() || base->second->kind != TypeKind::kFileClass) {
+      const TypeKind expected_base = file.kind == FileTypeKind::kError
+                                         ? TypeKind::kErrorClass
+                                         : TypeKind::kFileClass;
+      if (base == types.end() || base->second->kind != expected_base) {
         issues.add(record, "base type is absent or is not a class");
       }
     }
@@ -1659,7 +1738,8 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
           !file.abi.static_fields.empty() || !file.abi.callables.empty() ||
           descriptor->kind != AbiHeapObjectKind::kFileClass ||
           !descriptor->mangled_name.empty() || descriptor->parent_identity ||
-          descriptor->size != 0 || descriptor->alignment != 1 ||
+          descriptor->parent_is_error_root || descriptor->size != 0 ||
+          descriptor->alignment != 1 ||
           !descriptor->reference_offsets.empty() ||
           !descriptor->virtual_function_identities.empty() ||
           !descriptor->interfaces.empty() ||
@@ -1734,8 +1814,8 @@ std::vector<ImportedPackageIssue> verify_imported_package_closure(
 std::string imported_callable_signature(
     AbiReturnMode return_mode, AbiReceiverMode receiver_mode,
     std::string_view return_type,
-    std::span<const ImportedAbiParameter> parameters) {
-  std::string result = "c:";
+    std::span<const ImportedAbiParameter> parameters, bool uses_error_abi) {
+  std::string result = uses_error_abi ? "c:error:" : "c:plain:";
   result += abi_return_mode_name(return_mode);
   result += ':' + mangle_canonical_identity(return_type) + '(';
   for (std::size_t index = 0; index < parameters.size(); ++index) {

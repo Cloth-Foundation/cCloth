@@ -38,6 +38,20 @@ void print_parameters(const std::vector<ParameterDecl>& parameters,
   }
 }
 
+void print_throws(const std::vector<TypeSyntax>& types, bool is_explicit,
+                  std::ostream& output) {
+  if (!is_explicit) {
+    return;
+  }
+  output << " throws ";
+  for (std::size_t index = 0; index < types.size(); ++index) {
+    if (index != 0) {
+      output << ", ";
+    }
+    print_type(types[index], output);
+  }
+}
+
 void print_validity(bool is_valid, std::ostream& output) {
   if (!is_valid) {
     output << " [invalid]";
@@ -50,6 +64,7 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
   output << (file_class.kind == FileTypeKind::kStruct      ? "Struct "
              : file_class.kind == FileTypeKind::kEnum      ? "Enum "
              : file_class.kind == FileTypeKind::kInterface ? "Interface "
+             : file_class.kind == FileTypeKind::kError     ? "Error "
                                                            : "FileClass ")
          << file_class.qualified_name;
   if (file_class.base_class) {
@@ -125,6 +140,8 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
           output << ": ";
           print_type(*function.return_type, output);
         }
+        print_throws(function.throws_types, function.has_explicit_throws,
+                     output);
         output << " [" << visibility_name(function.visibility);
         if (function.is_static) {
           output << ", static";
@@ -148,6 +165,8 @@ void print_ast_summary(const FileClassDecl& file_class, std::ostream& output) {
         output << "Constructor " << constructor.name << '(';
         print_parameters(constructor.parameters, output);
         output << ')';
+        print_throws(constructor.throws_types, constructor.has_explicit_throws,
+                     output);
         if (constructor.initializer) {
           output << " : " << constructor.initializer->base_type.name << " ("
                  << constructor.initializer->arguments.size()

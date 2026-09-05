@@ -1,0 +1,46 @@
+import Box;
+import Failure;
+import Pair;
+import Status;
+
+static func Check(bool fail) throws Failure {
+  if (fail) { throw Failure("unexpected"); }
+}
+
+static func Scalar(bool fail): int32 throws Failure {
+  Check(fail);
+  return 7;
+}
+
+static func Reference(bool fail): Box throws Failure {
+  Check(fail);
+  return Box("cloth");
+}
+
+static func Values(bool fail): int32[] throws Failure {
+  Check(fail);
+  return [2, 3];
+}
+
+static func Choice(bool fail): Status throws Failure {
+  Check(fail);
+  return Status.Ready;
+}
+
+static func Aggregate(bool fail): Pair throws Failure {
+  Check(fail);
+  return Pair(9);
+}
+
+static func Unit(bool fail) throws Failure { Check(fail); }
+
+static func Main(): int32 throws Failure {
+  println(Scalar(false));
+  println(Reference(false).Value);
+  println(Values(false)::length);
+  println(Choice(false));
+  println(Aggregate(false).Value);
+  Unit(false);
+  println("done");
+  return 0;
+}

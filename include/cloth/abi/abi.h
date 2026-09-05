@@ -61,6 +61,7 @@ enum class AbiHeapObjectKind : std::uint64_t {
   kFileClass = 0,
   kString = 1,
   kArray = 2,
+  kError = 3,
 };
 
 struct AbiTypeDescriptor {
@@ -81,6 +82,7 @@ struct AbiTypeDescriptor {
   };
   std::vector<InterfaceDispatch> interfaces{};
   std::string mangled_name{};
+  bool parent_is_error_root{false};
 
   friend bool operator==(const AbiTypeDescriptor&,
                          const AbiTypeDescriptor&) = default;
@@ -145,6 +147,7 @@ struct AbiCallable {
   AbiLinkage initializer_linkage{AbiLinkage::kInternal};
   AbiReturnMode return_mode{AbiReturnMode::kDirect};
   AbiReceiverMode receiver_mode{AbiReceiverMode::kNone};
+  bool uses_error_abi{false};
 
   friend bool operator==(const AbiCallable&, const AbiCallable&) = default;
 };

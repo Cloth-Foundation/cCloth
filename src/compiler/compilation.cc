@@ -465,8 +465,26 @@ CompilationResult Compilation::analyze(DiagnosticEngine& diagnostics) {
       frontend.semantics.symbols(), [](const SemanticSymbol& symbol) {
         return symbol.kind == SymbolKind::kField && symbol.is_static;
       });
+  const bool has_error_control =
+      std::ranges::any_of(frontend.semantics.symbols(),
+                          [](const SemanticSymbol& symbol) {
+                            return !symbol.thrown_types.empty();
+                          }) ||
+      std::ranges::any_of(
+          frontend.hir.storage.expressions(),
+          [](const HirExpression& expression) {
+            if (std::holds_alternative<HirThrowExpression>(expression.data)) {
+              return true;
+            }
+            const auto* binary =
+                std::get_if<HirBinaryExpression>(&expression.data);
+            if (binary != nullptr && binary->may_divide_by_zero) return true;
+            const auto* assignment =
+                std::get_if<HirAssignmentExpression>(&expression.data);
+            return assignment != nullptr && assignment->may_divide_by_zero;
+          });
   if (frontend.is_valid ||
-      (!has_structs && !has_switch && !has_constants &&
+      (!has_structs && !has_switch && !has_constants && !has_error_control &&
        verify_hir(frontend.hir, frontend.semantics, diagnostics))) {
     mir = lower_to_mir(frontend.hir, frontend.semantics);
     for (std::size_t index = mir.files.size();

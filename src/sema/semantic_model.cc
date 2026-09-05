@@ -12,6 +12,7 @@ namespace cloth {
 
 SemanticModel::SemanticModel() {
   error_type_ = add_type(SemanticType{TypeKind::kError, "<error>", {}});
+  bottom_type_ = add_type(SemanticType{TypeKind::kBottom, "<bottom>", {}});
   void_type_ = add_type(SemanticType{TypeKind::kVoid, "void", {}});
   null_type_ = add_type(SemanticType{TypeKind::kNull, "null", {}});
   bool_type_ = add_type(SemanticType{TypeKind::kBool, "bool", {}});
@@ -31,6 +32,10 @@ SemanticModel::SemanticModel() {
       add_type(SemanticType{TypeKind::kFloat64, "float64", {}});
   string_type_ = add_type(SemanticType{TypeKind::kString, "string", {}});
   object_type_ = add_type(SemanticType{TypeKind::kObject, "object", {}});
+  error_root_type_ = add_type(SemanticType{TypeKind::kErrorClass, "Error", {}});
+  division_by_zero_type_ =
+      add_type(SemanticType{TypeKind::kErrorClass, "DivisionByZero", {}});
+  nullable_error_root_type_ = get_nullable_type(error_root_type_);
   add_type_alias("int", int32);
   add_type_alias("uint", uint32);
   add_type_alias("float", float32);
@@ -61,6 +66,20 @@ SemanticModel::SemanticModel() {
 }
 
 TypeId SemanticModel::error_type() const noexcept { return error_type_; }
+
+TypeId SemanticModel::bottom_type() const noexcept { return bottom_type_; }
+
+TypeId SemanticModel::error_root_type() const noexcept {
+  return error_root_type_;
+}
+
+TypeId SemanticModel::nullable_error_root_type() const noexcept {
+  return nullable_error_root_type_;
+}
+
+TypeId SemanticModel::division_by_zero_type() const noexcept {
+  return division_by_zero_type_;
+}
 
 TypeId SemanticModel::void_type() const noexcept { return void_type_; }
 
@@ -199,6 +218,8 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
   switch (kind) {
     case TypeKind::kError:
       return "error";
+    case TypeKind::kBottom:
+      return "bottom";
     case TypeKind::kVoid:
       return "void";
     case TypeKind::kNull:
@@ -233,6 +254,8 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
       return "string";
     case TypeKind::kObject:
       return "object";
+    case TypeKind::kErrorClass:
+      return "error class";
     case TypeKind::kFileClass:
       return "file class";
     case TypeKind::kInterface:
@@ -271,10 +294,54 @@ std::string_view symbol_kind_name(SymbolKind kind) noexcept {
       return "enum";
     case SymbolKind::kStruct:
       return "struct";
+    case SymbolKind::kError:
+      return "error";
     case SymbolKind::kEnumCase:
       return "enum case";
   }
   return "unknown";
+}
+
+bool callable_uses_error_abi(SymbolId symbol_id,
+                             const SemanticModel& semantics) {
+  std::vector<SymbolId> pending{symbol_id};
+  std::vector<bool> visited(semantics.symbols().size(), false);
+  while (!pending.empty()) {
+    const SymbolId current = pending.back();
+    pending.pop_back();
+    if (current.value >= semantics.symbols().size() || visited[current.value]) {
+      continue;
+    }
+    visited[current.value] = true;
+    const SemanticSymbol& symbol = semantics.symbol(current);
+    if (!symbol.thrown_types.empty()) {
+      return true;
+    }
+    if (symbol.overridden_symbol) {
+      pending.push_back(*symbol.overridden_symbol);
+    }
+    if (!symbol.file || symbol.file->value >= semantics.files().size()) {
+      continue;
+    }
+    const FileSemantics& owner = semantics.file(*symbol.file);
+    for (const InterfaceImplementation& implementation :
+         owner.interface_implementations) {
+      if (implementation.interface_file.value >= semantics.files().size()) {
+        continue;
+      }
+      const FileSemantics& interface_file =
+          semantics.file(implementation.interface_file);
+      const std::size_t count =
+          std::min(implementation.functions.size(),
+                   interface_file.interface_functions.size());
+      for (std::size_t index = 0; index < count; ++index) {
+        if (implementation.functions[index] == current) {
+          pending.push_back(interface_file.interface_functions[index]);
+        }
+      }
+    }
+  }
+  return false;
 }
 
 std::optional<std::uint32_t> enum_constant_tag(std::string_view text,

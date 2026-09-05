@@ -154,10 +154,17 @@ class AbiVerifier {
       if (file.type_descriptor->parent_file) {
         report(range, "root file class has a parent type descriptor");
       }
+      if (file.type_descriptor->parent_is_error_root !=
+          (file.kind == FileTypeKind::kError)) {
+        report(range, "root error descriptor has an invalid core parent");
+      }
       return;
     }
     if (file.type_descriptor->parent_file != file.base_file) {
       report(range, "type descriptor parent does not match the base class");
+    }
+    if (file.type_descriptor->parent_is_error_root) {
+      report(range, "derived descriptor retains a core error parent");
     }
     if (file.base_file->value >= abi_.files.size() ||
         *file.base_file == file.file) {
@@ -177,7 +184,8 @@ class AbiVerifier {
 
   void verify_type_descriptor(const AbiTypeDescriptor& descriptor,
                               const AbiClassLayout& layout, SourceRange range) {
-    if (descriptor.kind != AbiHeapObjectKind::kFileClass ||
+    if ((descriptor.kind != AbiHeapObjectKind::kFileClass &&
+         descriptor.kind != AbiHeapObjectKind::kError) ||
         descriptor.name.empty() || descriptor.size != layout.size ||
         descriptor.alignment != layout.alignment) {
       report(range, "file-class type descriptor is invalid");
@@ -294,7 +302,8 @@ class AbiVerifier {
   void verify_unique_names() {
     std::unordered_set<std::string> names;
     for (const AbiFileClass& file : abi_.files) {
-      if (file.kind == FileTypeKind::kClass &&
+      if ((file.kind == FileTypeKind::kClass ||
+           file.kind == FileTypeKind::kError) &&
           (!file.type_descriptor ||
            file.type_descriptor->mangled_name.empty() ||
            !names.insert(file.type_descriptor->mangled_name).second)) {
@@ -367,6 +376,10 @@ class AbiVerifier {
         }
         const AbiCallable* callable = find_callable(call->callable);
         if (callable == nullptr) {
+          if (!symbol.file && symbol.kind == SymbolKind::kConstructor &&
+              (symbol.name == "Error" || symbol.name == "DivisionByZero")) {
+            continue;
+          }
           report(instruction.range, "MIR call has no ABI declaration");
           continue;
         }
@@ -386,9 +399,15 @@ class AbiVerifier {
           report(instruction.range,
                  "MIR call does not match its ABI parameter count");
         }
-        const TypeId expected_return = is_base_initializer
-                                           ? semantics_.void_type()
-                                           : callable->return_type;
+        if (callable->uses_error_abi !=
+            callable_uses_error_abi(call->callable, semantics_)) {
+          report(instruction.range,
+                 "callable error ABI does not match semantics");
+        }
+        const TypeId expected_return =
+            callable->uses_error_abi ? semantics_.void_type()
+            : is_base_initializer    ? semantics_.void_type()
+                                     : callable->return_type;
         if (expected_return != instruction.type) {
           report(instruction.range,
                  "MIR call does not match its ABI return type");

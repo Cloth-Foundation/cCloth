@@ -70,11 +70,14 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 30 | Explicit wrapping and saturating integer conversions with verified lowering |
 | 31 | Deterministic target-independent MIR scalar and control-flow optimization |
 | 32 | Exact typed numeric literals with deterministic compiler and package integration |
+| 33 | Scientific notation, explicit integer bases, and strict digit separators |
+| 34 | Typed errors, declared effects, and portable automatic propagation |
 
-Stage 33 is the current completed language-surface baseline, and Stage 31 is the
-current completed optimizer baseline. Coordinated toolchain Stage 22 and
-separate-compilation Stage 23 are complete, including their cross-tool exit
-audits. Build-responsiveness Stage 24 is also complete.
+Stage 34 is the current completed native language-surface baseline, and Stage
+31 is the current completed optimizer baseline. Coordinated toolchain Stage 22
+and separate-compilation Stage 23 are complete, including their cross-tool exit
+audits.
+Build-responsiveness Stage 24 is also complete.
 
 Stage 26 is complete for value structs, including its approved source contract,
 frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
@@ -834,15 +837,85 @@ verification, whole/separate/source-free package equivalence, relocated
 serial/parallel determinism, editor and user documentation, and every existing
 quality gate.
 
-## Beyond Stage 33
+## Stage 34: Typed errors
 
-Stage 33 is complete. The remaining backlog does not acquire priority or enter
-the Cloth 1.0 scope automatically.
+Status: **complete — coordinated 34.4 exit audit passed 2026-09-05**
+
+The [approved contract](docs/proposals/stage_34_typed_errors.md) introduces
+file-wide `error` types, the compiler-known `Error` root, `throw` expressions,
+typed `throws` sets, and automatic propagation through ordinary call syntax.
+It deliberately adds no `try`, `catch`, `recover`, or `finally` construct.
+
+Objective: make exceptional failure explicit in public API contracts and safe
+across construction, inheritance, interfaces, optimization, targets, and
+packages without imposing call-site ceremony or depending on platform exception
+machinery.
+
+Prerequisite: Stages 13, 16, 18, 23, 28, 29, and 31.
+
+Deliverables:
+
+1. **34.1 — Contract (complete).** Freeze error declarations and inheritance,
+   the universal root, throw expressions, public declarations and private
+   inference, constructor and field effects, override/interface compatibility,
+   `Main`, division-by-zero migration, the portable result/error ABI,
+   compatibility transition, diagnostics, verification, and non-goals.
+2. **34.2 — Frontend and interfaces (complete).** Implement the keywords,
+   parser/AST, semantic effects and inference, bottom/null flow, error
+   declarations, HIR, verification, and focused frontend tests.
+3. **34.3 — Lowering and integration (complete).** Implement MIR error edges,
+   GC-safe result/error propagation, compiler-known descriptors, terminal
+   reporting, integer division/remainder migration, format/ABI transitions,
+   LLVM/native/package/Shuttle behavior, editor support, and user documentation.
+4. **34.4 — Exit audit (complete).** Close the complete source, malformed,
+   effect, construction, propagation, runtime, cross-target, package-
+   determinism, and quality-gate matrices.
+
+Errors are GC-managed class-like reference types and implicitly derive from the
+abstract compiler-provided `Error` root. `Error` owns a public final `Message`;
+custom error hierarchies may extend another error and implement interfaces.
+Constructors retain the existing no-`new` syntax and visibility rules.
+
+`throw` is an expression with an internal bottom type. Consequently,
+`T? ?? throw E()` produces non-null `T` while retaining lazy, once-only
+coalescing evaluation. Only non-null error values may be thrown.
+
+Public callables explicitly declare their stable set after the return type, as
+in `func Load(): object throws IoError, ParseError`. Private lowercase callables
+may infer a minimal transitive set. Calls use ordinary syntax and automatically
+propagate covered errors; no call-site keyword is added. Overrides and interface
+implementations may preserve or narrow a contract but cannot widen it.
+
+The implementation targets artifact format **5**, compiler ABI **5**, and
+runtime ABI **4**. Throwing callables physically return a nullable error
+reference and write non-void success values through a compiler-owned result
+out-parameter. This target-neutral contract avoids C++ exceptions, LLVM
+personalities, host unwinding, and sentinel source values. Protocol **2**,
+receipt schema **1**, and manifest schema **1** remain unchanged.
+
+Executed integer division and remainder by zero throw the compiler-known
+`DivisionByZero` error. Compile-time constant
+errors and all other checked runtime traps retain their existing contracts.
+The generated entry wrapper reports an error escaping a declared throwing
+`Main` and exits nonzero.
+
+The 34.4 audit closes typed errors across source semantics, field-
+initialization flow, malformed compiler states, all supported success-value
+shapes, failed construction, runtime descriptors and reporting, LLVM/O2 on both
+targets, native execution, artifacts, Shuttle invalidation and output
+preservation, editor checks, documentation, and repository gates. It also
+corrected explicit imports of user error types and made `throw` a proper
+non-fallthrough expression during constructor field analysis. Active
+compatibility remains artifact format 5, compiler ABI 5, and runtime ABI 4.
+
+## Beyond Stage 34
+
+Stage 34 is complete. The remaining backlog does not acquire
+priority or enter the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 
-- immutable per-case enum metadata, after its constant-data prerequisites; and
-- recoverable exceptions after their object/runtime ABI contract is approved.
+- immutable per-case enum metadata, after its constant-data prerequisites.
 
 These candidates follow completion of their prerequisites and approved stages.
 Each candidate still requires its own stage charter, dependency review,

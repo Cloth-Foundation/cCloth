@@ -120,7 +120,10 @@ cloth::PackageArtifact make_artifact(
   symbols.push_back(cloth::ArtifactSymbol{
       file.abi.descriptor->mangled_name, file.abi.descriptor->identity,
       cloth::ArtifactSymbolRole::kDefinition,
-      cloth::ArtifactSymbolKind::kDescriptor, "descriptor:file_class"});
+      cloth::ArtifactSymbolKind::kDescriptor,
+      file.abi.descriptor->kind == cloth::AbiHeapObjectKind::kError
+          ? "descriptor:error"
+          : "descriptor:file_class"});
   for (const cloth::ImportedStaticFieldAbi& field : file.abi.static_fields) {
     symbols.push_back(cloth::ArtifactSymbol{
         field.mangled_name, field.member_identity,
@@ -135,7 +138,20 @@ cloth::PackageArtifact make_artifact(
         cloth::ArtifactSymbolKind::kCallable,
         cloth::imported_callable_signature(
             callable.return_mode, callable.receiver_mode,
-            callable.return_type_identity, callable.parameters)});
+            callable.return_type_identity, callable.parameters,
+            callable.uses_error_abi)});
+    if (callable.initializer_identity &&
+        callable.initializer_linkage == cloth::AbiLinkage::kExternal) {
+      symbols.push_back(cloth::ArtifactSymbol{
+          callable.initializer_mangled_name, *callable.initializer_identity,
+          cloth::ArtifactSymbolRole::kDefinition,
+          cloth::ArtifactSymbolKind::kConstructorInitializer,
+          cloth::imported_callable_signature(
+              callable.initializer_return_mode,
+              callable.initializer_receiver_mode,
+              *callable.initializer_return_type_identity,
+              callable.initializer_parameters, callable.uses_error_abi)});
+    }
   }
   if (kind == cloth::PackageArtifactKind::kObject) {
     symbols.push_back(cloth::ArtifactSymbol{
@@ -197,19 +213,19 @@ void canonical_interface_round_trip(TestContext& test) {
   test.expect(!metadata.empty() && metadata.front() == '{' &&
                   metadata.back() == '}' && !metadata.ends_with('\n') &&
                   metadata.starts_with("{\"compatibility\":") &&
-                  metadata.contains("\"runtime_abi\":\"3\"") &&
+                  metadata.contains("\"runtime_abi\":\"4\"") &&
                   metadata.contains("\"value\":\"3fc00000\"") &&
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
   test.expect(
-      metadata.size() == 12288 &&
+      metadata.size() == 12377 &&
           cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-              "7ccf7eb4d3e2d58d2368a6808a53ddce5f"
-              "5c04df3ab08b69540b99abfdd4ff0c" &&
+              "b63ae2762a6ec018d849fe4b9e16e696c8"
+              "24e224c173d826cf0536e3008d7907" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "9436003fd8bf4912e55f075a8423eb5df86"
-              "2f1d929bce77653eaee51ec9779fb",
-      "canonical version-4 fixture: size=" + std::to_string(metadata.size()) +
+              "325ab6ae5019255a790a9a480d28883949"
+              "d63e94407ba2306b6d434d5af8f138",
+      "canonical version-5 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
 }
@@ -245,7 +261,7 @@ void scalar_constants_round_trip(TestContext& test) {
     test.expect(
         decoded.is_valid() && decoded.artifact->imported == artifact.imported,
         "scalar type/bits did not round trip exactly");
-    test.expect(encoded.artifact->bytes[8] == 4, "format-4 envelope");
+    test.expect(encoded.artifact->bytes[8] == 5, "format-5 envelope");
     const auto metadata = metadata_text(encoded.artifact->bytes);
     test.expect(metadata.contains("\"value\":\"-9223372036854775808\"") &&
                     metadata.contains("\"value\":\"18446744073709551615\""),
@@ -356,6 +372,46 @@ void object_round_trip_and_compatibility(TestContext& test) {
               "object payload with the wrong machine was accepted");
 }
 
+void typed_error_metadata_round_trip(TestContext& test) {
+  constexpr std::string_view source = R"(
+    error {
+      Main(string message): Error(message) {}
+      func Raise(): int32 throws Main { throw self; }
+    }
+  )";
+  const cloth::PackageArtifact artifact =
+      make_artifact(cloth::PackageArtifactKind::kInterface, source);
+  const auto encoded = cloth::write_package_artifact(artifact);
+  test.expect(encoded.is_valid(), "typed-error artifact was not encoded");
+  if (!encoded.artifact) return;
+  const std::string metadata = metadata_text(encoded.artifact->bytes);
+  test.expect(metadata.contains("\"kind\":\"error\"") &&
+                  metadata.contains("\"parent_is_error_root\":true") &&
+                  metadata.contains("\"throws\":[") &&
+                  metadata.contains("\"error_abi\":true") &&
+                  metadata.contains("\"abi_signature\":\"c:error:"),
+              "typed-error artifact omitted its error or ABI contract");
+  const auto decoded = cloth::read_package_artifact(encoded.artifact->bytes);
+  test.expect(decoded.is_valid() &&
+                  decoded.artifact->imported == artifact.imported &&
+                  decoded.artifact->symbols == artifact.symbols,
+              "typed-error artifact did not round trip exactly");
+
+  std::string corrupt = metadata;
+  const std::size_t error_abi = corrupt.find("\"error_abi\":true");
+  test.expect(error_abi != std::string::npos,
+              "typed-error corruption fixture is missing");
+  if (error_abi != std::string::npos) {
+    corrupt.replace(error_abi, std::string_view{"\"error_abi\":true"}.size(),
+                    "\"error_abi\":false");
+    test.expect(
+        !cloth::read_package_artifact(
+             replace_metadata(encoded.artifact->bytes, std::move(corrupt)))
+             .is_valid(),
+        "throwing artifact callable accepted a plain ABI");
+  }
+}
+
 void envelope_and_integrity_failures(TestContext& test) {
   const auto encoded = cloth::write_package_artifact(make_artifact());
   if (!encoded.artifact) {
@@ -387,6 +443,10 @@ void envelope_and_integrity_failures(TestContext& test) {
   broken[8] = 3;
   expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
                   "pre-constant format version was accepted");
+  broken = encoded.artifact->bytes;
+  broken[8] = 4;
+  expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
+                  "pre-error-ABI format version was accepted");
   broken = encoded.artifact->bytes;
   broken[12] = 1;
   expect_rejected(std::move(broken),
@@ -439,22 +499,22 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
   changed.insert(changed.size() - 1, ",\"types\":[]");
   expect_rejected(std::move(changed), "duplicate metadata field was accepted");
   changed = original;
-  changed.replace(changed.find("\"compiler_abi\":\"4\""), 18,
-                  "\"compiler_abi\":4");
+  changed.replace(changed.find("\"compiler_abi\":\"5\""), 18,
+                  "\"compiler_abi\":5");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
   changed = original;
-  const std::string_view current_runtime = "\"runtime_abi\":\"3\"";
+  const std::string_view current_runtime = "\"runtime_abi\":\"4\"";
   const std::size_t runtime = changed.find(current_runtime);
   test.expect(runtime != std::string::npos,
-              "runtime ABI fixture did not contain version 3");
+              "runtime ABI fixture did not contain version 4");
   if (runtime != std::string::npos) {
-    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"2\"");
+    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"3\"");
     const auto rejected = cloth::read_package_artifact(
         replace_metadata(encoded.artifact->bytes, std::move(changed)));
     test.expect(
         !rejected.is_valid() && !rejected.issues.empty() &&
             rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
-        "artifact with runtime ABI 2 was accepted by runtime ABI 3");
+        "artifact with runtime ABI 3 was accepted by runtime ABI 4");
   }
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");
@@ -597,6 +657,7 @@ int main() {
       {"scalar constant round trip", scalar_constants_round_trip},
       {"object round trip and compatibility",
        object_round_trip_and_compatibility},
+      {"typed error metadata round trip", typed_error_metadata_round_trip},
       {"envelope and integrity failures", envelope_and_integrity_failures},
       {"metadata canonicality and reference failures",
        metadata_canonicality_and_reference_failures},

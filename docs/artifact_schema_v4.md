@@ -1,6 +1,7 @@
 # Cloth package artifact schema, version 4
 
-This is the current `.cpa` contract. It inherits the frozen
+This is the frozen Stage 28 `.cpa` contract, superseded by
+[version 5](artifact_schema_v5.md). It inherits the frozen
 [version-3 schema](artifact_schema_v3.md), except for the envelope version and
 the integer constant rule below. Record keys, ordering, canonical identities,
 layouts, symbol inventories, integrity, payloads, and dependency rules do not
@@ -9,10 +10,10 @@ change.
 ## Compatibility
 
 Header offset 8 contains little-endian format integer **4**. Compiler ABI **4**
-(`_C4` names), runtime ABI **3**, process protocol **2**, receipt schema **1**, and
-manifest schema **1** are current. Stage 29 changed only the runtime ABI, adding
-the checked-integer-arithmetic runtime boundary. Earlier artifacts must be
-rebuilt; the reader does not migrate or reinterpret them.
+(`_C4` names), runtime ABI **3**, process protocol **2**, receipt schema **1**,
+and manifest schema **1** were active together. Stage 29 changed only the
+runtime ABI, adding the checked-integer-arithmetic runtime boundary. Earlier
+artifacts must be rebuilt; the reader does not migrate or reinterpret them.
 
 Capabilities advertise `artifact_formats: [4]`; receipts carry
 `artifact_format: 4`. Runtime ABI remains compiler-owned metadata inside that

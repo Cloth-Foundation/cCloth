@@ -1,0 +1,4 @@
+enum {
+  Ready,
+  Done,
+}

@@ -142,7 +142,8 @@ class MirVerifier {
       }
       if (field.initializer) {
         verify_body(*field.initializer,
-                    symbol_type(field.symbol, semantics_.error_type()), true);
+                    symbol_type(field.symbol, semantics_.error_type()), true,
+                    true);
         verify_struct_initialization(file, *field.initializer,
                                      initialized_fields, false);
         initialized_fields.insert(field.symbol.value);
@@ -255,7 +256,8 @@ class MirVerifier {
     }
     verify_body(callable.body, return_type,
                 expected_kind == SymbolKind::kConstructor,
-                expected_kind == SymbolKind::kConstructor);
+                expected_kind == SymbolKind::kConstructor,
+                callable_uses_error_abi(callable.symbol, semantics_));
     if (is_abstract && (callable.body.blocks.size() != 1 ||
                         !callable.body.blocks[0].instructions.empty() ||
                         !std::holds_alternative<MirUnreachableTerminator>(
@@ -455,8 +457,10 @@ class MirVerifier {
 
   void verify_body(const MirBody& body, TypeId return_type,
                    bool suppress_self_virtual_dispatch,
-                   bool initialization_allowed = false) {
+                   bool initialization_allowed = false,
+                   bool error_allowed = false) {
     initialization_allowed_ = initialization_allowed;
+    error_allowed_ = error_allowed;
     current_locals_.clear();
     for (const auto& block : body.blocks) {
       for (const auto& instruction : block.instructions) {
@@ -487,6 +491,32 @@ class MirVerifier {
           } else {
             value_types[instruction.result->value] = instruction.type;
           }
+        }
+        if (const auto* call =
+                std::get_if<MirCallInstruction>(&instruction.data)) {
+          const auto define = [&](std::optional<MirValueId> value,
+                                  TypeId type) {
+            if (!value) {
+              return;
+            }
+            if (value->value >= value_types.size()) {
+              report(instruction.range,
+                     "call result exceeds the body value table");
+            } else if (value_types[value->value]) {
+              report(instruction.range, "value is defined more than once");
+            } else {
+              value_types[value->value] = type;
+            }
+          };
+          TypeId result_type = semantics_.error_type();
+          if (call->callable.value < semantics_.symbols().size()) {
+            const SemanticSymbol& callable = semantics_.symbol(call->callable);
+            result_type = call->kind == MirCallKind::kBaseConstructor
+                              ? semantics_.void_type()
+                              : callable.type;
+          }
+          define(call->success_storage, result_type);
+          define(call->error_result, semantics_.nullable_error_root_type());
         }
       }
     }
@@ -540,6 +570,17 @@ class MirVerifier {
         if (instruction.result &&
             instruction.result->value < definitions.size())
           definitions[instruction.result->value] = MirBlockId{index};
+        if (const auto* call =
+                std::get_if<MirCallInstruction>(&instruction.data)) {
+          if (call->success_storage &&
+              call->success_storage->value < definitions.size()) {
+            definitions[call->success_storage->value] = MirBlockId{index};
+          }
+          if (call->error_result &&
+              call->error_result->value < definitions.size()) {
+            definitions[call->error_result->value] = MirBlockId{index};
+          }
+        }
       }
     }
     for (std::size_t index = 0; index < body.blocks.size(); ++index) {
@@ -1147,9 +1188,43 @@ class MirVerifier {
         const TypeId expected_type = call->kind == MirCallKind::kBaseConstructor
                                          ? semantics_.void_type()
                                          : callable.type;
-        if (instruction.type != expected_type) {
-          report(instruction.range,
-                 "call result type does not match its callable");
+        const bool uses_error_abi =
+            callable_uses_error_abi(call->callable, semantics_);
+        if (uses_error_abi) {
+          if (instruction.type != semantics_.void_type() ||
+              instruction.result || !call->error_result ||
+              call->success_storage.has_value() !=
+                  (expected_type != semantics_.void_type())) {
+            report(instruction.range,
+                   "throwing call has an invalid result contract");
+          }
+          verify_optional_value(call->success_storage, value_types,
+                                instruction.range);
+          verify_optional_value(call->error_result, value_types,
+                                instruction.range);
+          if (call->success_storage) {
+            verify_value_type(*call->success_storage, expected_type,
+                              value_types, instruction.range);
+          }
+          if (call->error_result) {
+            verify_value_type(*call->error_result,
+                              semantics_.nullable_error_root_type(),
+                              value_types, instruction.range);
+          }
+        } else {
+          if (call->success_storage || call->error_result) {
+            report(instruction.range,
+                   "nonthrowing call retains error-result metadata");
+          }
+          if (instruction.type != expected_type) {
+            report(instruction.range,
+                   "call result type does not match its callable");
+          }
+          if (instruction.type == semantics_.void_type()) {
+            require_no_result(instruction);
+          } else {
+            require_result(instruction);
+          }
         }
         if (call->arguments.size() != callable.parameter_types.size()) {
           report(instruction.range,
@@ -1165,11 +1240,12 @@ class MirVerifier {
                             instruction.range);
         }
       }
-      if (instruction.type == semantics_.void_type()) {
-        require_no_result(instruction);
-      } else {
-        require_result(instruction);
-      }
+    } else if (const auto* load = std::get_if<MirLoadCallResultInstruction>(
+                   &instruction.data)) {
+      require_result(instruction);
+      verify_value(load->storage, value_types, instruction.range);
+      verify_value_type(load->storage, instruction.type, value_types,
+                        instruction.range);
     } else if (std::holds_alternative<MirInitializeFieldsInstruction>(
                    instruction.data)) {
       if (!initialization_allowed_) {
@@ -1193,6 +1269,8 @@ class MirVerifier {
         verify_value_type(incoming.value, instruction.type, value_types,
                           instruction.range);
       }
+    } else if (std::holds_alternative<MirPoisonInstruction>(instruction.data)) {
+      require_result(instruction);
     } else if (const auto* constant = std::get_if<MirScalarConstantInstruction>(
                    &instruction.data)) {
       require_result(instruction);
@@ -1310,6 +1388,15 @@ class MirVerifier {
         verify_value_type(*return_terminator->value, return_type, value_types,
                           terminator.range);
       }
+    } else if (const auto* error =
+                   std::get_if<MirErrorTerminator>(&terminator.data)) {
+      verify_value(error->error, value_types, terminator.range);
+      verify_value_type(error->error, semantics_.error_root_type(), value_types,
+                        terminator.range);
+      if (!error_allowed_) {
+        report(terminator.range,
+               "nonthrowing body contains an error terminator");
+      }
     }
   }
 
@@ -1398,8 +1485,8 @@ class MirVerifier {
     }
     const TypeKind kind = semantics_.type(type).kind;
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
-           kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
-           kind == TypeKind::kArray;
+           kind == TypeKind::kFileClass || kind == TypeKind::kErrorClass ||
+           kind == TypeKind::kInterface || kind == TypeKind::kArray;
   }
 
   bool can_widen_reference(TypeId source, TypeId target) const {
@@ -1425,6 +1512,7 @@ class MirVerifier {
                                  *target_type.element_type);
     }
     if ((source_type.kind == TypeKind::kFileClass ||
+         source_type.kind == TypeKind::kErrorClass ||
          source_type.kind == TypeKind::kInterface) &&
         source_type.file && target_type.kind == TypeKind::kInterface &&
         target_type.file) {
@@ -1433,8 +1521,17 @@ class MirVerifier {
       return std::ranges::find(interfaces, *target_type.file) !=
              interfaces.end();
     }
-    if (source_type.kind != TypeKind::kFileClass || !source_type.file ||
-        target_type.kind != TypeKind::kFileClass || !target_type.file) {
+    if ((source_type.kind != TypeKind::kFileClass &&
+         source_type.kind != TypeKind::kErrorClass) ||
+        (target_type.kind != TypeKind::kFileClass &&
+         target_type.kind != TypeKind::kErrorClass)) {
+      return false;
+    }
+    if (target == semantics_.error_root_type() &&
+        source_type.kind == TypeKind::kErrorClass) {
+      return true;
+    }
+    if (!source_type.file || !target_type.file) {
       return false;
     }
     std::optional<FileId> current =
@@ -1493,7 +1590,8 @@ class MirVerifier {
                           value_types, range);
         current = array_element_type(*path.object, value_types, range);
       } else if (current && current->value < semantics_.types().size() &&
-                 semantics_.type(*current).kind != TypeKind::kFileClass) {
+                 semantics_.type(*current).kind != TypeKind::kFileClass &&
+                 semantics_.type(*current).kind != TypeKind::kErrorClass) {
         report(range, "storage path object is not a managed class reference");
         return std::nullopt;
       }
@@ -1544,7 +1642,9 @@ class MirVerifier {
     bool related = false;
     if (type.kind == TypeKind::kStruct && type.file && owner) {
       related = type.file == owner;
-    } else if (type.kind == TypeKind::kFileClass && type.file && owner) {
+    } else if ((type.kind == TypeKind::kFileClass ||
+                type.kind == TypeKind::kErrorClass) &&
+               type.file && owner) {
       related = is_file_subtype(*type.file, *owner);
     } else if (type.kind == TypeKind::kInterface && type.file && owner) {
       const std::vector<FileId>& interfaces =
@@ -1653,6 +1753,7 @@ class MirVerifier {
   std::set<std::size_t> current_parameters_;
   std::set<std::size_t> current_locals_;
   bool initialization_allowed_{false};
+  bool error_allowed_{false};
   bool is_valid_{true};
 };
 

@@ -1,0 +1,6 @@
+7
+cloth
+2
+Status.Ready
+9
+done

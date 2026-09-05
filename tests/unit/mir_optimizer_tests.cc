@@ -13,6 +13,7 @@
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_file.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -411,7 +412,7 @@ void failing_operations_remain(TestContext& test) {
     static final uint64 TooBig = 256;
     static final int32 Width = 32;
     static func Overflow(): int32 { return 2147483647 + 1; }
-    static func ZeroDivisor(): int32 { return 1 / 0; }
+    static func ZeroDivisor(): int32 throws DivisionByZero { return 1 / 0; }
     static func InvalidShift(): int32 { return 1 << Width; }
     static func FailedCheck(): int8 { return int8(TooBig); }
     static func NonFinite(): float64 { return 0.0; }
@@ -450,7 +451,7 @@ void failing_operations_remain(TestContext& test) {
               "failure baseline is invalid: " + messages(baseline_diagnostics));
   cloth::optimize_mir(sources.result->mir, sources.result->semantics);
   for (const std::string_view name :
-       {"Overflow", "ZeroDivisor", "InvalidShift", "NonFinite"}) {
+       {"Overflow", "InvalidShift", "NonFinite"}) {
     const cloth::MirCallable* function =
         find_function(sources.result->mir, sources.result->semantics, name);
     const auto* returned = std::get_if<cloth::MirReturnTerminator>(
@@ -462,6 +463,15 @@ void failing_operations_remain(TestContext& test) {
                         instruction->data),
                 std::string{name} + " failure was folded or replaced");
   }
+  const cloth::MirCallable* zero_divisor = find_function(
+      sources.result->mir, sources.result->semantics, "ZeroDivisor");
+  test.expect(std::ranges::any_of(
+                  zero_divisor->body.blocks,
+                  [](const cloth::MirBasicBlock& block) {
+                    return std::holds_alternative<cloth::MirErrorTerminator>(
+                        block.terminator.data);
+                  }),
+              "zero divisor lost its typed MIR error edge");
   const cloth::MirCallable* failed_check = find_function(
       sources.result->mir, sources.result->semantics, "FailedCheck");
   const auto* checked_return = std::get_if<cloth::MirReturnTerminator>(

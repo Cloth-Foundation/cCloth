@@ -6,6 +6,8 @@ set(CLOTH_INTEGRATION_PROGRAMS "${CMAKE_CURRENT_SOURCE_DIR}/programs")
 set(CLOTH_INTEGRATION_EXPECTED "${CMAKE_CURRENT_SOURCE_DIR}/expected")
 set(CLOTH_INTEGRATION_ERRORS "${CMAKE_CURRENT_SOURCE_DIR}/errors")
 set(CLOTH_INTEGRATION_PROJECTS "${CMAKE_CURRENT_SOURCE_DIR}/projects")
+set(CLOTH_TYPED_ERROR_PROJECT
+    "${CLOTH_INTEGRATION_PROJECTS}/typed_errors/src")
 
 foreach(target IN ITEMS x86_64 wasm32)
     add_test(NAME cloth_cli_check_numeric_literal_notation_${target}
@@ -103,6 +105,35 @@ foreach(target IN ITEMS x86_64 wasm32)
                 ${checked_updates_ir})
         set_tests_properties(cloth_checked_updates_optimized_verify_${target}
             PROPERTIES DEPENDS cloth_cli_checked_updates_llvm_${target})
+    endif()
+    set(typed_error_ir
+        "${PROJECT_BINARY_DIR}/cloth-typed-error-${target}.ll")
+    add_test(NAME cloth_cli_typed_error_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${typed_error_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/TypedErrorPropagation.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_typed_error_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${typed_error_ir})
+        set_tests_properties(cloth_typed_error_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_typed_error_llvm_${target})
+    endif()
+    set(typed_error_values_ir
+        "${PROJECT_BINARY_DIR}/cloth-typed-error-values-${target}.ll")
+    add_test(NAME cloth_cli_typed_error_values_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${typed_error_values_ir}
+            --source-root=${CLOTH_TYPED_ERROR_PROJECT}
+            ${CLOTH_TYPED_ERROR_PROJECT}/Main.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_typed_error_values_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${typed_error_values_ir})
+        set_tests_properties(cloth_typed_error_values_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_typed_error_values_llvm_${target})
     endif()
     set(switch_ir "${PROJECT_BINARY_DIR}/cloth-switch-${target}.ll")
     add_test(NAME cloth_cli_switch_llvm_${target}
@@ -318,7 +349,7 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         COMMAND ${CMAKE_COMMAND}
             "-DCLOTH_PROGRAM=${mir_raw_failure}"
             "-DCLOTH_COMPARE_PROGRAM=${mir_optimized_failure}"
-            "-DCLOTH_EXPECTED_ERROR=cloth runtime error: integer division by zero"
+            "-DCLOTH_EXPECTED_ERROR=cloth error: DivisionByZero"
             -DCLOTH_EXACT_ERROR=ON
             -P ${CMAKE_CURRENT_SOURCE_DIR}/RunProgram.cmake)
     set_tests_properties(cloth_mir_baseline_failure PROPERTIES
@@ -572,6 +603,28 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/integer_conversion_modes.txt
         EXACT
     )
+    cloth_add_native_output_test(typed_error_success
+        OUTPUT "cloth typed error success"
+        SOURCE ${CLOTH_TYPED_ERROR_PROJECT}/Main.co
+        SOURCE_ROOT ${CLOTH_TYPED_ERROR_PROJECT}
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/typed_error_success.txt
+        EXACT
+    )
+    cloth_add_native_failure_test(typed_error_propagation
+        OUTPUT "cloth typed error propagation"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/TypedErrorPropagation.co
+        ERROR "cloth error: TypedErrorPropagation: propagated"
+        EXACT
+    )
+    cloth_add_native_failure_test(typed_error_construction
+        OUTPUT "cloth typed error construction"
+        SOURCE
+            ${CLOTH_INTEGRATION_PROJECTS}/typed_error_construction/src/Main.co
+        SOURCE_ROOT
+            ${CLOTH_INTEGRATION_PROJECTS}/typed_error_construction/src
+        ERROR "cloth error: Failure: constructor"
+        EXACT
+    )
     cloth_add_native_failure_test(integer_overflow_failure
         OUTPUT "cloth integer overflow failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerOverflowFailure.co
@@ -581,13 +634,13 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
     cloth_add_native_failure_test(integer_division_by_zero_failure
         OUTPUT "cloth integer division by zero failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerDivisionByZeroFailure.co
-        ERROR "cloth runtime error: integer division by zero"
+        ERROR "cloth error: DivisionByZero"
         EXACT
     )
     cloth_add_native_failure_test(integer_remainder_by_zero_failure
         OUTPUT "cloth integer remainder by zero failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerRemainderByZeroFailure.co
-        ERROR "cloth runtime error: integer remainder by zero"
+        ERROR "cloth error: DivisionByZero"
         EXACT
     )
     cloth_add_native_failure_test(integer_division_overflow_failure
@@ -629,13 +682,13 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
     cloth_add_native_failure_test(integer_compound_division_failure
         OUTPUT "cloth integer compound division failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerCompoundDivisionFailure.co
-        ERROR "cloth runtime error: integer division by zero"
+        ERROR "cloth error: DivisionByZero"
         EXACT
     )
     cloth_add_native_failure_test(integer_compound_remainder_failure
         OUTPUT "cloth integer compound remainder failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/IntegerCompoundRemainderFailure.co
-        ERROR "cloth runtime error: integer remainder by zero"
+        ERROR "cloth error: DivisionByZero"
         EXACT
     )
     cloth_add_native_failure_test(shift_count_failure

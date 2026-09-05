@@ -49,6 +49,13 @@ struct ExpressionState {
   std::optional<TypeId> checked_type{};
   std::optional<FileId> interface_dispatch{};
   std::optional<IntegerMetaOperation> integer_meta_operation{};
+  bool may_divide_by_zero{false};
+};
+
+struct ErrorEffectSource {
+  std::optional<TypeId> direct_type;
+  std::optional<SymbolId> callee;
+  SourceRange range;
 };
 
 struct ShiftLiteral {
@@ -156,6 +163,7 @@ class SemanticAnalyzer {
         imported_packages_(imported_packages) {}
 
   SemanticAnalysisResult run() {
+    register_compiler_errors();
     register_file_classes();
     register_imported_packages();
     register_imports();
@@ -167,11 +175,50 @@ class SemanticAnalyzer {
     validate_overrides();
     validate_interface_conformance();
     analyze_definitions();
+    analyze_error_effects();
     return SemanticAnalysisResult{std::move(model_),
                                   !diagnostics_.has_errors()};
   }
 
  private:
+  void register_compiler_errors() {
+    const SourceRange range = point_range(SourceLocation{"<core>", 0, 1, 1});
+    error_message_symbol_ =
+        model_.add_symbol(SemanticSymbol{SymbolKind::kField,
+                                         "Message",
+                                         model_.string_type(),
+                                         {},
+                                         Visibility::kPublic,
+                                         std::nullopt,
+                                         range});
+    model_.mutable_symbol(error_message_symbol_).is_final = true;
+
+    error_default_constructor_ =
+        model_.add_symbol(SemanticSymbol{SymbolKind::kConstructor,
+                                         "Error",
+                                         model_.error_root_type(),
+                                         {},
+                                         Visibility::kPublic,
+                                         std::nullopt,
+                                         range});
+    error_message_constructor_ =
+        model_.add_symbol(SemanticSymbol{SymbolKind::kConstructor,
+                                         "Error",
+                                         model_.error_root_type(),
+                                         {model_.string_type()},
+                                         Visibility::kPublic,
+                                         std::nullopt,
+                                         range});
+    division_by_zero_constructor_ =
+        model_.add_symbol(SemanticSymbol{SymbolKind::kConstructor,
+                                         "DivisionByZero",
+                                         model_.division_by_zero_type(),
+                                         {},
+                                         Visibility::kPublic,
+                                         std::nullopt,
+                                         range});
+  }
+
   void register_file_classes() {
     for (std::size_t index = 0; index < files_.size(); ++index) {
       const FileClassDecl& syntax = *files_[index];
@@ -213,6 +260,7 @@ class SemanticAnalyzer {
             syntax.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
             : syntax.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
             : syntax.kind == FileTypeKind::kInterface ? TypeKind::kInterface
+            : syntax.kind == FileTypeKind::kError     ? TypeKind::kErrorClass
                                                       : TypeKind::kFileClass;
         type = model_.add_type(
             SemanticType{type_kind, syntax.qualified_name, file_id});
@@ -221,6 +269,7 @@ class SemanticAnalyzer {
           syntax.kind == FileTypeKind::kStruct      ? SymbolKind::kStruct
           : syntax.kind == FileTypeKind::kEnum      ? SymbolKind::kEnum
           : syntax.kind == FileTypeKind::kInterface ? SymbolKind::kInterface
+          : syntax.kind == FileTypeKind::kError     ? SymbolKind::kError
                                                     : SymbolKind::kFileClass,
           syntax.qualified_name,
           type,
@@ -315,6 +364,7 @@ class SemanticAnalyzer {
             imported.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
             : imported.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
             : imported.kind == FileTypeKind::kInterface ? TypeKind::kInterface
+            : imported.kind == FileTypeKind::kError     ? TypeKind::kErrorClass
                                                         : TypeKind::kFileClass;
         const std::string qualified_name =
             qualified_file_name(imported.nominal_identity.package.name,
@@ -324,11 +374,11 @@ class SemanticAnalyzer {
             model_.add_type(SemanticType{type_kind, qualified_name, file_id});
         const SourceRange range = imported_range(imported.location);
         const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
-            imported.kind == FileTypeKind::kStruct ? SymbolKind::kStruct
-            : imported.kind == FileTypeKind::kEnum ? SymbolKind::kEnum
-            : imported.kind == FileTypeKind::kInterface
-                ? SymbolKind::kInterface
-                : SymbolKind::kFileClass,
+            imported.kind == FileTypeKind::kStruct      ? SymbolKind::kStruct
+            : imported.kind == FileTypeKind::kEnum      ? SymbolKind::kEnum
+            : imported.kind == FileTypeKind::kInterface ? SymbolKind::kInterface
+            : imported.kind == FileTypeKind::kError     ? SymbolKind::kError
+                                                    : SymbolKind::kFileClass,
             qualified_name,
             type,
             {},
@@ -474,6 +524,20 @@ class SemanticAnalyzer {
             report_invalid(imported.identity);
             continue;
           }
+          std::vector<TypeId> thrown_types;
+          bool thrown_types_valid = true;
+          for (const std::string& identity : imported.thrown_type_identities) {
+            const auto thrown_type = imported_type_ids_.find(identity);
+            if (thrown_type == imported_type_ids_.end()) {
+              thrown_types_valid = false;
+              break;
+            }
+            thrown_types.push_back(thrown_type->second);
+          }
+          if (!thrown_types_valid) {
+            report_invalid(imported.identity);
+            continue;
+          }
           SymbolKind kind = SymbolKind::kField;
           if (imported.kind == ImportedMemberKind::kFunction) {
             kind = SymbolKind::kFunction;
@@ -490,6 +554,9 @@ class SemanticAnalyzer {
           semantic.is_override = imported.is_override;
           semantic.is_abstract = imported.is_abstract;
           semantic.virtual_slot = imported.virtual_slot;
+          semantic.thrown_types = std::move(thrown_types);
+          semantic.has_explicit_throws =
+              kind == SymbolKind::kFunction || kind == SymbolKind::kConstructor;
           if (imported.static_value && semantic.is_static &&
               semantic.is_final) {
             semantic.static_constant =
@@ -700,10 +767,13 @@ class SemanticAnalyzer {
                          FileId target, VisibleFileKind kind,
                          SourceRange range) {
     if (const std::optional<TypeId> core = model_.find_type(name);
-        core && model_.type(*core).kind != TypeKind::kFileClass &&
-        model_.type(*core).kind != TypeKind::kInterface &&
-        model_.type(*core).kind != TypeKind::kEnum &&
-        model_.type(*core).kind != TypeKind::kStruct) {
+        core && ((model_.type(*core).kind != TypeKind::kFileClass &&
+                  model_.type(*core).kind != TypeKind::kInterface &&
+                  model_.type(*core).kind != TypeKind::kEnum &&
+                  model_.type(*core).kind != TypeKind::kStruct &&
+                  model_.type(*core).kind != TypeKind::kErrorClass) ||
+                 *core == model_.error_root_type() ||
+                 *core == model_.division_by_zero_type())) {
       diagnostics_.error(range, "import name '" + std::string{name} +
                                     "' conflicts with a core type");
       model_.mutable_file(current_file).is_valid = false;
@@ -739,7 +809,36 @@ class SemanticAnalyzer {
         const TypeId base_type = resolve_type(*syntax.base_class, file_id);
         if (base_type != model_.error_type()) {
           const SemanticType& base = model_.type(base_type);
-          if (syntax.kind != FileTypeKind::kClass) {
+          if (syntax.kind == FileTypeKind::kError) {
+            if (base.kind != TypeKind::kErrorClass) {
+              diagnostics_.error(
+                  syntax.base_class->range,
+                  "base type '" + base.name + "' must be an error");
+              model_.mutable_file(file_id).is_valid = false;
+            } else if (base_type == model_.division_by_zero_type()) {
+              diagnostics_.error(
+                  syntax.base_class->range,
+                  "error '" + syntax.qualified_name +
+                      "' cannot inherit from sealed error 'DivisionByZero'");
+              model_.mutable_file(file_id).is_valid = false;
+            } else if (base.file && *base.file == file_id) {
+              diagnostics_.error(syntax.base_class->range,
+                                 "error '" + syntax.qualified_name +
+                                     "' cannot inherit from itself");
+              model_.mutable_file(file_id).is_valid = false;
+            } else if (base.file && model_.file(*base.file).is_sealed) {
+              diagnostics_.error(syntax.base_class->range,
+                                 "error '" + syntax.qualified_name +
+                                     "' cannot inherit from sealed error '" +
+                                     base.name + "'");
+              diagnostics_.note(
+                  model_.symbol(model_.file(*base.file).symbol).range,
+                  "sealed error is declared here");
+              model_.mutable_file(file_id).is_valid = false;
+            } else if (base.file) {
+              model_.mutable_file(file_id).base_file = *base.file;
+            }
+          } else if (syntax.kind != FileTypeKind::kClass) {
             diagnostics_.error(syntax.base_class->range,
                                "only classes can inherit a class");
             model_.mutable_file(file_id).is_valid = false;
@@ -1000,18 +1099,99 @@ class SemanticAnalyzer {
   void register_field(FileId file_id, std::size_t index) {
     const FieldDecl& field = files_[file_id.value]->fields.at(index);
     const TypeId type = resolve_type(field.type, file_id);
-    const SymbolId symbol = model_.add_symbol(
-        SemanticSymbol{SymbolKind::kField,
-                       std::string{field.name},
-                       type,
-                       {},
-                       field.visibility,
-                       file_id,
-                       field.range,
-                       field.is_valid && type != model_.error_type()});
+    bool valid = field.is_valid && type != model_.error_type();
+    if (model_.file(file_id).kind == FileTypeKind::kError &&
+        field.name == "Message") {
+      diagnostics_.error(field.range,
+                         "error field 'Message' cannot hide inherited final "
+                         "field 'Error.Message'");
+      diagnostics_.note(model_.symbol(error_message_symbol_).range,
+                        "compiler-provided final field is declared here");
+      model_.mutable_file(file_id).is_valid = false;
+      valid = false;
+    }
+    const SymbolId symbol =
+        model_.add_symbol(SemanticSymbol{SymbolKind::kField,
+                                         std::string{field.name},
+                                         type,
+                                         {},
+                                         field.visibility,
+                                         file_id,
+                                         field.range,
+                                         valid});
     model_.mutable_symbol(symbol).is_final = field.is_final;
     model_.mutable_symbol(symbol).is_static = field.is_static;
     model_.mutable_file(file_id).fields.at(index) = symbol;
+  }
+
+  std::vector<TypeId> resolve_throws_types(std::span<const TypeSyntax> syntaxes,
+                                           FileId file_id,
+                                           Visibility callable_visibility) {
+    std::vector<TypeId> types;
+    std::vector<SourceRange> type_ranges;
+    types.reserve(syntaxes.size());
+    for (const TypeSyntax& syntax : syntaxes) {
+      const TypeId type = resolve_type(syntax, file_id);
+      if (type == model_.error_type()) {
+        continue;
+      }
+      if (!is_error_type(type)) {
+        diagnostics_.error(syntax.range, "throws clause type '" +
+                                             type_name(type) +
+                                             "' is not a non-null error");
+        model_.mutable_file(file_id).is_valid = false;
+        continue;
+      }
+      if (callable_visibility == Visibility::kPublic) {
+        const SemanticType& value = model_.type(type);
+        if (value.file &&
+            model_.symbol(model_.file(*value.file).symbol).visibility ==
+                Visibility::kPrivate) {
+          diagnostics_.error(syntax.range,
+                             "public throws clause exposes private error '" +
+                                 type_name(type) + "'");
+          model_.mutable_file(file_id).is_valid = false;
+          continue;
+        }
+      }
+      if (std::ranges::find(types, type) != types.end()) {
+        diagnostics_.error(
+            syntax.range,
+            "duplicate error type '" + type_name(type) + "' in throws clause");
+        model_.mutable_file(file_id).is_valid = false;
+        continue;
+      }
+      types.push_back(type);
+      type_ranges.push_back(syntax.range);
+    }
+
+    for (std::size_t index = 0; index < types.size(); ++index) {
+      for (std::size_t other = index + 1; other < types.size(); ++other) {
+        std::optional<std::size_t> redundant;
+        std::optional<std::size_t> covering;
+        if (is_error_subtype(types[index], types[other])) {
+          redundant = index;
+          covering = other;
+        } else if (is_error_subtype(types[other], types[index])) {
+          redundant = other;
+          covering = index;
+        }
+        if (!redundant) {
+          continue;
+        }
+        diagnostics_.error(type_ranges[*redundant],
+                           "error type '" + type_name(types[*redundant]) +
+                               "' is already covered by '" +
+                               type_name(types[*covering]) +
+                               "' in throws clause");
+        model_.mutable_file(file_id).is_valid = false;
+      }
+    }
+    std::ranges::sort(types, [this](TypeId left, TypeId right) {
+      return canonical_type_identity(left, model_) <
+             canonical_type_identity(right, model_);
+    });
+    return types;
   }
 
   void register_function(FileId file_id, std::size_t index) {
@@ -1037,6 +1217,15 @@ class SemanticAnalyzer {
     model_.mutable_symbol(symbol).is_override = function.is_override;
     model_.mutable_symbol(symbol).is_abstract = function.is_abstract;
     model_.mutable_symbol(symbol).is_final = function.is_final;
+    model_.mutable_symbol(symbol).has_explicit_throws =
+        function.has_explicit_throws;
+    const std::size_t throws_diagnostic_begin =
+        diagnostics_.diagnostics().size();
+    model_.mutable_symbol(symbol).thrown_types = resolve_throws_types(
+        function.throws_types, file_id, function.visibility);
+    if (diagnostics_.diagnostics().size() != throws_diagnostic_begin) {
+      model_.mutable_symbol(symbol).is_valid = false;
+    }
     if (files_[file_id.value]->kind == FileTypeKind::kStruct &&
         (function.is_abstract || function.is_override || function.is_final)) {
       diagnostics_.error(
@@ -1053,7 +1242,8 @@ class SemanticAnalyzer {
       model_.mutable_file(file_id).is_valid = false;
     }
     if (function.is_abstract) {
-      if (files_[file_id.value]->kind == FileTypeKind::kClass &&
+      if ((files_[file_id.value]->kind == FileTypeKind::kClass ||
+           files_[file_id.value]->kind == FileTypeKind::kError) &&
           !files_[file_id.value]->is_abstract) {
         diagnostics_.error(function.range,
                            "abstract function '" + std::string{function.name} +
@@ -1114,7 +1304,7 @@ class SemanticAnalyzer {
     auto merge_function = [this](FileId interface_file,
                                  std::vector<SymbolId>& functions,
                                  SymbolId candidate_id) {
-      const SemanticSymbol& candidate = model_.symbol(candidate_id);
+      const SemanticSymbol candidate = model_.symbol(candidate_id);
       if (!candidate.is_valid) {
         return;
       }
@@ -1129,22 +1319,38 @@ class SemanticAnalyzer {
         return;
       }
 
-      const SemanticSymbol& inherited = model_.symbol(*existing);
+      const SemanticSymbol inherited = model_.symbol(*existing);
+      SymbolId selected = *existing;
       if (is_override_return_compatible(inherited.type, candidate.type)) {
-        *existing = candidate_id;
+        selected = candidate_id;
+      } else if (!is_override_return_compatible(candidate.type,
+                                                inherited.type)) {
+        diagnostics_.error(candidate.range,
+                           "interface function '" +
+                               callable_signature(candidate) +
+                               "' conflicts with inherited return type '" +
+                               type_name(inherited.type) + "'");
+        diagnostics_.note(inherited.range,
+                          "conflicting interface function is declared here");
+        model_.mutable_file(interface_file).is_valid = false;
         return;
       }
-      if (is_override_return_compatible(candidate.type, inherited.type)) {
+
+      const std::vector<TypeId> permitted = intersect_error_sets(
+          inherited.thrown_types.span(), candidate.thrown_types.span());
+      if (model_.symbol(selected).thrown_types == permitted) {
+        *existing = selected;
         return;
       }
-      diagnostics_.error(candidate.range,
-                         "interface function '" +
-                             callable_signature(candidate) +
-                             "' conflicts with inherited return type '" +
-                             type_name(inherited.type) + "'");
-      diagnostics_.note(inherited.range,
-                        "conflicting interface function is declared here");
-      model_.mutable_file(interface_file).is_valid = false;
+
+      SemanticSymbol merged = model_.symbol(selected);
+      merged.file = interface_file;
+      merged.range = candidate.range;
+      merged.thrown_types = permitted;
+      merged.has_explicit_throws = true;
+      merged.virtual_slot.reset();
+      merged.overridden_symbol.reset();
+      *existing = model_.add_symbol(std::move(merged));
     };
 
     while (remaining != 0) {
@@ -1218,7 +1424,8 @@ class SemanticAnalyzer {
           continue;
         }
         const FileId file_id{index};
-        if (model_.file(file_id).kind != FileTypeKind::kClass) {
+        if (model_.file(file_id).kind != FileTypeKind::kClass &&
+            model_.file(file_id).kind != FileTypeKind::kError) {
           complete[index] = true;
           --remaining;
           made_progress = true;
@@ -1259,7 +1466,8 @@ class SemanticAnalyzer {
     std::vector<bool> complete(files_.size(), false);
     std::size_t remaining = 0;
     for (std::size_t index = 0; index < files_.size(); ++index) {
-      if (model_.file(FileId{index}).kind == FileTypeKind::kClass) {
+      if (model_.file(FileId{index}).kind == FileTypeKind::kClass ||
+          model_.file(FileId{index}).kind == FileTypeKind::kError) {
         ++remaining;
       } else {
         complete[index] = true;
@@ -1271,7 +1479,8 @@ class SemanticAnalyzer {
       for (std::size_t index = 0; index < files_.size(); ++index) {
         const FileId file_id{index};
         FileSemantics& file = model_.mutable_file(file_id);
-        if (complete[index] || file.kind != FileTypeKind::kClass) {
+        if (complete[index] || (file.kind != FileTypeKind::kClass &&
+                                file.kind != FileTypeKind::kError)) {
           continue;
         }
         if (file.base_file && file.base_file->value < complete.size() &&
@@ -1321,6 +1530,18 @@ class SemanticAnalyzer {
                                      type_name(requirement.type) + "'");
               diagnostics_.note(requirement.range,
                                 "interface function contract is declared here");
+              file.is_valid = false;
+              continue;
+            }
+            if (!throws_set_covers(requirement.thrown_types.span(),
+                                   function.thrown_types.span())) {
+              complete_contract = false;
+              diagnostics_.error(function.range,
+                                 "implementation of interface function '" +
+                                     requirement.name +
+                                     "' widens its throws contract");
+              diagnostics_.note(requirement.range,
+                                "interface throws contract is declared here");
               file.is_valid = false;
               continue;
             }
@@ -1436,6 +1657,17 @@ class SemanticAnalyzer {
         file.is_valid = false;
         continue;
       }
+      if (!throws_set_covers(inherited.thrown_types.span(),
+                             symbol.thrown_types.span())) {
+        diagnostics_.error(symbol.range,
+                           "override of '" + symbol.name +
+                               "' widens the inherited throws contract");
+        diagnostics_.note(inherited.range,
+                          "inherited throws contract is declared here");
+        symbol.is_valid = false;
+        file.is_valid = false;
+        continue;
+      }
       if (!symbol.is_override) {
         diagnostics_.error(symbol.range, "function '" + symbol.name +
                                              "' overrides an inherited "
@@ -1488,6 +1720,15 @@ class SemanticAnalyzer {
         SemanticSymbol{SymbolKind::kConstructor, std::string{constructor.name},
                        file.type, std::move(parameters), constructor.visibility,
                        file_id, constructor.range, valid});
+    model_.mutable_symbol(symbol).has_explicit_throws =
+        constructor.has_explicit_throws;
+    const std::size_t throws_diagnostic_begin =
+        diagnostics_.diagnostics().size();
+    model_.mutable_symbol(symbol).thrown_types = resolve_throws_types(
+        constructor.throws_types, file_id, constructor.visibility);
+    if (diagnostics_.diagnostics().size() != throws_diagnostic_begin) {
+      model_.mutable_symbol(symbol).is_valid = false;
+    }
     model_.mutable_file(file_id).constructors.at(index) = symbol;
   }
 
@@ -1603,6 +1844,7 @@ class SemanticAnalyzer {
       analyze_field(location.second);
     }
     evaluate_static_constants(files_, model_, diagnostics_);
+    instance_field_initializers_complete_.assign(files_.size(), true);
     for (std::size_t file_index = 0; file_index < files_.size(); ++file_index) {
       current_file_ = FileId{file_index};
       for (std::size_t index = 0; index < files_[file_index]->fields.size();
@@ -1695,10 +1937,20 @@ class SemanticAnalyzer {
       return;
     }
     constant_context_ = field.is_static;
+    const bool initializer_reachable =
+        field.is_static ||
+        instance_field_initializers_complete_.at(current_file_.value);
+    if (!field.is_static) {
+      current_effect_field_ = current_file_;
+    }
     begin_root_scope(!field.is_static);
     const TypeId field_type = model_.symbol(symbol).type;
-    const ExpressionState value =
-        analyze_expression(*field.initializer, field_type);
+    const ExpressionState value = analyze_expression_with_effect_reachability(
+        *field.initializer, initializer_reachable, field_type);
+    if (!field.is_static && initializer_reachable &&
+        value.type == model_.bottom_type()) {
+      instance_field_initializers_complete_.at(current_file_.value) = false;
+    }
     if (field.is_static && !is_static_scalar_type(field_type)) {
       diagnostics_.error(
           expression_range(*field.initializer),
@@ -1718,6 +1970,7 @@ class SemanticAnalyzer {
         diagnostics_.diagnostics().size() != diagnostic_begin)
       model_.mutable_symbol(symbol).is_valid = false;
     constant_context_ = false;
+    current_effect_field_.reset();
     end_root_scope();
   }
 
@@ -1753,15 +2006,26 @@ class SemanticAnalyzer {
     const bool is_static = model_.symbol(callable_symbol).is_static;
     begin_root_scope(is_constructor || !is_static);
     register_parameters(callable_symbol, parameters);
+    current_callable_symbol_ = callable_symbol;
 
+    bool prefix_completes = true;
     if (is_constructor) {
-      analyze_constructor_initializer(callable_symbol, initializer);
+      const bool base_completes =
+          analyze_constructor_initializer(callable_symbol, initializer);
+      prefix_completes =
+          base_completes &&
+          instance_field_initializers_complete_.at(current_file_.value);
+      if (!base_completes) {
+        incomplete_base_initializers_.push_back(callable_symbol);
+      }
     }
 
     expected_return_type_ = return_type;
     current_callable_kind_ = model_.symbol(callable_symbol).kind;
-    static_cast<void>(analyze_block(body, false));
+    static_cast<void>(
+        analyze_block_with_effect_reachability(body, false, prefix_completes));
     current_callable_kind_.reset();
+    current_callable_symbol_.reset();
     expected_return_type_ = model_.void_type();
     end_root_scope();
   }
@@ -1791,16 +2055,26 @@ class SemanticAnalyzer {
     }
   }
 
-  void analyze_constructor_initializer(
+  bool analyze_constructor_initializer(
       SymbolId constructor_symbol, const ConstructorInitializer* initializer) {
     const FileSemantics& file = model_.file(current_file_);
     if (!file.base_file) {
+      if (file.kind == FileTypeKind::kError) {
+        if (initializer == nullptr) {
+          model_.mutable_symbol(constructor_symbol).base_constructor =
+              error_default_constructor_;
+          record_call_effect(error_default_constructor_,
+                             model_.symbol(constructor_symbol).range);
+          return true;
+        }
+        return analyze_error_root_initializer(constructor_symbol, *initializer);
+      }
       if (initializer != nullptr) {
         diagnostics_.error(initializer->range,
                            "root class constructor cannot have a base "
                            "initializer");
       }
-      return;
+      return true;
     }
 
     const FileSemantics& base = model_.file(*file.base_file);
@@ -1812,7 +2086,7 @@ class SemanticAnalyzer {
                                model_.symbol(file.symbol).name +
                                "' must initialize base '" + base_name + "'");
       }
-      return;
+      return true;
     }
 
     const TypeId initialized_type =
@@ -1826,18 +2100,24 @@ class SemanticAnalyzer {
     std::vector<ExpressionState> arguments;
     arguments.reserve(initializer->arguments.size());
     bool has_error_argument = false;
+    bool has_bottom_argument = false;
     analyzing_base_initializer_ = true;
     for (const ExpressionId argument : initializer->arguments) {
+      const bool previous = effects_reachable_;
+      effects_reachable_ = previous && !has_bottom_argument;
       ExpressionState value = analyze_overload_argument(argument);
+      effects_reachable_ = previous;
       check_value(value, expression_range(argument));
       has_error_argument =
           has_error_argument || value.type == model_.error_type();
+      has_bottom_argument =
+          has_bottom_argument || value.type == model_.bottom_type();
       arguments.push_back(std::move(value));
     }
     analyzing_base_initializer_ = false;
 
     if (initialized_type != base.type) {
-      return;
+      return !has_bottom_argument;
     }
     std::vector<SymbolId> matches;
     std::vector<SymbolId> exact_matches;
@@ -1870,20 +2150,20 @@ class SemanticAnalyzer {
       matches = std::move(exact_matches);
     }
     if (has_error_argument) {
-      return;
+      return !has_bottom_argument;
     }
     if (matches.empty()) {
       diagnostics_.error(initializer->range,
                          "no matching base constructor '" + base_name +
                              "' for " + std::to_string(arguments.size()) +
                              " argument(s)");
-      return;
+      return !has_bottom_argument;
     }
     if (matches.size() > 1) {
       diagnostics_.error(initializer->range,
                          "base constructor call is ambiguous between " +
                              std::to_string(matches.size()) + " overloads");
-      return;
+      return !has_bottom_argument;
     }
     const SymbolId selected = matches.front();
     const SemanticSymbol& selected_symbol = model_.symbol(selected);
@@ -1893,11 +2173,59 @@ class SemanticAnalyzer {
                          "base constructor for '" + base_name + "' is private");
       diagnostics_.note(selected_symbol.range,
                         "private constructor is declared here");
-      return;
+      return !has_bottom_argument;
     }
     apply_overload_argument_context(initializer->arguments, arguments,
                                     selected_symbol.parameter_types);
     model_.mutable_symbol(constructor_symbol).base_constructor = selected;
+    if (!has_bottom_argument) {
+      record_call_effect(selected, initializer->range);
+    }
+    return !has_bottom_argument;
+  }
+
+  bool analyze_error_root_initializer(
+      SymbolId constructor_symbol, const ConstructorInitializer& initializer) {
+    const TypeId initialized_type =
+        resolve_type(initializer.base_type, current_file_);
+    analyzing_base_initializer_ = true;
+    std::vector<ExpressionState> arguments;
+    arguments.reserve(initializer.arguments.size());
+    bool has_bottom_argument = false;
+    for (const ExpressionId argument : initializer.arguments) {
+      const bool previous = effects_reachable_;
+      effects_reachable_ = previous && !has_bottom_argument;
+      ExpressionState value = analyze_overload_argument(argument);
+      effects_reachable_ = previous;
+      check_value(value, expression_range(argument));
+      has_bottom_argument =
+          has_bottom_argument || value.type == model_.bottom_type();
+      arguments.push_back(std::move(value));
+    }
+    analyzing_base_initializer_ = false;
+    if (initialized_type != model_.error_root_type()) {
+      diagnostics_.error(initializer.base_type.range,
+                         "root error constructor initializer must name "
+                         "compiler error 'Error'");
+      return !has_bottom_argument;
+    }
+    SymbolId selected = error_default_constructor_;
+    if (arguments.size() == 1 &&
+        is_assignable(model_.string_type(), arguments.front().type)) {
+      selected = error_message_constructor_;
+    } else if (!arguments.empty()) {
+      diagnostics_.error(initializer.range,
+                         "no matching Error constructor for " +
+                             std::to_string(arguments.size()) + " argument(s)");
+      return !has_bottom_argument;
+    }
+    apply_overload_argument_context(initializer.arguments, arguments,
+                                    model_.symbol(selected).parameter_types);
+    model_.mutable_symbol(constructor_symbol).base_constructor = selected;
+    if (!has_bottom_argument) {
+      record_call_effect(selected, initializer.range);
+    }
+    return !has_bottom_argument;
   }
 
   void begin_root_scope(bool include_self = true) {
@@ -2020,7 +2348,8 @@ class SemanticAnalyzer {
   std::optional<SwitchLabel> analyze_case_label(ExpressionId id,
                                                 TypeId selector_type) {
     const NonNullSet before = active_non_null_;
-    const ExpressionState state = analyze_expression(id, selector_type);
+    const ExpressionState state =
+        analyze_expression_with_effect_reachability(id, false, selector_type);
     active_non_null_ = before;  // Labels never execute, including invalid ones.
     const SourceRange range = expression_range(id);
     if (!check_value(state, range) || state.type == model_.error_type())
@@ -2085,7 +2414,9 @@ class SemanticAnalyzer {
     const TypeKind kind = model_.type(selector.type).kind;
     const bool valid_selector =
         is_integer_type(kind) || kind == TypeKind::kEnum;
-    if (!valid_selector && selector.type != model_.error_type()) {
+    const bool selector_completes = selector.type != model_.bottom_type();
+    if (!valid_selector && selector.type != model_.error_type() &&
+        selector_completes) {
       diagnostics_.error(expression_range(selection.selector),
                          "switch selector must be an enum or integer value");
     }
@@ -2098,6 +2429,11 @@ class SemanticAnalyzer {
       has_default = has_default || arm.labels.empty();
       for (const ExpressionId label : arm.labels) {
         ++label_count;
+        if (!selector_completes) {
+          static_cast<void>(
+              analyze_expression_with_effect_reachability(label, false));
+          continue;
+        }
         if (auto value = analyze_case_label(label, selector.type);
             value && valid_selector) {
           const auto [first, inserted] =
@@ -2145,7 +2481,8 @@ class SemanticAnalyzer {
     transfers_.push_back(TransferContext{false});
     for (const SwitchArm& arm : selection.arms) {
       active_non_null_ = entry;
-      if (!analyze_block(arm.body, true))
+      if (!analyze_block_with_effect_reachability(arm.body, true,
+                                                  selector_completes))
         merge_non_null(join, active_non_null_);
     }
     if (transfers_.back().breaks)
@@ -2154,7 +2491,7 @@ class SemanticAnalyzer {
     active_non_null_ = join.value_or(entry);
     model_.mutable_file(current_file_)
         .switches.emplace(id.value, std::move(checked));
-    return !join;
+    return !selector_completes || !join;
   }
 
   bool analyze_block(BlockId id, bool create_scope) {
@@ -2176,6 +2513,15 @@ class SemanticAnalyzer {
       pop_scope();
     }
     return definitely_returns;
+  }
+
+  bool analyze_block_with_effect_reachability(BlockId id, bool create_scope,
+                                              bool reachable) {
+    const bool previous = effects_reachable_;
+    effects_reachable_ = previous && reachable;
+    const bool result = analyze_block(id, create_scope);
+    effects_reachable_ = previous;
+    return result;
   }
 
   bool analyze_statement(StatementId id) {
@@ -2211,6 +2557,11 @@ class SemanticAnalyzer {
         diagnostics_.error(expression_range(*local->initializer),
                            "cannot infer the type of local '" +
                                std::string{local->name} + "' from null");
+      } else if (initializer->type == model_.bottom_type()) {
+        diagnostics_.error(expression_range(*local->initializer),
+                           "cannot infer the type of local '" +
+                               std::string{local->name} +
+                               "' from a throw expression");
       } else if (initializer->type != model_.void_type()) {
         type = initializer->type;
       }
@@ -2240,7 +2591,7 @@ class SemanticAnalyzer {
       model_.mutable_file(current_file_).statement_symbols.at(id.value) =
           symbol;
       bind_name(local->name, symbol, statement.range);
-      return false;
+      return initializer && initializer->type == model_.bottom_type();
     }
     if (const auto* return_statement =
             std::get_if<ReturnStatement>(&statement.data)) {
@@ -2258,7 +2609,8 @@ class SemanticAnalyzer {
                 ? std::nullopt
                 : std::optional<TypeId>{expected_return_type_});
         check_value(value, expression_range(*return_statement->value));
-        if (expected_return_type_ == model_.void_type()) {
+        if (expected_return_type_ == model_.void_type() &&
+            value.type != model_.bottom_type()) {
           diagnostics_.error(statement.range,
                              "cannot return a value from a void function");
         } else {
@@ -2283,24 +2635,27 @@ class SemanticAnalyzer {
         diagnostics_.error(statement.range,
                            "'super' must qualify an instance function call");
       }
-      return false;
+      return value.type == model_.bottom_type();
     }
     if (const auto* if_statement = std::get_if<IfStatement>(&statement.data)) {
       const ExpressionState condition =
           analyze_expression(if_statement->condition);
       check_condition(condition, if_statement->condition, "if condition");
+      const bool condition_completes = condition.type != model_.bottom_type();
 
       const ConditionFacts facts = condition_facts(if_statement->condition);
       const NonNullSet branch_base = active_non_null_;
       add_non_null_facts(facts.when_true);
-      const bool then_returns = analyze_block(if_statement->then_block, true);
+      const bool then_returns = analyze_block_with_effect_reachability(
+          if_statement->then_block, true, condition_completes);
       const NonNullSet then_state = active_non_null_;
 
       active_non_null_ = branch_base;
       add_non_null_facts(facts.when_false);
       bool else_returns = false;
       if (if_statement->else_block) {
-        else_returns = analyze_block(*if_statement->else_block, true);
+        else_returns = analyze_block_with_effect_reachability(
+            *if_statement->else_block, true, condition_completes);
       }
       const NonNullSet else_state = active_non_null_;
 
@@ -2313,22 +2668,25 @@ class SemanticAnalyzer {
       } else {
         active_non_null_ = branch_base;
       }
-      return then_returns && if_statement->else_block && else_returns;
+      return !condition_completes ||
+             (then_returns && if_statement->else_block && else_returns);
     }
     if (const auto* while_statement =
             std::get_if<WhileStatement>(&statement.data)) {
       const ExpressionState condition =
           analyze_expression(while_statement->condition);
       check_condition(condition, while_statement->condition, "while condition");
+      const bool condition_completes = condition.type != model_.bottom_type();
       const ConditionFacts facts = condition_facts(while_statement->condition);
       const NonNullSet loop_base = active_non_null_;
       add_non_null_facts(facts.when_true);
       transfers_.push_back(TransferContext{true});
-      const bool body_returns = analyze_block(while_statement->body, true);
+      const bool body_returns = analyze_block_with_effect_reachability(
+          while_statement->body, true, condition_completes);
       const bool terminates = is_true_literal(while_statement->condition) &&
                               !transfers_.back().breaks;
       finish_loop(loop_base, body_returns);
-      return terminates;
+      return !condition_completes || terminates;
     }
     if (const auto* for_statement =
             std::get_if<ForEachStatement>(&statement.data)) {
@@ -2337,7 +2695,8 @@ class SemanticAnalyzer {
       check_value(iterable, expression_range(for_statement->iterable));
 
       TypeId element_type = model_.error_type();
-      if (iterable.type != model_.error_type()) {
+      const bool iterable_completes = iterable.type != model_.bottom_type();
+      if (iterable.type != model_.error_type() && iterable_completes) {
         const SemanticType& type = model_.type(iterable.type);
         if (type.kind == TypeKind::kArray && type.element_type) {
           element_type = *type.element_type;
@@ -2373,35 +2732,47 @@ class SemanticAnalyzer {
                 for_statement->variable.range);
       const NonNullSet loop_base = active_non_null_;
       transfers_.push_back(TransferContext{true});
-      const bool body_returns = analyze_block(for_statement->body, false);
+      const bool body_returns = analyze_block_with_effect_reachability(
+          for_statement->body, false, iterable_completes);
       finish_loop(loop_base, body_returns);
       pop_scope();
-      return false;
+      return !iterable_completes;
     }
     if (const auto* for_statement =
             std::get_if<ForStatement>(&statement.data)) {
       push_scope();
+      bool prefix_completes = true;
       if (for_statement->initializer) {
-        static_cast<void>(analyze_statement(*for_statement->initializer));
+        prefix_completes = !analyze_statement(*for_statement->initializer);
       }
 
       ConditionFacts facts;
+      bool condition_completes = true;
       if (for_statement->condition) {
         const ExpressionState condition =
-            analyze_expression(*for_statement->condition);
+            analyze_expression_with_effect_reachability(
+                *for_statement->condition, prefix_completes);
         check_condition(condition, *for_statement->condition, "for condition");
+        condition_completes = condition.type != model_.bottom_type();
         facts = condition_facts(*for_statement->condition);
       }
       const NonNullSet loop_base = active_non_null_;
       add_non_null_facts(facts.when_true);
 
       transfers_.push_back(TransferContext{true});
-      const bool body_returns = analyze_block(for_statement->body, true);
+      const bool body_returns = analyze_block_with_effect_reachability(
+          for_statement->body, true, prefix_completes && condition_completes);
       auto update_entry = transfers_.back().continues;
       if (!body_returns) merge_non_null(update_entry, active_non_null_);
       active_non_null_ = update_entry.value_or(loop_base);
+      bool updates_complete = true;
       for (const ExpressionId update : for_statement->updates) {
-        static_cast<void>(analyze_expression(update));
+        const ExpressionState value =
+            analyze_expression_with_effect_reachability(
+                update, prefix_completes && condition_completes &&
+                            updates_complete && update_entry.has_value());
+        updates_complete =
+            updates_complete && value.type != model_.bottom_type();
       }
       // continue paths run the updates; breaks do not.
       transfers_.back().continues.reset();
@@ -2410,7 +2781,7 @@ class SemanticAnalyzer {
                               !transfers_.back().breaks;
       finish_loop(loop_base, !update_entry);
       pop_scope();
-      return terminates;
+      return !prefix_completes || !condition_completes || terminates;
     }
     if (const auto* selection = std::get_if<SwitchStatement>(&statement.data)) {
       return analyze_switch(id, *selection, statement.range);
@@ -2446,10 +2817,24 @@ class SemanticAnalyzer {
     const Expression& expression =
         files_[current_file_.value]->storage.expression(id);
     return record_expression(
-        id, analyze_expression_value(expression, expected, is_negated_literal));
+        id,
+        analyze_expression_value(id, expression, expected, is_negated_literal));
   }
 
-  ExpressionState analyze_expression_value(const Expression& expression,
+  ExpressionState analyze_expression_with_effect_reachability(
+      ExpressionId id, bool reachable,
+      std::optional<TypeId> expected = std::nullopt,
+      bool is_negated_literal = false) {
+    const bool previous = effects_reachable_;
+    effects_reachable_ = previous && reachable;
+    ExpressionState result =
+        analyze_expression(id, expected, is_negated_literal);
+    effects_reachable_ = previous;
+    return result;
+  }
+
+  ExpressionState analyze_expression_value(ExpressionId id,
+                                           const Expression& expression,
                                            std::optional<TypeId> expected,
                                            bool is_negated_literal) {
     // Instantiate one dispatch branch per node type so recursive checking does
@@ -2463,15 +2848,17 @@ class SemanticAnalyzer {
             return analyze_identifier(node, expression.range);
           else if constexpr (std::is_same_v<Node, SuperExpression>)
             return analyze_super(expression.range);
+          else if constexpr (std::is_same_v<Node, ThrowExpression>)
+            return analyze_throw(node, expression.range);
           else if constexpr (std::is_same_v<Node, LiteralExpression>)
             return analyze_literal(node, expression.range, expected,
                                    is_negated_literal);
           else if constexpr (std::is_same_v<Node, UnaryExpression>)
-            return analyze_unary(node, expression.range, expected);
+            return analyze_unary_chain(id, expected);
           else if constexpr (std::is_same_v<Node, UpdateExpression>)
             return analyze_update(node, expression.range);
           else if constexpr (std::is_same_v<Node, BinaryExpression>)
-            return analyze_binary(node, expression.range, expected);
+            return analyze_binary_chain(id, expected);
           else if constexpr (std::is_same_v<Node, TypeTestExpression>)
             return analyze_type_test(node, expression.range);
           else if constexpr (std::is_same_v<Node, CheckedCastExpression>)
@@ -2503,6 +2890,32 @@ class SemanticAnalyzer {
                                       is_negated_literal);
         },
         expression.data);
+  }
+
+  ExpressionState analyze_throw(const ThrowExpression& thrown,
+                                SourceRange range) {
+    const ExpressionState operand = analyze_expression(thrown.operand);
+    if (!check_value(operand, expression_range(thrown.operand))) {
+      return ExpressionState{model_.error_type()};
+    }
+    if (operand.type == model_.bottom_type()) {
+      diagnostics_.error(range, "throw operand never produces an error value");
+      return ExpressionState{model_.error_type()};
+    }
+    if (!is_error_type(operand.type)) {
+      diagnostics_.error(expression_range(thrown.operand),
+                         "throw operand must be a non-null error; found '" +
+                             type_name(operand.type) + "'");
+      return ExpressionState{model_.error_type()};
+    }
+    if (constant_context_) {
+      diagnostics_.error(range,
+                         "throw expressions are not permitted in constant "
+                         "initializers");
+      return ExpressionState{model_.error_type()};
+    }
+    record_direct_error(operand.type, range);
+    return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
   }
 
   ExpressionState analyze_identifier(const IdentifierExpression& identifier,
@@ -2568,6 +2981,14 @@ class SemanticAnalyzer {
       }
       return ExpressionState{
           symbol.type, ValueCategory::kType, model_.file(*file).symbol, {}};
+    }
+
+    if (identifier.name == "Error") {
+      return ExpressionState{model_.error_root_type(), ValueCategory::kType};
+    }
+    if (identifier.name == "DivisionByZero") {
+      return ExpressionState{model_.division_by_zero_type(),
+                             ValueCategory::kType};
     }
 
     if (const std::optional<FileId> inaccessible =
@@ -2689,6 +3110,7 @@ class SemanticAnalyzer {
     elements.reserve(array.elements.size());
     std::optional<TypeId> element_type;
     bool contains_null = false;
+    bool contains_bottom = false;
     std::optional<TypeId> contextual_element;
     if (expected) {
       const SemanticType& contextual_array = model_.type(*expected);
@@ -2699,10 +3121,13 @@ class SemanticAnalyzer {
       }
     }
     for (const ExpressionId element : array.elements) {
-      ExpressionState state = analyze_expression(element, contextual_element);
+      ExpressionState state = analyze_expression_with_effect_reachability(
+          element, !contains_bottom, contextual_element);
       check_value(state, expression_range(element));
       contains_null = contains_null || state.type == model_.null_type();
+      contains_bottom = contains_bottom || state.type == model_.bottom_type();
       if (state.type != model_.error_type() &&
+          state.type != model_.bottom_type() &&
           state.type != model_.void_type() &&
           state.type != model_.null_type() && !element_type) {
         element_type = state.type;
@@ -2746,6 +3171,9 @@ class SemanticAnalyzer {
                        expression_range(array.elements[index]),
                        "array element");
     }
+    if (contains_bottom) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
     return ExpressionState{model_.get_array_type(*element_type),
                            ValueCategory::kValue};
   }
@@ -2753,15 +3181,24 @@ class SemanticAnalyzer {
   ExpressionState analyze_index(const IndexExpression& index,
                                 SourceRange range) {
     const ExpressionState object = analyze_expression(index.object);
-    const ExpressionState subscript = analyze_expression(index.index);
+    const ExpressionState subscript =
+        analyze_expression_with_effect_reachability(
+            index.index, object.type != model_.bottom_type());
     check_value(object, expression_range(index.object));
     check_value(subscript, expression_range(index.index));
+    if (object.type == model_.bottom_type() ||
+        subscript.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
     if (subscript.type != model_.error_type()) {
       check_assignment(*model_.find_type("int32"), subscript.type,
                        expression_range(index.index), "array index");
     }
     if (object.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
+    }
+    if (object.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
     const SemanticType& type = model_.type(object.type);
     if (type.kind == TypeKind::kNullable && type.element_type &&
@@ -2777,16 +3214,47 @@ class SemanticAnalyzer {
     return ExpressionState{*type.element_type, ValueCategory::kMutableLocation};
   }
 
-  ExpressionState analyze_unary(const UnaryExpression& unary, SourceRange range,
-                                std::optional<TypeId> expected) {
-    const bool numeric_sign = unary.operation == TokenKind::kPlus ||
-                              unary.operation == TokenKind::kMinus;
-    const ExpressionState operand = analyze_expression(
-        unary.operand, numeric_sign ? expected : std::nullopt,
-        unary.operation == TokenKind::kMinus);
+  ExpressionState analyze_unary_chain(ExpressionId root,
+                                      std::optional<TypeId> expected) {
+    std::vector<ExpressionId> unary_ids;
+    ExpressionId current = root;
+    std::optional<TypeId> operand_expected = expected;
+    bool is_negated_literal = false;
+    while (
+        const auto* unary = std::get_if<UnaryExpression>(
+            &files_[current_file_.value]->storage.expression(current).data)) {
+      unary_ids.push_back(current);
+      const bool numeric_sign = unary->operation == TokenKind::kPlus ||
+                                unary->operation == TokenKind::kMinus;
+      operand_expected = numeric_sign ? operand_expected : std::nullopt;
+      is_negated_literal = unary->operation == TokenKind::kMinus;
+      current = unary->operand;
+    }
+
+    ExpressionState state =
+        analyze_expression(current, operand_expected, is_negated_literal);
+    for (auto entry = unary_ids.rbegin(); entry != unary_ids.rend(); ++entry) {
+      const Expression& expression =
+          files_[current_file_.value]->storage.expression(*entry);
+      const auto& unary = std::get<UnaryExpression>(expression.data);
+      state =
+          analyze_unary_with_operand(unary, expression.range, std::move(state));
+      if (*entry != root) {
+        state = record_expression(*entry, std::move(state));
+      }
+    }
+    return state;
+  }
+
+  ExpressionState analyze_unary_with_operand(const UnaryExpression& unary,
+                                             SourceRange range,
+                                             ExpressionState operand) {
     if (!check_value(operand, expression_range(unary.operand)) ||
         operand.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
+    }
+    if (operand.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
     if (unary.operation == TokenKind::kBang) {
       if (operand.type != model_.bool_type() &&
@@ -2846,14 +3314,42 @@ class SemanticAnalyzer {
         operand.type, ValueCategory::kValue, operand.symbol, {}};
   }
 
-  ExpressionState analyze_binary(const BinaryExpression& binary,
-                                 SourceRange range,
-                                 std::optional<TypeId> expected) {
+  ExpressionState analyze_binary_chain(ExpressionId root,
+                                       std::optional<TypeId> expected) {
+    const std::optional<TypeId> numeric_context =
+        expected && is_numeric(*expected) ? expected : std::nullopt;
+    std::vector<ExpressionId> binary_ids;
+    ExpressionId current = root;
+    while (
+        const auto* binary = std::get_if<BinaryExpression>(
+            &files_[current_file_.value]->storage.expression(current).data)) {
+      binary_ids.push_back(current);
+      current = binary->left;
+    }
+
+    ExpressionState state = analyze_expression(current, numeric_context);
+    for (auto entry = binary_ids.rbegin(); entry != binary_ids.rend();
+         ++entry) {
+      const Expression& expression =
+          files_[current_file_.value]->storage.expression(*entry);
+      const auto& binary = std::get<BinaryExpression>(expression.data);
+      state = analyze_binary_with_left(binary, expression.range,
+                                       numeric_context, std::move(state));
+      if (*entry != root) {
+        state = record_expression(*entry, std::move(state));
+      }
+    }
+    return state;
+  }
+
+  ExpressionState analyze_binary_with_left(const BinaryExpression& binary,
+                                           SourceRange range,
+                                           std::optional<TypeId> expected,
+                                           ExpressionState left) {
     const bool is_shift = binary.operation == TokenKind::kShiftLeft ||
                           binary.operation == TokenKind::kShiftRight;
     const std::optional<TypeId> numeric_context =
         expected && is_numeric(*expected) ? expected : std::nullopt;
-    ExpressionState left = analyze_expression(binary.left, numeric_context);
     const bool is_short_circuit =
         binary.operation == TokenKind::kAmpersandAmpersand ||
         binary.operation == TokenKind::kPipePipe;
@@ -2873,7 +3369,8 @@ class SemanticAnalyzer {
             ? numeric_context
             : (is_numeric(left.type) ? std::optional<TypeId>{left.type}
                                      : std::nullopt);
-    ExpressionState right = analyze_expression(binary.right, right_context);
+    ExpressionState right = analyze_expression_with_effect_reachability(
+        binary.right, left.type != model_.bottom_type(), right_context);
     const bool right_is_boolean =
         right.type == model_.bool_type() ||
         (is_short_circuit && mark_presence_test(right, binary.right));
@@ -2894,6 +3391,18 @@ class SemanticAnalyzer {
         right.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
     }
+    if (left.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
+    if (right.type == model_.bottom_type()) {
+      if (binary.operation == TokenKind::kAmpersandAmpersand ||
+          binary.operation == TokenKind::kPipePipe) {
+        return left_is_boolean
+                   ? ExpressionState{model_.bool_type(), ValueCategory::kValue}
+                   : ExpressionState{model_.error_type()};
+      }
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
 
     switch (binary.operation) {
       case TokenKind::kPlus:
@@ -2907,14 +3416,29 @@ class SemanticAnalyzer {
       case TokenKind::kSlash:
         if (const std::optional<TypeId> common =
                 common_binary_numeric_type(binary, left, right)) {
-          return ExpressionState{*common, ValueCategory::kValue};
+          ExpressionState result{*common, ValueCategory::kValue};
+          if (binary.operation == TokenKind::kSlash && is_integer(*common) &&
+              !integer_divisor_is_proven_nonzero(binary.right)) {
+            result.may_divide_by_zero = true;
+            if (!constant_context_) {
+              record_direct_error(model_.division_by_zero_type(), range);
+            }
+          }
+          return result;
         }
         break;
       case TokenKind::kPercent:
         if (const std::optional<TypeId> common =
                 common_binary_numeric_type(binary, left, right);
             common && is_integer(*common)) {
-          return ExpressionState{*common, ValueCategory::kValue};
+          ExpressionState result{*common, ValueCategory::kValue};
+          if (!integer_divisor_is_proven_nonzero(binary.right)) {
+            result.may_divide_by_zero = true;
+            if (!constant_context_) {
+              record_direct_error(model_.division_by_zero_type(), range);
+            }
+          }
+          return result;
         }
         break;
       case TokenKind::kAmpersand:
@@ -2978,6 +3502,9 @@ class SemanticAnalyzer {
     if (value.type == model_.error_type() || target == model_.error_type()) {
       return ExpressionState{model_.error_type()};
     }
+    if (value.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
     if (model_.type(target).kind == TypeKind::kNullable) {
       diagnostics_.error(test.target.range,
                          "the right operand of 'is' must be non-nullable");
@@ -2997,6 +3524,9 @@ class SemanticAnalyzer {
     const TypeId target = resolve_type(cast.target, current_file_);
     if (value.type == model_.error_type() || target == model_.error_type()) {
       return ExpressionState{model_.error_type()};
+    }
+    if (value.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
     const SemanticType& target_type = model_.type(target);
     if (target_type.kind != TypeKind::kNullable || !target_type.element_type) {
@@ -3042,6 +3572,9 @@ class SemanticAnalyzer {
     if (value.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
     }
+    if (value.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
     if (!is_numeric(value.type)) {
       diagnostics_.error(
           range, "numeric conversion requires a numeric value; found '" +
@@ -3082,6 +3615,9 @@ class SemanticAnalyzer {
     check_value(value, expression_range(conversion.value));
     if (target == model_.error_type() || value.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
+    }
+    if (value.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
 
     bool valid = true;
@@ -3132,6 +3668,7 @@ class SemanticAnalyzer {
     }
     if (target_kind != TypeKind::kObject && target_kind != TypeKind::kString &&
         target_kind != TypeKind::kFileClass &&
+        target_kind != TypeKind::kErrorClass &&
         target_kind != TypeKind::kInterface) {
       diagnostics_.error(
           range, "type '" + type_name(target) + "' is not runtime-checkable");
@@ -3141,8 +3678,10 @@ class SemanticAnalyzer {
         target_kind == TypeKind::kObject || source_base == target) {
       return true;
     }
-    if (source_kind == TypeKind::kFileClass &&
-        target_kind == TypeKind::kFileClass &&
+    if ((source_kind == TypeKind::kFileClass ||
+         source_kind == TypeKind::kErrorClass) &&
+        (target_kind == TypeKind::kFileClass ||
+         target_kind == TypeKind::kErrorClass) &&
         (is_file_class_subtype(source_base, target) ||
          is_file_class_subtype(target, source_base))) {
       return true;
@@ -3151,7 +3690,8 @@ class SemanticAnalyzer {
         target_kind == TypeKind::kInterface) {
       return true;
     }
-    if (source_kind == TypeKind::kFileClass &&
+    if ((source_kind == TypeKind::kFileClass ||
+         source_kind == TypeKind::kErrorClass) &&
         target_kind == TypeKind::kInterface) {
       const SemanticType& source_info = model_.type(source_base);
       if (implements_interface(source_base, target) ||
@@ -3160,7 +3700,8 @@ class SemanticAnalyzer {
       }
     }
     if (source_kind == TypeKind::kInterface &&
-        target_kind == TypeKind::kFileClass) {
+        (target_kind == TypeKind::kFileClass ||
+         target_kind == TypeKind::kErrorClass)) {
       const SemanticType& target_info = model_.type(target);
       if (implements_interface(target, source_base) ||
           (target_info.file && !model_.file(*target_info.file).is_sealed)) {
@@ -3187,8 +3728,8 @@ class SemanticAnalyzer {
     const bool is_shift_assignment =
         assignment.operation == TokenKind::kShiftLeftEqual ||
         assignment.operation == TokenKind::kShiftRightEqual;
-    const ExpressionState value = analyze_expression(
-        assignment.value,
+    const ExpressionState value = analyze_expression_with_effect_reachability(
+        assignment.value, target.type != model_.bottom_type(),
         is_shift_assignment ? std::nullopt : std::optional{target.type});
     if (target.type != model_.error_type() &&
         target.category != ValueCategory::kMutableLocation &&
@@ -3218,6 +3759,9 @@ class SemanticAnalyzer {
       check_value(target, expression_range(assignment.target));
     }
     check_value(value, expression_range(assignment.value));
+    if (value.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
     if (target.symbol) {
       invalidate_narrowing(*target.symbol);
     }
@@ -3226,6 +3770,7 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
 
+    bool may_divide_by_zero = false;
     if (assignment.operation == TokenKind::kEqual) {
       check_assignment(target.type, value.type, range, "assignment");
     } else {
@@ -3269,9 +3814,20 @@ class SemanticAnalyzer {
                        "' and '" + type_name(value.type) + "'");
         return ExpressionState{model_.error_type()};
       }
+      if ((assignment.operation == TokenKind::kSlashEqual ||
+           assignment.operation == TokenKind::kPercentEqual) &&
+          is_integer(target.type) &&
+          !integer_divisor_is_proven_nonzero(assignment.value)) {
+        may_divide_by_zero = true;
+        if (!constant_context_) {
+          record_direct_error(model_.division_by_zero_type(), range);
+        }
+      }
     }
-    return ExpressionState{
+    ExpressionState result{
         target.type, ValueCategory::kValue, target.symbol, {}};
+    result.may_divide_by_zero = may_divide_by_zero;
+    return result;
   }
 
   std::optional<TypeId> narrowed_type(SymbolId symbol) const {
@@ -3586,6 +4142,9 @@ class SemanticAnalyzer {
     if (object.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
     }
+    if (object.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
     const SemanticType& object_type = model_.type(object.type);
     if (object_type.kind == TypeKind::kEnum && object_type.file) {
       if (object.category != ValueCategory::kType) {
@@ -3636,7 +4195,16 @@ class SemanticAnalyzer {
       }
       return ExpressionState{model_.error_type()};
     }
+    if (object_type.kind == TypeKind::kErrorClass && !object_type.file &&
+        member.member == "Message") {
+      return ExpressionState{
+          model_.string_type(),
+          field_category(model_.symbol(error_message_symbol_), object.category),
+          error_message_symbol_,
+          {}};
+    }
     if ((object_type.kind != TypeKind::kFileClass &&
+         object_type.kind != TypeKind::kErrorClass &&
          object_type.kind != TypeKind::kInterface &&
          object_type.kind != TypeKind::kStruct) ||
         !object_type.file) {
@@ -3698,6 +4266,9 @@ class SemanticAnalyzer {
     if (!check_value(object, expression_range(meta.object)) ||
         object.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
+    }
+    if (object.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
 
     const SemanticType& object_type = model_.type(object.type);
@@ -3764,6 +4335,9 @@ class SemanticAnalyzer {
     if (object.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
     }
+    if (object.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
     const SemanticType& nullable = model_.type(object.type);
     if (nullable.kind != TypeKind::kNullable || !nullable.element_type) {
       diagnostics_.error(range,
@@ -3805,7 +4379,15 @@ class SemanticAnalyzer {
       }
       return ExpressionState{model_.error_type()};
     }
+    if (object_type.kind == TypeKind::kErrorClass && !object_type.file &&
+        member.member == "Message") {
+      return ExpressionState{model_.get_nullable_type(model_.string_type()),
+                             ValueCategory::kValue,
+                             error_message_symbol_,
+                             {}};
+    }
     if ((object_type.kind != TypeKind::kFileClass &&
+         object_type.kind != TypeKind::kErrorClass &&
          object_type.kind != TypeKind::kInterface) ||
         !object_type.file) {
       diagnostics_.error(
@@ -3860,13 +4442,18 @@ class SemanticAnalyzer {
     const ExpressionState nullable = analyze_expression(coalesce.nullable);
     check_value(nullable, expression_range(coalesce.nullable));
     const NonNullSet fallback_base = active_non_null_;
-    const ExpressionState fallback = analyze_expression(coalesce.fallback);
+    const ExpressionState fallback =
+        analyze_expression_with_effect_reachability(
+            coalesce.fallback, nullable.type != model_.bottom_type());
     check_value(fallback, expression_range(coalesce.fallback));
     active_non_null_ = intersect_symbols(fallback_base, active_non_null_);
 
     if (nullable.type == model_.error_type() ||
         fallback.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
+    }
+    if (nullable.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
     const SemanticType& nullable_type = model_.type(nullable.type);
     if (nullable_type.kind != TypeKind::kNullable ||
@@ -3900,6 +4487,9 @@ class SemanticAnalyzer {
     if (operand.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
     }
+    if (operand.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
     const SemanticType& nullable = model_.type(operand.type);
     if (nullable.kind != TypeKind::kNullable || !nullable.element_type) {
       diagnostics_.error(range,
@@ -3920,12 +4510,24 @@ class SemanticAnalyzer {
     std::vector<ExpressionState> arguments;
     arguments.reserve(call.arguments.size());
     bool has_error_argument = false;
+    bool has_bottom_argument = false;
     for (const ExpressionId argument : call.arguments) {
+      const bool argument_reachable =
+          callee.type != model_.bottom_type() && !has_bottom_argument;
+      const bool previous = effects_reachable_;
+      effects_reachable_ = previous && argument_reachable;
       ExpressionState value = analyze_overload_argument(argument);
+      effects_reachable_ = previous;
       check_value(value, expression_range(argument));
       has_error_argument =
           has_error_argument || value.type == model_.error_type();
+      has_bottom_argument =
+          has_bottom_argument || value.type == model_.bottom_type();
       arguments.push_back(std::move(value));
+    }
+
+    if (callee.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
 
     if (callee.integer_meta_operation) {
@@ -3937,6 +4539,7 @@ class SemanticAnalyzer {
     if (callee.category == ValueCategory::kType) {
       const SemanticType& type = model_.type(callee.type);
       if ((type.kind == TypeKind::kFileClass ||
+           type.kind == TypeKind::kErrorClass ||
            type.kind == TypeKind::kStruct) &&
           type.file) {
         const FileSemantics& target = model_.file(*type.file);
@@ -3946,6 +4549,15 @@ class SemanticAnalyzer {
           return ExpressionState{model_.error_type()};
         }
         candidates = target.constructors;
+      } else if (type.kind == TypeKind::kErrorClass &&
+                 callee.type == model_.error_root_type()) {
+        diagnostics_.error(range,
+                           "abstract compiler error 'Error' cannot be "
+                           "constructed");
+        return ExpressionState{model_.error_type()};
+      } else if (type.kind == TypeKind::kErrorClass &&
+                 callee.type == model_.division_by_zero_type()) {
+        candidates = {division_by_zero_constructor_};
       } else if (type.kind == TypeKind::kInterface) {
         diagnostics_.error(
             range, "interface '" + type.name + "' cannot be constructed");
@@ -4038,6 +4650,11 @@ class SemanticAnalyzer {
     }
     apply_overload_argument_context(call.arguments, arguments,
                                     symbol.parameter_types);
+    if (has_bottom_argument) {
+      return ExpressionState{
+          model_.bottom_type(), ValueCategory::kValue, selected, {}};
+    }
+    record_call_effect(selected, range);
     ExpressionState result{symbol.type, ValueCategory::kValue, selected, {}};
     result.interface_dispatch = callee.interface_dispatch;
     return result;
@@ -4244,7 +4861,8 @@ class SemanticAnalyzer {
                             state.checked_type,
                             false,
                             state.interface_dispatch,
-                            state.integer_meta_operation};
+                            state.integer_meta_operation,
+                            state.may_divide_by_zero};
     return state;
   }
 
@@ -4294,6 +4912,10 @@ class SemanticAnalyzer {
         return matches;
       }
       owner = model_.file(*owner).base_file;
+    }
+    if (model_.file(file_id).kind == FileTypeKind::kError &&
+        name == "Message") {
+      return {error_message_symbol_};
     }
     return {};
   }
@@ -4375,6 +4997,7 @@ class SemanticAnalyzer {
                        std::string_view context) {
     const SourceRange range = expression_range(id);
     if (!check_value(state, range) || state.type == model_.error_type() ||
+        state.type == model_.bottom_type() ||
         state.type == model_.bool_type() || mark_presence_test(state, id)) {
       return;
     }
@@ -4388,6 +5011,9 @@ class SemanticAnalyzer {
   }
 
   bool check_value(const ExpressionState& state, SourceRange range) {
+    if (state.type == model_.bottom_type()) {
+      return true;
+    }
     if (state.category == ValueCategory::kCallable) {
       diagnostics_.error(range, "function reference must be called");
       return false;
@@ -4422,6 +5048,9 @@ class SemanticAnalyzer {
     if (expected == model_.error_type() || actual == model_.error_type()) {
       return true;
     }
+    if (actual == model_.bottom_type()) {
+      return true;
+    }
     if (expected == model_.void_type() || actual == model_.void_type()) {
       return false;
     }
@@ -4433,13 +5062,16 @@ class SemanticAnalyzer {
     if (can_widen_numeric(actual_type.kind, expected_type.kind)) {
       return true;
     }
-    if (expected_type.kind == TypeKind::kFileClass &&
-        actual_type.kind == TypeKind::kFileClass &&
+    if ((expected_type.kind == TypeKind::kFileClass ||
+         expected_type.kind == TypeKind::kErrorClass) &&
+        (actual_type.kind == TypeKind::kFileClass ||
+         actual_type.kind == TypeKind::kErrorClass) &&
         is_file_class_subtype(actual, expected)) {
       return true;
     }
     if (expected_type.kind == TypeKind::kInterface &&
         (actual_type.kind == TypeKind::kFileClass ||
+         actual_type.kind == TypeKind::kErrorClass ||
          actual_type.kind == TypeKind::kInterface) &&
         implements_interface(actual, expected)) {
       return true;
@@ -4447,6 +5079,7 @@ class SemanticAnalyzer {
     if (expected_type.kind == TypeKind::kObject) {
       return actual_type.kind == TypeKind::kString ||
              actual_type.kind == TypeKind::kFileClass ||
+             actual_type.kind == TypeKind::kErrorClass ||
              actual_type.kind == TypeKind::kInterface ||
              actual_type.kind == TypeKind::kArray;
     }
@@ -4479,8 +5112,16 @@ class SemanticAnalyzer {
     }
     const SemanticType& subtype_info = model_.type(subtype);
     const SemanticType& supertype_info = model_.type(supertype);
-    if (subtype_info.kind != TypeKind::kFileClass || !subtype_info.file ||
-        supertype_info.kind != TypeKind::kFileClass || !supertype_info.file) {
+    if (subtype_info.kind == TypeKind::kErrorClass &&
+        supertype == model_.error_root_type()) {
+      return true;
+    }
+    if ((subtype_info.kind != TypeKind::kFileClass &&
+         subtype_info.kind != TypeKind::kErrorClass) ||
+        !subtype_info.file ||
+        (supertype_info.kind != TypeKind::kFileClass &&
+         supertype_info.kind != TypeKind::kErrorClass) ||
+        !supertype_info.file) {
       return false;
     }
     std::optional<FileId> current = model_.file(*subtype_info.file).base_file;
@@ -4498,6 +5139,7 @@ class SemanticAnalyzer {
     const SemanticType& type_info = model_.type(type);
     const SemanticType& interface_info = model_.type(interface_type);
     if ((type_info.kind != TypeKind::kFileClass &&
+         type_info.kind != TypeKind::kErrorClass &&
          type_info.kind != TypeKind::kInterface) ||
         !type_info.file || interface_info.kind != TypeKind::kInterface ||
         !interface_info.file) {
@@ -4512,8 +5154,19 @@ class SemanticAnalyzer {
   bool is_reference(TypeId type) const {
     const TypeKind kind = model_.type(type).kind;
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
-           kind == TypeKind::kFileClass || kind == TypeKind::kInterface ||
-           kind == TypeKind::kArray || kind == TypeKind::kNullable;
+           kind == TypeKind::kFileClass || kind == TypeKind::kErrorClass ||
+           kind == TypeKind::kInterface || kind == TypeKind::kArray ||
+           kind == TypeKind::kNullable;
+  }
+
+  bool is_error_type(TypeId type) const {
+    return type.value < model_.types().size() &&
+           model_.type(type).kind == TypeKind::kErrorClass;
+  }
+
+  bool is_error_subtype(TypeId subtype, TypeId supertype) const {
+    return is_error_type(subtype) && is_error_type(supertype) &&
+           is_file_class_subtype(subtype, supertype);
   }
 
   bool integer_literal_fits(std::string_view lexeme, TypeId type,
@@ -4741,6 +5394,12 @@ class SemanticAnalyzer {
     }
   }
 
+  bool integer_divisor_is_proven_nonzero(ExpressionId id) const {
+    const std::optional<ScalarConstant> constant =
+        numeric_literal_expression_constant(id);
+    return constant && is_integer(constant->type) && constant->bits != 0;
+  }
+
   void invalidate_numeric_literal_expression(ExpressionId id) {
     model_.mutable_file(current_file_).expressions.at(id.value).type =
         model_.error_type();
@@ -4835,6 +5494,7 @@ class SemanticAnalyzer {
                                  TypeId parameter, bool& is_exact) const {
     is_exact = false;
     if (argument.type == model_.error_type() ||
+        argument.type == model_.bottom_type() ||
         parameter == model_.error_type()) {
       return true;
     }
@@ -4935,6 +5595,201 @@ class SemanticAnalyzer {
                    "' cannot be applied to '" + type_name(operand) + "'");
   }
 
+  void record_direct_error(TypeId type, SourceRange range) {
+    if (!flow_reachable_ || !effects_reachable_) {
+      return;
+    }
+    const ErrorEffectSource source{type, std::nullopt, range};
+    if (current_callable_symbol_) {
+      callable_effects_[current_callable_symbol_->value].push_back(source);
+    } else if (current_effect_field_) {
+      field_effects_[current_effect_field_->value].push_back(source);
+    }
+  }
+
+  void record_call_effect(SymbolId callee, SourceRange range) {
+    if (!flow_reachable_ || !effects_reachable_) {
+      return;
+    }
+    const ErrorEffectSource source{std::nullopt, callee, range};
+    if (current_callable_symbol_) {
+      callable_effects_[current_callable_symbol_->value].push_back(source);
+    } else if (current_effect_field_) {
+      field_effects_[current_effect_field_->value].push_back(source);
+    }
+  }
+
+  bool throws_set_covers(std::span<const TypeId> allowed,
+                         std::span<const TypeId> actual) const {
+    return std::ranges::all_of(actual, [this, allowed](TypeId type) {
+      return std::ranges::any_of(allowed, [this, type](TypeId permitted) {
+        return is_error_subtype(type, permitted);
+      });
+    });
+  }
+
+  std::vector<TypeId> normalize_error_set(std::vector<TypeId> types) const {
+    std::ranges::sort(types, [this](TypeId left, TypeId right) {
+      return canonical_type_identity(left, model_) <
+             canonical_type_identity(right, model_);
+    });
+    types.erase(std::unique(types.begin(), types.end()), types.end());
+    std::vector<TypeId> result;
+    for (const TypeId type : types) {
+      const bool covered =
+          std::ranges::any_of(types, [this, type](TypeId other) {
+            return other != type && is_error_subtype(type, other);
+          });
+      if (!covered) {
+        result.push_back(type);
+      }
+    }
+    return result;
+  }
+
+  std::vector<TypeId> intersect_error_sets(
+      std::span<const TypeId> left, std::span<const TypeId> right) const {
+    std::vector<TypeId> result;
+    for (const TypeId left_type : left) {
+      for (const TypeId right_type : right) {
+        if (is_error_subtype(left_type, right_type)) {
+          result.push_back(left_type);
+        } else if (is_error_subtype(right_type, left_type)) {
+          result.push_back(right_type);
+        }
+      }
+    }
+    return normalize_error_set(std::move(result));
+  }
+
+  bool infers_throws(SymbolId symbol_id) const {
+    const SemanticSymbol& symbol = model_.symbol(symbol_id);
+    return symbol.file && symbol.visibility == Visibility::kPrivate &&
+           !symbol.has_explicit_throws &&
+           (symbol.kind == SymbolKind::kFunction ||
+            symbol.kind == SymbolKind::kConstructor);
+  }
+
+  std::vector<TypeId> source_effects(
+      std::span<const ErrorEffectSource> sources,
+      const std::map<std::size_t, std::vector<TypeId>>& inferred) const {
+    std::vector<TypeId> types;
+    for (const ErrorEffectSource& source : sources) {
+      if (source.direct_type) {
+        types.push_back(*source.direct_type);
+        continue;
+      }
+      if (!source.callee || source.callee->value >= model_.symbols().size()) {
+        continue;
+      }
+      if (const auto found = inferred.find(source.callee->value);
+          found != inferred.end()) {
+        types.insert(types.end(), found->second.begin(), found->second.end());
+      } else {
+        const std::span<const TypeId> declared =
+            model_.symbol(*source.callee).thrown_types.span();
+        types.insert(types.end(), declared.begin(), declared.end());
+      }
+    }
+    return normalize_error_set(std::move(types));
+  }
+
+  void analyze_error_effects() {
+    std::vector<SymbolId> callables;
+    for (std::size_t file_index = 0; file_index < files_.size(); ++file_index) {
+      const FileSemantics& file = model_.file(FileId{file_index});
+      callables.insert(callables.end(), file.functions.begin(),
+                       file.functions.end());
+      callables.insert(callables.end(), file.constructors.begin(),
+                       file.constructors.end());
+      const auto fields = field_effects_.find(file_index);
+      if (fields != field_effects_.end()) {
+        for (const SymbolId constructor : file.constructors) {
+          if (std::ranges::find(incomplete_base_initializers_, constructor) !=
+              incomplete_base_initializers_.end()) {
+            continue;
+          }
+          auto& effects = callable_effects_[constructor.value];
+          effects.insert(effects.end(), fields->second.begin(),
+                         fields->second.end());
+        }
+      }
+    }
+
+    std::map<std::size_t, std::vector<TypeId>> inferred;
+    for (const SymbolId callable : callables) {
+      if (infers_throws(callable)) {
+        inferred.emplace(callable.value, std::vector<TypeId>{});
+      }
+    }
+    for (std::size_t iteration = 0; iteration <= inferred.size(); ++iteration) {
+      bool changed = false;
+      for (auto& [symbol, types] : inferred) {
+        const auto sources = callable_effects_.find(symbol);
+        const std::vector<TypeId> next =
+            sources == callable_effects_.end()
+                ? std::vector<TypeId>{}
+                : source_effects(sources->second, inferred);
+        if (next != types) {
+          types = next;
+          changed = true;
+        }
+      }
+      if (!changed) {
+        break;
+      }
+    }
+    for (const auto& [symbol, types] : inferred) {
+      model_.mutable_symbol(SymbolId{symbol}).thrown_types = types;
+    }
+
+    for (const SymbolId callable : callables) {
+      if (infers_throws(callable)) {
+        continue;
+      }
+      const auto found = callable_effects_.find(callable.value);
+      if (found == callable_effects_.end()) {
+        continue;
+      }
+      const SemanticSymbol& symbol = model_.symbol(callable);
+      std::vector<std::pair<TypeId, SourceRange>> uncovered;
+      for (const ErrorEffectSource& source : found->second) {
+        std::vector<TypeId> types;
+        if (source.direct_type) {
+          types.push_back(*source.direct_type);
+        } else if (source.callee) {
+          if (const auto inferred_callee = inferred.find(source.callee->value);
+              inferred_callee != inferred.end()) {
+            types = inferred_callee->second;
+          } else if (source.callee->value < model_.symbols().size()) {
+            const ErrorTypeSet& declared =
+                model_.symbol(*source.callee).thrown_types;
+            types.assign(declared.begin(), declared.end());
+          }
+        }
+        for (const TypeId type : types) {
+          if (!throws_set_covers(symbol.thrown_types.span(),
+                                 std::span<const TypeId>{&type, 1}) &&
+              std::ranges::find(uncovered, std::pair{type, source.range}) ==
+                  uncovered.end()) {
+            uncovered.emplace_back(type, source.range);
+          }
+        }
+      }
+      for (const auto& [type, range] : uncovered) {
+        diagnostics_.error(range,
+                           std::string{symbol_kind_name(symbol.kind)} + " '" +
+                               callable_signature(symbol) + "' may throw '" +
+                               type_name(type) +
+                               "', which is not covered by its throws clause");
+        model_.mutable_symbol(callable).is_valid = false;
+        if (symbol.file) {
+          model_.mutable_file(*symbol.file).is_valid = false;
+        }
+      }
+    }
+  }
+
   std::string callable_signature(const SemanticSymbol& symbol) const {
     std::string signature = symbol.name + '(';
     for (std::size_t index = 0; index < symbol.parameter_types.size();
@@ -4967,6 +5822,8 @@ class SemanticAnalyzer {
   FileId current_file_{0};
   TypeId expected_return_type_{0};
   std::optional<SymbolKind> current_callable_kind_;
+  std::optional<SymbolId> current_callable_symbol_;
+  std::optional<FileId> current_effect_field_;
   std::vector<Scope> scopes_;
   std::vector<std::vector<VisibleFile>> visible_files_;
   NonNullSet active_non_null_;
@@ -4978,8 +5835,17 @@ class SemanticAnalyzer {
   std::map<std::string, std::pair<std::size_t, std::size_t>> constant_budgets_;
   std::vector<std::map<std::string, std::vector<SymbolId>, std::less<>>>
       member_names_;
+  std::vector<bool> instance_field_initializers_complete_;
+  std::vector<SymbolId> incomplete_base_initializers_;
   std::vector<TransferContext> transfers_;
   bool flow_reachable_{true};
+  bool effects_reachable_{true};
+  SymbolId error_message_symbol_{0};
+  SymbolId error_default_constructor_{0};
+  SymbolId error_message_constructor_{0};
+  SymbolId division_by_zero_constructor_{0};
+  std::map<std::size_t, std::vector<ErrorEffectSource>> callable_effects_;
+  std::map<std::size_t, std::vector<ErrorEffectSource>> field_effects_;
 };
 
 SemanticAnalysisResult analyze_semantics(
