@@ -4,6 +4,7 @@
 
 #include "cloth/parser/declaration_pass.h"
 
+#include "cloth/identity/package_identity.h"
 #include "cloth/parser/syntax_facts.h"
 #include "cloth/sema/visibility.h"
 
@@ -653,6 +654,7 @@ void DeclarationPass::parse_constructor() {
 void DeclarationPass::parse_import() {
   const std::size_t diagnostic_count = diagnostics_.diagnostics().size();
   const Token& keyword = advance();
+  SourceRange root_range = keyword.range;
   std::vector<std::string_view> package_segments;
   std::string type_name;
   std::string local_name;
@@ -664,6 +666,7 @@ void DeclarationPass::parse_import() {
     is_valid_ = false;
   } else {
     const Token& first = advance();
+    root_range = first.range;
     if (match(TokenKind::kColonColon)) {
       package_segments.push_back(first.lexeme);
       if (current().kind == TokenKind::kIdentifier) {
@@ -711,7 +714,15 @@ void DeclarationPass::parse_import() {
 
   if (kind == ImportKind::kType && match(TokenKind::kKwAs)) {
     if (current().kind == TokenKind::kIdentifier) {
-      local_name = std::string{advance().lexeme};
+      const Token& alias = advance();
+      local_name = std::string{alias.lexeme};
+      if (has_reserved_standard_library_root(alias.lexeme)) {
+        diagnostics_.error(
+            alias.range,
+            "import alias '" + local_name +
+                "' is reserved for the standard library root 'cloth'");
+        is_valid_ = false;
+      }
     } else {
       diagnostics_.error(current().range, "expected an alias name after 'as'");
       is_valid_ = false;
@@ -747,6 +758,13 @@ void DeclarationPass::parse_import() {
       package_name += '.';
     }
     package_name += segment;
+  }
+  if (!package_segments.empty() &&
+      has_reserved_standard_library_root(package_segments.front()) &&
+      package_segments.front() != kStandardLibraryPackageName) {
+    diagnostics_.error(root_range,
+                       "standard library root must be spelled 'cloth'");
+    is_valid_ = false;
   }
   if (local_name.empty()) {
     local_name = type_name;

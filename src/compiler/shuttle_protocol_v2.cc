@@ -305,6 +305,10 @@ std::expected<PackageOperationInputs, std::string> package_operation_inputs(
         "object artifacts currently require target 'x86_64'");
   }
   auto [name, version, source_root] = std::move(parsed.packages.front());
+  if (has_reserved_standard_library_root(name) &&
+      name != kStandardLibraryPackageName) {
+    return std::unexpected("standard library package must be spelled 'cloth'");
+  }
   if (!is_valid_package_name(name) || !is_valid_package_version(version)) {
     return std::unexpected("source package identity is invalid");
   }
@@ -319,6 +323,12 @@ std::expected<PackageOperationInputs, std::string> package_operation_inputs(
   std::ranges::sort(parsed.dependencies, {}, &ShuttleV2DependencyInput::alias);
   std::set<std::string, std::less<>> aliases;
   for (const ShuttleV2DependencyInput& dependency : parsed.dependencies) {
+    if (has_standard_library_dependency_conflict(dependency.alias,
+                                                 dependency.package)) {
+      return std::unexpected(
+          "standard library dependency must map alias 'cloth' to package "
+          "'cloth'");
+    }
     if (!valid_alias(dependency.alias) ||
         !is_valid_package_name(dependency.package) ||
         dependency.package == name ||
@@ -455,7 +465,10 @@ std::string shuttle_capabilities_json(const ArtifactDigest& compiler_id) {
   return "{\"schema\":1,\"protocols\":[1,2],\"artifact_formats\":[" +
          std::to_string(kPackageArtifactFormatVersion) +
          "],\"compiler_id\":\"" + artifact_digest_hex(compiler_id) +
-         "\",\"operations\":[\"compile\",\"inspect\",\"link\",\"reuse\"],"
+         "\",\"standard_library\":{\"package\":\"" +
+         std::string{kStandardLibraryPackageName} + "\",\"version\":\"" +
+         std::string{kStandardLibraryPackageVersion} +
+         "\"},\"operations\":[\"compile\",\"inspect\",\"link\",\"reuse\"],"
          "\"interface_targets\":[\"x86_64\",\"wasm32\"],"
          "\"object_targets\":[\"x86_64\"]}";
 }

@@ -77,8 +77,9 @@ and foreign-function boundary.
 ## Current status
 
 Cloth is under active development. The language, compiler interfaces, runtime
-ABI, and tooling are not stable, and there is not yet a standard library or
-external package registry.
+ABI, and tooling are not stable. The standard library has begun with the
+compiler-paired `cloth.math::Math` package; it is intentionally incomplete, and
+there is not yet an external package registry.
 
 The compiler currently provides a deterministic lexer, two-pass parser,
 semantic analysis, typed HIR, control-flow MIR, a verified target ABI, and an

@@ -8,6 +8,7 @@
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/sema/semantic_model.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <exception>
@@ -145,6 +146,94 @@ void package_dependency_import(TestContext& test) {
   }
   test.expect(retained_package_identity,
               "dependency type lost its Shuttle package identity");
+}
+
+void standard_library_dependency(TestContext& test) {
+  TemporaryDirectory temporary;
+  const std::filesystem::path app = temporary.path() / "app";
+  const std::filesystem::path standard_library = temporary.path() / "std";
+  write_file(app / "Main.co",
+             "import cloth.math::Math;\n"
+             "static func Main() { println(Math.Double(4)); }\n");
+  write_file(standard_library / "math" / "Math.co",
+             "static func Double(int32 value): int32 { return value * 2; }\n");
+
+  const std::vector<std::filesystem::path> arguments{"--shuttle-protocol",
+                                                     "1",
+                                                     "--target",
+                                                     "wasm32",
+                                                     "--output-kind",
+                                                     "check",
+                                                     "--root-package",
+                                                     "app",
+                                                     "--entry",
+                                                     "Main.co",
+                                                     "--package",
+                                                     "cloth",
+                                                     "0.1.0",
+                                                     standard_library,
+                                                     "--package",
+                                                     "app",
+                                                     "1.0.0",
+                                                     app,
+                                                     "--dependency",
+                                                     "app",
+                                                     "cloth",
+                                                     "cloth"};
+  auto plan = cloth::prepare_shuttle_build(arguments);
+  test.expect(plan.has_value(), "standard-library package plan was rejected");
+  if (!plan) return;
+
+  cloth::Compilation compilation{plan->request.target};
+  compilation.set_package_dependencies(
+      {cloth::CompilationDependency{"app", "cloth", "cloth"}});
+  for (cloth::ShuttleSourceInput& source : plan->sources) {
+    compilation.add_package_source(
+        std::move(source.source), std::move(source.package),
+        std::move(source.source_package), std::move(source.version));
+  }
+  cloth::DiagnosticEngine diagnostics;
+  const cloth::CompilationResult result = compilation.analyze(diagnostics);
+  test.expect(result.is_valid && !diagnostics.has_errors(),
+              "cloth.math import did not resolve through the reserved root");
+  test.expect(std::ranges::any_of(result.semantics.types(),
+                                  [](const cloth::SemanticType& type) {
+                                    return type.name == "cloth.math.Math";
+                                  }),
+              "standard-library type lost its canonical package identity");
+
+  auto wrong_alias = arguments;
+  wrong_alias[20] = "models";
+  const auto wrong_alias_plan = cloth::prepare_shuttle_build(wrong_alias);
+  test.expect(!wrong_alias_plan && wrong_alias_plan.error().contains(
+                                       "standard library dependency"),
+              "the cloth package was exposed through a noncanonical alias");
+
+  auto case_alias = arguments;
+  case_alias[20] = "Cloth";
+  const auto case_alias_plan = cloth::prepare_shuttle_build(case_alias);
+  test.expect(!case_alias_plan && case_alias_plan.error().contains(
+                                      "standard library dependency"),
+              "a case-only cloth dependency alias was accepted");
+
+  auto wrong_target = arguments;
+  wrong_target[21] = "app";
+  const auto wrong_target_plan = cloth::prepare_shuttle_build(wrong_target);
+  test.expect(!wrong_target_plan && wrong_target_plan.error().contains(
+                                        "standard library dependency"),
+              "the reserved cloth alias targeted an ordinary package");
+
+  auto case_target = arguments;
+  case_target[21] = "Cloth";
+  const auto case_target_plan = cloth::prepare_shuttle_build(case_target);
+  test.expect(!case_target_plan && case_target_plan.error().contains(
+                                       "standard library dependency"),
+              "a case-only standard-library package target was accepted");
+
+  write_file(app / "Cloth" / "Shadow.co", "class {}\n");
+  const auto shadow = cloth::prepare_shuttle_build(arguments);
+  test.expect(!shadow && shadow.error().contains("is reserved"),
+              "case-only local standard-library root shadowing was accepted");
 }
 
 void invalid_protocol_graphs(TestContext& test) {
@@ -296,6 +385,37 @@ void protocol_v2_operations(TestContext& test) {
         checked.has_value() == (alias == "models"),
         "protocol-v2 switch keyword alias policy differs from the lexer");
   }
+  auto standard_library = compile;
+  standard_library.insert(standard_library.end(),
+                          {"--dependency", "cloth", "cloth", "--artifact",
+                           "cloth", "0.1.0", digest, artifact_path});
+  test.expect(cloth::prepare_shuttle_v2_request(standard_library).has_value(),
+              "protocol-v2 rejected the canonical standard-library edge");
+  auto case_standard_alias = compile;
+  case_standard_alias.insert(case_standard_alias.end(),
+                             {"--dependency", "Cloth", "cloth", "--artifact",
+                              "cloth", "0.1.0", digest, artifact_path});
+  test.expect(!cloth::prepare_shuttle_v2_request(case_standard_alias),
+              "protocol-v2 accepted a case-only standard-library alias");
+  auto case_standard_package = compile;
+  case_standard_package.insert(case_standard_package.end(),
+                               {"--dependency", "cloth", "Cloth", "--artifact",
+                                "Cloth", "0.1.0", digest, artifact_path});
+  test.expect(!cloth::prepare_shuttle_v2_request(case_standard_package),
+              "protocol-v2 accepted a case-only standard-library package");
+  auto wrong_standard_alias = compile;
+  wrong_standard_alias.insert(wrong_standard_alias.end(),
+                              {"--dependency", "models", "cloth", "--artifact",
+                               "cloth", "0.1.0", digest, artifact_path});
+  test.expect(!cloth::prepare_shuttle_v2_request(wrong_standard_alias),
+              "protocol-v2 accepted a renamed standard-library edge");
+  auto reserved_ordinary_alias = compile;
+  reserved_ordinary_alias.insert(
+      reserved_ordinary_alias.end(),
+      {"--dependency", "cloth", "models", "--artifact", "models", "0.1.0",
+       digest, artifact_path});
+  test.expect(!cloth::prepare_shuttle_v2_request(reserved_ordinary_alias),
+              "protocol-v2 allowed an ordinary package to claim cloth");
 
   const std::array<std::filesystem::path, 6> inspect{
       "--shuttle-protocol", "2", "--operation", "inspect", "--input",
@@ -358,12 +478,15 @@ void protocol_v2_operations(TestContext& test) {
 void protocol_v2_json_contract(TestContext& test) {
   const cloth::ArtifactDigest digest = cloth::sha256("compiler");
   const std::string capabilities = cloth::shuttle_capabilities_json(digest);
-  test.expect(capabilities.starts_with("{\"schema\":1,\"protocols\":[1,2]") &&
-                  capabilities.contains("\"operations\":[\"compile\","
-                                        "\"inspect\",\"link\",\"reuse\"]") &&
-                  capabilities.contains(cloth::artifact_digest_hex(digest)) &&
-                  !capabilities.ends_with('\n'),
-              "capability response does not match protocol schema 1");
+  test.expect(
+      capabilities.starts_with("{\"schema\":1,\"protocols\":[1,2]") &&
+          capabilities.contains("\"standard_library\":{\"package\":\"cloth\","
+                                "\"version\":\"0.1.0\"}") &&
+          capabilities.contains("\"operations\":[\"compile\","
+                                "\"inspect\",\"link\",\"reuse\"]") &&
+          capabilities.contains(cloth::artifact_digest_hex(digest)) &&
+          !capabilities.ends_with('\n'),
+      "capability response does not match protocol schema 1");
 }
 
 }  // namespace
@@ -372,6 +495,7 @@ int main() {
   const std::vector<TestCase> tests{
       {"valid protocol plan", valid_protocol_plan},
       {"package dependency import", package_dependency_import},
+      {"standard library dependency", standard_library_dependency},
       {"invalid protocol graphs", invalid_protocol_graphs},
       {"protocol configuration validation", protocol_configuration_validation},
       {"output configuration validation", output_configuration_validation},

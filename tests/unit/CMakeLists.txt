@@ -22,6 +22,10 @@ target_compile_definitions(cloth_project_tests PRIVATE
 cloth_add_unit_test(cloth_sema_tests sema_tests.cc)
 cloth_add_unit_test(cloth_override_tests override_tests.cc)
 cloth_add_unit_test(cloth_typed_error_tests typed_error_tests.cc)
+cloth_add_unit_test(cloth_standard_library_tests standard_library_tests.cc)
+target_compile_definitions(cloth_standard_library_tests PRIVATE
+    CLOTH_STANDARD_LIBRARY_SOURCE_DIR="${PROJECT_SOURCE_DIR}/std/src"
+)
 cloth_add_unit_test(cloth_shuttle_protocol_tests shuttle_protocol_tests.cc)
 cloth_add_unit_test(cloth_mir_tests mir_tests.cc)
 cloth_add_unit_test(cloth_mir_optimizer_tests mir_optimizer_tests.cc)

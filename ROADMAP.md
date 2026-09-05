@@ -72,9 +72,11 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 32 | Exact typed numeric literals with deterministic compiler and package integration |
 | 33 | Scientific notation, explicit integer bases, and strict digit separators |
 | 34 | Typed errors, declared effects, and portable automatic propagation |
+| 35 | Compiler-paired standard library with a reserved import root and deterministic Shuttle integration |
 
 Stage 34 is the current completed native language-surface baseline, and Stage
-31 is the current completed optimizer baseline. Coordinated toolchain Stage 22
+31 is the current completed optimizer baseline. Stage 35 is complete, including
+its standard-library exit audit. Coordinated toolchain Stage 22
 and separate-compilation Stage 23 are complete, including their cross-tool exit
 audits.
 Build-responsiveness Stage 24 is also complete.
@@ -908,10 +910,63 @@ corrected explicit imports of user error types and made `throw` a proper
 non-fallthrough expression during constructor field analysis. Active
 compatibility remains artifact format 5, compiler ABI 5, and runtime ABI 4.
 
-## Beyond Stage 34
+## Stage 35: Standard library foundation
 
-Stage 34 is complete. The remaining backlog does not acquire
-priority or enter the Cloth 1.0 scope automatically.
+Status: **complete — exit audit passed 2026-09-05**
+
+The [approved contract](docs/proposals/stage_35_standard_library_foundation.md)
+establishes the `std` submodule as the source of truth for the official Cloth
+standard library and reserves `cloth` as its exact source import root.
+
+Objective: make the standard library a deterministic, verified toolchain
+package that can grow in Cloth source without turning reusable APIs into
+compiler intrinsics or allowing ordinary projects to shadow its namespace.
+
+Prerequisite: Stages 8, 22 through 24, 28, and 34.
+
+Deliverables:
+
+1. **35.1 — Contract (complete).** Freeze compiler/library ownership, the
+   reserved `cloth` root, canonical source layout, explicit imports, automatic
+   Shuttle dependency injection, compatibility, distribution, diagnostics,
+   verification, and non-goals.
+2. **35.2 — Compiler and library bootstrap (complete).** Enforce the reserved root,
+   normalize the `std` library manifest and source layout, compile `Math` as the
+   first production library component, and verify interface/object artifacts
+   on x86-64 and wasm32.
+3. **35.3 — Shuttle integration (complete).** Select the standard library
+   paired with the compiler, inject it without manifest boilerplate, preserve
+   exact reuse and invalidation, link consumer applications, and document the
+   workflow.
+4. **35.4 — Exit audit (complete).** Close namespace, compatibility, malformed input,
+   source-free use, native/cross-target, determinism, invalidation,
+   distribution, and repository quality matrices.
+
+The official library package identity is `cloth`. Its source root begins with
+library areas such as `math/`; it does not repeat `cloth/`. Thus
+`src/math/Math.co` is imported as `cloth.math::Math`. Ordinary source roots,
+dependency aliases, and import aliases cannot claim `cloth`, including
+case-only filesystem variants.
+
+Shuttle supplies one exact compatible library as a direct implicit dependency
+of every ordinary package. Types remain explicitly imported; Stage 35 adds no
+general prelude. `Error`, `DivisionByZero`, primitives, the GC/error ABI, and
+the existing `print`/`println` compatibility surface remain compiler-owned.
+
+The library reuses verified package artifacts and dependency inventories.
+Compatibility remains artifact format 5, compiler ABI 5, runtime ABI 4,
+process protocol 2, receipt schema 1, and manifest schema 1.
+
+All four checkpoints are complete. The verification record is in
+[testing](docs/testing.md#stage-354-standard-library-foundation-exit-audit).
+Console input, command-line arguments, parsing,
+formatting, collections, registries, downloads, signing, a prelude, and new
+language/runtime behavior remain outside the active stage.
+
+## Beyond Stage 35
+
+Stage 35 is complete. The remaining backlog does not acquire priority or enter
+the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 

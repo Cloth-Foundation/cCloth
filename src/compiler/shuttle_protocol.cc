@@ -394,6 +394,11 @@ std::expected<ShuttleBuildRequest, std::string> validate_request(
     return std::unexpected(
         "native executable output currently supports only target 'x86_64'");
   }
+  if (parsed.root_package &&
+      has_reserved_standard_library_root(*parsed.root_package) &&
+      *parsed.root_package != kStandardLibraryPackageName) {
+    return std::unexpected("standard library package must be spelled 'cloth'");
+  }
   if (!parsed.root_package || !is_valid_package_name(*parsed.root_package)) {
     return std::unexpected("--root-package is missing or invalid");
   }
@@ -404,6 +409,11 @@ std::expected<ShuttleBuildRequest, std::string> validate_request(
   std::map<std::string, std::filesystem::path> package_roots;
   std::set<std::filesystem::path> unique_roots;
   for (ShuttlePackageInput& package : parsed.packages) {
+    if (has_reserved_standard_library_root(package.name) &&
+        package.name != kStandardLibraryPackageName) {
+      return std::unexpected(
+          "standard library package must be spelled 'cloth'");
+    }
     if (!is_valid_package_name(package.name)) {
       return std::unexpected("invalid package name '" + package.name + "'");
     }
@@ -431,6 +441,12 @@ std::expected<ShuttleBuildRequest, std::string> validate_request(
   std::set<std::pair<std::string, std::string>> aliases;
   std::set<std::pair<std::string, std::string>> targets;
   for (const ShuttleDependencyInput& dependency : parsed.dependencies) {
+    if (has_standard_library_dependency_conflict(dependency.alias,
+                                                 dependency.target)) {
+      return std::unexpected(
+          "standard library dependency must map alias 'cloth' to package "
+          "'cloth'");
+    }
     if (!package_roots.contains(dependency.owner) ||
         !package_roots.contains(dependency.target)) {
       return std::unexpected("dependency '" + dependency.owner + " --" +
@@ -599,6 +615,12 @@ std::expected<std::vector<ShuttleSourceInput>, std::string> enumerate_sources(
           return std::unexpected(text.error());
         }
         const std::string source_package = source_package_name(relative);
+        if (has_reserved_standard_library_root(source_package)) {
+          const std::size_t separator = source_package.find('.');
+          return std::unexpected("source package root '" +
+                                 source_package.substr(0, separator) +
+                                 "' is reserved for the standard library");
+        }
         const std::string logical =
             logical_source_name(package.name, source_package, stem);
         const std::string logical_key = ascii_case_key(logical);

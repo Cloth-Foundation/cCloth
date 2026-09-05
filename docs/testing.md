@@ -1,5 +1,103 @@
 # Cloth testing and diagnostic builds
 
+## Stage 35.4 standard-library foundation exit audit
+
+Verified on Windows on 2026-09-05 with development and ASan/UBSan compilers.
+Both configurations pass all 255 CTests, including 35 public Shuttle toolchain
+cases and 32 native cases. All 49 ordinary Rust tests, Rust 1.85, warning-denied
+Clippy, Rust and C++ formatting, 12 compiler-backed editor checks per compiler,
+local Markdown links, and repository whitespace checks pass.
+
+The namespace matrix covers exact, aliased, and nonrecursive wildcard imports
+beneath `cloth`, plus local-source, dependency-alias, import-alias, package, and
+case-only shadow attempts. Compiler tests compare whole-project and source-free
+artifact consumers on x86-64 and wasm32. The separate-package integration emits
+verified LLVM before and after O2 on both targets, links independent x86-64
+objects, and executes `Math` natively.
+
+Shuttle rejects absent, corrupt, duplicate-field, unknown-field, unsupported-
+schema, selection-mismatched, non-normal, and missing-manifest metadata. It also
+rejects wrong-name, wrong-version, executable, and dependency-bearing library
+distributions before application compilation. Existing artifact tests close
+target, compiler/runtime, receipt, reuse, and link incompatibility. A corrupt
+`cloth` candidate is rebuilt without disturbing byte-identical consumers.
+
+An exact `Math.co` edit rebuilds `cloth` and its consumer on both targets, then
+returns to full warm reuse. An invalid library edit preserves the completed
+library artifact, consumer artifact, and native executable and never launches
+stale output. Relocated one-job/four-job artifacts remain byte-identical on both
+targets, as do relocated native executables. Compatibility remains artifact/
+compiler/runtime **5/5/4** and process/receipt/manifest/toolchain schemas
+**2/1/1/1**. **Stage 35 is complete.**
+
+## Stage 35.3 Shuttle standard-library integration
+
+Verified on Windows on 2026-09-05 with development and ASan/UBSan compilers.
+Shuttle reads strict schema-1 `cloth-toolchain.json` beside the selected
+compiler, validates the exact executable-free `cloth` distribution, injects it
+as a direct dependency of every ordinary package, and compiles the library
+without a self-edge. Missing metadata, incompatible compiler capabilities,
+reserved manifest aliases, and replacement packages fail before application
+compilation.
+
+A dependency-free application manifest imports `cloth.math::Math`, checks on
+x86-64 and wasm32, records `cloth` in its artifact receipt, links and prints
+`6` natively, and reuses both artifacts on a warm build. The existing cache,
+parallel, invalidation, relocation, source-free, stale-link, and failure tests
+now include the implicit fifth package.
+
+Both compiler configurations pass all 255 CTests, including 34 public Shuttle
+toolchain cases and 31 native cases. All 47 ordinary Rust tests, Rust 1.85,
+formatting, warning-denied Clippy, and C++ formatting pass. Compatibility
+remains artifact/compiler/runtime 5/5/4 and process/receipt/manifest 2/1/1;
+toolchain metadata begins at schema 1.
+
+## Stage 35.2 standard library bootstrap
+
+Verified on Windows on 2026-09-05 with development and ASan/UBSan compilers.
+The compiler reserves the `cloth` source root, package spelling, import alias,
+and dependency alias, accepting only the exact distinguished dependency
+`cloth -> cloth`. Focused parser, identity, protocol, package, and negative
+case-collision tests cover the compiler-owned boundary.
+
+The `std` checkout is the executable-free `cloth` v0.1.0 package. Its
+`src/math/Math.co` source compiles as `cloth.math.Math`; `Gcd` and `Lcm` retain
+the Stage 34 checked-division contract through explicit `DivisionByZero`
+declarations. A direct Shuttle check compiles the library without an entry point
+or self-dependency.
+
+The integration matrix produces and consumes interface artifacts on x86-64 and
+wasm32, verifies whole-project LLVM before and after O2 on both targets, and
+links independent x86-64 library/application object artifacts. The consumer
+opens no library source and prints the exact expected `7`, `9`, and `6` lines.
+Both configurations pass all 255 CTests, including the existing 32 public
+Shuttle toolchain and 30 native cases. All 43 ordinary Shuttle tests, Rust
+formatting, and warning-denied Clippy also pass. Artifact/compiler/runtime
+compatibility remains 5/5/4; process protocol, receipt schema, and manifest
+schema remain 2/1/1. Shuttle selection and automatic injection remain 35.3
+work.
+
+## Stage 35.1 standard library contract
+
+Recorded on 2026-09-05. The approved contract assigns library source to the
+`std` repository, retains compiler ownership of primitives and `Error`, reserves
+the exact `cloth` import root, and fixes the intended mapping from
+`src/math/Math.co` to `cloth.math::Math`. It defines an executable-free library
+package, explicit type imports, automatic Shuttle dependency injection, exact
+version/digest inputs, compatibility, distribution, diagnostics, verification,
+and non-goals.
+
+This checkpoint changes documentation only. Active compiler, runtime, artifact,
+process, receipt, and manifest versions remain 5/5/4/2/1/1. Compiler/library
+bootstrap is separately scheduled for 35.2; Shuttle production integration is
+scheduled for 35.3.
+
+A read-only Stage 34 frontend check of the existing `Math.co` bootstrap reports
+two expected 35.2 migration items: dynamic remainder in `Gcd` and dynamic
+division in `Lcm` require `DivisionByZero` coverage under the current
+conservative effect contract. The checkpoint records these items and does not
+weaken error analysis or change library source.
+
 ## Stage 34.4 typed error exit audit
 
 Verified on Windows on 2026-09-05 with development and ASan/UBSan compilers.

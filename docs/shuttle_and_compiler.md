@@ -85,6 +85,20 @@ source imports. For example, alias `models` exposes `models::User` and
 dependencies are not implicitly visible. The complete rule is defined in
 [`shuttle/docs/manifest.md`](../shuttle/docs/manifest.md).
 
+The reserved alias `cloth` is different: Shuttle injects it as a direct
+dependency of every ordinary package from the distribution paired with the
+selected compiler. Users cannot declare or replace it. Standard-library types
+remain explicitly imported, such as `cloth.math::Math`; no general prelude is
+created.
+
+The compiler executable advertises the required standard-library package and
+version in its protocol capabilities. An adjacent `cloth-toolchain.json`
+selects the exact `Shuttle.toml` distribution by relative path. Shuttle rejects
+missing, malformed, mismatched, executable, or dependency-bearing library
+distributions before compiling application packages. Development CMake builds
+point this metadata at the checked-out `std` submodule; released layouts bundle
+the same paired contract.
+
 ## Direct compiler use
 
 `clothc` remains usable without Shuttle for compiler development, diagnostics,

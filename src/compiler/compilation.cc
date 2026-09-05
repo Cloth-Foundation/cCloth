@@ -219,8 +219,12 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
 
   auto prepare_unit = [&](Unit& unit) {
     if (!unit.owning_package.empty()) {
-      if (!is_valid_package_name(unit.owning_package) ||
-          !is_valid_package_version(unit.package_version)) {
+      if (has_reserved_standard_library_root(unit.owning_package) &&
+          unit.owning_package != kStandardLibraryPackageName) {
+        diagnostics.error(source_origin(unit.source),
+                          "standard library package must be spelled 'cloth'");
+      } else if (!is_valid_package_name(unit.owning_package) ||
+                 !is_valid_package_version(unit.package_version)) {
         diagnostics.error(source_origin(unit.source),
                           "source has an invalid owning package identity");
       }
@@ -258,6 +262,14 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
       diagnostics.error(source_origin(unit.source),
                         "source has an invalid package name");
     }
+    if (!unit.package_name.empty() &&
+        has_reserved_standard_library_root(unit.package_name)) {
+      const std::size_t separator = unit.package_name.find('.');
+      diagnostics.error(source_origin(unit.source),
+                        "source package root '" +
+                            unit.package_name.substr(0, separator) +
+                            "' is reserved for the standard library");
+    }
 
     unit.qualified_name = qualified_name(unit.owning_package, unit.package_name,
                                          unit.source.stem());
@@ -292,6 +304,16 @@ void Compilation::prepare_source_graph(DiagnosticEngine& diagnostics) {
                                 : import.package_name.substr(separator + 1);
     }
   };
+
+  for (const CompilationDependency& dependency : package_dependencies_) {
+    if (has_standard_library_dependency_conflict(dependency.alias,
+                                                 dependency.target)) {
+      diagnostics.error(
+          SourceLocation{"<package>", 0, 1, 1},
+          "standard library dependency must map alias 'cloth' to package "
+          "'cloth'");
+    }
+  }
 
   auto load_source = [&](const std::filesystem::path& path, SourceRange range,
                          std::string_view description, bool report_failure) {

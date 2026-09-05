@@ -346,6 +346,17 @@ void rejects_identity_and_linkage_corruption(TestContext& test) {
 }
 
 void rejects_invalid_package_identity(TestContext& test) {
+  test.expect(
+      cloth::has_reserved_standard_library_root("cloth") &&
+          cloth::has_reserved_standard_library_root("Cloth.math") &&
+          cloth::has_reserved_standard_library_root("CLOTH") &&
+          !cloth::has_reserved_standard_library_root("clothing") &&
+          !cloth::has_reserved_standard_library_root("math.cloth") &&
+          !cloth::has_reserved_standard_library_root("") &&
+          !cloth::has_standard_library_dependency_conflict("cloth", "cloth") &&
+          cloth::has_standard_library_dependency_conflict("Cloth", "cloth") &&
+          cloth::has_standard_library_dependency_conflict("cloth", "models"),
+      "standard-library root reservation is not ASCII-case stable");
   for (const std::string_view invalid :
        {"", "1", "1.2", "1.2.3.4", "01.2.3", "1.2.3-01", "1.2.3+"}) {
     test.expect(!cloth::is_valid_package_version(invalid),

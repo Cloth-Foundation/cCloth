@@ -9,8 +9,14 @@
 
 namespace cloth {
 
+inline constexpr std::string_view kStandardLibraryPackageName = "cloth";
+inline constexpr std::string_view kStandardLibraryPackageVersion = "0.1.0";
+
 [[nodiscard]] bool is_valid_package_name(std::string_view value);
 [[nodiscard]] bool is_valid_package_version(std::string_view value);
+[[nodiscard]] bool has_reserved_standard_library_root(std::string_view value);
+[[nodiscard]] bool has_standard_library_dependency_conflict(
+    std::string_view alias, std::string_view package);
 
 }  // namespace cloth
 

@@ -138,6 +138,19 @@ void imports(TestContext& test) {
   test.expect(
       has_diagnostic(invalid, "imports must appear before member declarations"),
       "late import was accepted");
+
+  const ParsedSource reserved{"ReservedImports.co",
+                              "import Cloth.math::Math;\n"
+                              "import CLOTH.math::Math;\n"
+                              "import tools::Example as cloth;\n"
+                              "import tools::Other as Cloth;\n"};
+  test.expect(
+      error_count(reserved) == 4 &&
+          has_diagnostic(reserved,
+                         "standard library root must be spelled 'cloth'") &&
+          has_diagnostic(reserved,
+                         "is reserved for the standard library root 'cloth'"),
+      "reserved standard-library import names were accepted");
 }
 
 void explicit_file_class_declaration(TestContext& test) {

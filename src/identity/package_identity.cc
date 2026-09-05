@@ -119,4 +119,31 @@ bool is_valid_package_version(std::string_view value) {
   });
 }
 
+bool has_reserved_standard_library_root(std::string_view value) {
+  const std::size_t separator = value.find('.');
+  value = value.substr(0, separator);
+  if (value.size() != kStandardLibraryPackageName.size()) {
+    return false;
+  }
+  for (std::size_t index = 0; index < value.size(); ++index) {
+    char character = value[index];
+    if (character >= 'A' && character <= 'Z') {
+      character = static_cast<char>(character + ('a' - 'A'));
+    }
+    if (character != kStandardLibraryPackageName[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool has_standard_library_dependency_conflict(std::string_view alias,
+                                              std::string_view package) {
+  const bool claims_standard_library =
+      has_reserved_standard_library_root(alias) ||
+      has_reserved_standard_library_root(package);
+  return claims_standard_library && (alias != kStandardLibraryPackageName ||
+                                     package != kStandardLibraryPackageName);
+}
+
 }  // namespace cloth

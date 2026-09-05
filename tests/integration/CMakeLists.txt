@@ -8,8 +8,32 @@ set(CLOTH_INTEGRATION_ERRORS "${CMAKE_CURRENT_SOURCE_DIR}/errors")
 set(CLOTH_INTEGRATION_PROJECTS "${CMAKE_CURRENT_SOURCE_DIR}/projects")
 set(CLOTH_TYPED_ERROR_PROJECT
     "${CLOTH_INTEGRATION_PROJECTS}/typed_errors/src")
+set(CLOTH_STANDARD_LIBRARY_PROJECT
+    "${CLOTH_INTEGRATION_PROJECTS}/standard_library/src")
+set(CLOTH_STANDARD_LIBRARY_ROOT "${PROJECT_SOURCE_DIR}/std/src")
 
 foreach(target IN ITEMS x86_64 wasm32)
+    set(standard_library_ir
+        "${PROJECT_BINARY_DIR}/cloth-standard-library-${target}.ll")
+    add_test(NAME cloth_cli_standard_library_llvm_${target}
+        COMMAND clothc
+            --shuttle-protocol 1
+            --target ${target}
+            --output-kind llvm-ir
+            --output "${standard_library_ir}"
+            --root-package app
+            --entry Main.co
+            --package app 0.1.0 "${CLOTH_STANDARD_LIBRARY_PROJECT}"
+            --package cloth 0.1.0 "${CLOTH_STANDARD_LIBRARY_ROOT}"
+            --dependency app cloth cloth)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_standard_library_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${standard_library_ir})
+        set_tests_properties(cloth_standard_library_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_standard_library_llvm_${target})
+    endif()
     add_test(NAME cloth_cli_check_numeric_literal_notation_${target}
         COMMAND clothc --check --target=${target}
             ${CLOTH_INTEGRATION_PROGRAMS}/NumericLiteralNotation.co)
@@ -148,6 +172,22 @@ foreach(target IN ITEMS x86_64 wasm32)
             DEPENDS cloth_cli_switch_llvm_${target})
     endif()
 endforeach()
+
+if(CLOTH_LLVM_LLC_EXECUTABLE)
+    set(CLOTH_TEST_STANDARD_LIBRARY_NATIVE ON)
+else()
+    set(CLOTH_TEST_STANDARD_LIBRARY_NATIVE OFF)
+endif()
+add_test(NAME cloth_standard_library_artifacts
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_COMPILER=$<TARGET_FILE:clothc>"
+        "-DCLOTH_STANDARD_LIBRARY_ROOT=${CLOTH_STANDARD_LIBRARY_ROOT}"
+        "-DCLOTH_APPLICATION_ROOT=${CLOTH_STANDARD_LIBRARY_PROJECT}"
+        "-DCLOTH_WORK_DIRECTORY=${PROJECT_BINARY_DIR}/standard-library-artifacts"
+        "-DCLOTH_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/standard_library.txt"
+        "-DCLOTH_TEST_NATIVE=${CLOTH_TEST_STANDARD_LIBRARY_NATIVE}"
+        "-DCLOTH_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/RunStandardLibrary.cmake)
 
 add_test(NAME cloth_cli_check_structs
     COMMAND clothc --check

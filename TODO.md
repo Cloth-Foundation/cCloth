@@ -63,6 +63,8 @@ complete following its separately authorized 32.4 exit audit on 2026-09-04.
 Stage 33 is complete following its separately authorized 33.4 numeric-notation
 exit audit on 2026-09-04. Stage 34 is complete following its separately
 authorized 34.4 typed-error exit audit on 2026-09-05.
+Stage 35 is complete following its separately authorized 35.4 exit audit on
+2026-09-05.
 
 ## Scheduled work
 
@@ -768,6 +770,67 @@ class override validation. Existing ABI and artifact versions are unchanged.
   **Stage 34 is complete.** Further work requires a separately proposed and
   approved stage.
 
+### Stage 35: Standard library foundation
+
+- [x] **35.1 — Contract.** Approve the
+  [standard-library foundation](docs/proposals/stage_35_standard_library_foundation.md),
+  including compiler/library ownership, the reserved `cloth` import root,
+  canonical `std` source layout, explicit imports, automatic Shuttle
+  dependency injection, exact version/digest inputs, distribution,
+  diagnostics, verification, compatibility, and non-goals.
+
+  Approved 2026-09-05. The `std` submodule owns library source. The official
+  package identity is `cloth`, `src/math/Math.co` maps to
+  `cloth.math::Math`, and ordinary source roots, dependency aliases, and import
+  aliases cannot claim `cloth`. Shuttle will inject the selected library as an
+  implicit direct dependency without implicitly importing its types. `Error`,
+  `DivisionByZero`, primitives, and core runtime/ABI behavior remain compiler-
+  owned. Compatibility remains 5/5/4 with process protocol 2, receipt schema 1,
+  and manifest schema 1. This checkpoint changes documentation only.
+
+- [x] **35.2 — Compiler and library bootstrap.** Enforce reserved-root and
+  case-collision diagnostics; normalize the standard-library manifest and move
+  its source root from `src/cloth/` to `src/`; compile `Math` as a library
+  package without an executable or self-dependency; resolve the existing
+  `Gcd`/`Lcm` dynamic integer division effects without weakening Stage 34; and
+  verify canonical identity, interface/object artifacts, LLVM, native
+  consumers, and both targets.
+
+  Completed 2026-09-05. The compiler reserves `cloth` case-insensitively across
+  source-package roots and package/import aliases while requiring the exact
+  distinguished dependency `cloth -> cloth`. The `std` package is now the
+  executable-free `cloth` v0.1.0 package, and `src/math/Math.co` owns
+  `cloth.math.Math`; `Gcd` and `Lcm` explicitly declare `DivisionByZero`.
+  Interface artifacts compile on x86-64 and wasm32, native object artifacts link
+  through a source-free consumer, and LLVM passes verification before and after
+  O2 on both targets. Development and ASan/UBSan configurations each pass all
+  255 CTests. Compatibility remains 5/5/4 with protocol/schema versions 2/1/1.
+- [x] **35.3 — Shuttle integration.** Select the standard-library distribution
+  paired with the chosen compiler; inject the exact package into every ordinary
+  package; preserve deterministic progress, reuse, invalidation, atomic
+  publication, linking, and failure behavior; and add user/tooling
+  documentation.
+
+  Completed 2026-09-05. `clothc` advertises `cloth` v0.1.0 and CMake generates
+  adjacent schema-1 toolchain metadata selecting the exact library manifest.
+  Shuttle validates the paired executable-free package, injects it directly
+  into every ordinary package, rejects manifest aliases and replacement
+  packages, and carries its artifact through deterministic compile, reuse,
+  receipt, and link paths. User-facing imports remain explicit and require no
+  manifest entry.
+- [x] **35.4 — Exit audit.** Complete namespace and shadowing diagnostics,
+  absent/duplicate/corrupt/incompatible library handling, bootstrap and
+  consumer matrices, whole/separate/source-free equivalence, relocated serial/
+  parallel determinism, x86-64 native and x86-64/wasm32 verification, and all
+  compiler, runtime, Shuttle, standard-library, editor, documentation,
+  formatting, link, and sanitizer gates.
+
+  Completed 2026-09-05. Both 255-test compiler configurations, all 35 public
+  Shuttle toolchain cases, 32 native cases, 49 ordinary Rust tests, both-target
+  artifact checks, editor checks, documentation links, formatting, Clippy,
+  Rust 1.85, and repository gates pass. The audit record is in
+  [testing](docs/testing.md#stage-354-standard-library-foundation-exit-audit).
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -867,7 +930,6 @@ active stage without first updating `ROADMAP.md`.
 - Add Shuttle package registries, semantic-version selection, lockfile
   generation, and remote dependency retrieval after the local-only Stage 22
   contract.
-- Define and distribute the standard library (started in std sub module).
 
 ### Backend, runtime, and tooling
 
@@ -876,6 +938,8 @@ active stage without first updating `ROADMAP.md`.
 - Expand native output beyond the current x86-64 pipeline.
 - Add selectable optimization levels and debug information.
 - Define command-line argument delivery to `Main`.
+- Define portable console input and string-to-primitive parsing after the Stage
+  35 standard-library distribution boundary is complete.
 - Add platform packaging and distribution tooling.
 - Add ability for Shuttle to build to .lib or .a (Linux/MacOS) for library files.
 

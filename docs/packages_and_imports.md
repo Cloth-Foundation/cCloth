@@ -98,6 +98,10 @@ dependencies are visible, and aliases cannot collide with a local top-level
 source package.
 
 Package names, versions, graph cycles, and path dependencies are Shuttle build
-concerns. Remote retrieval, version solving, registries, and standard-library
-distribution remain deferred and do not require a change to the identifier
-import grammar. See [Shuttle and the Cloth compiler](shuttle_and_compiler.md).
+concerns. Remote retrieval, version solving, and registries remain deferred.
+The approved [Stage 35 standard-library contract](proposals/stage_35_standard_library_foundation.md)
+reserves `cloth` within this same identifier grammar. Shuttle automatically
+injects the exact library paired with the selected compiler as the direct
+`cloth` dependency of every ordinary package. Users do not declare that edge,
+and types such as `cloth.math::Math` still require explicit imports. See
+[Shuttle and the Cloth compiler](shuttle_and_compiler.md).
