@@ -4,4 +4,8 @@ static func Main() throws DivisionByZero {
   println(Math.Abs(int32(-7)));
   println(Math.Max(int32(4), int32(9)));
   println(Math.Gcd(84, 30));
+  println(ArgumentError("invalid argument").Message);
+  println(StateError("invalid state").Message);
+  println(ArgumentError().Message == "");
+  println(StateError().Message == "");
 }

@@ -6,6 +6,7 @@
 #include "cloth/compiler/shuttle_protocol.h"
 #include "cloth/compiler/shuttle_protocol_v2.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
+#include "cloth/identity/package_identity.h"
 #include "cloth/sema/semantic_model.h"
 
 #include <algorithm>
@@ -158,28 +159,29 @@ void standard_library_dependency(TestContext& test) {
   write_file(standard_library / "math" / "Math.co",
              "static func Double(int32 value): int32 { return value * 2; }\n");
 
-  const std::vector<std::filesystem::path> arguments{"--shuttle-protocol",
-                                                     "1",
-                                                     "--target",
-                                                     "wasm32",
-                                                     "--output-kind",
-                                                     "check",
-                                                     "--root-package",
-                                                     "app",
-                                                     "--entry",
-                                                     "Main.co",
-                                                     "--package",
-                                                     "cloth",
-                                                     "0.1.0",
-                                                     standard_library,
-                                                     "--package",
-                                                     "app",
-                                                     "1.0.0",
-                                                     app,
-                                                     "--dependency",
-                                                     "app",
-                                                     "cloth",
-                                                     "cloth"};
+  const std::vector<std::filesystem::path> arguments{
+      "--shuttle-protocol",
+      "1",
+      "--target",
+      "wasm32",
+      "--output-kind",
+      "check",
+      "--root-package",
+      "app",
+      "--entry",
+      "Main.co",
+      "--package",
+      "cloth",
+      std::string{cloth::kStandardLibraryPackageVersion},
+      standard_library,
+      "--package",
+      "app",
+      "1.0.0",
+      app,
+      "--dependency",
+      "app",
+      "cloth",
+      "cloth"};
   auto plan = cloth::prepare_shuttle_build(arguments);
   test.expect(plan.has_value(), "standard-library package plan was rejected");
   if (!plan) return;
@@ -478,15 +480,16 @@ void protocol_v2_operations(TestContext& test) {
 void protocol_v2_json_contract(TestContext& test) {
   const cloth::ArtifactDigest digest = cloth::sha256("compiler");
   const std::string capabilities = cloth::shuttle_capabilities_json(digest);
-  test.expect(
-      capabilities.starts_with("{\"schema\":1,\"protocols\":[1,2]") &&
-          capabilities.contains("\"standard_library\":{\"package\":\"cloth\","
-                                "\"version\":\"0.1.0\"}") &&
-          capabilities.contains("\"operations\":[\"compile\","
-                                "\"inspect\",\"link\",\"reuse\"]") &&
-          capabilities.contains(cloth::artifact_digest_hex(digest)) &&
-          !capabilities.ends_with('\n'),
-      "capability response does not match protocol schema 1");
+  const std::string standard_library =
+      "\"standard_library\":{\"package\":\"cloth\",\"version\":\"" +
+      std::string{cloth::kStandardLibraryPackageVersion} + "\"}";
+  test.expect(capabilities.starts_with("{\"schema\":1,\"protocols\":[1,2]") &&
+                  capabilities.contains(standard_library) &&
+                  capabilities.contains("\"operations\":[\"compile\","
+                                        "\"inspect\",\"link\",\"reuse\"]") &&
+                  capabilities.contains(cloth::artifact_digest_hex(digest)) &&
+                  !capabilities.ends_with('\n'),
+              "capability response does not match protocol schema 1");
 }
 
 }  // namespace

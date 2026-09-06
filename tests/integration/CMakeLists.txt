@@ -24,7 +24,7 @@ foreach(target IN ITEMS x86_64 wasm32)
             --root-package app
             --entry Main.co
             --package app 0.1.0 "${CLOTH_STANDARD_LIBRARY_PROJECT}"
-            --package cloth 0.1.0 "${CLOTH_STANDARD_LIBRARY_ROOT}"
+            --package cloth ${PROJECT_VERSION} "${CLOTH_STANDARD_LIBRARY_ROOT}"
             --dependency app cloth cloth)
     if(CLOTH_LLVM_OPT_EXECUTABLE)
         add_test(NAME cloth_standard_library_verify_${target}
@@ -185,6 +185,7 @@ add_test(NAME cloth_standard_library_artifacts
         "-DCLOTH_APPLICATION_ROOT=${CLOTH_STANDARD_LIBRARY_PROJECT}"
         "-DCLOTH_WORK_DIRECTORY=${PROJECT_BINARY_DIR}/standard-library-artifacts"
         "-DCLOTH_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/standard_library.txt"
+        "-DCLOTH_STANDARD_LIBRARY_VERSION=${PROJECT_VERSION}"
         "-DCLOTH_TEST_NATIVE=${CLOTH_TEST_STANDARD_LIBRARY_NATIVE}"
         "-DCLOTH_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/RunStandardLibrary.cmake)
@@ -776,6 +777,14 @@ cloth_add_cli_failure_test(inheritance_error
     ${CLOTH_INTEGRATION_ERRORS}/InheritanceErrors.co)
 
 cloth_finalize_tests(LABEL integration)
+
+# This test compiles five package artifacts, links two native objects, and runs
+# the result. Allow sanitizer instrumentation headroom without relaxing the
+# timeout for ordinary integration tests.
+math(EXPR standard_library_test_timeout
+    "4 * ${CLOTH_TEST_TIMEOUT_SECONDS}")
+set_tests_properties(cloth_standard_library_artifacts PROPERTIES
+    TIMEOUT ${standard_library_test_timeout})
 
 if(CLOTH_TEST_SHUTTLE)
     find_program(CLOTH_CARGO_EXECUTABLE NAMES cargo REQUIRED)

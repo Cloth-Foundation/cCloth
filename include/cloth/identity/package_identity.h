@@ -10,7 +10,7 @@
 namespace cloth {
 
 inline constexpr std::string_view kStandardLibraryPackageName = "cloth";
-inline constexpr std::string_view kStandardLibraryPackageVersion = "0.1.0";
+inline constexpr std::string_view kStandardLibraryPackageVersion = "0.2.0";
 
 [[nodiscard]] bool is_valid_package_name(std::string_view value);
 [[nodiscard]] bool is_valid_package_version(std::string_view value);

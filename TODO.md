@@ -65,6 +65,8 @@ exit audit on 2026-09-04. Stage 34 is complete following its separately
 authorized 34.4 typed-error exit audit on 2026-09-05.
 Stage 35 is complete following its separately authorized 35.4 exit audit on
 2026-09-05.
+Stage 36 is complete following its separately authorized 36.4 exit audit on
+2026-09-06.
 
 ## Scheduled work
 
@@ -830,6 +832,57 @@ class override validation. Existing ABI and artifact versions are unchanged.
   artifact checks, editor checks, documentation links, formatting, Clippy,
   Rust 1.85, and repository gates pass. The audit record is in
   [testing](docs/testing.md#stage-354-standard-library-foundation-exit-audit).
+
+### Stage 36: Standard-library prelude
+
+- [x] **36.1 — Prelude contract.** Define `cloth.lang` eligibility, exact
+  reach, deterministic lookup precedence, compiler/Shuttle
+  ownership, source-free behavior, compatibility, evolution, diagnostics,
+  verification, and non-goals.
+
+  Approved and completed 2026-09-05. The prelude is a low-priority type-name
+  fallback derived from the canonical `cloth` declarations already supplied to
+  the compiler. It adds no AST import, source discovery, dependency edge,
+  public API, version change, or production behavior in this checkpoint. See
+  the [contract](docs/proposals/stage_36_standard_library_prelude.md).
+- [x] **36.2 — Prelude resolution.** Implement whole-project and imported-
+  artifact lookup for public direct `cloth.lang` file types. Cover all file
+  kinds, capitalization, precedence, explicit imports, wildcard ambiguity,
+  core conflicts, absent inputs, malformed models, source-free packages, and
+  deterministic diagnostics without a Shuttle production change.
+
+  Completed 2026-09-05. Semantic analysis builds one canonical, public,
+  direct-`cloth.lang` fallback table after registering source and verified
+  artifact declarations. Normal bindings remain authoritative; invalid core
+  collisions are reported once at the library declaration. Synthetic compiler
+  and public Shuttle fixtures cover both targets without adding production
+  standard-library source or changing compatibility versions.
+- [x] **36.3 — Initial `lang` API slice.** Approve the exact public declarations
+  separately, then add only that source-defined set beneath `std/src/lang/`,
+  select its library version, document it for users, and verify artifacts,
+  both targets, native execution, reuse, and invalidation.
+
+  Completed 2026-09-05 and amended 2026-09-06. Prelude lookup now recursively
+  covers public types beneath `cloth.lang` and rejects duplicate public short
+  names across that tree. `cloth.lang.errors.ArgumentError` and
+  `cloth.lang.errors.StateError` are ordinary extensible errors with default
+  and message constructors. The paired package remains `cloth` v0.2.0; exact
+  version and digest flow through existing capability, metadata, artifact,
+  receipt, cache, and link contracts without schema changes.
+- [x] **36.4 — Exit audit.** Complete lookup, bootstrap, compatibility,
+  malformed-input, whole/separate/source-free, failure-preservation, relocated
+  serial/parallel, x86-64 native, x86-64/wasm32, editor, documentation,
+  formatting, link, sanitizer, and repository quality matrices.
+
+  Completed 2026-09-06. Development and sanitizer configurations each pass all
+  255 CTests, including 36 compiler-backed Shuttle cases and 32 native cases.
+  All 49 ordinary Rust tests, Rust 1.85, warning-denied Clippy, both 12-test
+  editor runs, both-target LLVM verification, local documentation links,
+  formatting, and repository gates pass. The audit added scoped sanitizer
+  headroom for the multi-artifact standard-library integration test; no
+  production behavior or compatibility version changed.
+
+  **Stage 36 is complete.**
 
 ## Unscheduled backlog
 

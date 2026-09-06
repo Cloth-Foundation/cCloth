@@ -1,3 +1,7 @@
 7
 9
 6
+invalid argument
+invalid state
+true
+true

@@ -1638,9 +1638,15 @@ class MirVerifier {
       return;
     }
     const SemanticType& type = semantics_.type(receiver_type);
-    const std::optional<FileId> owner = semantics_.symbol(member).file;
+    const SemanticSymbol& member_symbol = semantics_.symbol(member);
+    const std::optional<FileId> owner = member_symbol.file;
     bool related = false;
-    if (type.kind == TypeKind::kStruct && type.file && owner) {
+    if (type.kind == TypeKind::kErrorClass && !owner &&
+        member_symbol.kind == SymbolKind::kField &&
+        member_symbol.name == "Message" && member_symbol.is_final &&
+        member_symbol.type == semantics_.string_type()) {
+      related = true;
+    } else if (type.kind == TypeKind::kStruct && type.file && owner) {
       related = type.file == owner;
     } else if ((type.kind == TypeKind::kFileClass ||
                 type.kind == TypeKind::kErrorClass) &&

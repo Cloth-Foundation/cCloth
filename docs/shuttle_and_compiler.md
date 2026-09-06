@@ -88,8 +88,8 @@ dependencies are not implicitly visible. The complete rule is defined in
 The reserved alias `cloth` is different: Shuttle injects it as a direct
 dependency of every ordinary package from the distribution paired with the
 selected compiler. Users cannot declare or replace it. Standard-library types
-remain explicitly imported, such as `cloth.math::Math`; no general prelude is
-created.
+beneath `cloth.lang` form a recursive, low-priority prelude. Other areas remain
+explicitly imported, such as `cloth.math::Math`.
 
 The compiler executable advertises the required standard-library package and
 version in its protocol capabilities. An adjacent `cloth-toolchain.json`

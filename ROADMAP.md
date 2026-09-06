@@ -73,12 +73,13 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 33 | Scientific notation, explicit integer bases, and strict digit separators |
 | 34 | Typed errors, declared effects, and portable automatic propagation |
 | 35 | Compiler-paired standard library with a reserved import root and deterministic Shuttle integration |
+| 36 | Recursive `cloth.lang` prelude with source-defined foundational errors |
 
 Stage 34 is the current completed native language-surface baseline, and Stage
-31 is the current completed optimizer baseline. Stage 35 is complete, including
-its standard-library exit audit. Coordinated toolchain Stage 22
-and separate-compilation Stage 23 are complete, including their cross-tool exit
-audits.
+31 is the current completed optimizer baseline. Stages 35 and 36 are complete,
+including their standard-library and prelude exit audits. Coordinated toolchain
+Stage 22 and separate-compilation Stage 23 are complete, including their
+cross-tool exit audits.
 Build-responsiveness Stage 24 is also complete.
 
 Stage 26 is complete for value structs, including its approved source contract,
@@ -959,13 +960,62 @@ process protocol 2, receipt schema 1, and manifest schema 1.
 
 All four checkpoints are complete. The verification record is in
 [testing](docs/testing.md#stage-354-standard-library-foundation-exit-audit).
-Console input, command-line arguments, parsing,
-formatting, collections, registries, downloads, signing, a prelude, and new
-language/runtime behavior remain outside the active stage.
+Console input, command-line arguments, parsing, formatting, collections,
+registries, downloads, signing, a prelude, and new language/runtime behavior
+were outside Stage 35.
 
-## Beyond Stage 35
+## Stage 36: Standard-library prelude
 
-Stage 35 is complete. The remaining backlog does not acquire priority or enter
+Status: **complete — 36.4 exit audit passed 2026-09-06**
+
+The [approved contract](docs/proposals/stage_36_standard_library_prelude.md)
+defines the `cloth.lang` namespace tree as a focused, recursive prelude backed by
+ordinary standard-library declarations and artifacts.
+
+Objective: make universal library types available without repetitive imports
+while preserving deterministic lookup, explicit ownership, source-free package
+behavior, and the Stage 35 compiler/Shuttle boundary.
+
+Prerequisite: Stage 35.
+
+Deliverables:
+
+1. **36.1 — Prelude contract (complete).** Freeze the namespace, eligible
+   declarations, lookup precedence, compatibility, diagnostics, verification,
+   and non-goals.
+2. **36.2 — Prelude resolution (complete).** Resolve public direct `cloth.lang`
+   types as a compiler-managed fallback from whole-project source and imported
+   artifacts.
+3. **36.3 — Initial `lang` API slice (complete, amended).** Extend the prelude
+   recursively beneath `cloth.lang`, enforce globally unique public short names,
+   add the extensible `cloth.lang.errors.ArgumentError` and
+   `cloth.lang.errors.StateError` declarations, and integrate version `0.2.0`
+   across both targets and native behavior.
+4. **36.4 — Exit audit (complete).** Close lookup, bootstrap, compatibility,
+   invalidation, determinism, native/cross-target, documentation, and repository
+   gates.
+
+Prelude lookup follows same-package types, explicit imports and aliases, and
+explicit wildcards, but precedes compiler-owned core symbols. Higher-priority
+bindings intentionally shadow the prelude without warnings. Every public file
+type beneath `cloth.lang` participates; all other `cloth` areas remain explicit.
+
+The compiler derives candidates only from the canonical `cloth` input already
+present in the compilation. Shuttle keeps its Stage 35 selection and injection
+behavior and does not interpret library declarations. Compatibility remains
+artifact/compiler/runtime 5/5/4 and process/receipt/manifest/toolchain schemas
+2/1/1/1 unless implementation discovers an unrepresentable invariant.
+
+Stage 36 is complete. The exit audit passes the complete development and
+sanitizer matrices, source-free and native Shuttle suites, both LLVM targets,
+editor checks, Rust 1.85, formatting, documentation, and repository gates. The
+compiler resolves the two source-defined APIs from whole-project and source-free
+artifacts, while the existing Shuttle selection, digest, cache, and link paths
+carry exact `cloth` version `0.2.0`. Compatibility remains 5/5/4 and 2/1/1/1.
+
+## Beyond Stage 36
+
+Stage 36 is complete. The remaining backlog does not acquire priority or enter
 the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:

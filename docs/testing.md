@@ -1,5 +1,100 @@
 # Cloth testing and diagnostic builds
 
+## Stage 36.4 standard-library prelude exit audit
+
+Completed on Windows on 2026-09-06 with development and ASan/UBSan compilers.
+Each configuration passes all 255 CTests, including 36 compiler-backed Shuttle
+toolchain cases and 32 native cases. All 49 ordinary Rust tests, Rust 1.85,
+warning-denied Clippy, Rust and C++ formatting, 12 compiler-backed editor checks
+per compiler, local Markdown links, and repository whitespace checks pass.
+
+The lookup matrix covers every public file-type kind at arbitrary depth beneath
+`cloth.lang`, private capitalization, the `cloth.language` boundary, every
+precedence level, exact and aliased imports, nonrecursive explicit wildcards,
+global short-name and core collisions, absent library input, malformed
+artifacts, and source-order-independent diagnostics. Whole-project and
+source-free consumers emit verified raw and optimized LLVM for x86-64 and
+wasm32. The standard library bootstraps without a self-edge, and independent
+x86-64 objects link and execute the initial error API.
+
+Shuttle verifies exact library selection, recursive prelude lookup through
+artifacts, one-job/four-job relocation determinism, warm reuse, exact
+invalidation, failed-output preservation, and stale-run prevention. The audit
+increased only the scoped timeout for the multi-artifact standard-library CTest
+to tolerate concurrent sanitizer instrumentation. Production compiler,
+runtime, Shuttle, and library behavior did not change. Compatibility remains
+artifact/compiler/runtime 5/5/4 and process/receipt/manifest/toolchain schemas
+2/1/1/1. **Stage 36 is complete.**
+
+## Stage 36.3 initial standard-library API
+
+Completed on Windows on 2026-09-05 and amended 2026-09-06. The `cloth` package
+remains `0.2.0` and provides the source-defined, extensible
+`cloth.lang.errors.ArgumentError` and `cloth.lang.errors.StateError` types.
+Both provide default and message constructors, inherit the compiler-owned
+`Error.Message` contract, and resolve without an import from whole-project
+source or verified package artifacts.
+
+The integration matrix constructs both types, reads inherited messages, and
+emits verified LLVM before and after optimization on x86-64 and wasm32. Nested
+synthetic declarations cover every file kind, arbitrary prelude depth,
+namespace boundaries, global short-name collisions, core collisions, and
+deterministic diagnostics. The native package path links independent `cloth`
+and application artifacts and prints both messages. An application error
+derives from `ArgumentError` in a source-free consumer, and the MIR verifier
+recognizes the ownerless compiler `Error.Message` field on every error-class
+receiver.
+
+All 253 development CTests, 36 compiler-backed Shuttle toolchain cases, 32
+native Shuttle cases, and 49 ordinary Rust tests pass. Exact `cloth` version
+and digest continue through capability, metadata, artifact, receipt, cache,
+invalidation, and link paths. C++/Rust formatting and warning-denied Clippy
+pass, as do all local Markdown targets and repository whitespace checks.
+Compatibility remains artifact/compiler/runtime 5/5/4 and process/receipt/
+manifest/toolchain schemas 2/1/1/1. The completed Stage 36.4 audit is recorded
+above.
+
+## Stage 36.2 standard-library prelude resolution
+
+Completed on Windows on 2026-09-05. Semantic analysis now derives one
+deterministically ordered type-name fallback from public file declarations
+directly in the canonical `cloth.lang` package. The same path consumes
+whole-project declarations and verified source-free package views. Existing
+same-package, explicit, aliased, and wildcard bindings remain higher priority;
+private files and child packages remain absent. Core-name conflicts are
+reported at the rejected library declaration.
+
+Focused compiler coverage exercises classes, errors, interfaces, enums, and
+structs; lexical, member, same-package, exact, aliased, wildcard, prelude, and
+core lookup boundaries; private and nested types; explicit wildcard ambiguity;
+missing library input; malformed artifacts; stable diagnostics; and LLVM
+emission for x86-64 and wasm32. The complete development configuration passes
+all 253 CTests.
+
+The public Shuttle suite adds a temporary paired-library fixture whose
+synthetic `cloth.lang` type is compiled without a self-dependency and consumed
+only through its artifact. One-job and four-job package artifacts are byte-
+identical on x86-64 and wasm32. All 36 compiler-backed toolchain checks and 49
+ordinary Rust tests pass, together with warning-denied Clippy and Rust/C++
+formatting. Shuttle production code, production standard-library source,
+package version `0.1.0`, and compatibility versions 5/5/4 and 2/1/1/1 remain
+unchanged.
+
+## Stage 36.1 standard-library prelude contract
+
+Approved and recorded on Windows on 2026-09-05. The contract defines
+`cloth.lang` as a nonrecursive, type-only fallback after current-package types,
+explicit imports and aliases, and explicit wildcards but before compiler-owned
+core symbols. It freezes public/private eligibility, deterministic ordering,
+whole-project and artifact ownership, version evolution, diagnostics,
+verification, and non-goals.
+
+This checkpoint changes roadmap, work-ledger, and contract documentation only.
+It adds no synthetic AST import, standard-library declaration, compiler or
+Shuttle production behavior, user-facing claim, compatibility transition, or
+library version change. Local Markdown targets and repository whitespace gates
+passed. The separately authorized 36.2 implementation is recorded above.
+
 ## Stage 35.4 standard-library foundation exit audit
 
 Verified on Windows on 2026-09-05 with development and ASan/UBSan compilers.

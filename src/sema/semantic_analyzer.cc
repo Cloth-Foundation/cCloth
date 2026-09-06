@@ -4,6 +4,7 @@
 
 #include "cloth/sema/semantic_analyzer.h"
 
+#include "cloth/identity/package_identity.h"
 #include "cloth/lexer/literal.h"
 #include "cloth/lexer/token.h"
 #include "cloth/sema/canonical_identity.h"
@@ -30,6 +31,13 @@
 
 namespace cloth {
 namespace {
+
+constexpr std::string_view kPreludeSourcePackage = "lang";
+
+bool is_standard_library_prelude_package(std::string_view source_package) {
+  return source_package == kPreludeSourcePackage ||
+         source_package.starts_with("lang.");
+}
 
 struct ScopeEntry {
   std::string_view name;
@@ -166,6 +174,7 @@ class SemanticAnalyzer {
     register_compiler_errors();
     register_file_classes();
     register_imported_packages();
+    register_standard_library_prelude();
     register_imports();
     register_type_relationships();
     register_members();
@@ -242,8 +251,11 @@ class SemanticAnalyzer {
         break;
       }
 
+      const bool is_prelude_declaration =
+          syntax.owning_package == kStandardLibraryPackageName &&
+          is_standard_library_prelude_package(syntax.package_name);
       const std::optional<TypeId> existing_type = model_.find_type(syntax.name);
-      if (existing_type &&
+      if (!is_prelude_declaration && existing_type &&
           model_.type(*existing_type).kind != TypeKind::kFileClass &&
           model_.type(*existing_type).kind != TypeKind::kInterface &&
           model_.type(*existing_type).kind != TypeKind::kEnum &&
@@ -717,6 +729,64 @@ class SemanticAnalyzer {
     }
   }
 
+  void register_standard_library_prelude() {
+    std::vector<FileId> candidates;
+    for (std::size_t index = 0; index < model_.files().size(); ++index) {
+      const FileId file_id{index};
+      const FileSemantics& file = model_.file(file_id);
+      const SemanticSymbol& symbol = model_.symbol(file.symbol);
+      if (file.identity.package.name == kStandardLibraryPackageName &&
+          is_standard_library_prelude_package(file.identity.source_package) &&
+          symbol.visibility == Visibility::kPublic && file.is_valid &&
+          file.type != model_.error_type()) {
+        candidates.push_back(file_id);
+      }
+    }
+    std::ranges::sort(candidates, {}, [this](FileId file_id) {
+      return model_.symbol(model_.file(file_id).symbol).name;
+    });
+
+    std::map<std::string, std::vector<FileId>, std::less<>>
+        candidates_by_short_name;
+    for (const FileId file_id : candidates) {
+      candidates_by_short_name[model_.file(file_id).identity.name].push_back(
+          file_id);
+    }
+
+    for (const auto& [name, same_named_files] : candidates_by_short_name) {
+      if (const std::optional<TypeId> core = find_core_type(name)) {
+        for (const FileId file_id : same_named_files) {
+          const SemanticSymbol& symbol =
+              model_.symbol(model_.file(file_id).symbol);
+          diagnostics_.error(symbol.range, "standard-library prelude type '" +
+                                               symbol.name +
+                                               "' conflicts with core type '" +
+                                               model_.type(*core).name + "'");
+          model_.mutable_file(file_id).is_valid = false;
+        }
+        continue;
+      }
+      if (same_named_files.size() != 1) {
+        std::string identities;
+        for (const FileId file_id : same_named_files) {
+          if (!identities.empty()) {
+            identities += ", ";
+          }
+          identities +=
+              "'" + model_.symbol(model_.file(file_id).symbol).name + "'";
+          model_.mutable_file(file_id).is_valid = false;
+        }
+        const SemanticSymbol& first =
+            model_.symbol(model_.file(same_named_files.front()).symbol);
+        diagnostics_.error(first.range, "standard-library prelude name '" +
+                                            name + "' is ambiguous between " +
+                                            identities);
+        continue;
+      }
+      prelude_files_.emplace(name, same_named_files.front());
+    }
+  }
+
   void register_explicit_import(FileId current_file, const ImportDecl& import) {
     const std::string target_name = qualified_file_name(
         import.target_package, import.package_name, import.type_name);
@@ -766,14 +836,7 @@ class SemanticAnalyzer {
   void bind_visible_file(FileId current_file, std::string_view name,
                          FileId target, VisibleFileKind kind,
                          SourceRange range) {
-    if (const std::optional<TypeId> core = model_.find_type(name);
-        core && ((model_.type(*core).kind != TypeKind::kFileClass &&
-                  model_.type(*core).kind != TypeKind::kInterface &&
-                  model_.type(*core).kind != TypeKind::kEnum &&
-                  model_.type(*core).kind != TypeKind::kStruct &&
-                  model_.type(*core).kind != TypeKind::kErrorClass) ||
-                 *core == model_.error_root_type() ||
-                 *core == model_.division_by_zero_type())) {
+    if (find_core_type(name)) {
       diagnostics_.error(range, "import name '" + std::string{name} +
                                     "' conflicts with a core type");
       model_.mutable_file(current_file).is_valid = false;
@@ -799,6 +862,24 @@ class SemanticAnalyzer {
       return;
     }
     bindings.push_back(VisibleFile{std::string{name}, target, kind, range});
+  }
+
+  std::optional<TypeId> find_core_type(std::string_view name) const {
+    const std::optional<TypeId> type = model_.find_type(name);
+    if (!type) {
+      return std::nullopt;
+    }
+    const TypeKind kind = model_.type(*type).kind;
+    if (kind != TypeKind::kFileClass && kind != TypeKind::kInterface &&
+        kind != TypeKind::kEnum && kind != TypeKind::kStruct &&
+        kind != TypeKind::kErrorClass) {
+      return type;
+    }
+    if (*type == model_.error_root_type() ||
+        *type == model_.division_by_zero_type()) {
+      return type;
+    }
+    return std::nullopt;
   }
 
   void register_type_relationships() {
@@ -4959,6 +5040,11 @@ class SemanticAnalyzer {
         return binding.file;
       }
     }
+    const auto prelude = prelude_files_.find(name);
+    if (prelude != prelude_files_.end() &&
+        model_.file(prelude->second).type != model_.error_type()) {
+      return prelude->second;
+    }
     return std::nullopt;
   }
 
@@ -5826,6 +5912,7 @@ class SemanticAnalyzer {
   std::optional<FileId> current_effect_field_;
   std::vector<Scope> scopes_;
   std::vector<std::vector<VisibleFile>> visible_files_;
+  std::map<std::string, FileId, std::less<>> prelude_files_;
   NonNullSet active_non_null_;
   std::optional<std::size_t> current_scope_;
   bool has_implicit_receiver_{false};

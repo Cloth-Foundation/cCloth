@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 foreach(required IN ITEMS CLOTH_COMPILER CLOTH_STANDARD_LIBRARY_ROOT
+                          CLOTH_STANDARD_LIBRARY_VERSION
                           CLOTH_APPLICATION_ROOT CLOTH_WORK_DIRECTORY)
     if(NOT DEFINED ${required})
         message(FATAL_ERROR "${required} is required")
@@ -11,14 +12,15 @@ endforeach()
 
 file(MAKE_DIRECTORY "${CLOTH_WORK_DIRECTORY}")
 
-function(compile_package output_digest target kind output package source_root)
+function(compile_package output_digest target kind output package version
+                         source_root)
     set(arguments
         --shuttle-protocol 2
         --operation compile
         --target "${target}"
         --artifact-kind "${kind}"
         --output "${output}"
-        --package "${package}" 0.1.0 "${source_root}")
+        --package "${package}" "${version}" "${source_root}")
     list(APPEND arguments ${ARGN})
     execute_process(
         COMMAND "${CLOTH_COMPILER}" ${arguments}
@@ -42,15 +44,17 @@ foreach(target IN ITEMS x86_64 wasm32)
     set(library_artifact
         "${CLOTH_WORK_DIRECTORY}/cloth-${target}-interface.cpa")
     compile_package(library_digest "${target}" interface
-        "${library_artifact}" cloth "${CLOTH_STANDARD_LIBRARY_ROOT}")
+        "${library_artifact}" cloth "${CLOTH_STANDARD_LIBRARY_VERSION}"
+        "${CLOTH_STANDARD_LIBRARY_ROOT}")
 
     set(application_artifact
         "${CLOTH_WORK_DIRECTORY}/app-${target}-interface.cpa")
     compile_package(application_digest "${target}" interface
-        "${application_artifact}" app "${CLOTH_APPLICATION_ROOT}"
+        "${application_artifact}" app 0.1.0 "${CLOTH_APPLICATION_ROOT}"
         --entry Main.co
         --dependency cloth cloth
-        --artifact cloth 0.1.0 "${library_digest}" "${library_artifact}")
+        --artifact cloth "${CLOTH_STANDARD_LIBRARY_VERSION}"
+                   "${library_digest}" "${library_artifact}")
 endforeach()
 
 if(NOT CLOTH_TEST_NATIVE)
@@ -59,14 +63,15 @@ endif()
 
 set(library_artifact "${CLOTH_WORK_DIRECTORY}/cloth-x86_64-object.cpa")
 compile_package(library_digest x86_64 object "${library_artifact}" cloth
-    "${CLOTH_STANDARD_LIBRARY_ROOT}")
+    "${CLOTH_STANDARD_LIBRARY_VERSION}" "${CLOTH_STANDARD_LIBRARY_ROOT}")
 
 set(application_artifact "${CLOTH_WORK_DIRECTORY}/app-x86_64-object.cpa")
 compile_package(application_digest x86_64 object "${application_artifact}" app
-    "${CLOTH_APPLICATION_ROOT}"
+    0.1.0 "${CLOTH_APPLICATION_ROOT}"
     --entry Main.co
     --dependency cloth cloth
-    --artifact cloth 0.1.0 "${library_digest}" "${library_artifact}")
+    --artifact cloth "${CLOTH_STANDARD_LIBRARY_VERSION}"
+               "${library_digest}" "${library_artifact}")
 
 set(executable "${CLOTH_WORK_DIRECTORY}/standard-library${CLOTH_EXECUTABLE_SUFFIX}")
 execute_process(
@@ -78,7 +83,8 @@ execute_process(
         --root-package app
         --entry Main.co
         --artifact app 0.1.0 "${application_digest}" "${application_artifact}"
-        --artifact cloth 0.1.0 "${library_digest}" "${library_artifact}"
+        --artifact cloth "${CLOTH_STANDARD_LIBRARY_VERSION}"
+                   "${library_digest}" "${library_artifact}"
     RESULT_VARIABLE link_result
     OUTPUT_VARIABLE link_output
     ERROR_VARIABLE link_diagnostics)

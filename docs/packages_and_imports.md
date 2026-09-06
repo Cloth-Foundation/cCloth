@@ -77,7 +77,8 @@ Resolution order is:
 3. current-package public file classes
 4. explicit imports and aliases
 5. wildcard imports
-6. core symbols
+6. public file types beneath `cloth.lang`
+7. core symbols
 
 An explicit import takes precedence over a wildcard. Two wildcard imports that
 provide the same local class name are ambiguous unless an explicit import or
@@ -88,6 +89,31 @@ interfaces. Every case of an accessible enum is public regardless of spelling.
 An alias changes the lookup name, not nominal identity or printed names;
 wildcards import types, never bare cases. Source-free artifact consumers retain
 the complete ordered case set. See [enums](enums.md).
+
+## Standard-library prelude
+
+When the canonical `cloth` package is part of the compilation, every public
+file type beneath `cloth.lang` is available by its short name without an
+import. The compiler derives this fallback from the same verified source or
+package artifact supplied for normal imports; it does not scan for library
+files or synthesize an AST import.
+
+Prelude lookup is type-only and recursive across that namespace tree. Members
+remain qualified by their file type and private files do not participate.
+Public short names must be unique across the tree; a duplicate invalidates the
+standard library with a deterministic diagnostic. A higher-priority same-
+package or explicitly imported name wins silently. The canonical prelude type
+remains reachable through an alias such as:
+
+```cloth
+import cloth.lang.errors::ArgumentError as StandardArgumentError;
+```
+
+An explicit wildcard import of a concrete `cloth.lang` package remains ordinary
+and therefore retains ordinary collision diagnostics. Without a canonical
+`cloth` source or artifact input, an unqualified library type is simply unknown.
+The initial prelude API is `ArgumentError` and `StateError`, both ordinary
+extensible error types with default and message constructors.
 
 ## Shuttle dependency boundary
 
