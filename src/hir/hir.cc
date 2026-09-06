@@ -270,7 +270,10 @@ class Lowerer {
       const TypeId object_type = semantics_.file(current_file_)
                                      .expressions.at(meta->object.value)
                                      .type;
-      if (semantic.integer_meta_operation) {
+      if (semantic.symbol && semantics_.symbol(*semantic.symbol).intrinsic ==
+                                 IntrinsicKind::kPrimitiveParse) {
+        data = HirSymbolExpression{*semantic.symbol};
+      } else if (semantic.integer_meta_operation) {
         data = HirIntegerMetaExpression{expression(meta->object),
                                         *semantic.integer_meta_operation};
       } else if (meta->meta == "typeName" &&

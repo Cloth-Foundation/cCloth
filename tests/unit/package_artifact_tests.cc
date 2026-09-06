@@ -213,19 +213,19 @@ void canonical_interface_round_trip(TestContext& test) {
   test.expect(!metadata.empty() && metadata.front() == '{' &&
                   metadata.back() == '}' && !metadata.ends_with('\n') &&
                   metadata.starts_with("{\"compatibility\":") &&
-                  metadata.contains("\"runtime_abi\":\"5\"") &&
+                  metadata.contains("\"runtime_abi\":\"6\"") &&
                   metadata.contains("\"value\":\"3fc00000\"") &&
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
   test.expect(
       metadata.size() == 12377 &&
           cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-              "df1f1a9fb9db3e3663b60867f821f132b"
-              "c3da9ef69d7f17e1d9df808eb4efc75" &&
+              "0bc0f871811b676c9e869f45bbf88576e"
+              "cb5c7de28f86d657982aed0fda267d7" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "85841ba251c75eea3585d52967b831e013"
-              "9aa5607d7beb69a12e5cadfee7bd40",
-      "canonical version-5 fixture: size=" + std::to_string(metadata.size()) +
+              "d4ddb509e2d2f0a2a6dd73b20f2a3b99"
+              "a76510dccadb6c16df9197eceeacf8c4",
+      "canonical version-6 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
 }
@@ -503,18 +503,18 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
                   "\"compiler_abi\":5");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
   changed = original;
-  const std::string_view current_runtime = "\"runtime_abi\":\"5\"";
+  const std::string_view current_runtime = "\"runtime_abi\":\"6\"";
   const std::size_t runtime = changed.find(current_runtime);
   test.expect(runtime != std::string::npos,
-              "runtime ABI fixture did not contain version 5");
+              "runtime ABI fixture did not contain version 6");
   if (runtime != std::string::npos) {
-    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"4\"");
+    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"5\"");
     const auto rejected = cloth::read_package_artifact(
         replace_metadata(encoded.artifact->bytes, std::move(changed)));
     test.expect(
         !rejected.is_valid() && !rejected.issues.empty() &&
             rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
-        "artifact with runtime ABI 4 was accepted by runtime ABI 5");
+        "artifact with runtime ABI 5 was accepted by runtime ABI 6");
   }
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");

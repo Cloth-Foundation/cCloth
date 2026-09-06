@@ -14,13 +14,48 @@ if(NOT DEFINED CLOTH_PROGRAM_TIMEOUT)
     set(CLOTH_PROGRAM_TIMEOUT 10)
 endif()
 
-execute_process(
-    COMMAND "${CLOTH_PROGRAM}" ${CLOTH_PROGRAM_ARGUMENTS}
-    TIMEOUT "${CLOTH_PROGRAM_TIMEOUT}"
-    RESULT_VARIABLE program_result
-    OUTPUT_VARIABLE program_output
-    ERROR_VARIABLE program_error
-)
+if(DEFINED CLOTH_INPUT_MODE)
+    if(NOT DEFINED CLOTH_INPUT_WORK_FILE)
+        message(FATAL_ERROR "CLOTH_INPUT_WORK_FILE is required with CLOTH_INPUT_MODE")
+    endif()
+    if(CLOTH_INPUT_MODE STREQUAL "edges")
+        execute_process(
+            COMMAND "${CLOTH_PROGRAM}" emit_console_edges
+            OUTPUT_FILE "${CLOTH_INPUT_WORK_FILE}"
+            RESULT_VARIABLE input_result
+            ERROR_VARIABLE input_error
+        )
+        if(NOT input_result EQUAL 0)
+            message(FATAL_ERROR
+                "could not generate console edge input: ${input_error}")
+        endif()
+    elseif(CLOTH_INPUT_MODE STREQUAL "invalid")
+        string(ASCII 192 175 invalid_utf8)
+        file(WRITE "${CLOTH_INPUT_WORK_FILE}" "${invalid_utf8}")
+    else()
+        message(FATAL_ERROR "unknown input mode '${CLOTH_INPUT_MODE}'")
+    endif()
+    set(CLOTH_INPUT "${CLOTH_INPUT_WORK_FILE}")
+endif()
+
+if(DEFINED CLOTH_INPUT)
+    execute_process(
+        COMMAND "${CLOTH_PROGRAM}" ${CLOTH_PROGRAM_ARGUMENTS}
+        INPUT_FILE "${CLOTH_INPUT}"
+        TIMEOUT "${CLOTH_PROGRAM_TIMEOUT}"
+        RESULT_VARIABLE program_result
+        OUTPUT_VARIABLE program_output
+        ERROR_VARIABLE program_error
+    )
+else()
+    execute_process(
+        COMMAND "${CLOTH_PROGRAM}" ${CLOTH_PROGRAM_ARGUMENTS}
+        TIMEOUT "${CLOTH_PROGRAM_TIMEOUT}"
+        RESULT_VARIABLE program_result
+        OUTPUT_VARIABLE program_output
+        ERROR_VARIABLE program_error
+    )
+endif()
 
 if(DEFINED CLOTH_COMPARE_PROGRAM)
     execute_process(

@@ -19,6 +19,7 @@
 #include "cloth/source/source_range.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <charconv>
 #include <cmath>
@@ -431,6 +432,14 @@ class BodyEmitter {
                            std::ostringstream& output);
   void emit_call(const MirInstruction& instruction,
                  const MirCallInstruction& call, std::ostringstream& output);
+  void emit_console_read_line(const MirInstruction& instruction,
+                              const MirCallInstruction& call,
+                              const SemanticSymbol& symbol,
+                              std::ostringstream& output);
+  void emit_primitive_parse(const MirInstruction& instruction,
+                            const MirCallInstruction& call,
+                            const SemanticSymbol& symbol,
+                            std::ostringstream& output);
   void emit_load_call_result(const MirInstruction& instruction,
                              const MirLoadCallResultInstruction& load,
                              std::ostringstream& output);
@@ -451,6 +460,7 @@ class BodyEmitter {
   [[nodiscard]] bool has_receiver_root() const noexcept;
   [[nodiscard]] std::size_t gc_root_count() const noexcept;
   [[nodiscard]] std::string next_address();
+  [[nodiscard]] std::string next_label(std::string_view prefix);
 
   ModuleEmitter& module_;
   const MirBody& body_;
@@ -603,7 +613,9 @@ class ModuleEmitter {
            << "declare void @cloth_rt_print_f64(double)\n"
            << "declare void @cloth_rt_print_bool(i8)\n"
            << "declare void @cloth_rt_print_object(ptr)\n"
-           << "declare void @cloth_rt_print_newline()\n\n";
+           << "declare void @cloth_rt_print_newline()\n"
+           << "declare ptr @cloth_rt_console_read_line(ptr)\n"
+           << "declare i8 @cloth_rt_parse_primitive(i8, ptr, ptr)\n\n";
     for (const unsigned int width : {8U, 16U, 32U, 64U}) {
       for (const std::string_view sign : {"s", "u"}) {
         for (const std::string_view operation : {"add", "sub", "mul"}) {
@@ -3200,11 +3212,315 @@ void BodyEmitter::emit_type_condition(std::string_view result,
   output << "  " << result << " = icmp ne i8 " << raw << ", 0\n";
 }
 
+void BodyEmitter::emit_console_read_line(const MirInstruction& instruction,
+                                         const MirCallInstruction& call,
+                                         const SemanticSymbol& symbol,
+                                         std::ostringstream& output) {
+  if (!call.arguments.empty() || call.receiver || instruction.result ||
+      !call.success_storage || !call.error_result ||
+      symbol.thrown_types.size() != 1 || !symbol.is_static) {
+    module_.report(instruction.range,
+                   "invalid console input intrinsic reached LLVM lowering");
+    return;
+  }
+  const SemanticType& error_type =
+      module_.semantics().type(symbol.thrown_types[0]);
+  if (!error_type.file) {
+    module_.report(instruction.range,
+                   "console input error has no source declaration");
+    return;
+  }
+  const FileSemantics& error_file = module_.semantics().file(*error_type.file);
+  const auto constructor =
+      std::ranges::find_if(error_file.constructors, [&](SymbolId candidate) {
+        const SemanticSymbol& value = module_.semantics().symbol(candidate);
+        return value.is_valid && value.parameter_types.size() == 1 &&
+               value.parameter_types[0] == module_.semantics().string_type();
+      });
+  const AbiCallable* constructor_abi =
+      constructor == error_file.constructors.end()
+          ? nullptr
+          : module_.find_callable(*constructor);
+  if (constructor_abi == nullptr || constructor_abi->uses_error_abi ||
+      constructor_abi->return_mode != AbiReturnMode::kDirect) {
+    module_.report(instruction.range,
+                   "console input error has no usable message constructor");
+    return;
+  }
+
+  const std::string status_storage = next_address();
+  const std::string line = next_address();
+  const std::string status = next_address();
+  const std::string has_line = next_address();
+  const std::string status_has_line = next_address();
+  const std::string is_consistent = next_address();
+  const std::string dispatch_label = next_label("console.dispatch.");
+  const std::string value_label = next_label("console.value.");
+  const std::string eof_label = next_label("console.eof.");
+  const std::string io_label = next_label("console.io.");
+  const std::string encoding_label = next_label("console.encoding.");
+  const std::string too_large_label = next_label("console.too_large.");
+  const std::string invalid_label = next_label("console.invalid.");
+  const std::string join_label = next_label("console.join.");
+  output << "  " << status_storage << " = alloca i8, align 1\n"
+         << "  " << line << " = call ptr @cloth_rt_console_read_line(ptr "
+         << status_storage << ")\n"
+         << "  " << status << " = load i8, ptr " << status_storage
+         << ", align 1\n"
+         << "  " << has_line << " = icmp ne ptr " << line << ", null\n"
+         << "  " << status_has_line << " = icmp eq i8 " << status << ", 0\n"
+         << "  " << is_consistent << " = icmp eq i1 " << has_line << ", "
+         << status_has_line << "\n"
+         << "  br i1 " << is_consistent << ", label %" << dispatch_label
+         << ", label %" << invalid_label << "\n\n"
+         << dispatch_label << ":\n"
+         << "  switch i8 " << status << ", label %" << invalid_label << " [\n"
+         << "    i8 0, label %" << value_label << "\n"
+         << "    i8 1, label %" << eof_label << "\n"
+         << "    i8 2, label %" << io_label << "\n"
+         << "    i8 3, label %" << encoding_label << "\n"
+         << "    i8 4, label %" << too_large_label << "\n"
+         << "  ]\n\n"
+         << value_label << ":\n"
+         << "  store ptr " << line << ", ptr " << value(*call.success_storage)
+         << ", align " << module_.pointer_alignment() << "\n"
+         << "  br label %" << join_label << "\n\n"
+         << eof_label << ":\n"
+         << "  store ptr null, ptr " << value(*call.success_storage)
+         << ", align " << module_.pointer_alignment() << "\n"
+         << "  br label %" << join_label << "\n\n";
+
+  struct ErrorBranch {
+    std::string_view label;
+    std::string_view message;
+    std::string error;
+  };
+  std::array<ErrorBranch, 3> errors{{
+      {io_label, "could not read standard input", next_address()},
+      {encoding_label, "standard input is not valid Unicode", next_address()},
+      {too_large_label, "standard input line is too large", next_address()},
+  }};
+  for (ErrorBranch& branch : errors) {
+    const std::string bytes =
+        module_.add_string_literal(std::string{branch.message});
+    const std::string message = next_address();
+    output << branch.label << ":\n"
+           << "  " << message << " = call ptr @cloth_rt_string_literal(ptr "
+           << bytes << ", i64 " << branch.message.size() << ")\n"
+           << "  store ptr " << message << ", ptr "
+           << gc_value_address(*call.error_result) << ", align "
+           << module_.pointer_alignment() << "\n"
+           << "  " << branch.error << " = call ptr @"
+           << constructor_abi->mangled_name << "(ptr " << message << ")\n"
+           << "  br label %" << join_label << "\n\n";
+  }
+  output << invalid_label << ":\n"
+         << "  call void @llvm.trap()\n"
+         << "  unreachable\n\n"
+         << join_label << ":\n"
+         << "  " << value(*call.error_result) << " = phi ptr [ null, %"
+         << value_label << " ], [ null, %" << eof_label << " ]";
+  for (const ErrorBranch& branch : errors) {
+    output << ", [ " << branch.error << ", %" << branch.label << " ]";
+  }
+  output << "\n";
+}
+
+void BodyEmitter::emit_primitive_parse(const MirInstruction& instruction,
+                                       const MirCallInstruction& call,
+                                       const SemanticSymbol& symbol,
+                                       std::ostringstream& output) {
+  if (call.arguments.size() != 1 || call.receiver || instruction.result ||
+      !call.success_storage || !call.error_result ||
+      symbol.parameter_types !=
+          std::vector<TypeId>{module_.semantics().string_type()} ||
+      value_type(call.arguments[0]) != module_.semantics().string_type() ||
+      symbol.thrown_types.size() != 1 || !symbol.is_static) {
+    module_.report(instruction.range,
+                   "invalid primitive parse intrinsic reached LLVM lowering");
+    return;
+  }
+
+  std::optional<std::uint8_t> parse_kind;
+  const TypeKind target_kind = module_.semantics().type(symbol.type).kind;
+  switch (target_kind) {
+    case TypeKind::kBool:
+      parse_kind = kClothParseBool;
+      break;
+    case TypeKind::kChar:
+      parse_kind = kClothParseChar;
+      break;
+    case TypeKind::kByte:
+      parse_kind = kClothParseByte;
+      break;
+    case TypeKind::kInt8:
+      parse_kind = kClothParseInt8;
+      break;
+    case TypeKind::kInt16:
+      parse_kind = kClothParseInt16;
+      break;
+    case TypeKind::kInt32:
+      parse_kind = kClothParseInt32;
+      break;
+    case TypeKind::kInt64:
+      parse_kind = kClothParseInt64;
+      break;
+    case TypeKind::kUint8:
+      parse_kind = kClothParseUint8;
+      break;
+    case TypeKind::kUint16:
+      parse_kind = kClothParseUint16;
+      break;
+    case TypeKind::kUint32:
+      parse_kind = kClothParseUint32;
+      break;
+    case TypeKind::kUint64:
+      parse_kind = kClothParseUint64;
+      break;
+    case TypeKind::kFloat32:
+      parse_kind = kClothParseFloat32;
+      break;
+    case TypeKind::kFloat64:
+      parse_kind = kClothParseFloat64;
+      break;
+    default:
+      break;
+  }
+  if (!parse_kind || symbol.type != value_type(*call.success_storage)) {
+    module_.report(instruction.range,
+                   "primitive parse intrinsic has an invalid result type");
+    return;
+  }
+
+  const SemanticType& error_type =
+      module_.semantics().type(symbol.thrown_types[0]);
+  if (!error_type.file) {
+    module_.report(instruction.range,
+                   "primitive parse error has no source declaration");
+    return;
+  }
+  const FileSemantics& error_file = module_.semantics().file(*error_type.file);
+  const auto constructor =
+      std::ranges::find_if(error_file.constructors, [&](SymbolId candidate) {
+        const SemanticSymbol& value = module_.semantics().symbol(candidate);
+        return value.is_valid && value.visibility == Visibility::kPublic &&
+               value.parameter_types.size() == 1 &&
+               value.parameter_types.front() ==
+                   module_.semantics().string_type();
+      });
+  const AbiCallable* constructor_abi =
+      constructor == error_file.constructors.end()
+          ? nullptr
+          : module_.find_callable(*constructor);
+  if (constructor_abi == nullptr || constructor_abi->uses_error_abi ||
+      constructor_abi->return_mode != AbiReturnMode::kDirect) {
+    module_.report(instruction.range,
+                   "primitive parse error has no usable message constructor");
+    return;
+  }
+
+  const std::string bits = next_address();
+  const std::string status = next_address();
+  const std::string value_label = next_label("parse.value.");
+  const std::string invalid_label = next_label("parse.invalid.");
+  const std::string range_label = next_label("parse.range.");
+  const std::string trap_label = next_label("parse.trap.");
+  const std::string join_label = next_label("parse.join.");
+  const TypeId uint64_type = *module_.semantics().find_type("uint64");
+  output << "  " << bits << " = alloca i64, align "
+         << module_.alignment(uint64_type) << "\n"
+         << "  " << status << " = call i8 @cloth_rt_parse_primitive(i8 "
+         << static_cast<unsigned int>(*parse_kind) << ", ptr "
+         << value(call.arguments[0]) << ", ptr " << bits << ")\n"
+         << "  switch i8 " << status << ", label %" << trap_label << " [\n"
+         << "    i8 " << static_cast<unsigned int>(kClothParseValue)
+         << ", label %" << value_label << "\n"
+         << "    i8 " << static_cast<unsigned int>(kClothParseInvalid)
+         << ", label %" << invalid_label << "\n";
+  const bool has_range_error =
+      target_kind != TypeKind::kBool && target_kind != TypeKind::kChar;
+  if (has_range_error) {
+    output << "    i8 " << static_cast<unsigned int>(kClothParseOutOfRange)
+           << ", label %" << range_label << "\n";
+  }
+  output << "  ]\n\n" << value_label << ":\n";
+
+  const std::string loaded_bits = next_address();
+  output << "  " << loaded_bits << " = load i64, ptr " << bits << ", align "
+         << module_.alignment(uint64_type) << "\n";
+  std::string parsed_value = loaded_bits;
+  if (target_kind == TypeKind::kFloat32) {
+    const std::string narrowed = next_address();
+    parsed_value = next_address();
+    output << "  " << narrowed << " = trunc i64 " << loaded_bits << " to i32\n"
+           << "  " << parsed_value << " = bitcast i32 " << narrowed
+           << " to float\n";
+  } else if (target_kind == TypeKind::kFloat64) {
+    parsed_value = next_address();
+    output << "  " << parsed_value << " = bitcast i64 " << loaded_bits
+           << " to double\n";
+  } else if (module_.llvm_type(symbol.type) != "i64") {
+    parsed_value = next_address();
+    output << "  " << parsed_value << " = trunc i64 " << loaded_bits << " to "
+           << module_.llvm_type(symbol.type) << "\n";
+  }
+  output << "  store " << module_.llvm_type(symbol.type) << " " << parsed_value
+         << ", ptr " << value(*call.success_storage) << ", align "
+         << module_.alignment(symbol.type) << "\n"
+         << "  br label %" << join_label << "\n\n";
+
+  struct ErrorBranch {
+    std::string label;
+    std::string message;
+    std::string error;
+  };
+  const std::string canonical_type = module_.semantics().type(symbol.type).name;
+  std::vector<ErrorBranch> errors;
+  errors.push_back(ErrorBranch{
+      invalid_label, "invalid " + canonical_type + " text", next_address()});
+  if (has_range_error) {
+    errors.push_back(ErrorBranch{range_label,
+                                 canonical_type + " value is out of range",
+                                 next_address()});
+  }
+  for (const ErrorBranch& branch : errors) {
+    const std::string bytes = module_.add_string_literal(branch.message);
+    const std::string message = next_address();
+    output << branch.label << ":\n"
+           << "  " << message << " = call ptr @cloth_rt_string_literal(ptr "
+           << bytes << ", i64 " << branch.message.size() << ")\n"
+           << "  store ptr " << message << ", ptr "
+           << gc_value_address(*call.error_result) << ", align "
+           << module_.pointer_alignment() << "\n"
+           << "  " << branch.error << " = call ptr @"
+           << constructor_abi->mangled_name << "(ptr " << message << ")\n"
+           << "  br label %" << join_label << "\n\n";
+  }
+  output << trap_label << ":\n"
+         << "  call void @llvm.trap()\n"
+         << "  unreachable\n\n"
+         << join_label << ":\n"
+         << "  " << value(*call.error_result) << " = phi ptr [ null, %"
+         << value_label << " ]";
+  for (const ErrorBranch& branch : errors) {
+    output << ", [ " << branch.error << ", %" << branch.label << " ]";
+  }
+  output << "\n";
+}
+
 void BodyEmitter::emit_call(const MirInstruction& instruction,
                             const MirCallInstruction& call,
                             std::ostringstream& output) {
   const SemanticSymbol& symbol = module_.semantics().symbol(call.callable);
   if (symbol.intrinsic != IntrinsicKind::kNone) {
+    if (symbol.intrinsic == IntrinsicKind::kConsoleReadLine) {
+      emit_console_read_line(instruction, call, symbol, output);
+      return;
+    }
+    if (symbol.intrinsic == IntrinsicKind::kPrimitiveParse) {
+      emit_primitive_parse(instruction, call, symbol, output);
+      return;
+    }
     const std::size_t expected_arguments =
         symbol.intrinsic == IntrinsicKind::kPrintNewline ? 0U : 1U;
     if (call.arguments.size() != expected_arguments || instruction.result) {
@@ -3281,6 +3597,8 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
         output << "  call void @cloth_rt_print_object(ptr " << argument
                << ")\n";
         break;
+      case IntrinsicKind::kConsoleReadLine:
+      case IntrinsicKind::kPrimitiveParse:
       case IntrinsicKind::kPrintNewline:
       case IntrinsicKind::kNone:
         module_.report(instruction.range,
@@ -3732,6 +4050,10 @@ std::size_t BodyEmitter::gc_root_count() const noexcept {
 
 std::string BodyEmitter::next_address() {
   return "%addr" + std::to_string(address_count_++);
+}
+
+std::string BodyEmitter::next_label(std::string_view prefix) {
+  return std::string{prefix} + std::to_string(address_count_++);
 }
 
 }  // namespace

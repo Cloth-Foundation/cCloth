@@ -75,8 +75,9 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 35 | Compiler-paired standard library with a reserved import root and deterministic Shuttle integration |
 | 36 | Recursive `cloth.lang` prelude with source-defined foundational errors |
 | 37 | Portable program arguments through managed `string[]` entry values |
+| 38 | Portable line input and strict primitive parsing |
 
-Stage 37 is the current completed native language/runtime/toolchain baseline,
+Stage 38 is the current completed native language/runtime/toolchain baseline,
 and Stage 31 is the current completed optimizer baseline. Stages 35 and 36 are
 complete, including their standard-library and prelude exit audits. Coordinated
 toolchain Stage 22 and separate-compilation Stage 23 are complete, including
@@ -1056,9 +1057,51 @@ forced argument-graph collection, direct and Shuttle execution, source-free
 linking, failure preservation, Rust/MSRV, editor, documentation, formatting,
 and repository gates. **Stage 37 is complete.**
 
-## Beyond Stage 37
+## Stage 38: Portable text input and primitive parsing
 
-Stage 37 is complete. The remaining backlog does not acquire priority or enter
+Status: **complete — 38.4 exit audit passed 2026-09-06**
+
+The [approved contract](docs/proposals/stage_38_text_input_and_parsing.md) adds
+strict line-oriented standard input through `cloth.io::Console` and checked
+`T::parse(string)` meta operations for existing primitive types.
+
+Objective: provide deterministic portable text ingestion without locale
+dependence, platform string leakage, general FFI, or error-recovery ceremony.
+
+Prerequisite: Stage 37.
+
+Deliverables:
+
+1. **38.1 — Contract (complete).** Freeze the public API, line and Unicode
+   semantics, parse grammar and rounding, typed failures, trusted library
+   bridge, memory ownership, compatibility, diagnostics, verification, and
+   non-goals.
+2. **38.2 — Library and runtime foundation (complete).** Add `Console`, `IoError`, and
+   `ParseError`; implement the private standard-library bridge and complete
+   checked input/parsing runtime substrate; advance runtime ABI to 6 and
+   `cloth` to v0.3.0; and verify the low-level boundary.
+3. **38.3 — Primitive parsing integration (complete).** Carry every approved `T::parse`
+   operation through the compiler, packages, native/cross-target paths,
+   Shuttle stream handling, editor support, and user documentation.
+4. **38.4 — Exit audit (complete).** Close Unicode, grammar, rounding,
+   resource, GC, compatibility, determinism, failure-preservation,
+   native/cross-target, and repository quality matrices.
+
+`Console.ReadLine(): string? throws IoError` is an ordinary public static
+standard-library member and uses `.`. Primitive parsing is a language-owned
+lowercase meta operation and uses `::`. The trusted bridge is available only
+while compiling the exact compiler-paired `cloth` package and cannot name
+arbitrary native symbols or be used by applications.
+
+The coordinated 38.4 audit closes line decoding, strict grammar, deterministic
+rounding, malformed-layout, resource, GC, typed-failure, native/cross-target,
+artifact, Shuttle, and repository quality matrices. Compatibility remains
+artifact/compiler/runtime 5/5/6 and process/receipt/manifest/toolchain schemas
+remain 2/1/1/1; the selected standard library is `cloth` v0.3.0.
+
+## Beyond Stage 38
+
+Stage 38 is complete. The remaining backlog does not acquire priority or enter
 the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:

@@ -952,6 +952,44 @@ void meta_queries(TestContext& test) {
               "malformed meta query prevented declaration recovery");
 }
 
+void primitive_parse_meta_call(TestContext& test) {
+  const ParsedSource source{"Parse.co",
+                            "static func ParseValues(string text) {\n"
+                            "  int32 value = int32::parse(text);\n"
+                            "  int32 wrapped = int32::wrap(4294967295u64);\n"
+                            "}\n"};
+  test.expect(error_count(source) == 0,
+              "primitive parse meta syntax did not parse");
+
+  bool found_parse = false;
+  bool found_conversion = false;
+  for (const cloth::Expression& expression :
+       source.ast().storage.expressions()) {
+    if (const auto* call =
+            std::get_if<cloth::CallExpression>(&expression.data)) {
+      const cloth::Expression& callee =
+          source.ast().storage.expression(call->callee);
+      const auto* meta = std::get_if<cloth::MetaAccessExpression>(&callee.data);
+      if (meta != nullptr && meta->meta == "parse") {
+        const cloth::Expression& target =
+            source.ast().storage.expression(meta->object);
+        const auto* identifier =
+            std::get_if<cloth::IdentifierExpression>(&target.data);
+        found_parse = call->arguments.size() == 1 && identifier != nullptr &&
+                      identifier->name == "int32";
+      }
+    }
+    found_conversion =
+        found_conversion ||
+        std::holds_alternative<cloth::IntegerConversionExpression>(
+            expression.data);
+  }
+  test.expect(found_parse,
+              "T::parse did not retain its type, meta, and call structure");
+  test.expect(found_conversion,
+              "T::parse routing changed integer wrap/sat parsing");
+}
+
 void checked_type_expressions(TestContext& test) {
   const ParsedSource source{"Checked.co",
                             "static func Main() {\n"
@@ -1369,6 +1407,7 @@ int main() {
       {"calls, members, and assignment", calls_members_and_assignment},
       {"base-qualified call syntax", base_qualified_call_syntax},
       {"meta queries", meta_queries},
+      {"primitive parse meta call", primitive_parse_meta_call},
       {"checked type expressions", checked_type_expressions},
       {"numeric conversion expressions", numeric_conversion_expressions},
       {"integer conversion modes", integer_conversion_modes},

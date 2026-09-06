@@ -64,6 +64,52 @@ foreach(scenario IN ITEMS program_argument_count program_argument_vector
             "-DCLOTH_EXPECTED_ERROR=program argument"
             -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 endforeach()
+foreach(scenario IN ITEMS parse_kind parse_text parse_bits)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=primitive parse"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
+foreach(scenario IN ITEMS parse_layout_size parse_layout_data
+                          parse_layout_encoding parse_layout_scalars)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=primitive parse text has an invalid layout"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
+add_test(NAME cloth_runtime_console_status
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=console_status"
+        "-DCLOTH_EXPECTED_ERROR=standard input status pointer is null"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+add_test(NAME cloth_runtime_console_input
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=console_input"
+        "-DCLOTH_INPUT=${CMAKE_CURRENT_SOURCE_DIR}/data/console_input.txt"
+        "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/data/console_input.expected"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+add_test(NAME cloth_runtime_console_io
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=console_io"
+        "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/data/console_input.expected"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+foreach(mode IN ITEMS edges invalid)
+    add_test(NAME cloth_runtime_console_${mode}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=console_${mode}"
+            "-DCLOTH_INPUT_MODE=${mode}"
+            "-DCLOTH_INPUT_WORK_FILE=${PROJECT_BINARY_DIR}/console-${mode}.input"
+            "-DCLOTH_EXPECTED=${CMAKE_CURRENT_SOURCE_DIR}/data/console_input.expected"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
 add_test(NAME cloth_runtime_report_non_error
     COMMAND ${CMAKE_COMMAND}
         "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"

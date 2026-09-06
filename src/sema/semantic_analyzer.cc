@@ -39,6 +39,21 @@ bool is_standard_library_prelude_package(std::string_view source_package) {
          source_package.starts_with("lang.");
 }
 
+bool is_primitive_parse_type(TypeKind kind) noexcept {
+  return kind == TypeKind::kBool || kind == TypeKind::kChar ||
+         kind == TypeKind::kByte || kind == TypeKind::kInt8 ||
+         kind == TypeKind::kInt16 || kind == TypeKind::kInt32 ||
+         kind == TypeKind::kInt64 || kind == TypeKind::kUint8 ||
+         kind == TypeKind::kUint16 || kind == TypeKind::kUint32 ||
+         kind == TypeKind::kUint64 || kind == TypeKind::kFloat32 ||
+         kind == TypeKind::kFloat64;
+}
+
+bool is_builtin_type_expression(TypeKind kind) noexcept {
+  return is_primitive_parse_type(kind) || kind == TypeKind::kString ||
+         kind == TypeKind::kObject || kind == TypeKind::kVoid;
+}
+
 struct ScopeEntry {
   std::string_view name;
   SymbolId symbol;
@@ -178,6 +193,8 @@ class SemanticAnalyzer {
     register_imports();
     register_type_relationships();
     register_members();
+    register_standard_library_bridges();
+    register_primitive_parse_intrinsics();
     index_members();
     validate_struct_layout_cycles();
     validate_interface_contracts();
@@ -1118,6 +1135,107 @@ class SemanticAnalyzer {
         }
       }
     }
+  }
+
+  void register_standard_library_bridges() {
+    std::optional<FileId> console_file;
+    std::optional<TypeId> io_error;
+    for (std::size_t index = 0; index < files_.size(); ++index) {
+      const FileSemantics& file = model_.file(FileId{index});
+      const NominalIdentity& identity = file.identity;
+      if (identity.package.name != kStandardLibraryPackageName ||
+          identity.package.version != kStandardLibraryPackageVersion) {
+        continue;
+      }
+      if (identity.source_package == "io" && identity.name == "Console" &&
+          file.kind == FileTypeKind::kClass) {
+        console_file = FileId{index};
+      } else if (identity.source_package == "lang.errors" &&
+                 identity.name == "IoError" &&
+                 file.kind == FileTypeKind::kError) {
+        io_error = file.type;
+      }
+    }
+    if (!console_file || !io_error) {
+      return;
+    }
+
+    SemanticSymbol bridge{
+        SymbolKind::kFunction,
+        "__readLine",
+        model_.get_nullable_type(model_.string_type()),
+        {},
+        Visibility::kPrivate,
+        std::nullopt,
+        model_.symbol(model_.file(*console_file).symbol).range};
+    bridge.intrinsic = IntrinsicKind::kConsoleReadLine;
+    bridge.is_static = true;
+    bridge.thrown_types = std::vector<TypeId>{*io_error};
+    bridge.has_explicit_throws = true;
+    static_cast<void>(model_.add_symbol(std::move(bridge)));
+  }
+
+  void register_primitive_parse_intrinsics() {
+    std::optional<TypeId> parse_error;
+    SourceRange bridge_range = point_range(SourceLocation{"<core>", 0, 1, 1});
+    for (std::size_t index = 0; index < model_.files().size(); ++index) {
+      const FileSemantics& file = model_.file(FileId{index});
+      const NominalIdentity& identity = file.identity;
+      if (identity.package.name != kStandardLibraryPackageName ||
+          identity.package.version != kStandardLibraryPackageVersion ||
+          identity.source_package != "lang.errors" ||
+          identity.name != "ParseError" || file.kind != FileTypeKind::kError) {
+        continue;
+      }
+      const bool has_message_constructor =
+          std::ranges::any_of(file.constructors, [&](SymbolId candidate) {
+            const SemanticSymbol& constructor = model_.symbol(candidate);
+            return constructor.is_valid &&
+                   constructor.visibility == Visibility::kPublic &&
+                   constructor.parameter_types.size() == 1 &&
+                   constructor.parameter_types.front() == model_.string_type();
+          });
+      if (has_message_constructor) {
+        parse_error = file.type;
+        bridge_range = model_.symbol(file.symbol).range;
+      }
+      break;
+    }
+    if (!parse_error) {
+      return;
+    }
+
+    const std::size_t type_count = model_.types().size();
+    for (std::size_t index = 0; index < type_count; ++index) {
+      const TypeId type{index};
+      if (!is_primitive_parse_type(model_.type(type).kind)) {
+        continue;
+      }
+      SemanticSymbol bridge{SymbolKind::kFunction,
+                            "__primitiveParse",
+                            type,
+                            {model_.string_type()},
+                            Visibility::kPrivate,
+                            std::nullopt,
+                            bridge_range};
+      bridge.intrinsic = IntrinsicKind::kPrimitiveParse;
+      bridge.is_static = true;
+      bridge.thrown_types = std::vector<TypeId>{*parse_error};
+      bridge.has_explicit_throws = true;
+      static_cast<void>(model_.add_symbol(std::move(bridge)));
+    }
+  }
+
+  bool is_standard_library_console(FileId file_id) const {
+    if (file_id.value >= files_.size()) {
+      return false;
+    }
+    const FileSemantics& file = model_.file(file_id);
+    const NominalIdentity& identity = file.identity;
+    return identity.package.name == kStandardLibraryPackageName &&
+           identity.package.version == kStandardLibraryPackageVersion &&
+           identity.source_package == "io" && identity.name == "Console" &&
+           file.kind == FileTypeKind::kClass;
   }
 
   // Only inline struct fields add layout dependencies. Iterative DFS keeps
@@ -3064,6 +3182,11 @@ class SemanticAnalyzer {
           symbol.type, ValueCategory::kType, model_.file(*file).symbol, {}};
     }
 
+    if (const std::optional<TypeId> type = model_.find_type(identifier.name);
+        type && is_builtin_type_expression(model_.type(*type).kind)) {
+      return ExpressionState{*type, ValueCategory::kType};
+    }
+
     if (identifier.name == "Error") {
       return ExpressionState{model_.error_root_type(), ValueCategory::kType};
     }
@@ -3082,6 +3205,12 @@ class SemanticAnalyzer {
     }
 
     std::vector<SymbolId> intrinsics = model_.find_intrinsics(identifier.name);
+    std::erase_if(intrinsics, [this](SymbolId symbol) {
+      const IntrinsicKind intrinsic = model_.symbol(symbol).intrinsic;
+      return intrinsic == IntrinsicKind::kPrimitiveParse ||
+             (intrinsic == IntrinsicKind::kConsoleReadLine &&
+              !is_standard_library_console(current_file_));
+    });
     if (!intrinsics.empty()) {
       return ExpressionState{model_.error_type(),
                              ValueCategory::kCallable,
@@ -4344,8 +4473,7 @@ class SemanticAnalyzer {
   ExpressionState analyze_meta_access(const MetaAccessExpression& meta,
                                       SourceRange range) {
     const ExpressionState object = analyze_expression(meta.object);
-    if (!check_value(object, expression_range(meta.object)) ||
-        object.type == model_.error_type()) {
+    if (object.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
     }
     if (object.type == model_.bottom_type()) {
@@ -4353,6 +4481,40 @@ class SemanticAnalyzer {
     }
 
     const SemanticType& object_type = model_.type(object.type);
+    if (object.category == ValueCategory::kType) {
+      if (meta.meta != "parse") {
+        diagnostics_.error(range, "type '" + object_type.name +
+                                      "' has no meta operation '" +
+                                      std::string{meta.meta} + "'");
+        return ExpressionState{model_.error_type()};
+      }
+      if (!is_primitive_parse_type(object_type.kind)) {
+        diagnostics_.error(range,
+                           "type '" + object_type.name + "' cannot be parsed");
+        return ExpressionState{model_.error_type()};
+      }
+      std::vector<SymbolId> candidates;
+      for (std::size_t index = 0; index < model_.symbols().size(); ++index) {
+        const SemanticSymbol& symbol = model_.symbol(SymbolId{index});
+        if (symbol.intrinsic == IntrinsicKind::kPrimitiveParse &&
+            symbol.type == object.type) {
+          candidates.push_back(SymbolId{index});
+        }
+      }
+      if (candidates.empty()) {
+        diagnostics_.error(range,
+                           "primitive parsing requires the compiler-paired "
+                           "'cloth.lang.errors.ParseError'");
+        return ExpressionState{model_.error_type()};
+      }
+      return ExpressionState{model_.error_type(),
+                             ValueCategory::kCallable,
+                             {},
+                             std::move(candidates)};
+    }
+    if (!check_value(object, expression_range(meta.object))) {
+      return ExpressionState{model_.error_type()};
+    }
     if (object_type.kind == TypeKind::kNullable) {
       diagnostics_.error(range, "nullable type '" + object_type.name +
                                     "' has no meta queries without narrowing");

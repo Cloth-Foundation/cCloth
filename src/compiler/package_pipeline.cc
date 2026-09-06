@@ -496,6 +496,16 @@ std::vector<ArtifactSymbol> artifact_symbols(
         ArtifactSymbol{"cloth_rt_array_alloc", std::nullopt,
                        ArtifactSymbolRole::kRequirement,
                        ArtifactSymbolKind::kRuntime, "c:ptr(i32,ptr)"});
+    symbols.try_emplace(
+        "cloth_rt_console_read_line",
+        ArtifactSymbol{"cloth_rt_console_read_line", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:ptr(ptr)"});
+    symbols.try_emplace(
+        "cloth_rt_parse_primitive",
+        ArtifactSymbol{"cloth_rt_parse_primitive", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:i8(i8,ptr,ptr)"});
   }
   std::vector<ArtifactSymbol> result;
   result.reserve(symbols.size());

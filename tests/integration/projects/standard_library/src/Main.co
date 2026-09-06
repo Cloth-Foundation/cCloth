@@ -1,6 +1,17 @@
 import cloth.math::Math;
 
-static func Main() throws DivisionByZero {
+static func Main(string[] arguments) throws DivisionByZero, ParseError {
+  if (arguments::length == 1) {
+    ParseProbe probe = ParseProbe();
+    if (arguments[0] == "invalid") {
+      int32 invalid = int::parse(probe.Invalid());
+    }
+    uint32 outOfRange = uint::parse(probe.Range());
+  }
+
+  ParseProbe probe = ParseProbe();
+  println(int32::parse(probe.Value()));
+  println(probe.Calls);
   println(Math.Abs(int32(-7)));
   println(Math.Max(int32(4), int32(9)));
   println(Math.Gcd(84, 30));
@@ -8,4 +19,20 @@ static func Main() throws DivisionByZero {
   println(StateError("invalid state").Message);
   println(ArgumentError().Message == "");
   println(StateError().Message == "");
+  println(bool::parse("true"));
+  println(char::parse("🙂"));
+  println(byte::parse("0xFF"));
+  println(int8::parse("-128"));
+  println(int16::parse("+32_767"));
+  println(int32::parse("-2147483648"));
+  println(int64::parse("9223372036854775807"));
+  println(uint8::parse("0b1111_1111"));
+  println(uint16::parse("0o177777"));
+  println(uint32::parse("4294967295"));
+  println(uint64::parse("18446744073709551615"));
+  println(float32::parse("1.5"));
+  println(float64::parse("2.5e1"));
+  println(int::parse("10"));
+  println(uint::parse("20"));
+  println(float::parse("3.5"));
 }

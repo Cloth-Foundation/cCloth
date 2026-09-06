@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
@@ -19,6 +20,13 @@
 #include <fcntl.h>
 #include <io.h>
 #include <malloc.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#ifdef interface
+#undef interface
+#endif
 #endif
 
 namespace {
@@ -135,53 +143,79 @@ std::size_t native_size(std::uint64_t value,
   return static_cast<std::size_t>(value);
 }
 
-std::size_t count_utf8_scalars(const char* data, std::size_t size,
-                               std::string_view invalid_message =
-                                   "string contains invalid UTF-8") noexcept {
-  std::size_t count = 0;
-  std::size_t index = 0;
+bool decode_utf8_scalar(const char* data, std::size_t size, std::size_t& index,
+                        std::uint32_t& scalar) noexcept {
   const auto byte = [data](std::size_t offset) {
     return static_cast<unsigned char>(data[offset]);
   };
   const auto is_continuation = [&byte](std::size_t offset) {
     return (byte(offset) & 0xc0U) == 0x80U;
   };
+  if (index >= size) {
+    return false;
+  }
+  const unsigned char first = byte(index);
+  if (first <= 0x7fU) {
+    scalar = first;
+    ++index;
+    return true;
+  }
+  if (first >= 0xc2U && first <= 0xdfU && index + 1 < size &&
+      is_continuation(index + 1)) {
+    scalar = ((first & 0x1fU) << 6U) | (byte(index + 1) & 0x3fU);
+    index += 2;
+    return true;
+  }
+  if (index + 2 < size &&
+      ((first == 0xe0U && byte(index + 1) >= 0xa0U &&
+        byte(index + 1) <= 0xbfU && is_continuation(index + 2)) ||
+       (((first >= 0xe1U && first <= 0xecU) ||
+         (first >= 0xeeU && first <= 0xefU)) &&
+        is_continuation(index + 1) && is_continuation(index + 2)) ||
+       (first == 0xedU && byte(index + 1) >= 0x80U &&
+        byte(index + 1) <= 0x9fU && is_continuation(index + 2)))) {
+    scalar = ((first & 0x0fU) << 12U) | ((byte(index + 1) & 0x3fU) << 6U) |
+             (byte(index + 2) & 0x3fU);
+    index += 3;
+    return true;
+  }
+  if (index + 3 < size &&
+      ((first == 0xf0U && byte(index + 1) >= 0x90U &&
+        byte(index + 1) <= 0xbfU && is_continuation(index + 2) &&
+        is_continuation(index + 3)) ||
+       (first >= 0xf1U && first <= 0xf3U && is_continuation(index + 1) &&
+        is_continuation(index + 2) && is_continuation(index + 3)) ||
+       (first == 0xf4U && byte(index + 1) >= 0x80U &&
+        byte(index + 1) <= 0x8fU && is_continuation(index + 2) &&
+        is_continuation(index + 3)))) {
+    scalar = ((first & 0x07U) << 18U) | ((byte(index + 1) & 0x3fU) << 12U) |
+             ((byte(index + 2) & 0x3fU) << 6U) | (byte(index + 3) & 0x3fU);
+    index += 4;
+    return true;
+  }
+  return false;
+}
+
+bool try_count_utf8_scalars(const char* data, std::size_t size,
+                            std::size_t& count) noexcept {
+  count = 0;
+  std::size_t index = 0;
   while (index < size) {
-    const unsigned char first = byte(index);
-    std::size_t width = 0;
-    if (first <= 0x7fU) {
-      width = 1;
-    } else if (first >= 0xc2U && first <= 0xdfU && index + 1 < size &&
-               is_continuation(index + 1)) {
-      width = 2;
-    } else if (first == 0xe0U && index + 2 < size && byte(index + 1) >= 0xa0U &&
-               byte(index + 1) <= 0xbfU && is_continuation(index + 2)) {
-      width = 3;
-    } else if (((first >= 0xe1U && first <= 0xecU) ||
-                (first >= 0xeeU && first <= 0xefU)) &&
-               index + 2 < size && is_continuation(index + 1) &&
-               is_continuation(index + 2)) {
-      width = 3;
-    } else if (first == 0xedU && index + 2 < size && byte(index + 1) >= 0x80U &&
-               byte(index + 1) <= 0x9fU && is_continuation(index + 2)) {
-      width = 3;
-    } else if (first == 0xf0U && index + 3 < size && byte(index + 1) >= 0x90U &&
-               byte(index + 1) <= 0xbfU && is_continuation(index + 2) &&
-               is_continuation(index + 3)) {
-      width = 4;
-    } else if (first >= 0xf1U && first <= 0xf3U && index + 3 < size &&
-               is_continuation(index + 1) && is_continuation(index + 2) &&
-               is_continuation(index + 3)) {
-      width = 4;
-    } else if (first == 0xf4U && index + 3 < size && byte(index + 1) >= 0x80U &&
-               byte(index + 1) <= 0x8fU && is_continuation(index + 2) &&
-               is_continuation(index + 3)) {
-      width = 4;
-    } else {
-      runtime_failure(invalid_message);
+    std::uint32_t scalar = 0;
+    if (!decode_utf8_scalar(data, size, index, scalar)) {
+      return false;
     }
-    index += width;
     ++count;
+  }
+  return true;
+}
+
+std::size_t count_utf8_scalars(const char* data, std::size_t size,
+                               std::string_view invalid_message =
+                                   "string contains invalid UTF-8") noexcept {
+  std::size_t count = 0;
+  if (!try_count_utf8_scalars(data, size, count)) {
+    runtime_failure(invalid_message);
   }
   return count;
 }
@@ -577,6 +611,21 @@ const ClothString& require_string(const void* value) noexcept {
   return string;
 }
 
+const ClothString& require_parse_text(const void* value) noexcept {
+  const ClothString& text = require_string(value);
+  constexpr std::size_t kMaximumStringSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  std::size_t scalar_count = 0;
+  if (text.byte_size > kMaximumStringSize ||
+      text.scalar_count > kMaximumStringSize ||
+      (text.data == nullptr && text.byte_size != 0) ||
+      !try_count_utf8_scalars(text.data, text.byte_size, scalar_count) ||
+      scalar_count != text.scalar_count) {
+    runtime_failure("primitive parse text has an invalid layout");
+  }
+  return text;
+}
+
 const ClothObjectHeader& require_object(const void* value) noexcept {
   if (value == nullptr) {
     runtime_failure("null object");
@@ -780,6 +829,513 @@ ClothString* allocate_concatenated_string(const ClothString& left,
   return string;
 }
 
+template <typename Value>
+class NativeBuffer {
+ public:
+  NativeBuffer() = default;
+  NativeBuffer(const NativeBuffer&) = delete;
+  NativeBuffer& operator=(const NativeBuffer&) = delete;
+  ~NativeBuffer() { std::free(data_); }
+
+  [[nodiscard]] bool push_back(Value value) noexcept {
+    constexpr std::size_t kMaximumSize =
+        static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+    if (size_ == kMaximumSize) {
+      return false;
+    }
+    if (size_ == capacity_) {
+      std::size_t capacity = capacity_ == 0 ? 256 : capacity_;
+      if (capacity > kMaximumSize / 2) {
+        capacity = kMaximumSize;
+      } else {
+        capacity *= 2;
+      }
+      if (capacity > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
+        runtime_failure("native input buffer is too large");
+      }
+      void* storage = std::realloc(data_, capacity * sizeof(Value));
+      if (storage == nullptr) {
+        runtime_failure("native input buffer allocation failed");
+      }
+      data_ = static_cast<Value*>(storage);
+      capacity_ = capacity;
+    }
+    data_[size_++] = value;
+    return true;
+  }
+
+  void pop_back() noexcept {
+    if (size_ != 0) {
+      --size_;
+    }
+  }
+
+  [[nodiscard]] Value* data() noexcept { return data_; }
+  [[nodiscard]] const Value* data() const noexcept { return data_; }
+  [[nodiscard]] std::size_t size() const noexcept { return size_; }
+  [[nodiscard]] bool empty() const noexcept { return size_ == 0; }
+  [[nodiscard]] Value back() const noexcept { return data_[size_ - 1]; }
+
+ private:
+  Value* data_{nullptr};
+  std::size_t size_{0};
+  std::size_t capacity_{0};
+};
+
+struct StreamInputState {
+  std::array<char, 4096> bytes{};
+  std::size_t next{0};
+  std::size_t size{0};
+  bool eof{false};
+};
+
+StreamInputState stream_input;
+
+bool configure_stdin() noexcept {
+#if defined(_WIN32)
+  static const bool configured = _setmode(_fileno(stdin), _O_BINARY) != -1;
+  return configured;
+#else
+  return true;
+#endif
+}
+
+bool read_stream_byte(char& value, std::uint8_t& status) noexcept {
+  if (stream_input.next < stream_input.size) {
+    value = stream_input.bytes[stream_input.next++];
+    return true;
+  }
+  if (stream_input.eof) {
+    status = kClothConsoleInputEof;
+    return false;
+  }
+  if (!configure_stdin()) {
+    status = kClothConsoleInputIoError;
+    return false;
+  }
+
+  stream_input.size = std::fread(stream_input.bytes.data(), 1,
+                                 stream_input.bytes.size(), stdin);
+  stream_input.next = 0;
+  if (stream_input.size != 0) {
+    value = stream_input.bytes[stream_input.next++];
+    return true;
+  }
+  if (std::ferror(stdin) != 0) {
+    status = kClothConsoleInputIoError;
+    return false;
+  }
+  stream_input.eof = true;
+  status = kClothConsoleInputEof;
+  return false;
+}
+
+void* read_stream_line(std::uint8_t& status) noexcept {
+  NativeBuffer<char> line;
+  for (;;) {
+    char byte = 0;
+    if (!read_stream_byte(byte, status)) {
+      if (status != kClothConsoleInputEof || line.empty()) {
+        return nullptr;
+      }
+      break;
+    }
+    if (byte == '\n') {
+      break;
+    }
+    if (!line.push_back(byte)) {
+      status = kClothConsoleInputLineTooLarge;
+      return nullptr;
+    }
+  }
+  if (!line.empty() && line.back() == '\r') {
+    line.pop_back();
+  }
+  std::size_t scalar_count = 0;
+  if (!try_count_utf8_scalars(line.data(), line.size(), scalar_count)) {
+    status = kClothConsoleInputEncodingError;
+    return nullptr;
+  }
+  status = kClothConsoleInputValue;
+  return allocate_owned_string(line.data(), line.size(), scalar_count);
+}
+
+#if defined(_WIN32)
+
+struct ConsoleInputState {
+  std::array<wchar_t, 256> units{};
+  std::size_t next{0};
+  std::size_t size{0};
+  bool eof{false};
+};
+
+ConsoleInputState console_input;
+
+bool has_console_input() noexcept {
+  DWORD mode = 0;
+  const HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
+  return handle != nullptr && handle != INVALID_HANDLE_VALUE &&
+         GetConsoleMode(handle, &mode) != 0;
+}
+
+bool read_console_unit(wchar_t& value, std::uint8_t& status) noexcept {
+  if (console_input.next < console_input.size) {
+    value = console_input.units[console_input.next++];
+    return true;
+  }
+  if (console_input.eof) {
+    status = kClothConsoleInputEof;
+    return false;
+  }
+  DWORD size = 0;
+  const HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
+  if (handle == nullptr || handle == INVALID_HANDLE_VALUE ||
+      ReadConsoleW(handle, console_input.units.data(),
+                   static_cast<DWORD>(console_input.units.size()), &size,
+                   nullptr) == 0) {
+    status = kClothConsoleInputIoError;
+    return false;
+  }
+  console_input.next = 0;
+  console_input.size = size;
+  if (size == 0) {
+    console_input.eof = true;
+    status = kClothConsoleInputEof;
+    return false;
+  }
+  value = console_input.units[console_input.next++];
+  return true;
+}
+
+std::uint8_t measure_utf16_line(const wchar_t* units, std::size_t size,
+                                std::size_t& bytes,
+                                std::size_t& scalars) noexcept {
+  constexpr std::size_t kMaximumSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  bytes = 0;
+  scalars = 0;
+  for (std::size_t index = 0; index < size;) {
+    std::uint32_t scalar = static_cast<std::uint16_t>(units[index++]);
+    if (scalar >= 0xd800U && scalar <= 0xdbffU) {
+      if (index == size) {
+        return kClothConsoleInputEncodingError;
+      }
+      const std::uint32_t low = static_cast<std::uint16_t>(units[index++]);
+      if (low < 0xdc00U || low > 0xdfffU) {
+        return kClothConsoleInputEncodingError;
+      }
+      scalar = 0x10000U + ((scalar - 0xd800U) << 10U) + (low - 0xdc00U);
+    } else if (scalar >= 0xdc00U && scalar <= 0xdfffU) {
+      return kClothConsoleInputEncodingError;
+    }
+    const std::size_t width = scalar <= 0x7fU     ? 1
+                              : scalar <= 0x7ffU  ? 2
+                              : scalar <= 0xffffU ? 3
+                                                  : 4;
+    if (bytes > kMaximumSize - width || scalars == kMaximumSize) {
+      return kClothConsoleInputLineTooLarge;
+    }
+    bytes += width;
+    ++scalars;
+  }
+  return kClothConsoleInputValue;
+}
+
+void append_utf8_scalar(std::uint32_t scalar, char* output,
+                        std::size_t& index) noexcept {
+  if (scalar <= 0x7fU) {
+    output[index++] = static_cast<char>(scalar);
+  } else if (scalar <= 0x7ffU) {
+    output[index++] = static_cast<char>(0xc0U | (scalar >> 6U));
+    output[index++] = static_cast<char>(0x80U | (scalar & 0x3fU));
+  } else if (scalar <= 0xffffU) {
+    output[index++] = static_cast<char>(0xe0U | (scalar >> 12U));
+    output[index++] = static_cast<char>(0x80U | ((scalar >> 6U) & 0x3fU));
+    output[index++] = static_cast<char>(0x80U | (scalar & 0x3fU));
+  } else {
+    output[index++] = static_cast<char>(0xf0U | (scalar >> 18U));
+    output[index++] = static_cast<char>(0x80U | ((scalar >> 12U) & 0x3fU));
+    output[index++] = static_cast<char>(0x80U | ((scalar >> 6U) & 0x3fU));
+    output[index++] = static_cast<char>(0x80U | (scalar & 0x3fU));
+  }
+}
+
+void encode_utf16_line(const wchar_t* units, std::size_t size,
+                       char* output) noexcept {
+  std::size_t output_index = 0;
+  for (std::size_t index = 0; index < size;) {
+    std::uint32_t scalar = static_cast<std::uint16_t>(units[index++]);
+    if (scalar >= 0xd800U && scalar <= 0xdbffU) {
+      const std::uint32_t low = static_cast<std::uint16_t>(units[index++]);
+      scalar = 0x10000U + ((scalar - 0xd800U) << 10U) + (low - 0xdc00U);
+    }
+    append_utf8_scalar(scalar, output, output_index);
+  }
+}
+
+void* read_console_line(std::uint8_t& status) noexcept {
+  NativeBuffer<wchar_t> line;
+  for (;;) {
+    wchar_t unit = 0;
+    if (!read_console_unit(unit, status)) {
+      if (status != kClothConsoleInputEof || line.empty()) {
+        return nullptr;
+      }
+      break;
+    }
+    if (unit == L'\n') {
+      break;
+    }
+    if (!line.push_back(unit)) {
+      status = kClothConsoleInputLineTooLarge;
+      return nullptr;
+    }
+  }
+  if (!line.empty() && line.back() == L'\r') {
+    line.pop_back();
+  }
+  std::size_t byte_size = 0;
+  std::size_t scalar_count = 0;
+  status =
+      measure_utf16_line(line.data(), line.size(), byte_size, scalar_count);
+  if (status != kClothConsoleInputValue) {
+    return nullptr;
+  }
+  auto* bytes = static_cast<char*>(allocate_aligned(
+      byte_size, alignof(char), "standard input conversion failed"));
+  encode_utf16_line(line.data(), line.size(), bytes);
+  void* result = allocate_owned_string(bytes, byte_size, scalar_count);
+  free_aligned(bytes);
+  return result;
+}
+
+#endif
+
+int digit_value(char value) noexcept {
+  if (value >= '0' && value <= '9') {
+    return value - '0';
+  }
+  if (value >= 'a' && value <= 'f') {
+    return value - 'a' + 10;
+  }
+  if (value >= 'A' && value <= 'F') {
+    return value - 'A' + 10;
+  }
+  return -1;
+}
+
+struct IntegerParseType {
+  std::uint8_t width;
+  bool is_signed;
+};
+
+bool integer_parse_type(std::uint8_t kind, IntegerParseType& type) noexcept {
+  switch (kind) {
+    case kClothParseByte:
+    case kClothParseUint8:
+      type = IntegerParseType{8, false};
+      return true;
+    case kClothParseInt8:
+      type = IntegerParseType{8, true};
+      return true;
+    case kClothParseInt16:
+      type = IntegerParseType{16, true};
+      return true;
+    case kClothParseInt32:
+      type = IntegerParseType{32, true};
+      return true;
+    case kClothParseInt64:
+      type = IntegerParseType{64, true};
+      return true;
+    case kClothParseUint16:
+      type = IntegerParseType{16, false};
+      return true;
+    case kClothParseUint32:
+      type = IntegerParseType{32, false};
+      return true;
+    case kClothParseUint64:
+      type = IntegerParseType{64, false};
+      return true;
+    default:
+      return false;
+  }
+}
+
+std::uint8_t parse_integer(const ClothString& text, IntegerParseType type,
+                           std::uint64_t& bits) noexcept {
+  std::size_t index = 0;
+  bool negative = false;
+  if (index < text.byte_size &&
+      (text.data[index] == '+' || text.data[index] == '-')) {
+    negative = text.data[index] == '-';
+    ++index;
+  }
+  if (negative && !type.is_signed) {
+    return kClothParseInvalid;
+  }
+
+  unsigned radix = 10;
+  if (index + 1 < text.byte_size && text.data[index] == '0') {
+    switch (text.data[index + 1]) {
+      case 'b':
+        radix = 2;
+        break;
+      case 'o':
+        radix = 8;
+        break;
+      case 'x':
+        radix = 16;
+        break;
+      default:
+        break;
+    }
+    if (radix != 10) {
+      index += 2;
+    }
+  }
+
+  const std::uint64_t unsigned_limit =
+      type.width == 64 ? std::numeric_limits<std::uint64_t>::max()
+                       : (UINT64_C(1) << type.width) - 1;
+  const std::uint64_t signed_maximum =
+      type.width == 64 ? static_cast<std::uint64_t>(INT64_MAX)
+                       : (UINT64_C(1) << (type.width - 1)) - 1;
+  const std::uint64_t limit =
+      type.is_signed ? signed_maximum + static_cast<std::uint64_t>(negative)
+                     : unsigned_limit;
+  std::uint64_t magnitude = 0;
+  bool has_digit = false;
+  bool out_of_range = false;
+  while (index < text.byte_size) {
+    const int digit = digit_value(text.data[index]);
+    if (digit >= 0 && static_cast<unsigned>(digit) < radix) {
+      has_digit = true;
+      if (!out_of_range) {
+        const auto value = static_cast<std::uint64_t>(digit);
+        if (magnitude > (limit - value) / radix) {
+          out_of_range = true;
+        } else {
+          magnitude = magnitude * radix + value;
+        }
+      }
+      ++index;
+      continue;
+    }
+    if (text.data[index] != '_' || !has_digit || index + 1 == text.byte_size) {
+      return kClothParseInvalid;
+    }
+    const int next = digit_value(text.data[index + 1]);
+    if (next < 0 || static_cast<unsigned>(next) >= radix) {
+      return kClothParseInvalid;
+    }
+    ++index;
+  }
+  if (!has_digit) {
+    return kClothParseInvalid;
+  }
+  if (out_of_range) {
+    return kClothParseOutOfRange;
+  }
+  bits = negative ? ((~magnitude) + 1) & unsigned_limit : magnitude;
+  return kClothParseValue;
+}
+
+bool append_float_digits(const ClothString& text, std::size_t& index,
+                         NativeBuffer<char>& normalized,
+                         bool& nonzero) noexcept {
+  bool has_digit = false;
+  while (index < text.byte_size) {
+    const char value = text.data[index];
+    if (value >= '0' && value <= '9') {
+      has_digit = true;
+      nonzero = nonzero || value != '0';
+      static_cast<void>(normalized.push_back(value));
+      ++index;
+      continue;
+    }
+    if (value != '_') {
+      break;
+    }
+    if (!has_digit || index + 1 == text.byte_size ||
+        text.data[index + 1] < '0' || text.data[index + 1] > '9') {
+      return false;
+    }
+    ++index;
+  }
+  return has_digit;
+}
+
+template <typename Float>
+std::uint8_t parse_float(const ClothString& text,
+                         std::uint64_t& bits) noexcept {
+  NativeBuffer<char> normalized;
+  std::size_t index = 0;
+  bool negative = false;
+  if (index < text.byte_size &&
+      (text.data[index] == '+' || text.data[index] == '-')) {
+    negative = text.data[index] == '-';
+    if (negative) {
+      static_cast<void>(normalized.push_back('-'));
+    }
+    ++index;
+  }
+  bool nonzero = false;
+  if (!append_float_digits(text, index, normalized, nonzero)) {
+    return kClothParseInvalid;
+  }
+  if (index < text.byte_size && text.data[index] == '.') {
+    static_cast<void>(normalized.push_back('.'));
+    ++index;
+    if (!append_float_digits(text, index, normalized, nonzero)) {
+      return kClothParseInvalid;
+    }
+  }
+  if (index < text.byte_size &&
+      (text.data[index] == 'e' || text.data[index] == 'E')) {
+    static_cast<void>(normalized.push_back(text.data[index++]));
+    if (index < text.byte_size &&
+        (text.data[index] == '+' || text.data[index] == '-')) {
+      static_cast<void>(normalized.push_back(text.data[index++]));
+    }
+    bool exponent_nonzero = false;
+    if (!append_float_digits(text, index, normalized, exponent_nonzero)) {
+      return kClothParseInvalid;
+    }
+  }
+  if (index != text.byte_size) {
+    return kClothParseInvalid;
+  }
+  if (!nonzero) {
+    if constexpr (sizeof(Float) == sizeof(std::uint32_t)) {
+      bits = negative ? UINT32_C(0x80000000) : 0;
+    } else {
+      bits = negative ? UINT64_C(0x8000000000000000) : 0;
+    }
+    return kClothParseValue;
+  }
+
+  Float value = 0;
+  const auto parsed =
+      std::from_chars(normalized.data(), normalized.data() + normalized.size(),
+                      value, std::chars_format::general);
+  if (parsed.ec == std::errc::result_out_of_range) {
+    return kClothParseOutOfRange;
+  }
+  if (parsed.ec != std::errc{} ||
+      parsed.ptr != normalized.data() + normalized.size()) {
+    runtime_failure("floating-point parser rejected validated input");
+  }
+  if (!std::isfinite(value) || value == 0) {
+    return kClothParseOutOfRange;
+  }
+  if constexpr (sizeof(Float) == sizeof(std::uint32_t)) {
+    bits = std::bit_cast<std::uint32_t>(value);
+  } else {
+    bits = std::bit_cast<std::uint64_t>(value);
+  }
+  return kClothParseValue;
+}
+
 void configure_stdout() noexcept {
 #if defined(_WIN32)
   static const bool configured = _setmode(_fileno(stdout), _O_BINARY) != -1;
@@ -945,6 +1501,61 @@ extern "C" void* cloth_rt_string_concat(const void* left,
                                         const void* right) noexcept {
   return allocate_concatenated_string(require_string(left),
                                       require_string(right));
+}
+
+extern "C" void* cloth_rt_console_read_line(std::uint8_t* status) noexcept {
+  if (status == nullptr) {
+    runtime_failure("standard input status pointer is null");
+  }
+  *status = kClothConsoleInputIoError;
+#if defined(_WIN32)
+  if (has_console_input()) {
+    return read_console_line(*status);
+  }
+#endif
+  return read_stream_line(*status);
+}
+
+extern "C" std::uint8_t cloth_rt_parse_primitive(std::uint8_t kind,
+                                                 const void* value,
+                                                 std::uint64_t* bits) noexcept {
+  if (bits == nullptr) {
+    runtime_failure("primitive parse result pointer is null");
+  }
+  *bits = 0;
+  if (kind > kClothParseFloat64) {
+    runtime_failure("primitive parse kind is invalid");
+  }
+  if (value == nullptr) {
+    runtime_failure("primitive parse text is null");
+  }
+  const ClothString& text = require_parse_text(value);
+  if (kind == kClothParseBool) {
+    if (text.byte_size == 4 && std::memcmp(text.data, "true", 4) == 0) {
+      *bits = 1;
+      return kClothParseValue;
+    }
+    if (text.byte_size == 5 && std::memcmp(text.data, "false", 5) == 0) {
+      return kClothParseValue;
+    }
+    return kClothParseInvalid;
+  }
+  if (kind == kClothParseChar) {
+    std::size_t index = 0;
+    std::uint32_t scalar = 0;
+    if (!decode_utf8_scalar(text.data, text.byte_size, index, scalar) ||
+        index != text.byte_size) {
+      return kClothParseInvalid;
+    }
+    *bits = scalar;
+    return kClothParseValue;
+  }
+  IntegerParseType integer_type{};
+  if (integer_parse_type(kind, integer_type)) {
+    return parse_integer(text, integer_type, *bits);
+  }
+  return kind == kClothParseFloat32 ? parse_float<float>(text, *bits)
+                                    : parse_float<double>(text, *bits);
 }
 
 extern "C" void* cloth_rt_program_arguments(std::int32_t host_count,

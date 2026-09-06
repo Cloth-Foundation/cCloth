@@ -69,6 +69,8 @@ Stage 36 is complete following its separately authorized 36.4 exit audit on
 2026-09-06.
 Stage 37 is complete following its separately authorized 37.4 exit audit on
 2026-09-06.
+Stage 38 is complete following its separately authorized 38.4 exit audit on
+2026-09-06.
 
 ## Scheduled work
 
@@ -932,6 +934,58 @@ class override validation. Existing ABI and artifact versions are unchanged.
   artifact/compiler/runtime 5/5/5 and process/receipt/manifest/toolchain schemas
   2/1/1/1. **Stage 37 is complete.**
 
+### Stage 38: Portable text input and primitive parsing
+
+- [x] **38.1 — Contract.** Freeze `Console.ReadLine`, line and strict Unicode
+  semantics, primitive `T::parse`, exact grammar and rounding, `IoError` and
+  `ParseError`, the trusted standard-library bridge, memory ownership,
+  compatibility, diagnostics, verification, and non-goals.
+
+  Approved and completed 2026-09-06. `Console.ReadLine(): string? throws
+  IoError` is an explicitly imported ordinary member of `cloth.io.Console`.
+  Existing primitive targets gain lowercase `::parse(string)` operations that
+  throw the source-defined prelude type `ParseError`. Parsing is strict,
+  locale-independent, consumes the complete string, and reuses Stage 33 numeric
+  notation without suffixes. The bridge is private to the exact compiler-paired
+  `cloth` package and is not a general FFI. This checkpoint changes
+  documentation only; active compatibility remains 5/5/5 and 2/1/1/1 with
+  `cloth` v0.2.0. See the
+  [contract](docs/proposals/stage_38_text_input_and_parsing.md).
+- [x] **38.2 — Library and runtime foundation.** Add `Console`, `IoError`, and
+  `ParseError`; implement the private library bridge and complete checked
+  line-input and primitive-parsing runtime operations; advance runtime ABI to 6
+  and `cloth` to v0.3.0; and verify the low-level boundary independently.
+
+  Completed 2026-09-06. The compiler-paired `cloth` v0.3.0 package now defines
+  `cloth.io.Console`, `IoError`, and `ParseError`. The exact private bridge
+  lowers `Console.ReadLine` through runtime ABI 6 and maps recoverable statuses
+  to source-defined `IoError` values. The same ABI provides the complete strict,
+  locale-independent primitive parser substrate without exposing `T::parse`
+  before 38.3. Development and sanitizer coverage verifies the boundary.
+- [x] **38.3 — Primitive parsing integration.** Implement every approved
+  `T::parse` operation through semantic analysis, verified HIR/MIR, checked
+  lowering, whole/source-free packages, native and both-target paths, Shuttle
+  input inheritance, editor support, and user documentation.
+
+  Completed 2026-09-06. All approved canonical primitive types and the
+  `int`/`uint`/`float` aliases expose strict lowercase `T::parse(string): T
+  throws ParseError`. Typed effects, source-defined errors, checked runtime-ABI-6
+  lowering, whole/source-free artifacts, both targets, native execution,
+  Shuttle stdin inheritance and reuse, editor grammar, and user documentation
+  are integrated without a compatibility or schema transition.
+- [x] **38.4 — Exit audit.** Complete Unicode, line, grammar, rounding,
+  resource, GC, compatibility, determinism, failure-preservation, native/
+  cross-target, Rust, editor, documentation, formatting, link, sanitizer, and
+  repository quality matrices.
+
+  Completed 2026-09-06. The audit closes line-ending, EOF, chunking, Unicode,
+  embedded-null, complete-input grammar, integer-boundary, floating-rounding,
+  boolean/character, malformed-layout, typed-effect, once-evaluation, GC,
+  native/cross-target, artifact, Shuttle, determinism, invalidation, reuse, and
+  failure-preservation matrices. All coordinated development, sanitizer,
+  Rust/MSRV, editor, documentation, formatting, link, and repository gates
+  pass without a compatibility, schema, or library-version transition.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1038,8 +1092,6 @@ active stage without first updating `ROADMAP.md`.
   exists.
 - Expand native output beyond the current x86-64 pipeline.
 - Add selectable optimization levels and debug information.
-- Define portable console input and string-to-primitive parsing after the Stage
-  35 standard-library distribution boundary is complete.
 - Add platform packaging and distribution tooling.
 - Add ability for Shuttle to build to .lib or .a (Linux/MacOS) for library files.
 

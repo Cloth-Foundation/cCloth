@@ -112,6 +112,8 @@ enum class SymbolKind {
 
 enum class IntrinsicKind {
   kNone,
+  kConsoleReadLine,
+  kPrimitiveParse,
   kPrintString,
   kPrintBool,
   kPrintChar,

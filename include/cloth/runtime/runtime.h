@@ -57,6 +57,30 @@ inline constexpr std::uint8_t kClothIntegerArithmeticOverflow = 0;
 inline constexpr std::uint8_t kClothIntegerDivisionByZero = 1;
 inline constexpr std::uint8_t kClothIntegerRemainderByZero = 2;
 
+inline constexpr std::uint8_t kClothConsoleInputValue = 0;
+inline constexpr std::uint8_t kClothConsoleInputEof = 1;
+inline constexpr std::uint8_t kClothConsoleInputIoError = 2;
+inline constexpr std::uint8_t kClothConsoleInputEncodingError = 3;
+inline constexpr std::uint8_t kClothConsoleInputLineTooLarge = 4;
+
+inline constexpr std::uint8_t kClothParseValue = 0;
+inline constexpr std::uint8_t kClothParseInvalid = 1;
+inline constexpr std::uint8_t kClothParseOutOfRange = 2;
+
+inline constexpr std::uint8_t kClothParseBool = 0;
+inline constexpr std::uint8_t kClothParseChar = 1;
+inline constexpr std::uint8_t kClothParseByte = 2;
+inline constexpr std::uint8_t kClothParseInt8 = 3;
+inline constexpr std::uint8_t kClothParseInt16 = 4;
+inline constexpr std::uint8_t kClothParseInt32 = 5;
+inline constexpr std::uint8_t kClothParseInt64 = 6;
+inline constexpr std::uint8_t kClothParseUint8 = 7;
+inline constexpr std::uint8_t kClothParseUint16 = 8;
+inline constexpr std::uint8_t kClothParseUint32 = 9;
+inline constexpr std::uint8_t kClothParseUint64 = 10;
+inline constexpr std::uint8_t kClothParseFloat32 = 11;
+inline constexpr std::uint8_t kClothParseFloat64 = 12;
+
 extern "C" {
 
 extern const ClothTypeDescriptor cloth_rt_error_type;
@@ -75,6 +99,9 @@ void cloth_rt_gc_collect() noexcept;
                                             std::uint64_t size) noexcept;
 [[nodiscard]] void* cloth_rt_string_concat(const void* left,
                                            const void* right) noexcept;
+[[nodiscard]] void* cloth_rt_console_read_line(std::uint8_t* status) noexcept;
+[[nodiscard]] std::uint8_t cloth_rt_parse_primitive(
+    std::uint8_t kind, const void* text, std::uint64_t* bits) noexcept;
 [[nodiscard]] void* cloth_rt_program_arguments(
     std::int32_t host_count, const void* host_values) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_string_equal(const void* left,

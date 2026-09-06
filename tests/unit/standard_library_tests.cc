@@ -12,11 +12,13 @@
 #include "cloth/target/data_layout.h"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "test.h"
@@ -484,6 +486,339 @@ void lang_api_and_source_free_consumer(TestContext& test) {
   }
 }
 
+void console_api_and_source_free_consumer(TestContext& test) {
+  const std::filesystem::path source_root{CLOTH_STANDARD_LIBRARY_SOURCE_DIR};
+  const auto add_console_sources = [&](cloth::Compilation& compilation,
+                                       std::string_view version) {
+    struct Source {
+      std::filesystem::path path;
+      std::string_view package;
+    };
+    const std::array sources{
+        Source{source_root / "lang" / "errors" / "IoError.co", "lang.errors"},
+        Source{source_root / "lang" / "errors" / "ParseError.co",
+               "lang.errors"},
+        Source{source_root / "io" / "Console.co", "io"},
+    };
+    bool loaded = true;
+    for (const Source& source : sources) {
+      auto file = cloth::SourceFile::load(source.path);
+      test.expect(file.has_value(),
+                  "standard-library console source could not be read");
+      if (!file) {
+        loaded = false;
+        continue;
+      }
+      compilation.add_package_source(std::move(*file), "cloth",
+                                     std::string{source.package},
+                                     std::string{version});
+    }
+    return loaded;
+  };
+
+  constexpr std::string_view kConsumer = R"(
+    import cloth.io::Console;
+    static func Keep(ParseError value): ParseError { return value; }
+    static func Read(): string? throws IoError {
+      return Console.ReadLine();
+    }
+    func infer(string text): int32 {
+      return int32::parse(text);
+    }
+    static func ParseValues() throws ParseError {
+      bool boolean = bool::parse("true");
+      char character = char::parse("C");
+      byte octet = byte::parse("255");
+      int8 signed8 = int8::parse("-128");
+      int16 signed16 = int16::parse("-32768");
+      int32 signed32 = int32::parse("-2147483648");
+      int64 signed64 = int64::parse("-9223372036854775808");
+      uint8 unsigned8 = uint8::parse("255");
+      uint16 unsigned16 = uint16::parse("65535");
+      uint32 unsigned32 = uint32::parse("4294967295");
+      uint64 unsigned64 = uint64::parse("18446744073709551615");
+      float32 single = float32::parse("1.5");
+      float64 double = float64::parse("2.5e1");
+      int aliasInt = int::parse("1");
+      uint aliasUint = uint::parse("2");
+      float aliasFloat = float::parse("3.5");
+    }
+    static func Main() throws IoError, ParseError {
+      string? line = Read();
+      ParseValues();
+    }
+  )";
+  for (const cloth::TargetDataLayout& target :
+       {cloth::TargetDataLayout::llvm_x86_64(),
+        cloth::TargetDataLayout::llvm_wasm32()}) {
+    cloth::Compilation producer{target};
+    if (!add_console_sources(producer, cloth::kStandardLibraryPackageVersion)) {
+      continue;
+    }
+    cloth::DiagnosticEngine producer_diagnostics;
+    cloth::CompilationResult produced = producer.analyze(producer_diagnostics);
+    test.expect(produced.is_valid, messages(producer_diagnostics));
+    if (!produced.is_valid) continue;
+
+    const auto find_file = [&](std::string_view name) {
+      return std::ranges::find_if(
+          produced.semantics.files(), [&](const cloth::FileSemantics& file) {
+            return produced.semantics.symbol(file.symbol).name == name;
+          });
+    };
+    const auto console = find_file("cloth.io.Console");
+    const auto io_error = find_file("cloth.lang.errors.IoError");
+    const auto parse_error = find_file("cloth.lang.errors.ParseError");
+    test.expect(console != produced.semantics.files().end() &&
+                    console->constructors.empty() &&
+                    io_error != produced.semantics.files().end() &&
+                    io_error->constructors.size() == 2 &&
+                    parse_error != produced.semantics.files().end() &&
+                    parse_error->constructors.size() == 2,
+                "console or input error declarations have the wrong shape");
+    if (console == produced.semantics.files().end() ||
+        io_error == produced.semantics.files().end()) {
+      continue;
+    }
+    const cloth::SemanticSymbol* read_line =
+        find_function(produced.semantics, *console, "ReadLine");
+    test.expect(read_line != nullptr && read_line->is_static &&
+                    produced.semantics.type(read_line->type).kind ==
+                        cloth::TypeKind::kNullable &&
+                    read_line->thrown_types == std::vector{io_error->type},
+                "Console.ReadLine lost its nullable result or IoError effect");
+
+    cloth::LlvmIrOptions producer_options;
+    producer_options.package = cloth::PackageIdentity{
+        "cloth", std::string{cloth::kStandardLibraryPackageVersion}};
+    const auto producer_ir =
+        cloth::emit_llvm_ir(produced.mir, produced.abi, produced.semantics,
+                            producer_diagnostics, producer_options);
+    test.expect(
+        producer_ir.has_value() &&
+            producer_ir->text.contains(
+                "call ptr @cloth_rt_console_read_line") &&
+            producer_ir->text.contains("could not read standard input") &&
+            producer_ir->text.contains("standard input is not valid Unicode") &&
+            producer_ir->text.contains("standard input line is too large") &&
+            producer_ir->text.contains("phi ptr"),
+        "Console.ReadLine did not lower through the checked ABI-6 bridge");
+
+    const cloth::ImportedPackageResult imported =
+        cloth::build_imported_package_view(
+            {"cloth", std::string{cloth::kStandardLibraryPackageVersion}},
+            produced.semantics, produced.mir, produced.abi);
+    test.expect(imported.is_valid(),
+                "console package interface could not be exported");
+    if (!imported.view) continue;
+
+    cloth::Compilation consumer{target};
+    consumer.set_package_dependencies({{"app", "cloth", "cloth"}});
+    consumer.add_imported_package(*imported.view);
+    consumer.add_package_source(
+        cloth::SourceFile::from_memory("Main.co", std::string{kConsumer}),
+        "app", "", "0.1.0");
+    cloth::DiagnosticEngine consumer_diagnostics;
+    cloth::CompilationResult consumed = consumer.analyze(consumer_diagnostics);
+    test.expect(consumed.is_valid, messages(consumer_diagnostics));
+    if (consumed.is_valid) {
+      const auto app_file = std::ranges::find_if(
+          consumed.semantics.files(), [&](const cloth::FileSemantics& file) {
+            return consumed.semantics.symbol(file.symbol).name == "app.Main";
+          });
+      const auto consumed_parse_error = std::ranges::find_if(
+          consumed.semantics.files(), [&](const cloth::FileSemantics& file) {
+            return consumed.semantics.symbol(file.symbol).name ==
+                   "cloth.lang.errors.ParseError";
+          });
+      const cloth::SemanticSymbol* inferred =
+          app_file == consumed.semantics.files().end()
+              ? nullptr
+              : find_function(consumed.semantics, *app_file, "infer");
+      test.expect(
+          inferred != nullptr &&
+              consumed_parse_error != consumed.semantics.files().end() &&
+              inferred->thrown_types ==
+                  std::vector{consumed_parse_error->type} &&
+              !inferred->has_explicit_throws,
+          "private primitive parse effects were not inferred as ParseError");
+      std::size_t parse_calls = 0;
+      for (const cloth::HirExpression& expression :
+           consumed.hir.storage.expressions()) {
+        const auto* call =
+            std::get_if<cloth::HirCallExpression>(&expression.data);
+        if (call != nullptr && call->callable &&
+            consumed.semantics.symbol(*call->callable).intrinsic ==
+                cloth::IntrinsicKind::kPrimitiveParse) {
+          ++parse_calls;
+        }
+      }
+      test.expect(parse_calls == 17,
+                  "primitive parse calls were not retained in typed HIR");
+      cloth::LlvmIrOptions options;
+      options.package = cloth::PackageIdentity{"app", "0.1.0"};
+      const auto consumer_ir =
+          cloth::emit_llvm_ir(consumed.mir, consumed.abi, consumed.semantics,
+                              consumer_diagnostics, options);
+      test.expect(
+          consumer_ir.has_value() &&
+              consumer_ir->text.contains("call i8 @cloth_rt_parse_primitive") &&
+              consumer_ir->text.contains("invalid bool text") &&
+              consumer_ir->text.contains("int32 value is out of range") &&
+              consumer_ir->text.contains("float64 value is out of range"),
+          "source-free primitive parsing did not lower through the "
+          "checked ABI-6 bridge");
+    }
+
+    cloth::Compilation unavailable{target};
+    unavailable.add_package_source(cloth::SourceFile::from_memory("Main.co", R"(
+          static func Main() throws ParseError {
+            int32 value = int32::parse("1");
+          }
+        )"),
+                                   "app", "", "0.1.0");
+    cloth::DiagnosticEngine unavailable_diagnostics;
+    test.expect(!unavailable.analyze(unavailable_diagnostics).is_valid &&
+                    messages(unavailable_diagnostics)
+                        .contains("primitive parsing requires the "
+                                  "compiler-paired "
+                                  "'cloth.lang.errors.ParseError'"),
+                "primitive parsing was accepted without the paired library");
+
+    cloth::Compilation whole{target};
+    whole.set_package_dependencies({{"app", "cloth", "cloth"}});
+    if (!add_console_sources(whole, cloth::kStandardLibraryPackageVersion)) {
+      continue;
+    }
+    whole.add_package_source(
+        cloth::SourceFile::from_memory("Main.co", std::string{kConsumer}),
+        "app", "", "0.1.0");
+    cloth::DiagnosticEngine whole_diagnostics;
+    cloth::CompilationResult whole_result = whole.analyze(whole_diagnostics);
+    test.expect(whole_result.is_valid, messages(whole_diagnostics));
+    if (whole_result.is_valid) {
+      expect_package_ir(test, whole_result, whole_diagnostics, "app",
+                        "whole-project Console consumer IR is incomplete");
+    }
+  }
+
+  cloth::Compilation inaccessible;
+  inaccessible.add_package_source(cloth::SourceFile::from_memory("Main.co", R"(
+      static func Main() { __readLine(); }
+    )"),
+                                  "app", "", "0.1.0");
+  cloth::DiagnosticEngine inaccessible_diagnostics;
+  test.expect(!inaccessible.analyze(inaccessible_diagnostics).is_valid &&
+                  messages(inaccessible_diagnostics)
+                      .contains("unknown name '__readLine'"),
+              "the private Console bridge escaped the compiler-paired library");
+
+  cloth::Compilation mismatched;
+  if (add_console_sources(mismatched, "0.2.0")) {
+    cloth::DiagnosticEngine mismatched_diagnostics;
+    test.expect(!mismatched.analyze(mismatched_diagnostics).is_valid &&
+                    messages(mismatched_diagnostics)
+                        .contains("unknown name '__readLine'"),
+                "the private Console bridge accepted an unpaired library");
+  }
+}
+
+void primitive_parse_rejections(TestContext& test) {
+  const std::filesystem::path parse_error_path =
+      std::filesystem::path{CLOTH_STANDARD_LIBRARY_SOURCE_DIR} / "lang" /
+      "errors" / "ParseError.co";
+  const auto add_parse_error = [&](cloth::Compilation& compilation,
+                                   std::string_view version) {
+    auto source = cloth::SourceFile::load(parse_error_path);
+    test.expect(source.has_value(), "ParseError.co could not be read");
+    if (!source) {
+      return false;
+    }
+    compilation.add_package_source(std::move(*source), "cloth", "lang.errors",
+                                   std::string{version});
+    compilation.set_package_dependencies({{"app", "cloth", "cloth"}});
+    return true;
+  };
+
+  cloth::Compilation invalid;
+  if (add_parse_error(invalid, cloth::kStandardLibraryPackageVersion)) {
+    invalid.add_package_source(cloth::SourceFile::from_memory("Main.co", R"(
+      static final int32 Constant = int32::parse("1");
+      static func MissingThrows(): int32 { return int32::parse("1"); }
+      static func Main() throws ParseError {
+        string? maybe = null;
+        int32 value = 1;
+        int32 missing = int32::parse();
+        int32 wrongType = int32::parse(value);
+        int32 nullable = int32::parse(maybe);
+        int32 extra = int32::parse("1", "2");
+        int32 wrongCase = int32::Parse("1");
+        int32 wrongReceiver = value::parse("1");
+        string unsupported = string::parse("text");
+        int32 hidden = __primitiveParse("1");
+      }
+    )"),
+                               "app", "", "0.1.0");
+    cloth::DiagnosticEngine diagnostics;
+    const auto result = invalid.analyze(diagnostics);
+    const std::string text = messages(diagnostics);
+    test.expect(
+        !result.is_valid &&
+            text.contains("static field initializer must be a scalar constant "
+                          "expression") &&
+            text.contains("function 'MissingThrows(): int32' may throw ") &&
+            text.contains("cloth.lang.errors.ParseError") &&
+            text.contains("no matching overload for call with 0 argument(s)") &&
+            text.contains("no matching overload for call with 2 argument(s)") &&
+            text.contains("type 'int32' has no meta operation 'Parse'") &&
+            text.contains("type 'int32' has no Cloth meta queries") &&
+            text.contains("type 'string' cannot be parsed") &&
+            text.contains("unknown name '__primitiveParse'"),
+        text);
+  }
+
+  cloth::Compilation mismatched;
+  if (add_parse_error(mismatched, "0.2.0")) {
+    mismatched.add_package_source(cloth::SourceFile::from_memory("Main.co", R"(
+          static func Main() throws ParseError {
+            int32 value = int32::parse("1");
+          }
+        )"),
+                                  "app", "", "0.1.0");
+    cloth::DiagnosticEngine diagnostics;
+    const auto result = mismatched.analyze(diagnostics);
+    test.expect(
+        !result.is_valid &&
+            messages(diagnostics)
+                .contains("primitive parsing requires the compiler-paired "
+                          "'cloth.lang.errors.ParseError'"),
+        "primitive parsing accepted a mismatched standard-library version");
+  }
+
+  cloth::Compilation malformed;
+  malformed.set_package_dependencies({{"app", "cloth", "cloth"}});
+  malformed.add_package_source(
+      cloth::SourceFile::from_memory("ParseError.co", R"(
+        error { ParseError() {} }
+      )"),
+      "cloth", "lang.errors",
+      std::string{cloth::kStandardLibraryPackageVersion});
+  malformed.add_package_source(cloth::SourceFile::from_memory("Main.co", R"(
+        static func Main() throws ParseError {
+          int32 value = int32::parse("1");
+        }
+      )"),
+                               "app", "", "0.1.0");
+  cloth::DiagnosticEngine malformed_diagnostics;
+  const auto malformed_result = malformed.analyze(malformed_diagnostics);
+  test.expect(
+      !malformed_result.is_valid &&
+          messages(malformed_diagnostics)
+              .contains("primitive parsing requires the compiler-paired "
+                        "'cloth.lang.errors.ParseError'"),
+      "primitive parsing accepted an incompatible ParseError declaration");
+}
+
 void math_package_and_source_free_consumer(TestContext& test) {
   const std::filesystem::path math_path =
       std::filesystem::path{CLOTH_STANDARD_LIBRARY_SOURCE_DIR} / "math" /
@@ -663,6 +998,9 @@ void reserved_source_package(TestContext& test) {
 
 int main() {
   const std::vector<TestCase> tests{
+      {"Console API and source-free consumer",
+       console_api_and_source_free_consumer},
+      {"primitive parse rejections", primitive_parse_rejections},
       {"Math package and source-free consumer",
        math_package_and_source_free_consumer},
       {"prelude whole and source-free", prelude_whole_and_source_free},

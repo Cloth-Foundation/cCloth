@@ -368,7 +368,11 @@ class AbiVerifier {
             report(instruction.range,
                    "MIR intrinsic call has the wrong parameter count");
           }
-          if (symbol.type != instruction.type) {
+          const TypeId expected_return =
+              callable_uses_error_abi(call->callable, semantics_)
+                  ? semantics_.void_type()
+                  : symbol.type;
+          if (expected_return != instruction.type) {
             report(instruction.range,
                    "MIR intrinsic call has the wrong return type");
           }

@@ -1,5 +1,105 @@
 # Cloth testing and diagnostic builds
 
+## Stage 38.4 text-input and primitive-parsing exit audit
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 281 CTests, including 36 compiler-backed Shuttle toolchain cases
+and 34 native cases. All 51 ordinary Rust tests, Rust 1.85 all-target checking,
+warning-denied Clippy, Rust and C++ formatting, 14 editor grammar/compiler tests,
+338 local targets across 111 Markdown files, and repository whitespace checks
+pass.
+
+The runtime matrix covers LF, CRLF, lone CR, empty and final unterminated lines,
+buffered input, repeated EOF, whitespace, BOM, embedded null, non-BMP text,
+UTF-8 split across a 4096-byte read boundary, I/O failure, and exact no-partial
+results. Parsing covers every primitive and alias; adjacent integer bounds;
+bases, separators, invalid forms, and full-input consumption; binary32/binary64
+ties-to-even independent of the host rounding mode; signed zero, subnormals,
+extrema, underflow, overflow, and extreme exponents; and exact boolean and
+Unicode-scalar character behavior. Malformed managed-string layouts now fail at
+the runtime boundary before parsing.
+
+Compiler and native coverage proves typed messages and effects, source-defined
+error inheritance, once-only receiver evaluation, collection during success and
+failure, whole/separate/source-free equivalence, verified x86-64 and wasm32 LLVM
+before and after optimization, exact standard-library invalidation and reuse,
+input-independent artifacts, relocated serial/parallel determinism, failed-output
+preservation, and stale-run prevention. The existing checked `int32` string
+representation remains the only line-size bound; allocation exhaustion remains
+a terminal runtime policy. Interactive Windows console conversion and the
+structural oversized-line guard were audited directly, while redirected Windows
+input and all portable byte-oriented cases are automated.
+
+Compatibility remains artifact/compiler/runtime 5/5/6 and
+process/receipt/manifest/toolchain-metadata schemas 2/1/1/1 with `cloth`
+v0.3.0. Stage 38 is complete without another format, ABI, protocol, schema, or
+library-version transition.
+
+## Stage 38.3 primitive-parsing integration
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 276 CTests, including 36 compiler-backed Shuttle toolchain cases
+and 34 native cases. All 51 ordinary Rust tests, Rust 1.85 all-target checking,
+warning-denied Clippy, Rust and C++ formatting, 14 editor grammar/compiler tests,
+338 local targets across 111 Markdown files, and repository whitespace checks
+pass.
+
+The matrix covers every canonical primitive parse target and the
+`int`/`uint`/`float` aliases, exact invalid and range errors, typed-effect
+inference and enforcement, unavailable or incompatible paired libraries,
+runtime-only constant rejection, HIR retention, checked runtime-ABI-6 lowering,
+verified x86-64 and wasm32 LLVM, native success and failure, whole and
+source-free packages, redirected Shuttle stdin, artifact identity, warm reuse,
+streams, statuses, and failed-output preservation.
+
+Compatibility remains artifact/compiler/runtime 5/5/6 and
+process/receipt/manifest/toolchain-metadata schemas 2/1/1/1 with `cloth`
+v0.3.0. Checkpoint 38.3 changes no format, ABI, protocol, schema, or library
+version.
+
+## Stage 38.2 text-input and parsing foundation
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 276 CTests, including the compiler-backed Shuttle toolchain and
+native suites. The 51 ordinary Rust tests, warning-denied Clippy, Rust format,
+Rust 1.85 all-target check, and C++ format checks pass.
+
+The compiler-paired `cloth` v0.3.0 package defines `cloth.io.Console`,
+`cloth.lang.errors.IoError`, and `cloth.lang.errors.ParseError` for both LLVM
+targets and source-free consumers. The private bridge is accepted only for the
+exact paired `cloth.io.Console`; applications and a mismatched library version
+cannot name it. Native success, EOF, empty, CRLF, final unterminated, Unicode,
+invalid redirected UTF-8, and source-defined `IoError` propagation paths pass.
+
+Runtime ABI 6 supplies bounded line input and the complete low-level parser
+matrix for all approved primitive kinds. Tests cover exact integer limits,
+bases and separators, full-input rejection, Unicode scalar validation,
+floating ties, signed zero, subnormals, underflow, overflow, malformed ABI
+arguments, and deterministic status/result initialization. Public `T::parse`
+remains unavailable until 38.3.
+
+Artifact/compiler/runtime compatibility is now 5/5/6 and `cloth` is v0.3.0.
+Process protocol 2 and receipt/manifest/toolchain-metadata schemas 1/1/1 are
+unchanged. Artifact goldens, source-free linking, exact library selection, and
+native error behavior pass without a Shuttle production change.
+
+## Stage 38.1 portable text-input and primitive-parsing contract
+
+Approved and recorded on Windows on 2026-09-06. The contract freezes
+`Console.ReadLine(): string? throws IoError`, exact LF/CRLF and EOF behavior,
+strict host Unicode decoding, complete-string primitive parsing, Stage 33-based
+numeric grammar without suffixes, deterministic IEEE rounding, source-defined
+`IoError` and `ParseError`, the compiler-paired private bridge, memory ownership,
+compatibility, diagnostics, verification, and non-goals.
+
+This checkpoint changes roadmap, work-ledger, proposal, and verification
+documentation only. It adds no source behavior, runtime symbol,
+standard-library declaration, editor claim, or Shuttle production behavior.
+Artifact/compiler/runtime compatibility remains 5/5/5 and process/receipt/
+manifest/toolchain schemas remain 2/1/1/1; the selected library remains `cloth`
+v0.2.0. Runtime ABI 6 and `cloth` v0.3.0 begin only with a separately authorized
+38.2 implementation. Local Markdown links and repository whitespace gates pass.
+
 ## Stage 37.4 portable program-argument exit audit
 
 Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations

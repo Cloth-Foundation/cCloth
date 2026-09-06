@@ -1,0 +1,14 @@
+import cloth.io::Console;
+
+static func Main() throws IoError {
+  string first = Console.ReadLine() ?? "missing";
+  string empty = Console.ReadLine() ?? "missing";
+  string unicode = Console.ReadLine() ?? "missing";
+  string last = Console.ReadLine() ?? "missing";
+  string eof = Console.ReadLine() ?? "eof";
+  println(first);
+  println(empty);
+  println(unicode);
+  println(last);
+  println(eof);
+}

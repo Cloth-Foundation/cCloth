@@ -1,0 +1,30 @@
+int32 Calls;
+
+ParseProbe() {
+  Calls = 0;
+}
+
+func Churn() {
+  string value = "";
+  for (int32 index = 0; index < 2500; index++) {
+    value = value + "";
+  }
+}
+
+func Value(): string {
+  Calls++;
+  Churn();
+  return "4" + "2";
+}
+
+func Invalid(): string {
+  Calls++;
+  Churn();
+  return "12" + " ";
+}
+
+func Range(): string {
+  Calls++;
+  Churn();
+  return "429496729" + "6";
+}

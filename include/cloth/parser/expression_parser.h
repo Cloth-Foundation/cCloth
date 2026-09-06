@@ -43,6 +43,8 @@ class ExpressionParser {
                                                       SourceLocation end);
   [[nodiscard]] ExpressionId parse_postfix_expression();
   [[nodiscard]] ExpressionId parse_primary_expression();
+  [[nodiscard]] bool at_primitive_parse_target() const noexcept;
+  [[nodiscard]] ExpressionId parse_primitive_meta_target();
   [[nodiscard]] ExpressionId parse_atom_expression();
   [[nodiscard]] ExpressionId parse_grouped_expression();
   [[nodiscard]] ExpressionId parse_postfix_suffixes(ExpressionId expression);

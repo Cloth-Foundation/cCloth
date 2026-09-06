@@ -252,6 +252,7 @@ ExpressionId ExpressionParser::parse_primary_expression() {
   if (!at_limit()) {
     if (current().kind == TokenKind::kLeftParen)
       return parse_grouped_expression();
+    if (at_primitive_parse_target()) return parse_primitive_meta_target();
     if (is_primitive_type(current().kind) && current_ + 1 < limit_ &&
         tokens_[current_ + 1].kind == TokenKind::kColonColon) {
       return parse_integer_conversion_expression();
@@ -263,6 +264,20 @@ ExpressionId ExpressionParser::parse_primary_expression() {
       return parse_array_literal_expression();
   }
   return parse_atom_expression();
+}
+
+bool ExpressionParser::at_primitive_parse_target() const noexcept {
+  return current_ + 2 < limit_ && is_primitive_type(current().kind) &&
+         tokens_[current_ + 1].kind == TokenKind::kColonColon &&
+         tokens_[current_ + 2].kind == TokenKind::kIdentifier &&
+         (tokens_[current_ + 2].lexeme == "parse" ||
+          tokens_[current_ + 2].lexeme == "Parse");
+}
+
+ExpressionId ExpressionParser::parse_primitive_meta_target() {
+  const Token& target = advance();
+  return add_expression(
+      Expression{target.range, IdentifierExpression{target.lexeme}});
 }
 
 ExpressionId ExpressionParser::parse_grouped_expression() {
