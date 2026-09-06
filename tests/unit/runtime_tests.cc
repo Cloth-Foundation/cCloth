@@ -4,11 +4,13 @@
 
 #include "cloth/runtime/runtime.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <string_view>
+#include <vector>
 
 #include "test.h"
 
@@ -54,6 +56,30 @@ int runtime_failure_scenario(std::string_view scenario) {
   }
   if (scenario == "invalid_integer_arithmetic_reason") {
     cloth_rt_require_integer_arithmetic(0, UINT8_MAX);
+  }
+  if (scenario == "program_argument_count") {
+    static_cast<void>(cloth_rt_program_arguments(-1, nullptr));
+  }
+  if (scenario == "program_argument_vector") {
+    static_cast<void>(cloth_rt_program_arguments(1, nullptr));
+  }
+  if (scenario == "program_argument_value") {
+#if defined(_WIN32)
+    const wchar_t* values[]{L"program", nullptr};
+#else
+    const char* values[]{"program", nullptr};
+#endif
+    static_cast<void>(cloth_rt_program_arguments(2, values));
+  }
+  if (scenario == "program_argument_unicode") {
+#if defined(_WIN32)
+    const wchar_t invalid[]{static_cast<wchar_t>(0xd800), L'\0'};
+    const wchar_t* values[]{L"program", invalid};
+#else
+    const char invalid[]{static_cast<char>(0xff), '\0'};
+    const char* values[]{"program", invalid};
+#endif
+    static_cast<void>(cloth_rt_program_arguments(2, values));
   }
   constexpr std::string_view kPlainName = "Plain";
   const ClothTypeDescriptor plain_type{ClothHeapObjectKind::kFileClass,
@@ -300,6 +326,81 @@ int main(int argc, char** argv) {
   test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
               "sweeping did not reclaim borrowed and owned strings");
   cloth_rt_gc_pop_frame(&string_frame);
+
+  ClothGcRootFrame argument_frame{};
+  void* program_arguments = nullptr;
+  void** argument_roots[]{&program_arguments};
+#if defined(_WIN32)
+  wchar_t empty_argument[]{L'\0'};
+  wchar_t words_argument[]{L't', L'w', L'o', L' ', L'w',
+                           L'o', L'r', L'd', L's', L'\0'};
+  wchar_t option_argument[]{L'-', L'-', L'f', L'l', L'a', L'g', L'\0'};
+  wchar_t unicode_argument[]{static_cast<wchar_t>(0x00e9),
+                             static_cast<wchar_t>(0xd83d),
+                             static_cast<wchar_t>(0xde42), L'\0'};
+  const wchar_t* host_arguments[]{L"program", empty_argument, words_argument,
+                                  option_argument, unicode_argument};
+#else
+  char empty_argument[]{'\0'};
+  char words_argument[]{"two words"};
+  char option_argument[]{"--flag"};
+  char unicode_argument[]{"\xC3\xA9\xF0\x9F\x99\x82"};
+  const char* host_arguments[]{"program", empty_argument, words_argument,
+                               option_argument, unicode_argument};
+#endif
+  program_arguments = cloth_rt_program_arguments(5, host_arguments);
+  cloth_rt_gc_push_frame(&argument_frame, argument_roots, 1);
+  words_argument[0] = 'X';
+  option_argument[0] = 'X';
+  unicode_argument[0] = 'X';
+  test.expect(cloth_rt_array_length(program_arguments) == 4,
+              "program argument count excluded the wrong host values");
+  constexpr std::array<std::string_view, 4> kExpectedArguments{
+      "", "two words", "--flag", "\xC3\xA9\xF0\x9F\x99\x82"};
+  for (std::int32_t index = 0; index < 4; ++index) {
+    void* actual = nullptr;
+    std::memcpy(&actual, cloth_rt_array_element(program_arguments, index),
+                sizeof(actual));
+    const std::string_view expected =
+        kExpectedArguments[static_cast<std::size_t>(index)];
+    void* expected_string =
+        cloth_rt_string_literal(expected.data(), expected.size());
+    test.expect(cloth_rt_string_equal(actual, expected_string) == 1,
+                "program argument conversion changed a value");
+  }
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 5,
+              "owned program arguments were not traced through their array");
+  program_arguments = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "owned program arguments were not reclaimed");
+  cloth_rt_gc_pop_frame(&argument_frame);
+
+  constexpr std::int32_t kStressArgumentCount = 5000;
+#if defined(_WIN32)
+  std::vector<const wchar_t*> stress_arguments(
+      static_cast<std::size_t>(kStressArgumentCount) + 1, L"argument");
+  stress_arguments.front() = L"program";
+#else
+  std::vector<const char*> stress_arguments(
+      static_cast<std::size_t>(kStressArgumentCount) + 1, "argument");
+  stress_arguments.front() = "program";
+#endif
+  program_arguments = cloth_rt_program_arguments(kStressArgumentCount + 1,
+                                                 stress_arguments.data());
+  cloth_rt_gc_push_frame(&argument_frame, argument_roots, 1);
+  cloth_rt_gc_collect();
+  test.expect(
+      cloth_rt_array_length(program_arguments) == kStressArgumentCount &&
+          cloth_rt_gc_live_objects() ==
+              static_cast<std::uint64_t>(kStressArgumentCount) + 1,
+      "program argument construction lost values at GC safepoints");
+  program_arguments = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "stress program arguments were not reclaimed");
+  cloth_rt_gc_pop_frame(&argument_frame);
 
   ClothGcRootFrame array_frame{};
   void* array_root = nullptr;

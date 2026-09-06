@@ -55,6 +55,7 @@ struct EntrySelection {
   std::string mangled_name;
   bool returns_int32;
   bool uses_error_abi;
+  bool accepts_arguments;
 };
 
 class PrivateOutputDirectory {
@@ -511,6 +512,8 @@ std::expected<EntrySelection, std::string> select_entry(
   }
   const std::string void_type = canonical_primitive_identity("void");
   const std::string int32_type = canonical_primitive_identity("int32");
+  const std::string string_array_type =
+      canonical_array_identity(canonical_primitive_identity("string"));
   std::optional<EntrySelection> selected;
   bool saw_main = false;
   for (const ImportedMember& member : file->members) {
@@ -518,8 +521,11 @@ std::expected<EntrySelection, std::string> select_entry(
       continue;
     }
     saw_main = true;
+    const bool accepts_arguments =
+        member.parameters.size() == 1 &&
+        member.parameters.front().type_identity == string_array_type;
     if (member.visibility != Visibility::kPublic || !member.is_static ||
-        !member.parameters.empty() ||
+        (!member.parameters.empty() && !accepts_arguments) ||
         (member.type_identity != void_type &&
          member.type_identity != int32_type)) {
       continue;
@@ -532,15 +538,36 @@ std::expected<EntrySelection, std::string> select_entry(
       continue;
     }
     const bool returns_int32 = member.type_identity == int32_type;
-    const bool valid_error_result =
-        callable->uses_error_abi && returns_int32 &&
-        callable->parameters.size() == 1 &&
-        callable->parameters.front().kind == AbiParameterKind::kResult &&
-        callable->parameters.front().type_identity == int32_type &&
-        callable->parameters.front().passing == AbiPassingMode::kResultPointer;
-    if (callable->uses_error_abi && returns_int32
-            ? !valid_error_result
-            : !callable->parameters.empty()) {
+    const AbiReturnMode expected_return =
+        callable->uses_error_abi && returns_int32 ? AbiReturnMode::kIndirect
+        : returns_int32                           ? AbiReturnMode::kDirect
+                                                  : AbiReturnMode::kVoid;
+    std::size_t parameter_index = 0;
+    bool valid_abi = callable->kind == AbiCallableKind::kFunction &&
+                     callable->calling_convention == AbiCallingConvention::kC &&
+                     callable->receiver_mode == AbiReceiverMode::kNone &&
+                     callable->return_type_identity == member.type_identity &&
+                     callable->return_mode == expected_return;
+    if (valid_abi && callable->uses_error_abi && returns_int32) {
+      valid_abi =
+          !callable->parameters.empty() &&
+          callable->parameters.front().kind == AbiParameterKind::kResult &&
+          callable->parameters.front().type_identity == int32_type &&
+          callable->parameters.front().passing ==
+              AbiPassingMode::kResultPointer;
+      parameter_index = 1;
+    }
+    if (valid_abi && accepts_arguments) {
+      valid_abi = parameter_index < callable->parameters.size() &&
+                  callable->parameters[parameter_index].kind ==
+                      AbiParameterKind::kExplicit &&
+                  callable->parameters[parameter_index].type_identity ==
+                      string_array_type &&
+                  callable->parameters[parameter_index].passing ==
+                      AbiPassingMode::kDirect;
+      ++parameter_index;
+    }
+    if (!valid_abi || parameter_index != callable->parameters.size()) {
       continue;
     }
     if (selected) {
@@ -548,12 +575,13 @@ std::expected<EntrySelection, std::string> select_entry(
           "native program has more than one eligible 'Main' function");
     }
     selected = EntrySelection{callable->mangled_name, returns_int32,
-                              callable->uses_error_abi};
+                              callable->uses_error_abi, accepts_arguments};
   }
   if (selected) return *selected;
   return std::unexpected(
       saw_main ? "entry point 'Main' must be public and static, take no "
-                 "parameters, and return no value or int32"
+                 "parameters or one non-null string[] parameter, and return "
+                 "no value or int32"
                : "native program requires a public static 'Main' function");
 }
 
@@ -562,6 +590,14 @@ LlvmIrModule entry_wrapper(const EntrySelection& entry,
   const std::string return_type = entry.uses_error_abi  ? "ptr"
                                   : entry.returns_int32 ? "i32"
                                                         : "void";
+  const bool use_wide_arguments =
+      entry.accepts_arguments &&
+      compatibility.native->target_triple.contains("windows");
+  const std::string_view entry_name = use_wide_arguments ? "wmain" : "main";
+  const std::uint64_t pointer_alignment =
+      compatibility.target.pointer.alignment;
+  const std::uint64_t frame_alignment =
+      std::max(pointer_alignment, compatibility.target.int64_alignment);
   std::ostringstream output;
   output << "; Cloth entry wrapper\nsource_filename = \"cloth-entry\"\n"
          << "target datalayout = \"" << compatibility.target.llvm_data_layout
@@ -570,18 +606,59 @@ LlvmIrModule entry_wrapper(const EntrySelection& entry,
          << "\"\n\ndeclare " << return_type << " @" << entry.mangled_name
          << '(';
   if (entry.uses_error_abi && entry.returns_int32) output << "ptr";
+  if (entry.accepts_arguments) {
+    if (entry.uses_error_abi && entry.returns_int32) output << ", ";
+    output << "ptr";
+  }
   output << ")\n";
   if (entry.uses_error_abi) {
     output << "declare i32 @cloth_rt_report_error(ptr)\n";
   }
-  output << "\ndefine i32 @main() {\nentry:\n";
+  if (entry.accepts_arguments) {
+    output << "declare void @cloth_rt_gc_push_frame(ptr, ptr, i64)\n"
+           << "declare void @cloth_rt_gc_pop_frame(ptr)\n"
+           << "declare ptr @cloth_rt_program_arguments(i32, ptr)\n";
+  }
+  output << "\ndefine i32 @" << entry_name << '(';
+  if (entry.accepts_arguments) {
+    output << "i32 %host.argc, ptr %host.argv";
+  }
+  output << ") {\nentry:\n";
+  if (entry.accepts_arguments) {
+    output << "  %entry.arguments.slot = alloca ptr, align "
+           << pointer_alignment << '\n'
+           << "  store ptr null, ptr %entry.arguments.slot, align "
+           << pointer_alignment << '\n'
+           << "  %entry.gc.frame = alloca { ptr, ptr, i64 }, align "
+           << frame_alignment << '\n'
+           << "  %entry.gc.roots = alloca [1 x ptr], align "
+           << pointer_alignment << '\n'
+           << "  %entry.gc.root = getelementptr [1 x ptr], ptr "
+              "%entry.gc.roots, i64 0, i64 0\n"
+           << "  store ptr %entry.arguments.slot, ptr %entry.gc.root, align "
+           << pointer_alignment << '\n'
+           << "  call void @cloth_rt_gc_push_frame(ptr %entry.gc.frame, ptr "
+              "%entry.gc.roots, i64 1)\n"
+           << "  %entry.arguments = call ptr "
+              "@cloth_rt_program_arguments(i32 %host.argc, ptr %host.argv)\n"
+           << "  store ptr %entry.arguments, ptr %entry.arguments.slot, align "
+           << pointer_alignment << '\n';
+  }
   if (entry.uses_error_abi) {
     if (entry.returns_int32) {
       output << "  %entry.result = alloca i32, align 4\n";
     }
     output << "  %entry.error = call ptr @" << entry.mangled_name << '(';
     if (entry.returns_int32) output << "ptr %entry.result";
+    if (entry.accepts_arguments) {
+      if (entry.returns_int32) output << ", ";
+      output << "ptr %entry.arguments";
+    }
     output << ")\n"
+           << (entry.accepts_arguments
+                   ? "  call void @cloth_rt_gc_pop_frame(ptr "
+                     "%entry.gc.frame)\n"
+                   : "")
            << "  %entry.failed = icmp ne ptr %entry.error, null\n"
            << "  br i1 %entry.failed, label %error, label %success\n"
            << "error:\n"
@@ -596,13 +673,24 @@ LlvmIrModule entry_wrapper(const EntrySelection& entry,
       output << "  ret i32 0\n";
     }
   } else if (entry.returns_int32) {
-    output << "  %result = call i32 @" << entry.mangled_name
-           << "()\n  ret i32 %result\n";
+    output << "  %result = call i32 @" << entry.mangled_name << '(';
+    if (entry.accepts_arguments) output << "ptr %entry.arguments";
+    output << ")\n";
+    if (entry.accepts_arguments) {
+      output << "  call void @cloth_rt_gc_pop_frame(ptr %entry.gc.frame)\n";
+    }
+    output << "  ret i32 %result\n";
   } else {
-    output << "  call void @" << entry.mangled_name << "()\n  ret i32 0\n";
+    output << "  call void @" << entry.mangled_name << '(';
+    if (entry.accepts_arguments) output << "ptr %entry.arguments";
+    output << ")\n";
+    if (entry.accepts_arguments) {
+      output << "  call void @cloth_rt_gc_pop_frame(ptr %entry.gc.frame)\n";
+    }
+    output << "  ret i32 0\n";
   }
   output << "}\n";
-  return {output.str()};
+  return {output.str(), use_wide_arguments};
 }
 
 std::expected<void, std::string> validate_link_symbols(
@@ -952,7 +1040,10 @@ ShuttleV2ExecutionResult execute_link(
   }
   object_paths.push_back(wrapper_path);
   const auto executable = staged.path() / "completed";
-  if (auto linked = link_native_objects(object_paths, executable, toolchain);
+  if (auto linked = link_native_objects(
+          object_paths, executable, toolchain,
+          entry->accepts_arguments &&
+              expected->native->target_triple.contains("windows"));
       !linked) {
     return failure(2, "clothc: error: " + linked.error().message);
   }

@@ -88,6 +88,14 @@ omitted the return annotation or wrote `: void`. Their fallthrough and
 The native entry adapter translates a void `Main` completion to process status
 zero.
 
+An entry may instead take one exact non-null `string[]`. Its native adapter
+receives the host count and vector, calls `cloth_rt_program_arguments`, roots
+the resulting managed array across the complete invocation, and passes it as
+the sole explicit argument. Windows native output selects `wmain` for wide
+host text; POSIX uses `main`. The same adapter sequence is emitted for direct
+builds and source-free package links. Zero-parameter entries retain their
+established wrapper.
+
 ## Calls and construction
 
 Instance functions receive the Stage 4 receiver slot followed by explicit

@@ -1,5 +1,86 @@
 # Cloth testing and diagnostic builds
 
+## Stage 37.4 portable program-argument exit audit
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 269 CTests, including 36 compiler-backed Shuttle toolchain cases
+and 33 native Shuttle cases. All 51 ordinary Rust tests, a Rust 1.85 all-target
+check, warning-denied Clippy, Rust and C++ formatting, both 12-test editor runs,
+local Markdown links, and repository whitespace gates pass.
+
+The completed matrix covers all six zero- and one-parameter `Main` forms,
+explicit and implicit `void`, `int32`, typed errors, and every ineligible entry
+category. Exact zero, one, many, empty, whitespace-only, option-like, and
+Unicode arguments agree across direct, whole-project, separate-package,
+source-free, and Shuttle execution. Host-specific invalid UTF-16/UTF-8 paths
+fail before user code, while malformed vectors and checked size/layout paths
+retain deterministic runtime failures.
+
+Program-argument LLVM verifies before and after O2 on x86-64 and wasm32. Native
+x86-64 tests force collection during construction and from inside `Main`,
+preserving the managed array and strings. Exit statuses, thrown errors, spawn
+and compiler failures, unchanged artifact identity, completed-output
+preservation, and stale-run prevention remain exact. No Stage 37.4 production
+surface or compatibility version changed: artifact/compiler/runtime remains
+5/5/5 and process/receipt/manifest/toolchain-metadata remains 2/1/1/1.
+
+**Stage 37 is complete.**
+
+## Stage 37.3 Shuttle program-argument forwarding
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 263 CTests, including 36 compiler-backed Shuttle toolchain cases
+and 33 native cases. All 51 ordinary Rust tests pass with Rust 1.89; the Rust
+1.85 MSRV remains unchanged. Warning-denied Clippy and Rust formatting also
+pass.
+
+The forwarding matrix proves that only `run` accepts application arguments and
+that an explicit `--` is required. Empty, whitespace-only, option-looking, and
+Unicode values retain their boundaries and order. `run --` supplies zero
+values. Direct execution, whole-project compilation, separate-package builds,
+source-free linking, warm artifact reuse, application streams and statuses,
+and malformed-host-Unicode failure all agree. Arguments remain host-native
+`OsString` values until the completed executable receives them and never enter
+compiler requests or cache keys.
+
+Compatibility remains artifact/compiler/runtime 5/5/5 and process/receipt/
+manifest/toolchain-metadata 2/1/1/1. Stage 37.4 remains the separately
+authorized exit audit.
+
+## Stage 37.2 compiler and runtime program arguments
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 263 CTests. Coverage includes exact `Main(string[] args)` entry
+selection, malformed and ambiguous signatures, void and `int32` entries, typed
+errors, direct native execution, source-free artifact linking, the existing
+zero-parameter entry forms, empty/whitespace/option-like/Unicode values, strict
+host decoding, copied storage, GC rooting, stress collection, and malformed
+host-vector failures.
+
+Windows adapters use `wmain` and strict UTF-16 conversion; POSIX adapters use
+`main` and strict UTF-8 validation. Application arguments exclude the executable
+name and become owned, non-null managed UTF-8 strings in a non-null managed
+array. Artifact/compiler/runtime compatibility is now 5/5/5. Process, receipt,
+manifest, and toolchain-metadata schemas remain 2/1/1/1, and `cloth` remains
+version 0.2.0. Shuttle production argument forwarding remains deferred to 37.3.
+
+## Stage 37.1 portable program-argument contract
+
+Approved and recorded on Windows on 2026-09-06. The contract preserves all
+zero-parameter entry forms and adds one exact non-null `string[]` alternative.
+It freezes application-only values, strict host Unicode conversion, owned UTF-8
+storage, GC reachability, entry selection, typed-error behavior, Shuttle's
+explicit `run --` boundary, diagnostics, compatibility, verification, and
+non-goals.
+
+This checkpoint changes roadmap, work-ledger, proposal, and verification
+documentation only. It adds no source behavior, runtime operation, Shuttle
+argument forwarding, standard-library API, or compatibility transition.
+Artifact/compiler/runtime compatibility remains 5/5/4 and process/receipt/
+manifest/toolchain schemas remain 2/1/1/1. Runtime ABI 5 begins only with a
+separately authorized 37.2 implementation. Local Markdown links and repository
+whitespace gates pass.
+
 ## Stage 36.4 standard-library prelude exit audit
 
 Completed on Windows on 2026-09-06 with development and ASan/UBSan compilers.

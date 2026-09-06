@@ -9,8 +9,9 @@ unchanged.
 ## Compatibility
 
 Header offset 8 contains little-endian format integer **5**. Compiler ABI **5**
-uses `_C5` native names, and runtime ABI **4** owns the compiler-known error
-descriptors and terminal reporter. Capabilities advertise
+uses `_C5` native names. Runtime ABI **5** includes the compiler-known error
+descriptors, terminal reporter, and owned program-argument operation.
+Capabilities advertise
 `artifact_formats: [5]`; receipts carry `artifact_format: 5`. Process protocol
 **2**, receipt schema **1**, and manifest schema **1** are unchanged. Formats
 1–4 and older compiler/runtime ABIs are rejected and rebuilt, never migrated.
@@ -70,14 +71,17 @@ Constructor initializers use the same error channel as their constructor.
 Virtual and interface slots retain `error_abi: true` when their contract may
 throw, including a nonthrowing implementation of a throwing declaration.
 Closure validation rejects declaration, slot, initializer, and physical-
-signature disagreement.
+signature disagreement. Stage 37 reuses these callable records for an exact
+non-null `string[]` entry parameter; no artifact key or format revision is
+needed.
 
 Link-inventory callable signatures are now prefixed with either `c:plain:` or
 `c:error:` before the existing return mode, logical type, parameters, and
 receiver mode. This prevents a throwing definition from satisfying a
-nonthrowing requirement with the same source signature. Runtime ABI 4 supplies
-`DivisionByZero` construction and uncaught-error reporting; Shuttle transports
-the metadata and object payload without interpreting either operation.
+nonthrowing requirement with the same source signature. Runtime ABI 5 retains
+`DivisionByZero` construction and uncaught-error reporting and adds the native
+program-argument operation; Shuttle transports artifact metadata and object
+payloads without interpreting those operations.
 
 ## Determinism and validation
 
@@ -95,10 +99,11 @@ artifact:
 
 - metadata length: `12377` bytes;
 - metadata SHA-256:
-  `b63ae2762a6ec018d849fe4b9e16e696c824e224c173d826cf0536e3008d7907`;
+  `df1f1a9fb9db3e3663b60867f821f132bc3da9ef69d7f17e1d9df808eb4efc75`;
 - complete artifact digest:
-  `325ab6ae5019255a790a9a480d28883949d63e94407ba2306b6d434d5af8f138`.
+  `85841ba251c75eea3585d52967b831e0139aa5607d7beb69a12e5cadfee7bd40`.
 
 Changing an exact key, identity, ordering rule, signature prefix, or error
 encoding requires an explicit artifact-format review rather than an incidental
-golden update.
+golden update. Runtime-only compatibility transitions retain the record shape
+but intentionally update the compatibility value and complete-artifact digest.

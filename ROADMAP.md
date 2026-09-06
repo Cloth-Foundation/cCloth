@@ -74,13 +74,13 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 34 | Typed errors, declared effects, and portable automatic propagation |
 | 35 | Compiler-paired standard library with a reserved import root and deterministic Shuttle integration |
 | 36 | Recursive `cloth.lang` prelude with source-defined foundational errors |
+| 37 | Portable program arguments through managed `string[]` entry values |
 
-Stage 34 is the current completed native language-surface baseline, and Stage
-31 is the current completed optimizer baseline. Stages 35 and 36 are complete,
-including their standard-library and prelude exit audits. Coordinated toolchain
-Stage 22 and separate-compilation Stage 23 are complete, including their
-cross-tool exit audits.
-Build-responsiveness Stage 24 is also complete.
+Stage 37 is the current completed native language/runtime/toolchain baseline,
+and Stage 31 is the current completed optimizer baseline. Stages 35 and 36 are
+complete, including their standard-library and prelude exit audits. Coordinated
+toolchain Stage 22 and separate-compilation Stage 23 are complete, including
+their cross-tool exit audits. Build-responsiveness Stage 24 is also complete.
 
 Stage 26 is complete for value structs, including its approved source contract,
 frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
@@ -1013,9 +1013,52 @@ compiler resolves the two source-defined APIs from whole-project and source-free
 artifacts, while the existing Shuttle selection, digest, cache, and link paths
 carry exact `cloth` version `0.2.0`. Compatibility remains 5/5/4 and 2/1/1/1.
 
-## Beyond Stage 36
+## Stage 37: Portable program arguments
 
-Stage 36 is complete. The remaining backlog does not acquire priority or enter
+Status: **complete — 37.4 exit audit passed 2026-09-06**
+
+The [approved contract](docs/proposals/stage_37_program_arguments.md) adds one
+optional non-null `string[]` parameter to Cloth's existing native `Main`
+signatures and defines exact host-text and Shuttle forwarding behavior.
+
+Objective: deliver ordered application arguments as owned managed UTF-8 strings
+without exposing platform encodings, introducing command-line parsing, or
+combining unrelated input APIs.
+
+Prerequisite: Stage 36.
+
+Deliverables:
+
+1. **37.1 — Contract (complete).** Freeze eligible entry signatures, argument
+   values, strict host decoding, runtime and GC ownership, Shuttle's `run --`
+   boundary, compatibility, diagnostics, verification, and non-goals.
+2. **37.2 — Compiler and runtime (complete).** Implement managed argument
+   construction, direct and package entry adapters, runtime ABI 5, and internal
+   verification.
+3. **37.3 — Shuttle integration (complete).** Forward host-native values after
+   `run --` and prove direct, whole-project, separate-package, and source-free
+   behavior.
+4. **37.4 — Exit audit (complete).** Close encoding, resource, GC, compatibility,
+   failure-preservation, native/cross-target, documentation, and repository
+   gates.
+
+Existing zero-parameter `Main` forms remain valid. The new parameter must be
+exactly non-null `string[]`, excludes the executable name, and contains
+non-null strings in host order. Windows uses strict wide-text decoding; POSIX
+bytes must be valid UTF-8. Invalid host text fails before user code.
+
+Artifact/compiler/runtime compatibility is now 5/5/5. Process,
+receipt, manifest, and toolchain-metadata schemas remain 2/1/1/1, and the
+compiler-paired standard library remains `cloth` v0.2.0.
+
+The 37.4 audit passes all development and sanitizer tests, both LLVM targets,
+forced argument-graph collection, direct and Shuttle execution, source-free
+linking, failure preservation, Rust/MSRV, editor, documentation, formatting,
+and repository gates. **Stage 37 is complete.**
+
+## Beyond Stage 37
+
+Stage 37 is complete. The remaining backlog does not acquire priority or enter
 the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:

@@ -1080,6 +1080,14 @@ void wasm32_module(TestContext& test) {
 }
 
 void print_and_native_entry_point(TestContext& test) {
+  CompiledSources omitted_void;
+  omitted_void.add("Program.co", "static func Main() {}\n");
+  omitted_void.compile(cloth::LlvmIrOptions{true});
+  test.expect(
+      omitted_void.contains(
+          "call void @" + cloth::test::function_name("Program", "Main") + "()"),
+      "implicit void Main did not use the void entry adapter");
+
   CompiledSources sources;
   sources.add("HelloWorld.co",
               "HelloWorld() {}\n"
@@ -1134,6 +1142,88 @@ void print_and_native_entry_point(TestContext& test) {
                                  "()") &&
                   exit_code.contains("ret i32 %exit_code"),
               "int32 Main did not supply the process exit code");
+
+  CompiledSources arguments;
+  arguments.add("Arguments.co", R"(
+    static func Main(string[] values): int32 {
+      println(values::length);
+      return values::length;
+    }
+  )");
+  arguments.compile(cloth::LlvmIrOptions{true});
+  const std::string argument_main =
+      cloth::test::function_name("Arguments", "Main", {"string[]"});
+  test.expect(
+      arguments.llvm &&
+          arguments.contains("define i32 @main(i32 %host.argc, ptr "
+                             "%host.argv)") &&
+          arguments.contains(
+              "call ptr @cloth_rt_program_arguments(i32 %host.argc, ptr "
+              "%host.argv)") &&
+          arguments.contains("call void @cloth_rt_gc_push_frame(") &&
+          arguments.contains("call i32 @" + argument_main +
+                             "(ptr %entry.arguments)") &&
+          arguments.contains("call void @cloth_rt_gc_pop_frame("),
+      "argument-taking Main lost conversion, invocation, or GC rooting");
+
+  CompiledSources explicit_void_arguments;
+  explicit_void_arguments.add("Arguments.co",
+                              "static func Main(string[] values): void {}\n");
+  explicit_void_arguments.compile(cloth::LlvmIrOptions{true});
+  const std::string explicit_void_argument_main =
+      cloth::test::function_name("Arguments", "Main", {"string[]"});
+  test.expect(explicit_void_arguments.llvm &&
+                  explicit_void_arguments.contains("call void @" +
+                                                   explicit_void_argument_main +
+                                                   "(ptr %entry.arguments)") &&
+                  explicit_void_arguments.contains("ret i32 0"),
+              "explicit void argument-taking Main lost its native adapter");
+
+  CompiledSources wide_arguments;
+  wide_arguments.add("Arguments.co", "static func Main(string[] values) {}\n");
+  wide_arguments.compile(
+      cloth::LlvmIrOptions{true, std::nullopt, std::nullopt, true});
+  test.expect(wide_arguments.contains(
+                  "define i32 @wmain(i32 %host.argc, ptr %host.argv)"),
+              "Windows argument entry did not select the wide host boundary");
+
+  CompiledSources throwing_arguments;
+  throwing_arguments.add("Failure.co", "error { Failure() {} }\n");
+  throwing_arguments.add("Throwing.co", R"(
+    import Failure;
+    static func Main(string[] values): int32 throws Failure {
+      if (values::length == 0) { throw Failure(); }
+      return values::length;
+    }
+  )");
+  throwing_arguments.compile(cloth::LlvmIrOptions{true});
+  const std::string throwing_main =
+      cloth::test::function_name("Throwing", "Main", {"string[]"});
+  test.expect(
+      throwing_arguments.llvm &&
+          throwing_arguments.contains("call ptr @" + throwing_main +
+                                      "(ptr %entry.result, ptr "
+                                      "%entry.arguments)") &&
+          throwing_arguments.contains("call i32 @cloth_rt_report_error("),
+      "throwing argument-taking Main lost its result/error ABI");
+
+  CompiledSources throwing_void_arguments;
+  throwing_void_arguments.add("Failure.co", "error { Failure() {} }\n");
+  throwing_void_arguments.add("Throwing.co", R"(
+    import Failure;
+    static func Main(string[] values): void throws Failure {
+      if (values::length == 0) { throw Failure(); }
+    }
+  )");
+  throwing_void_arguments.compile(cloth::LlvmIrOptions{true});
+  const std::string throwing_void_main =
+      cloth::test::function_name("Throwing", "Main", {"string[]"});
+  test.expect(
+      throwing_void_arguments.llvm &&
+          throwing_void_arguments.contains("call ptr @" + throwing_void_main +
+                                           "(ptr %entry.arguments)") &&
+          throwing_void_arguments.contains("call i32 @cloth_rt_report_error("),
+      "throwing void argument-taking Main lost its error ABI");
 }
 
 void rejects_invalid_native_entry_points(TestContext& test) {
@@ -1145,6 +1235,22 @@ void rejects_invalid_native_entry_points(TestContext& test) {
                                  "requires a public static 'Main' function"),
               "missing native entry point was accepted");
 
+  CompiledSources private_spelling;
+  private_spelling.add("Program.co", "static func main() {}\n");
+  private_spelling.compile(cloth::LlvmIrOptions{true});
+  test.expect(!private_spelling.llvm &&
+                  has_diagnostic(private_spelling.diagnostics,
+                                 "requires a public static 'Main' function"),
+              "private lowercase entry spelling was accepted as public Main");
+
+  CompiledSources instance;
+  instance.add("Program.co", "func Main() {}\n");
+  instance.compile(cloth::LlvmIrOptions{true});
+  test.expect(!instance.llvm &&
+                  has_diagnostic(instance.diagnostics,
+                                 "entry point 'Main' must be declared static"),
+              "instance Main was accepted as a native entry point");
+
   CompiledSources invalid;
   invalid.add("Program.co",
               "static func Main(int value): int { return value; }\n");
@@ -1154,6 +1260,19 @@ void rejects_invalid_native_entry_points(TestContext& test) {
                                       "entry point 'Main' must be public"),
       "invalid native entry signature was accepted");
 
+  for (const std::string_view parameters :
+       {"string[]? values", "string?[] values", "object[] values",
+        "string[] values, int32 extra"}) {
+    CompiledSources wrong_arguments;
+    wrong_arguments.add(
+        "Program.co", "static func Main(" + std::string{parameters} + ") {}\n");
+    wrong_arguments.compile(cloth::LlvmIrOptions{true});
+    test.expect(!wrong_arguments.llvm &&
+                    has_diagnostic(wrong_arguments.diagnostics,
+                                   "one non-null string[] parameter"),
+                "ineligible Main parameter shape was accepted");
+  }
+
   CompiledSources duplicate;
   duplicate.add("First.co", "static func Main() {}\n");
   duplicate.add("Second.co", "static func Main(): int { return 0; }\n");
@@ -1162,6 +1281,17 @@ void rejects_invalid_native_entry_points(TestContext& test) {
       !duplicate.llvm && has_diagnostic(duplicate.diagnostics,
                                         "more than one eligible 'Main'"),
       "duplicate native entry points were accepted");
+
+  CompiledSources overloaded;
+  overloaded.add("Program.co", R"(
+    static func Main() {}
+    static func Main(string[] values) {}
+  )");
+  overloaded.compile(cloth::LlvmIrOptions{true});
+  test.expect(
+      !overloaded.llvm && has_diagnostic(overloaded.diagnostics,
+                                         "more than one eligible 'Main'"),
+      "zero- and one-parameter Main overloads were not ambiguous");
 }
 
 void rejects_inconsistent_input(TestContext& test) {
@@ -1177,6 +1307,21 @@ void rejects_inconsistent_input(TestContext& test) {
   test.expect(!llvm, "LLVM emitter accepted inconsistent MIR and ABI");
   test.expect(has_diagnostic(diagnostics, "MIR and ABI file counts differ"),
               "LLVM emitter reported the wrong invariant failure");
+
+  CompiledSources entry;
+  entry.add("Entry.co", "static func Main(string[] values) {}\n");
+  entry.compile();
+  cloth::AbiModule broken_entry = entry.result->abi;
+  broken_entry.files[0].functions[0].parameters[0].passing =
+      cloth::AbiPassingMode::kValuePointer;
+  cloth::DiagnosticEngine entry_diagnostics;
+  const auto invalid_entry = cloth::emit_llvm_ir(
+      entry.result->mir, broken_entry, entry.result->semantics,
+      entry_diagnostics, cloth::LlvmIrOptions{true});
+  test.expect(
+      !invalid_entry &&
+          has_diagnostic(entry_diagnostics, "one non-null string[] parameter"),
+      "native entry accepted a malformed explicit-parameter ABI");
 }
 
 void rejects_out_of_range_literal(TestContext& test) {

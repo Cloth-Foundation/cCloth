@@ -1,0 +1,8 @@
+static func Main(string[] arguments): int32 {
+  println(arguments::length);
+  for (string argument in arguments) {
+    println(argument::length);
+    println(argument);
+  }
+  return 0;
+}

@@ -62,6 +62,11 @@ supplied roots or artifacts, and emits deterministic outputs. The process
 boundary is authoritative; Shuttle must not depend on private compiler C++
 headers or internal representation layouts.
 
+Application arguments use a separate host-process boundary. `shuttle run --`
+passes every following host-native value directly to the completed executable;
+those values never enter the compiler request, artifact identity, or cache key.
+The compiler runtime converts them into the managed `string[]` entry value.
+
 The initial protocol is a direct child-process invocation. Shuttle passes
 arguments as an argument vector without a command shell. Protocol version 1
 defines its argument shape, path encoding, version query, exit statuses, and
@@ -116,7 +121,7 @@ checking, then prints typed HIR. It emits no artifact and does not change
 Shuttle's versioned check/build operations. This frontend-only path supports
 [struct declarations](structs.md) without native emission. Struct native builds
 and source-free dependencies are supported by artifact format 5. Compiler ABI 5
-and runtime ABI 4 are compiler-owned; Shuttle requires format 5 in capabilities
+and runtime ABI 5 are compiler-owned; Shuttle requires format 5 in capabilities
 and receipts while `clothc` validates the runtime ABI inside opaque artifacts.
 Process protocol 2 and manifest schema 1 remain unchanged.
 

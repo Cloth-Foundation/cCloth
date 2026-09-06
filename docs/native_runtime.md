@@ -17,7 +17,8 @@ file-class descriptors; generated code performs the dispatch directly. Stage
 changing the managed-reference representation. Stage 29.2 adds the checked
 integer-arithmetic guard and advances the runtime ABI to 3. Stage 34.3 adds
 managed error descriptors, `DivisionByZero` construction, and terminal error
-reporting under runtime ABI 4.
+reporting under runtime ABI 4. Stage 37.2 adds owned portable program arguments
+and advances the runtime ABI to 5.
 
 ## Source contract
 
@@ -41,10 +42,14 @@ A native compilation must contain exactly one eligible entry point:
 static func Main() { ... }
 static func Main(): void { ... }
 static func Main(): int32 { ... }
+static func Main(string[] arguments) { ... }
+static func Main(string[] arguments): void { ... }
+static func Main(string[] arguments): int32 { ... }
 ```
 
-Capitalization makes `Main` public. It takes no explicit parameters. Omitting
-the return type or explicitly returning `void` produces process status zero;
+Capitalization makes `Main` public. It takes either no explicit parameters or
+one exact non-null `string[]` parameter with non-null elements. Omitting the
+return type or explicitly returning `void` produces process status zero;
 returning `int32` supplies the process status. A `Main` that declares `throws`
 uses the error ABI; its LLVM adapter reports a non-null error and returns the
 reporter's nonzero status. Successful completion retains the ordinary status.
@@ -64,6 +69,7 @@ cloth_rt_gc_collection_count() -> uint64
 cloth_rt_gc_peak_live_bytes() -> uint64
 cloth_rt_string_literal(data, size) -> string
 cloth_rt_string_concat(left, right) -> string
+cloth_rt_program_arguments(host_count, host_values) -> string[]
 cloth_rt_string_equal(left, right) -> uint8
 cloth_rt_string_length(value) -> int32
 cloth_rt_string_byte_length(value) -> int32
@@ -111,6 +117,15 @@ managed header while remaining opaque to generated LLVM IR. A literal string bor
 immutable program-lifetime bytes. A concatenated string owns its separately
 allocated bytes. Both cache byte and Unicode scalar lengths; collection reclaims
 owned payloads together with their managed headers.
+
+`cloth_rt_program_arguments` removes the host executable name and constructs a
+managed array of owned immutable strings. Windows entry adapters receive the
+wide host vector and reject unpaired UTF-16 surrogates. POSIX adapters require
+strict UTF-8. Count, size, conversion, and allocation arithmetic are checked;
+invalid text fails before user code with
+`cloth runtime error: program argument is not valid Unicode`. The partially
+constructed array remains rooted across every allocation safepoint, and the
+entry adapter roots the completed array for the full `Main` invocation.
 
 Object type-name queries return a managed immutable string over stable
 program-lifetime name bytes. File classes use qualified descriptor names,
@@ -184,6 +199,9 @@ exception or unwinding ABI; Stage 34 intentionally adds no local recovery.
 Processes are launched directly rather than through a command shell, so source
 and output paths are not interpreted as shell syntax. Tool paths and the
 native target triple come from the CMake configuration.
+An argument-taking program uses `wmain` on Windows and `main` on POSIX. Programs
+with the established zero-parameter entry retain their existing native entry
+symbol.
 MinGW builds statically link their compiler runtime dependencies so the result
 does not require toolchain-specific DLLs.
 
@@ -195,8 +213,8 @@ LLVM IR emission but does not yet have a WebAssembly runtime or linker path.
 Stage 15 completes the first universal managed-reference contract. Primitive
 boxing, reified array casts, string indexing, slicing, iteration, formatting,
 normalization, interning, root-slot reuse,
-optimization levels, debug information, command-line arguments, local error
-handling, foreign exceptions, and platform
+optimization levels, debug information, console input, environment access,
+argument parsing, local error handling, foreign exceptions, and platform
 packaging remain future work. These features should extend the runtime and
 toolchain boundaries without changing existing source contracts.
 

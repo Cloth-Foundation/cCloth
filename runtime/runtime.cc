@@ -95,6 +95,9 @@ constexpr ClothTypeDescriptor kArrayTypeDescriptor{ClothHeapObjectKind::kArray,
                                                    0,
                                                    nullptr,
                                                    0};
+constexpr std::uint64_t kProgramArgumentReferenceOffsets[]{0};
+constexpr ClothArrayElementLayout kProgramArgumentElementLayout{
+    sizeof(void*), alignof(void*), kProgramArgumentReferenceOffsets, 1};
 
 thread_local ClothGcRootFrame* current_root_frame = nullptr;
 ClothAllocation* allocations = nullptr;
@@ -132,7 +135,9 @@ std::size_t native_size(std::uint64_t value,
   return static_cast<std::size_t>(value);
 }
 
-std::size_t count_utf8_scalars(const char* data, std::size_t size) noexcept {
+std::size_t count_utf8_scalars(const char* data, std::size_t size,
+                               std::string_view invalid_message =
+                                   "string contains invalid UTF-8") noexcept {
   std::size_t count = 0;
   std::size_t index = 0;
   const auto byte = [data](std::size_t offset) {
@@ -173,7 +178,7 @@ std::size_t count_utf8_scalars(const char* data, std::size_t size) noexcept {
                is_continuation(index + 3)) {
       width = 4;
     } else {
-      runtime_failure("string contains invalid UTF-8");
+      runtime_failure(invalid_message);
     }
     index += width;
     ++count;
@@ -623,6 +628,130 @@ ClothString* allocate_borrowed_string(const char* data, std::size_t byte_size,
   return string;
 }
 
+ClothString* allocate_owned_string(const char* data, std::size_t byte_size,
+                                   std::size_t scalar_count) noexcept {
+  constexpr std::size_t kMaximumStringSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  if (byte_size > kMaximumStringSize || scalar_count > kMaximumStringSize) {
+    runtime_failure("program argument is too large");
+  }
+  const std::uint64_t managed_size = sizeof(ClothString) + byte_size;
+  collect_before_allocation(managed_size);
+  auto* string = static_cast<ClothString*>(allocate_aligned(
+      sizeof(ClothString), alignof(ClothString), "string allocation failed"));
+  auto* owned_data = static_cast<char*>(allocate_aligned(
+      byte_size, alignof(char), "string payload allocation failed"));
+  if (byte_size != 0) {
+    std::memcpy(owned_data, data, byte_size);
+  }
+  *string = ClothString{{&kStringTypeDescriptor, nullptr},
+                        owned_data,
+                        byte_size,
+                        scalar_count,
+                        true};
+  register_allocation(&string->header, managed_size);
+  return string;
+}
+
+#if !defined(_WIN32)
+
+std::size_t program_argument_size(const char* value) noexcept {
+  if (value == nullptr) {
+    runtime_failure("program argument vector contains a null value");
+  }
+  constexpr std::size_t kMaximumStringSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  std::size_t size = 0;
+  while (value[size] != '\0') {
+    if (size == kMaximumStringSize) {
+      runtime_failure("program argument is too large");
+    }
+    ++size;
+  }
+  return size;
+}
+
+#endif
+
+#if defined(_WIN32)
+
+struct Utf16ArgumentSize {
+  std::size_t units;
+  std::size_t bytes;
+  std::size_t scalars;
+};
+
+Utf16ArgumentSize measure_utf16_argument(const wchar_t* value) noexcept {
+  if (value == nullptr) {
+    runtime_failure("program argument vector contains a null value");
+  }
+  constexpr std::size_t kMaximumStringSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  Utf16ArgumentSize result{};
+  while (value[result.units] != L'\0') {
+    std::uint32_t scalar = static_cast<std::uint16_t>(value[result.units]);
+    std::size_t consumed = 1;
+    if (scalar >= 0xd800U && scalar <= 0xdbffU) {
+      const std::uint32_t low =
+          static_cast<std::uint16_t>(value[result.units + 1]);
+      if (low < 0xdc00U || low > 0xdfffU) {
+        runtime_failure("program argument is not valid Unicode");
+      }
+      scalar = 0x10000U + ((scalar - 0xd800U) << 10U) + (low - 0xdc00U);
+      consumed = 2;
+    } else if (scalar >= 0xdc00U && scalar <= 0xdfffU) {
+      runtime_failure("program argument is not valid Unicode");
+    }
+    const std::size_t width = scalar <= 0x7fU     ? 1
+                              : scalar <= 0x7ffU  ? 2
+                              : scalar <= 0xffffU ? 3
+                                                  : 4;
+    if (result.bytes > kMaximumStringSize - width ||
+        result.scalars == kMaximumStringSize ||
+        result.units > kMaximumStringSize - consumed) {
+      runtime_failure("program argument is too large");
+    }
+    result.units += consumed;
+    result.bytes += width;
+    ++result.scalars;
+  }
+  return result;
+}
+
+void encode_utf16_argument(const wchar_t* value, std::size_t units,
+                           char* output) noexcept {
+  std::size_t input_index = 0;
+  std::size_t output_index = 0;
+  while (input_index < units) {
+    std::uint32_t scalar = static_cast<std::uint16_t>(value[input_index++]);
+    if (scalar >= 0xd800U && scalar <= 0xdbffU) {
+      const std::uint32_t low =
+          static_cast<std::uint16_t>(value[input_index++]);
+      scalar = 0x10000U + ((scalar - 0xd800U) << 10U) + (low - 0xdc00U);
+    }
+    if (scalar <= 0x7fU) {
+      output[output_index++] = static_cast<char>(scalar);
+    } else if (scalar <= 0x7ffU) {
+      output[output_index++] = static_cast<char>(0xc0U | (scalar >> 6U));
+      output[output_index++] = static_cast<char>(0x80U | (scalar & 0x3fU));
+    } else if (scalar <= 0xffffU) {
+      output[output_index++] = static_cast<char>(0xe0U | (scalar >> 12U));
+      output[output_index++] =
+          static_cast<char>(0x80U | ((scalar >> 6U) & 0x3fU));
+      output[output_index++] = static_cast<char>(0x80U | (scalar & 0x3fU));
+    } else {
+      output[output_index++] = static_cast<char>(0xf0U | (scalar >> 18U));
+      output[output_index++] =
+          static_cast<char>(0x80U | ((scalar >> 12U) & 0x3fU));
+      output[output_index++] =
+          static_cast<char>(0x80U | ((scalar >> 6U) & 0x3fU));
+      output[output_index++] = static_cast<char>(0x80U | (scalar & 0x3fU));
+    }
+  }
+}
+
+#endif
+
 ClothString* allocate_concatenated_string(const ClothString& left,
                                           const ClothString& right) noexcept {
   constexpr std::size_t kMaximumStringSize =
@@ -816,6 +945,49 @@ extern "C" void* cloth_rt_string_concat(const void* left,
                                         const void* right) noexcept {
   return allocate_concatenated_string(require_string(left),
                                       require_string(right));
+}
+
+extern "C" void* cloth_rt_program_arguments(std::int32_t host_count,
+                                            const void* host_values) noexcept {
+  if (host_count < 0 || (host_count != 0 && host_values == nullptr)) {
+    runtime_failure("program argument vector is invalid");
+  }
+  const std::int32_t argument_count = host_count == 0 ? 0 : host_count - 1;
+  void* arguments =
+      cloth_rt_array_alloc(argument_count, &kProgramArgumentElementLayout);
+  void** roots[]{&arguments};
+  ClothGcRootFrame frame{};
+  cloth_rt_gc_push_frame(&frame, roots, 1);
+
+#if defined(_WIN32)
+  static_assert(sizeof(wchar_t) == sizeof(std::uint16_t));
+  const auto* values = static_cast<const wchar_t* const*>(host_values);
+#else
+  const auto* values = static_cast<const char* const*>(host_values);
+#endif
+  for (std::int32_t index = 0; index < argument_count; ++index) {
+    void* argument = nullptr;
+#if defined(_WIN32)
+    const wchar_t* value = values[index + 1];
+    const Utf16ArgumentSize size = measure_utf16_argument(value);
+    auto* encoded = static_cast<char*>(allocate_aligned(
+        size.bytes, alignof(char), "program argument conversion failed"));
+    encode_utf16_argument(value, size.units, encoded);
+    argument = allocate_owned_string(encoded, size.bytes, size.scalars);
+    free_aligned(encoded);
+#else
+    const char* value = values[index + 1];
+    const std::size_t size = program_argument_size(value);
+    const std::size_t scalars = count_utf8_scalars(
+        value, size, "program argument is not valid Unicode");
+    argument = allocate_owned_string(value, size, scalars);
+#endif
+    std::memcpy(cloth_rt_array_element(arguments, index), &argument,
+                sizeof(argument));
+  }
+
+  cloth_rt_gc_pop_frame(&frame);
+  return arguments;
 }
 
 extern "C" std::uint8_t cloth_rt_string_equal(const void* left,

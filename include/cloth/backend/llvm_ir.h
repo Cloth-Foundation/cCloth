@@ -18,6 +18,7 @@ namespace cloth {
 
 struct LlvmIrModule {
   std::string text;
+  bool uses_wide_native_arguments{false};
 };
 
 struct LlvmIrOptions {
@@ -26,6 +27,7 @@ struct LlvmIrOptions {
   // Restricts definitions to one package; dependencies are ABI declarations.
   // Package modules never contain a native entry wrapper.
   std::optional<PackageIdentity> package{};
+  bool use_wide_native_arguments{false};
 };
 
 // Selects and validates the executable entry independently of IR emission.

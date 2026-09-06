@@ -260,6 +260,8 @@ bool write_llvm_module(const cloth::LlvmIrModule& module,
 
 int compile(cloth::Compilation& compilation, const OutputOptions& options) {
   cloth::DiagnosticEngine diagnostics;
+  const std::optional<cloth::NativeToolchain> native =
+      options.native_output ? std::optional{native_toolchain()} : std::nullopt;
   if (options.check_only) {
     const cloth::FrontendResult result =
         compilation.analyze_frontend(diagnostics);
@@ -280,8 +282,9 @@ int compile(cloth::Compilation& compilation, const OutputOptions& options) {
       !diagnostics.has_errors()) {
     llvm_module = cloth::emit_llvm_ir(
         result.mir, result.abi, result.semantics, diagnostics,
-        cloth::LlvmIrOptions{options.native_output.has_value(),
-                             options.entry_file});
+        cloth::LlvmIrOptions{
+            options.native_output.has_value(), options.entry_file, std::nullopt,
+            native && native->target_triple.contains("windows")});
   }
   print_diagnostics(diagnostics);
   if (diagnostics.has_errors() || !result.is_valid) {
@@ -296,8 +299,8 @@ int compile(cloth::Compilation& compilation, const OutputOptions& options) {
     if (!temporary.ready()) {
       return 2;
     }
-    const auto build = cloth::build_native_executable(
-        *llvm_module, temporary.path(), native_toolchain());
+    const auto build =
+        cloth::build_native_executable(*llvm_module, temporary.path(), *native);
     if (!build) {
       std::cerr << "clothc: error: " << build.error().message << '\n';
       return 2;

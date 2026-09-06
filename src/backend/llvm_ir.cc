@@ -567,6 +567,7 @@ class ModuleEmitter {
            << "declare void @cloth_rt_gc_pop_frame(ptr)\n"
            << "declare ptr @cloth_rt_string_literal(ptr, i64)\n"
            << "declare ptr @cloth_rt_string_concat(ptr, ptr)\n"
+           << "declare ptr @cloth_rt_program_arguments(i32, ptr)\n"
            << "declare i8 @cloth_rt_string_equal(ptr, ptr)\n"
            << "declare i32 @cloth_rt_string_length(ptr)\n"
            << "declare i32 @cloth_rt_string_byte_length(ptr)\n"
@@ -622,7 +623,7 @@ class ModuleEmitter {
     }
     output << enum_helpers_.str() << aggregate_helpers_.str()
            << definitions_.str();
-    return LlvmIrModule{output.str()};
+    return LlvmIrModule{output.str(), uses_wide_native_arguments_};
   }
 
   std::string aggregate_comparer(TypeId type) {
@@ -1247,8 +1248,39 @@ class ModuleEmitter {
     }
 
     const TypeKind return_kind = semantics_.type(entry->return_type).kind;
-    definitions_ << "define i32 @main() {\n"
+    const bool accepts_arguments =
+        !semantics_.symbol(entry->symbol).parameter_types.empty();
+    const std::string_view entry_name =
+        accepts_arguments && options_.use_wide_native_arguments ? "wmain"
+                                                                : "main";
+    uses_wide_native_arguments_ = entry_name == "wmain";
+    definitions_ << "define i32 @" << entry_name << '(';
+    if (accepts_arguments) {
+      definitions_ << "i32 %host.argc, ptr %host.argv";
+    }
+    definitions_ << ") {\n"
                  << "entry:\n";
+    if (accepts_arguments) {
+      definitions_
+          << "  %entry.arguments.slot = alloca ptr, align "
+          << pointer_alignment() << '\n'
+          << "  store ptr null, ptr %entry.arguments.slot, align "
+          << pointer_alignment() << '\n'
+          << "  %entry.gc.frame = alloca { ptr, ptr, i64 }, align "
+          << gc_frame_alignment() << '\n'
+          << "  %entry.gc.roots = alloca [1 x ptr], align "
+          << pointer_alignment() << '\n'
+          << "  %entry.gc.root = getelementptr [1 x ptr], ptr "
+             "%entry.gc.roots, i64 0, i64 0\n"
+          << "  store ptr %entry.arguments.slot, ptr %entry.gc.root, align "
+          << pointer_alignment() << '\n'
+          << "  call void @cloth_rt_gc_push_frame(ptr %entry.gc.frame, ptr "
+             "%entry.gc.roots, i64 1)\n"
+          << "  %entry.arguments = call ptr @cloth_rt_program_arguments(i32 "
+             "%host.argc, ptr %host.argv)\n"
+          << "  store ptr %entry.arguments, ptr %entry.arguments.slot, align "
+          << pointer_alignment() << '\n';
+    }
     if (entry->uses_error_abi) {
       if (return_kind != TypeKind::kVoid) {
         definitions_ << "  %entry.result = alloca i32, align 4\n";
@@ -1258,7 +1290,17 @@ class ModuleEmitter {
       if (return_kind != TypeKind::kVoid) {
         definitions_ << "ptr %entry.result";
       }
+      if (accepts_arguments) {
+        if (return_kind != TypeKind::kVoid) {
+          definitions_ << ", ";
+        }
+        definitions_ << "ptr %entry.arguments";
+      }
       definitions_ << ")\n"
+                   << (accepts_arguments
+                           ? "  call void @cloth_rt_gc_pop_frame(ptr "
+                             "%entry.gc.frame)\n"
+                           : "")
                    << "  %entry.failed = icmp ne ptr %entry.error, null\n"
                    << "  br i1 %entry.failed, label %error, label %success\n"
                    << "error:\n"
@@ -1273,12 +1315,27 @@ class ModuleEmitter {
                      << "  ret i32 %exit_code\n";
       }
     } else if (return_kind == TypeKind::kVoid) {
-      definitions_ << "  call void @" << entry->mangled_name << "()\n"
-                   << "  ret i32 0\n";
+      definitions_ << "  call void @" << entry->mangled_name << '(';
+      if (accepts_arguments) {
+        definitions_ << "ptr %entry.arguments";
+      }
+      definitions_ << ")\n";
+      if (accepts_arguments) {
+        definitions_ << "  call void @cloth_rt_gc_pop_frame(ptr "
+                        "%entry.gc.frame)\n";
+      }
+      definitions_ << "  ret i32 0\n";
     } else {
-      definitions_ << "  %exit_code = call i32 @" << entry->mangled_name
-                   << "()\n"
-                   << "  ret i32 %exit_code\n";
+      definitions_ << "  %exit_code = call i32 @" << entry->mangled_name << '(';
+      if (accepts_arguments) {
+        definitions_ << "ptr %entry.arguments";
+      }
+      definitions_ << ")\n";
+      if (accepts_arguments) {
+        definitions_ << "  call void @cloth_rt_gc_pop_frame(ptr "
+                        "%entry.gc.frame)\n";
+      }
+      definitions_ << "  ret i32 %exit_code\n";
     }
     definitions_ << "}\n\n";
   }
@@ -1300,6 +1357,7 @@ class ModuleEmitter {
   std::vector<TypeId> aggregate_comparers_;
   std::vector<TypeId> enum_printers_;
   std::vector<TypeId> array_layouts_;
+  bool uses_wide_native_arguments_{false};
   bool is_valid_{true};
 };
 
@@ -3681,6 +3739,59 @@ std::string BodyEmitter::next_address() {
 const AbiCallable* find_native_entry_point(
     const AbiModule& abi, const SemanticModel& semantics,
     DiagnosticEngine& diagnostics, std::optional<std::string_view> entry_file) {
+  const auto is_program_argument_type = [&semantics](TypeId type) {
+    if (type.value >= semantics.types().size()) {
+      return false;
+    }
+    const SemanticType& array = semantics.type(type);
+    return array.kind == TypeKind::kArray && array.element_type &&
+           array.element_type->value < semantics.types().size() &&
+           semantics.type(*array.element_type).kind == TypeKind::kString;
+  };
+  const auto has_valid_abi = [&semantics](const AbiCallable& callable,
+                                          const SemanticSymbol& symbol,
+                                          bool returns_int32) {
+    if (callable.kind != AbiCallableKind::kFunction ||
+        callable.calling_convention != AbiCallingConvention::kC ||
+        callable.receiver_mode != AbiReceiverMode::kNone ||
+        callable.return_type != symbol.type) {
+      return false;
+    }
+    const AbiReturnMode expected_return =
+        callable.uses_error_abi && returns_int32 ? AbiReturnMode::kIndirect
+        : returns_int32                          ? AbiReturnMode::kDirect
+                                                 : AbiReturnMode::kVoid;
+    if (callable.return_mode != expected_return) {
+      return false;
+    }
+    std::size_t index = 0;
+    if (callable.uses_error_abi && returns_int32) {
+      if (callable.parameters.empty() ||
+          callable.parameters.front().kind != AbiParameterKind::kResult ||
+          callable.parameters.front().symbol ||
+          callable.parameters.front().type != symbol.type ||
+          callable.parameters.front().passing !=
+              AbiPassingMode::kResultPointer) {
+        return false;
+      }
+      index = 1;
+    }
+    for (std::size_t parameter_index = 0;
+         parameter_index < symbol.parameter_types.size(); ++parameter_index) {
+      if (index >= callable.parameters.size()) {
+        return false;
+      }
+      const AbiParameter& parameter = callable.parameters[index++];
+      if (parameter.kind != AbiParameterKind::kExplicit || !parameter.symbol ||
+          parameter.symbol->value >= semantics.symbols().size() ||
+          parameter.type != symbol.parameter_types[parameter_index] ||
+          parameter.passing != AbiPassingMode::kDirect ||
+          semantics.symbol(*parameter.symbol).type != parameter.type) {
+        return false;
+      }
+    }
+    return index == callable.parameters.size();
+  };
   const AbiCallable* entry = nullptr;
   SourceRange entry_range = point_range(SourceLocation{"<entry>", 0, 1, 1});
   bool saw_main = false;
@@ -3699,9 +3810,15 @@ const AbiCallable* find_native_entry_point(
       saw_main = true;
       entry_range = symbol.range;
       const TypeKind return_kind = semantics.type(callable.return_type).kind;
-      if (!symbol.is_static || !symbol.parameter_types.empty() ||
+      const bool valid_parameters =
+          symbol.parameter_types.empty() ||
+          (symbol.parameter_types.size() == 1 &&
+           is_program_argument_type(symbol.parameter_types.front()));
+      const bool returns_int32 = return_kind == TypeKind::kInt32;
+      if (!symbol.is_static || !valid_parameters ||
           callable.linkage != AbiLinkage::kExternal ||
-          (return_kind != TypeKind::kVoid && return_kind != TypeKind::kInt32)) {
+          (return_kind != TypeKind::kVoid && !returns_int32) ||
+          !has_valid_abi(callable, symbol, returns_int32)) {
         continue;
       }
       if (entry != nullptr) {
@@ -3717,7 +3834,8 @@ const AbiCallable* find_native_entry_point(
     diagnostics.error(
         entry_range,
         saw_main ? "entry point 'Main' must be public and static, take no "
-                   "parameters, and return no value or int32"
+                   "parameters or one non-null string[] parameter, and return "
+                   "no value or int32"
                  : "native program requires a public static 'Main' function");
   }
   return entry;

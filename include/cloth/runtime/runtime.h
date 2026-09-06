@@ -75,6 +75,8 @@ void cloth_rt_gc_collect() noexcept;
                                             std::uint64_t size) noexcept;
 [[nodiscard]] void* cloth_rt_string_concat(const void* left,
                                            const void* right) noexcept;
+[[nodiscard]] void* cloth_rt_program_arguments(
+    std::int32_t host_count, const void* host_values) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_string_equal(const void* left,
                                                  const void* right) noexcept;
 [[nodiscard]] std::int32_t cloth_rt_string_length(const void* value) noexcept;

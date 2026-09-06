@@ -47,7 +47,8 @@ struct NativeBuildError {
 // The caller supplies objects in deterministic order and owns output staging.
 [[nodiscard]] std::expected<void, NativeBuildError> link_native_objects(
     std::span<const std::filesystem::path> object_paths,
-    const std::filesystem::path& output_path, const NativeToolchain& toolchain);
+    const std::filesystem::path& output_path, const NativeToolchain& toolchain,
+    bool uses_wide_native_arguments = false);
 
 // Uses LLVM's llc and the configured host linker driver. Temporary IR and
 // object files are removed before this function returns.

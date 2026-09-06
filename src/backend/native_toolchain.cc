@@ -283,8 +283,8 @@ std::expected<void, NativeBuildError> build_native_object(
 
 std::expected<void, NativeBuildError> link_native_objects(
     std::span<const std::filesystem::path> object_paths,
-    const std::filesystem::path& output_path,
-    const NativeToolchain& toolchain) {
+    const std::filesystem::path& output_path, const NativeToolchain& toolchain,
+    bool uses_wide_native_arguments) {
   if (object_paths.empty()) {
     return std::unexpected(
         NativeBuildError{"native link has no object inputs"});
@@ -346,6 +346,10 @@ std::expected<void, NativeBuildError> link_native_objects(
     arguments.emplace_back(toolchain.target_triple.ends_with("msvc")
                                ? "-Wl,/Brepro"
                                : "-Wl,--no-insert-timestamp");
+    if (uses_wide_native_arguments &&
+        !toolchain.target_triple.ends_with("msvc")) {
+      arguments.emplace_back("-municode");
+    }
 #endif
     for (const std::filesystem::path& object : object_names) {
       arguments.push_back(object);
@@ -447,6 +451,10 @@ std::expected<void, NativeBuildError> build_native_executable(
     linker_arguments.emplace_back(toolchain.target_triple.ends_with("msvc")
                                       ? "-Wl,/Brepro"
                                       : "-Wl,--no-insert-timestamp");
+    if (module.uses_wide_native_arguments &&
+        !toolchain.target_triple.ends_with("msvc")) {
+      linker_arguments.emplace_back("-municode");
+    }
 #endif
     linker_arguments.insert(
         linker_arguments.end(),

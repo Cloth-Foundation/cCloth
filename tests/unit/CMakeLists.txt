@@ -55,6 +55,15 @@ foreach(scenario IN ITEMS integer_overflow integer_division_by_zero
             "-DCLOTH_EXPECTED_ERROR=integer"
             -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 endforeach()
+foreach(scenario IN ITEMS program_argument_count program_argument_vector
+                          program_argument_value program_argument_unicode)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=program argument"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
 add_test(NAME cloth_runtime_report_non_error
     COMMAND ${CMAKE_COMMAND}
         "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"

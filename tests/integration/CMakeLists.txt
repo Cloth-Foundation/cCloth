@@ -159,6 +159,20 @@ foreach(target IN ITEMS x86_64 wasm32)
         set_tests_properties(cloth_typed_error_values_verify_${target}
             PROPERTIES DEPENDS cloth_cli_typed_error_values_llvm_${target})
     endif()
+    set(program_arguments_ir
+        "${PROJECT_BINARY_DIR}/cloth-program-arguments-${target}.ll")
+    add_test(NAME cloth_cli_program_arguments_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${program_arguments_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/ProgramArguments.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_program_arguments_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${program_arguments_ir})
+        set_tests_properties(cloth_program_arguments_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_program_arguments_llvm_${target})
+    endif()
     set(switch_ir "${PROJECT_BINARY_DIR}/cloth-switch-${target}.ll")
     add_test(NAME cloth_cli_switch_llvm_${target}
         COMMAND clothc --target=${target} --emit-llvm=${switch_ir}
@@ -440,6 +454,27 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
             -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
     set_tests_properties(cloth_struct_gc_stress PROPERTIES
         DEPENDS cloth_build_struct_gc_stress)
+    add_executable(cloth_program_argument_native_tests
+        program_argument_native_tests.cc)
+    target_link_libraries(cloth_program_argument_native_tests
+        PRIVATE cloth_compiler)
+    target_compile_definitions(cloth_program_argument_native_tests
+        PRIVATE ${native_definitions})
+    cloth_enable_warnings(cloth_program_argument_native_tests)
+    add_dependencies(cloth_program_argument_native_tests cloth_runtime)
+    cloth_native_executable_path(program_argument_gc_stress
+        "cloth program argument GC stress")
+    add_test(NAME cloth_build_program_argument_gc_stress
+        COMMAND cloth_program_argument_native_tests
+            ${CLOTH_INTEGRATION_PROGRAMS}/ProgramArguments.co
+            "${program_argument_gc_stress}")
+    add_test(NAME cloth_program_argument_gc_stress
+        COMMAND "${program_argument_gc_stress}"
+            "first" "two words" "" "--flag" "é🙂")
+    set_tests_properties(cloth_program_argument_gc_stress PROPERTIES
+        DEPENDS cloth_build_program_argument_gc_stress
+        PASS_REGULAR_EXPRESSION
+            "^5\n5\nfirst\n9\ntwo words\n0\n\n6\n--flag\n2\né🙂\n$")
     cloth_add_native_output_test(enums
         OUTPUT "cloth enums"
         SOURCE ${CLOTH_INTEGRATION_PROJECTS}/enums/src/Main.co
@@ -465,6 +500,31 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/void_main.txt
         EXACT
     )
+    cloth_native_executable_path(program_arguments_executable
+        "cloth program arguments")
+    add_test(NAME cloth_cli_build_program_arguments
+        COMMAND clothc "--build=${program_arguments_executable}"
+            ${CLOTH_INTEGRATION_PROGRAMS}/ProgramArguments.co)
+    add_test(NAME cloth_program_arguments
+        COMMAND "${program_arguments_executable}"
+            "first" "two words" "" "--flag" "é🙂")
+    set_tests_properties(cloth_program_arguments PROPERTIES
+        DEPENDS cloth_cli_build_program_arguments
+        PASS_REGULAR_EXPRESSION
+            "^5\n5\nfirst\n9\ntwo words\n0\n\n6\n--flag\n2\né🙂\n$")
+    add_test(NAME cloth_program_arguments_empty
+        COMMAND "${program_arguments_executable}")
+    set_tests_properties(cloth_program_arguments_empty PROPERTIES
+        DEPENDS cloth_cli_build_program_arguments
+        PASS_REGULAR_EXPRESSION "^0\n$")
+    add_test(NAME cloth_program_arguments_artifacts
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_COMPILER=$<TARGET_FILE:clothc>"
+            "-DCLOTH_SOURCE_ROOT=${CLOTH_INTEGRATION_PROJECTS}/program_arguments/src"
+            "-DCLOTH_WORK_DIRECTORY=${PROJECT_BINARY_DIR}/program-argument-artifacts"
+            "-DCLOTH_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/program_arguments.txt"
+            "-DCLOTH_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/RunProgramArgumentsArtifacts.cmake)
     cloth_add_native_output_test(final_bindings
         OUTPUT "cloth final bindings"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/FinalBindings.co

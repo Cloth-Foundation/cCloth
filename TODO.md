@@ -67,6 +67,8 @@ Stage 35 is complete following its separately authorized 35.4 exit audit on
 2026-09-05.
 Stage 36 is complete following its separately authorized 36.4 exit audit on
 2026-09-06.
+Stage 37 is complete following its separately authorized 37.4 exit audit on
+2026-09-06.
 
 ## Scheduled work
 
@@ -884,6 +886,52 @@ class override validation. Existing ABI and artifact versions are unchanged.
 
   **Stage 36 is complete.**
 
+### Stage 37: Portable program arguments
+
+- [x] **37.1 — Contract.** Define eligible zero- and one-parameter `Main`
+  signatures, argument value and encoding semantics, entry selection,
+  runtime/GC ownership, Shuttle forwarding, compatibility, diagnostics,
+  verification, and non-goals.
+
+  Approved and completed 2026-09-06. An entry may take exactly one non-null
+  `string[]` of non-null application arguments. Values exclude the executable
+  name, preserve order and empty values, and use strict Unicode conversion.
+  Shuttle owns an explicit `run --` forwarding boundary. Artifact/compiler
+  versions and schemas remain unchanged; the required owned-value runtime
+  operation advances runtime ABI 4 to 5 during 37.2. See the
+  [contract](docs/proposals/stage_37_program_arguments.md).
+- [x] **37.2 — Compiler and runtime.** Accept the argument-taking entry shape,
+  construct and root owned managed argument values, update whole-project and
+  package entry adapters, advance runtime ABI to 5, and verify malformed state.
+
+  Completed 2026-09-06. Direct and source-free native adapters accept the exact
+  entry signature, construct owned arguments through runtime ABI 5, preserve
+  typed-error and status behavior, root the array across invocation, and reject
+  malformed entry ABI or host text. Existing zero-parameter entries remain
+  unchanged.
+- [x] **37.3 — Shuttle integration.** Forward host-native values after
+  `shuttle run --`, preserve streams and statuses, and prove direct/Shuttle and
+  whole/separate/source-free equivalence.
+
+  Completed 2026-09-06. Only `run` accepts application values, only after an
+  explicit delimiter. Shuttle stores and forwards `OsString` values directly,
+  leaves build inputs and cache keys unchanged, and preserves application
+  streams and statuses. Exact values, zero arguments, reuse, malformed Unicode,
+  direct execution, whole-project compilation, and source-free linking pass.
+- [x] **37.4 — Exit audit.** Complete strict encoding, resource, GC,
+  compatibility, failure-preservation, native/cross-target, Rust, editor,
+  documentation, formatting, and repository quality matrices.
+
+  Completed 2026-09-06. Both 269-test compiler configurations pass, including
+  36 compiler-backed Shuttle cases and 33 native cases per configuration.
+  Coverage closes all entry forms and invalid shapes, strict host text,
+  resource failures, construction and in-`Main` collection, direct/whole/
+  separate/source-free equivalence, exact forwarding, status/error behavior,
+  deterministic reuse, and stale-output prevention. Rust 1.85, Clippy, editor,
+  documentation, formatting, and repository gates pass. Compatibility remains
+  artifact/compiler/runtime 5/5/5 and process/receipt/manifest/toolchain schemas
+  2/1/1/1. **Stage 37 is complete.**
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -990,7 +1038,6 @@ active stage without first updating `ROADMAP.md`.
   exists.
 - Expand native output beyond the current x86-64 pipeline.
 - Add selectable optimization levels and debug information.
-- Define command-line argument delivery to `Main`.
 - Define portable console input and string-to-primitive parsing after the Stage
   35 standard-library distribution boundary is complete.
 - Add platform packaging and distribution tooling.
