@@ -231,6 +231,53 @@ int runtime_failure_scenario(std::string_view scenario) {
     static_cast<void>(
         cloth_rt_parse_primitive(kClothParseInt32, text, nullptr));
   }
+  if (scenario == "string_index_negative") {
+    void* text = cloth_rt_string_literal("A", 1);
+    static_cast<void>(cloth_rt_string_scalar_at(text, -1));
+  }
+  if (scenario == "string_index_length") {
+    void* text = cloth_rt_string_literal("A", 1);
+    static_cast<void>(cloth_rt_string_scalar_at(text, 1));
+  }
+  if (scenario == "string_index_empty") {
+    void* text = cloth_rt_string_literal(nullptr, 0);
+    static_cast<void>(cloth_rt_string_scalar_at(text, 0));
+  }
+  if (scenario == "string_index_after_length") {
+    void* text = cloth_rt_string_literal("A", 1);
+    static_cast<void>(cloth_rt_string_scalar_at(text, 2));
+  }
+  if (scenario == "string_iteration_offset") {
+    void* text = cloth_rt_string_literal("A", 1);
+    std::int32_t offset = 2;
+    std::uint32_t scalar = 0;
+    static_cast<void>(cloth_rt_string_next_scalar(text, &offset, &scalar));
+  }
+  if (scenario == "string_iteration_boundary") {
+    constexpr char kText[] = "\xC3\xA9";
+    void* text = cloth_rt_string_literal(kText, sizeof(kText) - 1);
+    std::int32_t offset = 1;
+    std::uint32_t scalar = 0;
+    static_cast<void>(cloth_rt_string_next_scalar(text, &offset, &scalar));
+  }
+  if (scenario == "string_iteration_output") {
+    void* text = cloth_rt_string_literal("A", 1);
+    std::uint32_t scalar = 0;
+    static_cast<void>(cloth_rt_string_next_scalar(text, nullptr, &scalar));
+  }
+  if (scenario == "string_layout_encoding") {
+    auto* text = static_cast<TestString*>(cloth_rt_string_literal("A", 1));
+    static constexpr char kInvalidUtf8[]{static_cast<char>(0xff)};
+    text->data = kInvalidUtf8;
+    static_cast<void>(cloth_rt_string_scalar_at(text, 0));
+  }
+  if (scenario == "string_layout_scalars") {
+    auto* text = static_cast<TestString*>(cloth_rt_string_literal("A", 1));
+    text->scalar_count = 2;
+    std::int32_t offset = 1;
+    std::uint32_t scalar = 0;
+    static_cast<void>(cloth_rt_string_next_scalar(text, &offset, &scalar));
+  }
   if (scenario.starts_with("parse_layout_")) {
     auto* text = static_cast<TestString*>(cloth_rt_string_literal("1", 1));
     if (scenario == "parse_layout_size") {
@@ -500,6 +547,49 @@ int main(int argc, char** argv) {
                   cloth_rt_string_equal(nullptr, nullptr) == 1 &&
                   cloth_rt_string_equal(nullptr, expected_string) == 0,
               "string content or nullable equality is wrong");
+  test.expect(cloth_rt_string_scalar_at(unicode_string, 0) == 0x00e9U &&
+                  cloth_rt_string_scalar_at(unicode_string, 1) == 0x1f642U,
+              "string scalar indexing decoded the wrong values");
+  std::int32_t byte_offset = 0;
+  std::uint32_t scalar = UINT32_MAX;
+  test.expect(
+      cloth_rt_string_next_scalar(unicode_string, &byte_offset, &scalar) == 1 &&
+          byte_offset == 2 && scalar == 0x00e9U &&
+          cloth_rt_string_next_scalar(unicode_string, &byte_offset, &scalar) ==
+              1 &&
+          byte_offset == 6 && scalar == 0x1f642U &&
+          cloth_rt_string_next_scalar(unicode_string, &byte_offset, &scalar) ==
+              0 &&
+          byte_offset == 6 && scalar == 0,
+      "string scalar iteration violated its cursor contract");
+
+  constexpr std::size_t kLongScalarCount = 4096;
+  constexpr std::string_view kThread = "\xF0\x9F\xA7\xB5";
+  std::string long_text;
+  long_text.reserve(kLongScalarCount * kThread.size());
+  for (std::size_t index = 0; index < kLongScalarCount; ++index) {
+    long_text.append(kThread);
+  }
+  void* long_string =
+      cloth_rt_string_literal(long_text.data(), long_text.size());
+  byte_offset = 0;
+  std::size_t visited = 0;
+  bool cursor_is_monotonic = true;
+  while (cloth_rt_string_next_scalar(long_string, &byte_offset, &scalar) != 0) {
+    ++visited;
+    cursor_is_monotonic =
+        cursor_is_monotonic &&
+        byte_offset == static_cast<std::int32_t>(visited * kThread.size()) &&
+        scalar == UINT32_C(0x1f9f5);
+  }
+  test.expect(
+      cursor_is_monotonic && visited == kLongScalarCount &&
+          byte_offset == static_cast<std::int32_t>(long_text.size()) &&
+          scalar == 0 &&
+          cloth_rt_string_scalar_at(
+              long_string, static_cast<std::int32_t>(kLongScalarCount - 1)) ==
+              UINT32_C(0x1f9f5),
+      "long string traversal did not advance one UTF-8 cursor");
 
   const ParseResult parsed_true = parse(kClothParseBool, "true");
   const ParseResult parsed_false = parse(kClothParseBool, "false");

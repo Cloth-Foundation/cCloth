@@ -1,6 +1,7 @@
 # Cloth package artifact schema, version 5
 
-This is the current `.cpa` contract. It inherits the frozen
+This is the frozen historical typed-error contract, superseded by
+[version 6](artifact_schema_v6.md). It inherits the frozen
 [version-4 schema](artifact_schema_v4.md), except for the typed-error records
 and compatibility transition below. Canonical JSON, exact-key validation,
 ordering, integrity, payload, resource-limit, target, and dependency rules are

@@ -4,6 +4,7 @@
 
 #include "cloth/diagnostics/diagnostic_engine.h"
 #include "cloth/lexer/lexer.h"
+#include "cloth/lexer/literal.h"
 #include "cloth/lexer/token.h"
 #include "cloth/source/source_file.h"
 
@@ -275,13 +276,98 @@ void unterminated_string(TestContext& test) {
 }
 
 void character_literals(TestContext& test) {
-  const LexedSource source{R"cloth('a' '\n' '\\')cloth"};
+  const LexedSource source{
+      R"cloth('a' '\n' '\\' 'é' '🧵' '\u{0}' '\u{10FFFF}' '́' '\u{301}')cloth"};
   expect_kinds(
       test, source,
       {cloth::TokenKind::kCharacterLiteral, cloth::TokenKind::kCharacterLiteral,
+       cloth::TokenKind::kCharacterLiteral, cloth::TokenKind::kCharacterLiteral,
+       cloth::TokenKind::kCharacterLiteral, cloth::TokenKind::kCharacterLiteral,
+       cloth::TokenKind::kCharacterLiteral, cloth::TokenKind::kCharacterLiteral,
        cloth::TokenKind::kCharacterLiteral, cloth::TokenKind::kEof});
   test.expect(!source.diagnostics.has_errors(),
               "valid character literals should be accepted");
+
+  const auto thread = cloth::decode_text_literal(
+      source.tokens[4].lexeme, cloth::TextLiteralKind::kCharacter);
+  test.expect(thread.error == cloth::TextLiteralError::kNone &&
+                  thread.character == 0x1F9F5 && thread.scalar_count == 1,
+              "raw non-BMP character did not decode as one scalar");
+  const auto maximum = cloth::decode_text_literal(
+      source.tokens[6].lexeme, cloth::TextLiteralKind::kCharacter);
+  test.expect(maximum.error == cloth::TextLiteralError::kNone &&
+                  maximum.character == 0x10FFFF,
+              "maximum Unicode escape did not decode");
+  const auto combining = cloth::decode_text_literal(
+      source.tokens[7].lexeme, cloth::TextLiteralKind::kCharacter);
+  const auto escaped_combining = cloth::decode_text_literal(
+      source.tokens[8].lexeme, cloth::TextLiteralKind::kCharacter);
+  test.expect(combining.error == cloth::TextLiteralError::kNone &&
+                  escaped_combining.error == cloth::TextLiteralError::kNone &&
+                  combining.character == 0x301 &&
+                  escaped_combining.character == combining.character,
+              "raw and escaped combining scalars disagree");
+}
+
+void unicode_string_literals(TestContext& test) {
+  const LexedSource source{
+      R"cloth("raw 🧵" "escaped \u{1F9F5}" "zero \u{000000}")cloth"};
+  expect_kinds(
+      test, source,
+      {cloth::TokenKind::kStringLiteral, cloth::TokenKind::kStringLiteral,
+       cloth::TokenKind::kStringLiteral, cloth::TokenKind::kEof});
+  test.expect(!source.diagnostics.has_errors(),
+              "Unicode string literals should be accepted");
+  const auto escaped = cloth::decode_text_literal(
+      source.tokens[1].lexeme, cloth::TextLiteralKind::kString);
+  test.expect(escaped.error == cloth::TextLiteralError::kNone &&
+                  escaped.scalar_count == 9 && escaped.utf8.ends_with("🧵"),
+              "Unicode string escape did not produce canonical UTF-8");
+  const auto zero = cloth::decode_text_literal(source.tokens[2].lexeme,
+                                               cloth::TextLiteralKind::kString);
+  test.expect(zero.error == cloth::TextLiteralError::kNone &&
+                  zero.utf8.size() == 6 && zero.utf8.back() == '\0',
+              "zero scalar escape was not retained in the string");
+}
+
+void malformed_unicode_literals(TestContext& test) {
+  const LexedSource source{R"cloth(
+    '\u{}' '\u{1234567}' '\u{D800}' '\u{110000}' '\u{1_2}' '\U{41}' '\q'
+  )cloth"};
+  test.expect(source.diagnostics.diagnostics().size() == 7,
+              "each malformed Unicode literal should produce one diagnostic");
+  if (source.diagnostics.diagnostics().size() == 7) {
+    test.expect(source.diagnostics.diagnostics()[0].message ==
+                        "invalid Unicode escape sequence" &&
+                    source.diagnostics.diagnostics()[2].message ==
+                        "Unicode escape does not name a scalar value" &&
+                    source.diagnostics.diagnostics()[6].message ==
+                        "unknown escape sequence \\q",
+                "malformed Unicode diagnostics are not stable");
+  }
+
+  const LexedSource invalid_strings{
+      R"cloth("\u{}" "\u{D800}" "\u{110000}" "\u{1_2}")cloth"};
+  test.expect(invalid_strings.diagnostics.diagnostics().size() == 4,
+              "malformed Unicode string escapes were not all diagnosed");
+
+  std::string invalid_utf8{"\""};
+  invalid_utf8.push_back(static_cast<char>(0xC0));
+  invalid_utf8.push_back('"');
+  const LexedSource invalid{std::move(invalid_utf8)};
+  test.expect(invalid.diagnostics.diagnostics().size() == 1 &&
+                  invalid.diagnostics.diagnostics()[0].message ==
+                      "string literal is not valid UTF-8",
+              "invalid raw UTF-8 was not rejected deterministically");
+
+  std::string truncated_utf8{"'"};
+  truncated_utf8.push_back(static_cast<char>(0xE2));
+  truncated_utf8.push_back('\'');
+  const LexedSource truncated{std::move(truncated_utf8)};
+  test.expect(truncated.diagnostics.diagnostics().size() == 1 &&
+                  truncated.diagnostics.diagnostics()[0].message ==
+                      "character literal is not valid UTF-8",
+              "truncated raw UTF-8 was not rejected deterministically");
 }
 
 void malformed_character_literals(TestContext& test) {
@@ -344,6 +430,8 @@ int main() {
       {"strings and escapes", strings_and_escapes},
       {"unterminated string", unterminated_string},
       {"character literals", character_literals},
+      {"Unicode string literals", unicode_string_literals},
+      {"malformed Unicode literals", malformed_unicode_literals},
       {"malformed character literals", malformed_character_literals},
       {"invalid characters recover", invalid_characters_recover},
       {"source locations and eof", source_locations_and_eof},

@@ -145,9 +145,12 @@ struct HirArrayLiteralExpression {
   std::vector<HirExpressionId> elements;
 };
 
+enum class HirIndexKind { kArray, kString };
+
 struct HirIndexExpression {
   HirExpressionId object;
   HirExpressionId index;
+  HirIndexKind kind;
 };
 
 struct HirArrayLengthExpression {
@@ -233,10 +236,14 @@ struct HirWhileStatement {
   bool condition_is_presence_test{false};
 };
 
+enum class HirIterableKind { kArray, kString };
+
 struct HirForEachStatement {
   std::optional<SymbolId> variable;
+  std::optional<SymbolId> cursor;
   HirExpressionId iterable;
   HirBlockId body;
+  HirIterableKind kind;
 };
 
 struct HirForStatement {

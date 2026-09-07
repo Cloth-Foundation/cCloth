@@ -548,6 +548,10 @@ void string_instructions(TestContext& test) {
                   "  bool equal = joined == \"cloth\";\n"
                   "  bool different = left != right;\n"
                   "  bool empty = joined::isEmpty;\n"
+                  "  char first = joined[0];\n"
+                  "  for (final char scalar in joined) {\n"
+                  "    if (scalar == first) { continue; }\n"
+                  "  }\n"
                   "  if (equal && different && !empty) {\n"
                   "    return joined::length;\n"
                   "  }\n"
@@ -589,8 +593,90 @@ void string_instructions(TestContext& test) {
   }
   test.expect(found_length && found_byte_length && found_is_empty,
               "string meta queries were not lowered explicitly");
-  test.expect(found_concat && equality_count == 2,
+  test.expect(found_concat && equality_count >= 2,
               "string value operators were not retained in MIR");
+  test.expect(
+      body_has_instruction<cloth::MirStringScalarAtInstruction>(body) &&
+          body_has_instruction<cloth::MirStringNextScalarInstruction>(body),
+      "string traversal was not lowered to dedicated MIR instructions");
+
+  cloth::HirModule broken_hir = compilation.result->hir;
+  bool corrupted_index_kind = false;
+  for (const cloth::HirExpression& stored : broken_hir.storage.expressions()) {
+    auto& expression = const_cast<cloth::HirExpression&>(stored);
+    if (auto* index = std::get_if<cloth::HirIndexExpression>(&expression.data);
+        index && index->kind == cloth::HirIndexKind::kString) {
+      index->kind = cloth::HirIndexKind::kArray;
+      corrupted_index_kind = true;
+    }
+  }
+  cloth::DiagnosticEngine hir_diagnostics;
+  test.expect(corrupted_index_kind,
+              "string-index HIR fixture was not available for corruption");
+  test.expect(!cloth::verify_hir(broken_hir, compilation.result->semantics,
+                                 hir_diagnostics),
+              "HIR verifier accepted a forged string index kind");
+
+  cloth::HirModule broken_iteration_hir = compilation.result->hir;
+  bool corrupted_iteration_kind = false;
+  for (const cloth::HirStatement& stored :
+       broken_iteration_hir.storage.statements()) {
+    auto& statement = const_cast<cloth::HirStatement&>(stored);
+    if (auto* loop = std::get_if<cloth::HirForEachStatement>(&statement.data);
+        loop && loop->kind == cloth::HirIterableKind::kString) {
+      loop->kind = cloth::HirIterableKind::kArray;
+      corrupted_iteration_kind = true;
+    }
+  }
+  cloth::DiagnosticEngine iteration_hir_diagnostics;
+  test.expect(
+      corrupted_iteration_kind &&
+          !cloth::verify_hir(broken_iteration_hir,
+                             compilation.result->semantics,
+                             iteration_hir_diagnostics) &&
+          has_diagnostic(iteration_hir_diagnostics,
+                         "array iteration carries string cursor metadata"),
+      "HIR verifier accepted a forged string iteration kind");
+
+  cloth::MirModule broken_access_mir = compilation.result->mir;
+  bool corrupted_access = false;
+  for (cloth::MirBasicBlock& block :
+       broken_access_mir.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (std::holds_alternative<cloth::MirStringScalarAtInstruction>(
+              instruction.data)) {
+        instruction.type = *compilation.result->semantics.find_type("int32");
+        corrupted_access = true;
+      }
+    }
+  }
+  cloth::DiagnosticEngine access_mir_diagnostics;
+  test.expect(
+      corrupted_access &&
+          !cloth::verify_mir(broken_access_mir, compilation.result->semantics,
+                             access_mir_diagnostics) &&
+          has_diagnostic(access_mir_diagnostics,
+                         "string scalar access result does not have type char"),
+      "MIR verifier accepted a forged string access result type");
+
+  cloth::MirModule broken_mir = compilation.result->mir;
+  bool corrupted_step = false;
+  for (cloth::MirBasicBlock& block :
+       broken_mir.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (auto* step = std::get_if<cloth::MirStringNextScalarInstruction>(
+              &instruction.data)) {
+        step->scalar = step->byte_cursor;
+        corrupted_step = true;
+      }
+    }
+  }
+  cloth::DiagnosticEngine mir_diagnostics;
+  test.expect(corrupted_step &&
+                  !cloth::verify_mir(broken_mir, compilation.result->semantics,
+                                     mir_diagnostics) &&
+                  has_diagnostic(mir_diagnostics, "invalid output locals"),
+              "MIR verifier accepted forged string cursor storage");
 }
 
 void object_model_instructions(TestContext& test) {
@@ -1872,9 +1958,10 @@ void verifiers_reject_corruption(TestContext& test) {
       compilation.result->semantics.void_type(), range,
       cloth::HirLiteralExpression{cloth::LiteralKind::kInteger, "1"}}));
   static_cast<void>(broken_hir.storage.add_statement(cloth::HirStatement{
-      range, cloth::HirForEachStatement{cloth::SymbolId{999},
+      range, cloth::HirForEachStatement{cloth::SymbolId{999}, std::nullopt,
                                         cloth::HirExpressionId{999},
-                                        cloth::HirBlockId{999}}}));
+                                        cloth::HirBlockId{999},
+                                        cloth::HirIterableKind::kArray}}));
   cloth::DiagnosticEngine hir_diagnostics;
   test.expect(!cloth::verify_hir(broken_hir, compilation.result->semantics,
                                  hir_diagnostics),

@@ -339,8 +339,14 @@ class Lowerer {
           type.element_type.value_or(semantics_.error_type()),
           std::move(elements)};
     } else if (const auto* index = std::get_if<IndexExpression>(&syntax.data)) {
+      const TypeId object_type = semantics_.file(current_file_)
+                                     .expressions.at(index->object.value)
+                                     .type;
+      const HirIndexKind kind = object_type == semantics_.string_type()
+                                    ? HirIndexKind::kString
+                                    : HirIndexKind::kArray;
       data = HirIndexExpression{expression(index->object),
-                                expression(index->index)};
+                                expression(index->index), kind};
     } else if (const auto* grouped =
                    std::get_if<ParenthesizedExpression>(&syntax.data)) {
       data = HirGroupedExpression{expression(grouped->expression)};
@@ -394,9 +400,18 @@ class Lowerer {
               .is_presence_test};
     } else if (const auto* for_statement =
                    std::get_if<ForEachStatement>(&syntax.data)) {
+      const TypeId iterable_type =
+          semantics_.file(current_file_)
+              .expressions.at(for_statement->iterable.value)
+              .type;
+      const HirIterableKind kind = iterable_type == semantics_.string_type()
+                                       ? HirIterableKind::kString
+                                       : HirIterableKind::kArray;
       data = HirForEachStatement{
           semantics_.file(current_file_).statement_symbols.at(id.value),
-          expression(for_statement->iterable), block(for_statement->body)};
+          semantics_.file(current_file_).string_iteration_cursors.at(id.value),
+          expression(for_statement->iterable), block(for_statement->body),
+          kind};
     } else if (const auto* for_statement =
                    std::get_if<ForStatement>(&syntax.data)) {
       std::vector<HirExpressionId> updates;

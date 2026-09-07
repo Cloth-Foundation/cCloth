@@ -1,0 +1,5 @@
+static func Main() {
+  string text = "A🧵Z";
+  println(text[text::length]);
+  println("unreachable");
+}

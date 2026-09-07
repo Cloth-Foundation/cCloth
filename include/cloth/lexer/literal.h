@@ -6,6 +6,7 @@
 #define CLOTH_LEXER_LITERAL_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -67,9 +68,36 @@ struct NumericLiteralSpelling {
 [[nodiscard]] std::string_view numeric_literal_suffix_type_name(
     NumericLiteralSuffix suffix) noexcept;
 
-[[nodiscard]] char decode_escape_character(char character) noexcept;
+enum class TextLiteralKind {
+  kString,
+  kCharacter,
+};
 
-[[nodiscard]] std::string decode_string_literal(std::string_view lexeme);
+enum class TextLiteralError {
+  kNone,
+  kInvalidStructure,
+  kInvalidUtf8,
+  kUnknownEscape,
+  kInvalidUnicodeEscape,
+  kInvalidUnicodeScalar,
+  kEmptyCharacter,
+  kMultipleCharacters,
+};
+
+struct DecodedTextLiteral {
+  TextLiteralError error{TextLiteralError::kNone};
+  std::size_t error_offset{0};
+  std::string utf8;
+  std::size_t scalar_count{0};
+  std::uint32_t character{0};
+};
+
+// Decodes and validates a complete string or character token. The returned
+// UTF-8 is canonical, including for Unicode escapes.
+[[nodiscard]] DecodedTextLiteral decode_text_literal(std::string_view lexeme,
+                                                     TextLiteralKind kind);
+
+[[nodiscard]] bool is_unicode_scalar(std::uint64_t value) noexcept;
 
 [[nodiscard]] std::optional<std::size_t> utf8_scalar_count(
     std::string_view text) noexcept;

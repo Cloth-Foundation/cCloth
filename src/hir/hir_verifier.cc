@@ -636,6 +636,50 @@ class HirVerifier {
     }
   }
 
+  void verify_index_expression(const HirExpression& expression,
+                               const HirIndexExpression& index) {
+    if (expression.type == semantics_.error_type() ||
+        index.object.value >= hir_.storage.expressions().size() ||
+        index.index.value >= hir_.storage.expressions().size()) {
+      return;
+    }
+    const HirExpression& object = hir_.storage.expression(index.object);
+    const HirExpression& subscript = hir_.storage.expression(index.index);
+    if (expression.type == semantics_.bottom_type() ||
+        object.type == semantics_.bottom_type() ||
+        subscript.type == semantics_.bottom_type()) {
+      return;
+    }
+    if (object.type.value >= semantics_.types().size()) {
+      return;
+    }
+    if (!is_int32_compatible(subscript.type)) {
+      report(expression.range, "index does not have an int32-compatible type");
+    }
+
+    ValueCategory expected_category = ValueCategory::kMutableLocation;
+    if (index.kind == HirIndexKind::kString) {
+      expected_category = ValueCategory::kValue;
+      if (object.type != semantics_.string_type() ||
+          expression.type != *semantics_.find_type("char")) {
+        report(expression.range,
+               "string index has inconsistent receiver or result type");
+      }
+    } else {
+      const SemanticType& array = semantics_.type(object.type);
+      if (array.kind != TypeKind::kArray || !array.element_type) {
+        report(expression.range, "array index has a non-array receiver");
+      } else {
+        verify_value_binding(*array.element_type, expression.type,
+                             expression.range);
+      }
+    }
+    if (expression.category != expected_category) {
+      report(expression.range,
+             "index expression lost its value/storage category");
+    }
+  }
+
   void verify_struct_expression(const HirExpression& expression, FileId file,
                                 bool constructor) {
     const bool struct_owner =
@@ -681,13 +725,6 @@ class HirVerifier {
       const auto& inner = hir_.storage.expression(grouped->expression);
       expected_category = inner.category;
       verify_value_binding(inner.type, expression.type, expression.range);
-    } else if (const auto* index = std::get_if<HirIndexExpression>(&data)) {
-      expected_category = ValueCategory::kMutableLocation;
-      const auto& array =
-          semantics_.type(hir_.storage.expression(index->object).type);
-      if (array.element_type)
-        verify_value_binding(*array.element_type, expression.type,
-                             expression.range);
     } else if (const auto* assignment =
                    std::get_if<HirAssignmentExpression>(&data)) {
       expected_category = ValueCategory::kValue;
@@ -1017,6 +1054,26 @@ class HirVerifier {
                    "numeric literal has invalid canonical spelling or type");
           }
         }
+        if (literal->kind == LiteralKind::kCharacter) {
+          const bool valid_type =
+              expression.type.value < semantics_.types().size() &&
+              semantics_.type(expression.type).kind == TypeKind::kChar;
+          const DecodedTextLiteral decoded =
+              decode_text_literal(literal->lexeme, TextLiteralKind::kCharacter);
+          if (!valid_type || decoded.error != TextLiteralError::kNone) {
+            report(expression.range,
+                   "character literal has invalid spelling or type");
+          }
+        }
+        if (literal->kind == LiteralKind::kString) {
+          const bool valid_type = expression.type == semantics_.string_type();
+          const DecodedTextLiteral decoded =
+              decode_text_literal(literal->lexeme, TextLiteralKind::kString);
+          if (!valid_type || decoded.error != TextLiteralError::kNone) {
+            report(expression.range,
+                   "string literal has invalid spelling or type");
+          }
+        }
         if ((literal->kind == LiteralKind::kEnum ||
              (expression.type.value < semantics_.types().size() &&
               semantics_.type(expression.type).kind == TypeKind::kEnum)) &&
@@ -1334,6 +1391,7 @@ class HirVerifier {
                      std::get_if<HirIndexExpression>(&expression.data)) {
         verify_expression(index->object, expression.range);
         verify_expression(index->index, expression.range);
+        verify_index_expression(expression, *index);
       } else if (const auto* length =
                      std::get_if<HirArrayLengthExpression>(&expression.data)) {
         verify_expression(length->array, expression.range);
@@ -1577,8 +1635,64 @@ class HirVerifier {
       } else if (const auto* for_statement =
                      std::get_if<HirForEachStatement>(&statement.data)) {
         verify_optional_symbol(for_statement->variable, statement.range);
+        verify_optional_symbol(for_statement->cursor, statement.range);
         verify_expression(for_statement->iterable, statement.range);
         verify_block(for_statement->body, statement.range);
+        if (!for_statement->variable ||
+            for_statement->variable->value >= semantics_.symbols().size() ||
+            for_statement->iterable.value >=
+                hir_.storage.expressions().size()) {
+          continue;
+        }
+        const SemanticSymbol& variable =
+            semantics_.symbol(*for_statement->variable);
+        if (variable.type == semantics_.error_type()) {
+          continue;
+        }
+        const TypeId iterable =
+            hir_.storage.expression(for_statement->iterable).type;
+        if (iterable == semantics_.bottom_type() ||
+            iterable == semantics_.error_type()) {
+          continue;
+        }
+        if (variable.kind != SymbolKind::kLocal) {
+          report(statement.range,
+                 "for iteration binding does not reference a local");
+        }
+        if (for_statement->kind == HirIterableKind::kString) {
+          if (iterable != semantics_.string_type() ||
+              variable.type != *semantics_.find_type("char") ||
+              !for_statement->cursor ||
+              for_statement->cursor->value >= semantics_.symbols().size()) {
+            report(statement.range,
+                   "string iteration has inconsistent HIR metadata");
+          } else {
+            const SemanticSymbol& cursor =
+                semantics_.symbol(*for_statement->cursor);
+            if (cursor.kind != SymbolKind::kLocal ||
+                cursor.type != *semantics_.find_type("int32") ||
+                cursor.is_final ||
+                *for_statement->cursor == *for_statement->variable) {
+              report(statement.range,
+                     "string iteration has an invalid byte cursor");
+            }
+          }
+        } else {
+          if (for_statement->cursor ||
+              iterable.value >= semantics_.types().size()) {
+            report(statement.range,
+                   "array iteration carries string cursor metadata");
+          } else {
+            const SemanticType& array = semantics_.type(iterable);
+            if (array.kind != TypeKind::kArray || !array.element_type) {
+              report(statement.range,
+                     "array iteration has a non-array iterable");
+            } else {
+              verify_value_binding(variable.type, *array.element_type,
+                                   statement.range);
+            }
+          }
+        }
       } else if (const auto* for_statement =
                      std::get_if<HirForStatement>(&statement.data)) {
         if (for_statement->initializer &&

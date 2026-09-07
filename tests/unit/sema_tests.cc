@@ -2787,7 +2787,18 @@ void string_value_semantics(TestContext& test) {
             "  return 0;\n"
             "}\n"
             "func Assert(string? value): int32 { return value!::length; }\n"
-            "func Literal(): int32 { return \"cloth\"::length; }\n");
+            "func Literal(): int32 { return \"cloth\"::length; }\n"
+            "func Traverse(string value): char {\n"
+            "  char first = value[0];\n"
+            "  for (var scalar in value) { scalar = first; }\n"
+            "  for (char scalar in value) { scalar = first; }\n"
+            "  for (final char scalar in value) { print(scalar); }\n"
+            "  return first;\n"
+            "}\n"
+            "func NarrowTraverse(string? value): char {\n"
+            "  if (value) { for (var scalar in value) { return scalar; } }\n"
+            "  return value![0];\n"
+            "}\n");
   valid.analyze();
 
   test.expect(valid.error_count() == 0,
@@ -2795,6 +2806,8 @@ void string_value_semantics(TestContext& test) {
   bool found_length = false;
   bool found_byte_length = false;
   bool found_is_empty = false;
+  bool found_string_index = false;
+  bool found_string_iteration = false;
   for (const cloth::HirExpression& expression :
        valid.result->hir.storage.expressions()) {
     const auto* meta =
@@ -2809,8 +2822,28 @@ void string_value_semantics(TestContext& test) {
     found_is_empty =
         found_is_empty || meta->query == cloth::StringMetaQuery::kIsEmpty;
   }
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    const auto* index =
+        std::get_if<cloth::HirIndexExpression>(&expression.data);
+    found_string_index =
+        found_string_index ||
+        (index != nullptr && index->kind == cloth::HirIndexKind::kString &&
+         expression.type == valid.result->semantics.find_type("char") &&
+         expression.category == cloth::ValueCategory::kValue);
+  }
+  for (const cloth::HirStatement& statement :
+       valid.result->hir.storage.statements()) {
+    const auto* loop = std::get_if<cloth::HirForEachStatement>(&statement.data);
+    found_string_iteration =
+        found_string_iteration ||
+        (loop != nullptr && loop->kind == cloth::HirIterableKind::kString &&
+         loop->variable && loop->cursor);
+  }
   test.expect(found_length && found_byte_length && found_is_empty,
               "string meta queries were not retained explicitly in HIR");
+  test.expect(found_string_index && found_string_iteration,
+              "string traversal kinds were not retained explicitly in HIR");
 
   AnalyzedCompilation uppercase_type;
   uppercase_type.add("String.co", "int32 Value = 1;\n");
@@ -2835,7 +2868,20 @@ void string_value_semantics(TestContext& test) {
               "}\n"
               "func Called(string value) { value::length(); }\n"
               "func Assigned(string value) { value::length = 1; }\n"
-              "func Primitive(int32 value): int32 { return value::length; }\n");
+              "func Primitive(int32 value): int32 { return value::length; }\n"
+              "func BadIndex(string? value, string text) {\n"
+              "  char nullable = value[0];\n"
+              "  char wrong = text[true];\n"
+              "  text[0] = 'C';\n"
+              "}\n"
+              "func BadIteration(string? value) {\n"
+              "  for (var scalar in value) {}\n"
+              "  for (int32 scalar in \"cloth\") {}\n"
+              "}\n"
+              "func FinalIteration() {\n"
+              "  for (final char scalar in \"cloth\") { scalar = 'x'; }\n"
+              "  print(scalar);\n"
+              "}\n");
   invalid.analyze();
 
   test.expect(invalid.has_diagnostic(
@@ -2864,6 +2910,23 @@ void string_value_semantics(TestContext& test) {
               "a meta query was accepted as an assignment target");
   test.expect(invalid.has_diagnostic("type 'int32' has no Cloth meta queries"),
               "a meta query was accepted on an unsupported value type");
+  test.expect(invalid.has_diagnostic(
+                  "nullable string type 'string?' cannot be indexed without "
+                  "narrowing"),
+              "nullable string indexing was accepted without narrowing");
+  test.expect(invalid.has_diagnostic("string index has type 'bool'"),
+              "non-int32 string index was accepted");
+  test.expect(invalid.has_diagnostic(
+                  "nullable string type 'string?' cannot be iterated without "
+                  "narrowing"),
+              "nullable string iteration was accepted without narrowing");
+  test.expect(invalid.has_diagnostic(
+                  "for iteration variable has type 'char'; expected 'int32'"),
+              "incompatible string iteration binding was accepted");
+  test.expect(invalid.has_diagnostic("cannot assign to final local 'scalar'"),
+              "final string iteration binding accepted reassignment");
+  test.expect(invalid.has_diagnostic("unknown name 'scalar'"),
+              "string iteration binding escaped its loop scope");
 
   std::string malformed_source = "func Broken(): string { return \"";
   malformed_source.push_back(static_cast<char>(0xC3));

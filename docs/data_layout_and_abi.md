@@ -229,7 +229,7 @@ their selected contract may throw, even when the implementation narrows its
 semantic effect set to empty. ABI verification compares declarations, slots,
 constructor initializers, parameters, and MIR calls before LLVM emission. The
 complete persistent encoding is specified by
-[artifact format 5](artifact_schema_v5.md).
+[artifact format 6](artifact_schema_v6.md).
 
 ## LLVM boundary
 

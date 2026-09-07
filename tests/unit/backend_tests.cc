@@ -818,6 +818,8 @@ void strings(TestContext& test) {
               "  println(joined == \"cloth\");\n"
               "  println(left != right);\n"
               "  println(joined::isEmpty);\n"
+              "  println(joined[0]);\n"
+              "  for (var scalar in joined) { print(scalar); }\n"
               "  return joined::length + joined::byteLength;\n"
               "}\n"
               "func Optional(string? left, string? right): bool {\n"
@@ -836,6 +838,9 @@ void strings(TestContext& test) {
           sources.contains("call i32 @cloth_rt_string_byte_length(ptr ") &&
           sources.contains("call i8 @cloth_rt_string_is_empty(ptr "),
       "string meta queries did not use their runtime boundaries");
+  test.expect(sources.contains("call i32 @cloth_rt_string_scalar_at(ptr ") &&
+                  sources.contains("call i8 @cloth_rt_string_next_scalar(ptr "),
+              "string traversal did not use its runtime boundaries");
   test.expect(sources.contains("icmp ne i8 "),
               "runtime string booleans were not converted to LLVM i1");
 }
@@ -1096,6 +1101,7 @@ void print_and_native_entry_point(TestContext& test) {
               "  print(7);\n"
               "  print(true);\n"
               "  print('C');\n"
+              "  print('\\u{1F9F5}');\n"
               "  print(1.5);\n"
               "  HelloWorld value = HelloWorld();\n"
               "  println(value);\n"
@@ -1116,6 +1122,8 @@ void print_and_native_entry_point(TestContext& test) {
               "bool print intrinsic was not lowered with its ABI width");
   test.expect(sources.contains("call void @cloth_rt_print_char(i32 67)"),
               "char print intrinsic was not lowered");
+  test.expect(sources.contains("call void @cloth_rt_print_char(i32 129525)"),
+              "non-BMP char print intrinsic was not lowered");
   test.expect(sources.contains("call void @cloth_rt_print_f64(double "),
               "float64 print intrinsic was not lowered");
   test.expect(

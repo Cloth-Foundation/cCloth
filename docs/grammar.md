@@ -26,8 +26,12 @@ decimal_digit
     = "0" ... "9" ;
 ```
 
-Literal token formation, whitespace, comments, and escape sequences are defined
-by the lexer. Keywords cannot be used as identifiers.
+Literal token formation, whitespace, and comments are defined by the lexer.
+String and character literals retain the simple escapes `\n`, `\r`, `\t`,
+`\0`, `\\`, `\'`, and `\"`, and accept `\u{HEX}` with one through six ASCII
+hexadecimal digits. The lowercase `u` and braces are required. A character
+literal decodes to exactly one Unicode scalar; string escapes append that
+scalar's canonical UTF-8 encoding. Keywords cannot be used as identifiers.
 
 ## Declarations
 
@@ -474,7 +478,11 @@ The declaration pass enforces these rules separately from the grammar:
   its element type. Nullable primitives, enums, structs, and `void?` are rejected
   semantically; nullable enum arrays remain valid references.
 - A `for` iteration declaration uses either `var` inference or an explicit
-  element type.
+  element type. Arrays yield their element type; exact non-null strings yield
+  `char` values in Unicode scalar order. The iterable is evaluated once.
+- Indexing an exact non-null string accepts an `int32`-compatible scalar index
+  and yields a non-writable `char`. Array indexing remains a writable location
+  when its element storage is writable.
 - A `var` local requires an initializer. A final local also requires an
   initializer.
 - A final field is initialized by its declaration or exactly once on every

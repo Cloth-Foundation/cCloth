@@ -193,7 +193,7 @@ void canonical_interface_round_trip(TestContext& test) {
   const auto& bytes = encoded.artifact->bytes;
   test.expect(bytes.size() > 64 && bytes[0] == 0x43 && bytes[7] == 0 &&
                   read_u64(bytes, 24) == 0,
-              "version-1 envelope fields are incorrect");
+              "format-6 envelope fields are incorrect");
   const auto decoded =
       cloth::read_package_artifact(bytes, artifact.compatibility);
   test.expect(decoded.is_valid(), "canonical interface artifact did not read");
@@ -213,18 +213,18 @@ void canonical_interface_round_trip(TestContext& test) {
   test.expect(!metadata.empty() && metadata.front() == '{' &&
                   metadata.back() == '}' && !metadata.ends_with('\n') &&
                   metadata.starts_with("{\"compatibility\":") &&
-                  metadata.contains("\"runtime_abi\":\"6\"") &&
+                  metadata.contains("\"runtime_abi\":\"7\"") &&
                   metadata.contains("\"value\":\"3fc00000\"") &&
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
   test.expect(
       metadata.size() == 12377 &&
           cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-              "0bc0f871811b676c9e869f45bbf88576e"
-              "cb5c7de28f86d657982aed0fda267d7" &&
+              "ae8ac4df555229616170fc0d5e240bc9"
+              "c2f7d7664ac826f696cffb4fbb0d064b" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "d4ddb509e2d2f0a2a6dd73b20f2a3b99"
-              "a76510dccadb6c16df9197eceeacf8c4",
+              "690cb7f59f21281562e70e0cc8b9ec60"
+              "f15897366000fb2c31cfc7fc1dd433fa",
       "canonical version-6 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
@@ -242,7 +242,7 @@ void scalar_constants_round_trip(TestContext& test) {
     static final uint32 U32 = 4294967295;
     static final uint64 U64 = 18446744073709551615;
     static final bool Bool = true;
-    static final char Char = '\0';
+    static final char Char = '\u{1F9F5}';
     static final float32 F32 = -0.0;
     static final float64 F64 = -0.0;
     static func Main() {}
@@ -261,7 +261,7 @@ void scalar_constants_round_trip(TestContext& test) {
     test.expect(
         decoded.is_valid() && decoded.artifact->imported == artifact.imported,
         "scalar type/bits did not round trip exactly");
-    test.expect(encoded.artifact->bytes[8] == 5, "format-5 envelope");
+    test.expect(encoded.artifact->bytes[8] == 6, "format-6 envelope");
     const auto metadata = metadata_text(encoded.artifact->bytes);
     test.expect(metadata.contains("\"value\":\"-9223372036854775808\"") &&
                     metadata.contains("\"value\":\"18446744073709551615\""),
@@ -307,9 +307,13 @@ void scalar_constants_round_trip(TestContext& test) {
          "\"kind\":\"boolean\",\"value\":1"},
         {"\"kind\":\"boolean\",\"value\":true",
          "\"kind\":\"integer\",\"value\":\"1\""},
-        {"\"kind\":\"character\",\"value\":\"0\"",
-         "\"kind\":\"character\",\"value\":\"256\""},
-        {"\"kind\":\"character\",\"value\":\"0\"",
+        {"\"kind\":\"character\",\"value\":\"129525\"",
+         "\"kind\":\"character\",\"value\":\"55296\""},
+        {"\"kind\":\"character\",\"value\":\"129525\"",
+         "\"kind\":\"character\",\"value\":\"1114112\""},
+        {"\"kind\":\"character\",\"value\":\"129525\"",
+         "\"kind\":\"character\",\"value\":\"0129525\""},
+        {"\"kind\":\"character\",\"value\":\"129525\"",
          "\"kind\":\"character\",\"value\":\"-1\""},
         {"\"kind\":\"integer\",\"value\":\"-128\"",
          "\"kind\":\"float32\",\"value\":\"00000000\""},
@@ -448,6 +452,10 @@ void envelope_and_integrity_failures(TestContext& test) {
   expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
                   "pre-error-ABI format version was accepted");
   broken = encoded.artifact->bytes;
+  broken[8] = 5;
+  expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
+                  "pre-Unicode-scalar format version was accepted");
+  broken = encoded.artifact->bytes;
   broken[12] = 1;
   expect_rejected(std::move(broken),
                   cloth::ArtifactIssueCode::kMalformedEnvelope,
@@ -503,18 +511,18 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
                   "\"compiler_abi\":5");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
   changed = original;
-  const std::string_view current_runtime = "\"runtime_abi\":\"6\"";
+  const std::string_view current_runtime = "\"runtime_abi\":\"7\"";
   const std::size_t runtime = changed.find(current_runtime);
   test.expect(runtime != std::string::npos,
-              "runtime ABI fixture did not contain version 6");
+              "runtime ABI fixture did not contain version 7");
   if (runtime != std::string::npos) {
-    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"5\"");
+    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"6\"");
     const auto rejected = cloth::read_package_artifact(
         replace_metadata(encoded.artifact->bytes, std::move(changed)));
     test.expect(
         !rejected.is_valid() && !rejected.issues.empty() &&
             rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
-        "artifact with runtime ABI 5 was accepted by runtime ABI 6");
+        "artifact with runtime ABI 6 was accepted by runtime ABI 7");
   }
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");

@@ -110,6 +110,11 @@ void cloth_rt_gc_collect() noexcept;
 [[nodiscard]] std::int32_t cloth_rt_string_byte_length(
     const void* value) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_string_is_empty(const void* value) noexcept;
+[[nodiscard]] std::uint32_t cloth_rt_string_scalar_at(
+    const void* value, std::int32_t index) noexcept;
+[[nodiscard]] std::uint8_t cloth_rt_string_next_scalar(
+    const void* value, std::int32_t* byte_offset,
+    std::uint32_t* scalar) noexcept;
 [[nodiscard]] void* cloth_rt_object_type_name(const void* value) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_object_is_kind(const void* value,
                                                    std::uint64_t kind) noexcept;

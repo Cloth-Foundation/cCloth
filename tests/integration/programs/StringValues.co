@@ -1,4 +1,37 @@
+int32 traversalCalls = 0;
+int32 indexCalls = 0;
+int32 evaluationStep = 0;
+bool receiverBeforeIndex = false;
+
+StringValues() {}
+
+func TraversableText(): string {
+  if (traversalCalls == 0 && indexCalls == 0) { evaluationStep = 1; }
+  traversalCalls += 1;
+  return "A" + "🧵Z";
+}
+
+func TraversalIndex(): int32 {
+  receiverBeforeIndex = evaluationStep == 1;
+  evaluationStep = 2;
+  CollectionPressure();
+  indexCalls += 1;
+  return 1;
+}
+
+static func First(string text): char {
+  for (var scalar in text) { return scalar; }
+  return '\0';
+}
+
+static func CollectionPressure() {
+  for (int32 index = 0; index < 4000; index++) {
+    string temporary = "collector" + " pressure";
+  }
+}
+
 static func Main() {
+  StringValues traversal = StringValues();
   string empty = "";
   string greeting = "Hello, " + "Cloth";
   string unicode = "é🙂";
@@ -14,4 +47,65 @@ static func Main() {
   println(unicode::byteLength);
   println(withNull::length);
   println(withNull::byteLength);
+  println(unicode[0] == 'é');
+  println(unicode[1] == '🙂');
+  println(withNull[1] == '\0');
+  char evaluated =
+      traversal.TraversableText()[traversal.TraversalIndex()];
+  println(evaluated == '🧵');
+  println(traversal.receiverBeforeIndex);
+
+  int32 traversed = 0;
+  for (var scalar in traversal.TraversableText()) {
+    CollectionPressure();
+    if (traversed == 0) { println(scalar == 'A'); }
+    if (traversed == 1) { println(scalar == '🧵'); }
+    if (traversed == 2) { println(scalar == 'Z'); }
+    traversed += 1;
+  }
+  println(traversed);
+
+  for (final char scalar in "01234") {
+    if (scalar == '1') { continue; }
+    if (scalar == '4') { break; }
+    print(scalar);
+  }
+  println();
+
+  int32 emptyIterations = 0;
+  for (var scalar in "") { emptyIterations += 1; }
+  println(emptyIterations);
+
+  string rebound = "ab";
+  int32 explicitIterations = 0;
+  for (char scalar in rebound) {
+    scalar = 'z';
+    explicitIterations += 1;
+  }
+  println(rebound == "ab");
+  println(explicitIterations);
+
+  char scalar = 'X';
+  int32 nestedIterations = 0;
+  for (var scalar in "ab") {
+    for (var inner in "12") {
+      if (scalar != '\0' && inner != '\0') { nestedIterations += 1; }
+    }
+  }
+  println(scalar == 'X');
+  println(nestedIterations);
+  println(First("🧵Z") == '🧵');
+
+  string longText = "A🧵";
+  for (int32 repeat = 0; repeat < 10; repeat++) {
+    longText += longText;
+  }
+  int32 longCount = 0;
+  for (var scalar in longText) { longCount += 1; }
+  println(longCount);
+  println(longText[0] == 'A');
+  println(longText[longText::length - 1] == '🧵');
+
+  println(traversal.traversalCalls);
+  println(traversal.indexCalls);
 }

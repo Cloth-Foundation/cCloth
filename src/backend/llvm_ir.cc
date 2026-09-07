@@ -49,16 +49,6 @@ std::string field_initializer_name(std::string_view class_name,
   return "_C1I" + encode_name(class_name) + encode_name(field_name);
 }
 
-std::uint32_t decode_character(std::string_view lexeme) noexcept {
-  if (lexeme.size() < 3) {
-    return 0;
-  }
-  const char value = lexeme[1] == '\\' && lexeme.size() >= 4
-                         ? decode_escape_character(lexeme[2])
-                         : lexeme[1];
-  return static_cast<unsigned char>(value);
-}
-
 template <typename Value>
 std::optional<std::string> format_floating_literal(Value value) {
   static_assert(std::is_same_v<Value, float> || std::is_same_v<Value, double>);
@@ -151,8 +141,12 @@ std::optional<std::string> lower_scalar_literal(
       }
       return format_floating_literal(parsed);
     }
-    case LiteralKind::kCharacter:
-      return std::to_string(decode_character(literal.lexeme));
+    case LiteralKind::kCharacter: {
+      const ConstantBits value = scalar_literal(LiteralKind::kCharacter,
+                                                literal.lexeme, semantic_kind);
+      if (!value) return std::nullopt;
+      return std::to_string(*value);
+    }
     case LiteralKind::kBoolean:
       return literal.lexeme;
     case LiteralKind::kString:
@@ -212,6 +206,13 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* meta =
                  std::get_if<MirStringMetaInstruction>(&instruction.data)) {
     uses.push_back(meta->string);
+  } else if (const auto* access =
+                 std::get_if<MirStringScalarAtInstruction>(&instruction.data)) {
+    uses.push_back(access->string);
+    uses.push_back(access->index);
+  } else if (const auto* step = std::get_if<MirStringNextScalarInstruction>(
+                 &instruction.data)) {
+    uses.push_back(step->string);
   } else if (const auto* meta =
                  std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
     uses.push_back(meta->object);
@@ -389,6 +390,12 @@ class BodyEmitter {
   void emit_string_meta(const MirInstruction& instruction,
                         const MirStringMetaInstruction& meta,
                         std::ostringstream& output);
+  void emit_string_scalar_at(const MirInstruction& instruction,
+                             const MirStringScalarAtInstruction& access,
+                             std::ostringstream& output);
+  void emit_string_next_scalar(const MirInstruction& instruction,
+                               const MirStringNextScalarInstruction& step,
+                               std::ostringstream& output);
   void emit_object_meta(const MirInstruction& instruction,
                         const MirObjectMetaInstruction& meta,
                         std::ostringstream& output);
@@ -582,6 +589,8 @@ class ModuleEmitter {
            << "declare i32 @cloth_rt_string_length(ptr)\n"
            << "declare i32 @cloth_rt_string_byte_length(ptr)\n"
            << "declare i8 @cloth_rt_string_is_empty(ptr)\n"
+           << "declare i32 @cloth_rt_string_scalar_at(ptr, i32)\n"
+           << "declare i8 @cloth_rt_string_next_scalar(ptr, ptr, ptr)\n"
            << "declare ptr @cloth_rt_object_type_name(ptr)\n"
            << "declare i8 @cloth_rt_object_is_kind(ptr, i64)\n"
            << "declare i8 @cloth_rt_object_is_type(ptr, ptr)\n"
@@ -2217,6 +2226,12 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* meta =
                  std::get_if<MirStringMetaInstruction>(&instruction.data)) {
     emit_string_meta(instruction, *meta, output);
+  } else if (const auto* access =
+                 std::get_if<MirStringScalarAtInstruction>(&instruction.data)) {
+    emit_string_scalar_at(instruction, *access, output);
+  } else if (const auto* step = std::get_if<MirStringNextScalarInstruction>(
+                 &instruction.data)) {
+    emit_string_next_scalar(instruction, *step, output);
   } else if (const auto* meta =
                  std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
     emit_object_meta(instruction, *meta, output);
@@ -2329,11 +2344,18 @@ void BodyEmitter::emit_literal(const MirInstruction& instruction,
       break;
     }
     case LiteralKind::kString: {
-      const std::string decoded = decode_string_literal(literal.lexeme);
-      const std::string global = module_.add_string_literal(decoded);
+      const DecodedTextLiteral decoded =
+          decode_text_literal(literal.lexeme, TextLiteralKind::kString);
+      if (decoded.error != TextLiteralError::kNone) {
+        module_.report(instruction.range,
+                       "invalid string literal reached LLVM lowering");
+        values_.at(instruction.result->value) = "null";
+        return;
+      }
+      const std::string global = module_.add_string_literal(decoded.utf8);
       output << "  " << result_name(instruction)
              << " = call ptr @cloth_rt_string_literal(ptr " << global
-             << ", i64 " << decoded.size() << ")\n";
+             << ", i64 " << decoded.utf8.size() << ")\n";
       return;
     }
     case LiteralKind::kNull:
@@ -2460,6 +2482,25 @@ void BodyEmitter::emit_string_meta(const MirInstruction& instruction,
       break;
     }
   }
+}
+
+void BodyEmitter::emit_string_scalar_at(
+    const MirInstruction& instruction,
+    const MirStringScalarAtInstruction& access, std::ostringstream& output) {
+  output << "  " << result_name(instruction)
+         << " = call i32 @cloth_rt_string_scalar_at(ptr "
+         << value(access.string) << ", i32 " << value(access.index) << ")\n";
+}
+
+void BodyEmitter::emit_string_next_scalar(
+    const MirInstruction& instruction,
+    const MirStringNextScalarInstruction& step, std::ostringstream& output) {
+  const std::string raw_result = next_address();
+  output << "  " << raw_result << " = call i8 @cloth_rt_string_next_scalar(ptr "
+         << value(step.string) << ", ptr " << symbol_address(step.byte_cursor)
+         << ", ptr " << symbol_address(step.scalar) << ")\n"
+         << "  " << result_name(instruction) << " = icmp ne i8 " << raw_result
+         << ", 0\n";
 }
 
 void BodyEmitter::emit_object_meta(const MirInstruction& instruction,

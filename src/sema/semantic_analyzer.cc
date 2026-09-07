@@ -341,6 +341,7 @@ class SemanticAnalyzer {
           : syntax.kind == FileTypeKind::kInterface ? NominalKind::kInterface
                                                     : NominalKind::kClass};
       file.member_order = syntax.member_order;
+      file.string_iteration_cursors.resize(syntax.storage.statements().size());
       if (syntax.kind == FileTypeKind::kInterface) {
         file.interface_id = canonical_interface_id(file.identity);
       }
@@ -2894,11 +2895,20 @@ class SemanticAnalyzer {
       check_value(iterable, expression_range(for_statement->iterable));
 
       TypeId element_type = model_.error_type();
+      bool is_string_iteration = false;
       const bool iterable_completes = iterable.type != model_.bottom_type();
       if (iterable.type != model_.error_type() && iterable_completes) {
         const SemanticType& type = model_.type(iterable.type);
         if (type.kind == TypeKind::kArray && type.element_type) {
           element_type = *type.element_type;
+        } else if (iterable.type == model_.string_type()) {
+          element_type = *model_.find_type("char");
+          is_string_iteration = true;
+        } else if (type.kind == TypeKind::kNullable && type.element_type &&
+                   *type.element_type == model_.string_type()) {
+          diagnostics_.error(expression_range(for_statement->iterable),
+                             "nullable string type '" + type.name +
+                                 "' cannot be iterated without narrowing");
         } else {
           diagnostics_.error(expression_range(for_statement->iterable),
                              "type '" + type.name + "' is not iterable");
@@ -2925,6 +2935,19 @@ class SemanticAnalyzer {
       model_.mutable_symbol(symbol).is_final = for_statement->variable.is_final;
       model_.mutable_file(current_file_).statement_symbols.at(id.value) =
           symbol;
+      if (is_string_iteration) {
+        const SymbolId cursor =
+            model_.add_symbol(SemanticSymbol{SymbolKind::kLocal,
+                                             "$string_cursor",
+                                             *model_.find_type("int32"),
+                                             {},
+                                             Visibility::kPrivate,
+                                             current_file_,
+                                             for_statement->variable.range});
+        model_.mutable_symbol(cursor).is_final = false;
+        model_.mutable_file(current_file_)
+            .string_iteration_cursors.at(id.value) = cursor;
+      }
 
       push_scope();
       bind_name(for_statement->variable.name, symbol,
@@ -3293,15 +3316,25 @@ class SemanticAnalyzer {
         }
         return ExpressionState{type, ValueCategory::kValue};
       }
-      case LiteralKind::kString:
-        if (!utf8_scalar_count(decode_string_literal(literal.lexeme))) {
-          diagnostics_.error(range, "string literal is not valid UTF-8");
+      case LiteralKind::kString: {
+        const DecodedTextLiteral decoded =
+            decode_text_literal(literal.lexeme, TextLiteralKind::kString);
+        if (decoded.error != TextLiteralError::kNone) {
+          diagnostics_.error(range, "invalid string literal");
           return ExpressionState{model_.error_type()};
         }
         return ExpressionState{model_.string_type(), ValueCategory::kValue};
-      case LiteralKind::kCharacter:
+      }
+      case LiteralKind::kCharacter: {
+        const DecodedTextLiteral decoded =
+            decode_text_literal(literal.lexeme, TextLiteralKind::kCharacter);
+        if (decoded.error != TextLiteralError::kNone) {
+          diagnostics_.error(range, "invalid character literal");
+          return ExpressionState{model_.error_type()};
+        }
         return ExpressionState{*model_.find_type("char"),
                                ValueCategory::kValue};
+      }
       case LiteralKind::kBoolean:
         return ExpressionState{model_.bool_type(), ValueCategory::kValue};
       case LiteralKind::kNull:
@@ -3400,9 +3433,11 @@ class SemanticAnalyzer {
         subscript.type == model_.bottom_type()) {
       return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
+    const bool is_string = object.type == model_.string_type();
     if (subscript.type != model_.error_type()) {
       check_assignment(*model_.find_type("int32"), subscript.type,
-                       expression_range(index.index), "array index");
+                       expression_range(index.index),
+                       is_string ? "string index" : "array index");
     }
     if (object.type == model_.error_type()) {
       return ExpressionState{model_.error_type()};
@@ -3411,6 +3446,15 @@ class SemanticAnalyzer {
       return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
     }
     const SemanticType& type = model_.type(object.type);
+    if (object.type == model_.string_type()) {
+      return ExpressionState{*model_.find_type("char"), ValueCategory::kValue};
+    }
+    if (type.kind == TypeKind::kNullable && type.element_type &&
+        *type.element_type == model_.string_type()) {
+      diagnostics_.error(range, "nullable string type '" + type.name +
+                                    "' cannot be indexed without narrowing");
+      return ExpressionState{model_.error_type()};
+    }
     if (type.kind == TypeKind::kNullable && type.element_type &&
         model_.type(*type.element_type).kind == TypeKind::kArray) {
       diagnostics_.error(range, "nullable array type '" + type.name +

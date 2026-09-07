@@ -71,6 +71,8 @@ Stage 37 is complete following its separately authorized 37.4 exit audit on
 2026-09-06.
 Stage 38 is complete following its separately authorized 38.4 exit audit on
 2026-09-06.
+Stage 39 is complete following its separately authorized 39.4 exit audit on
+2026-09-06.
 
 ## Scheduled work
 
@@ -986,6 +988,56 @@ class override validation. Existing ABI and artifact versions are unchanged.
   Rust/MSRV, editor, documentation, formatting, link, and repository gates
   pass without a compatibility, schema, or library-version transition.
 
+### Stage 39: Unicode string traversal
+
+- [x] **39.1 — Contract.** Freeze the Unicode scalar model, raw and escaped
+  character/string literals, scalar indexing, linear string iteration,
+  evaluation and bounds behavior, runtime/GC ownership, artifact/runtime
+  transitions, diagnostics, verification, and non-goals.
+
+  Approved and completed 2026-09-06. Raw and `\u{...}` literal spellings
+  produce valid Unicode scalars; `text[index]` returns a non-writable `char`;
+  and `for (char scalar in text)` traverses scalar values once in linear byte
+  time. Checkpoint 39.2 introduced artifact format 6 with compiler ABI 5;
+  checkpoint 39.3 targets runtime ABI 7. This checkpoint changes documentation
+  only, so active compatibility remains 5/5/6 and 2/1/1/1 with `cloth` v0.3.0.
+  See the [contract](docs/proposals/stage_39_unicode_string_traversal.md).
+- [x] **39.2 — Scalar frontend and artifacts.** Implement one authoritative
+  Unicode literal decoder, full-range character constants, semantic/HIR and
+  LLVM integration, artifact format 6, package/source-free behavior, editor
+  grammar, and focused user documentation without enabling traversal.
+
+  Completed 2026-09-06. One checked decoder now owns raw UTF-8, simple escapes,
+  and `\u{...}` for lexing, constants, semantic/HIR/MIR verification, and LLVM.
+  Valid scalar bits cross both targets, native execution, format-6 artifacts,
+  source-free packages, and Shuttle reuse/invalidation. The editor and user
+  references cover the spelling. Compatibility is 6/5/6 and 2/1/1/1 with
+  `cloth` v0.3.0; string indexing and iteration remain disabled until 39.3.
+- [x] **39.3 — Traversal and lowering.** Implement typed string indexing and
+  iteration through verified HIR/MIR, runtime ABI 7, optimized LLVM, GC-safe
+  native execution, packages, source-free consumers, Shuttle, and user
+  documentation.
+
+  Completed 2026-09-06. Exact non-null `string` indexing now returns a
+  non-writable scalar `char`, while `for in` uses a compiler-owned monotonic
+  UTF-8 cursor and evaluates its iterable once. Dedicated verified HIR/MIR,
+  allocation-free runtime ABI 7 operations, optimized LLVM, precise roots,
+  native bounds failures, packages, source-free consumers, Shuttle fixtures,
+  and user documentation carry the contract. Compatibility is 6/5/7 and
+  2/1/1/1 with `cloth` v0.3.0.
+- [x] **39.4 — Exit audit.** Complete Unicode, bounds, evaluation, complexity,
+  GC, malformed-state, compatibility, determinism, failure-preservation,
+  native/cross-target, Rust, editor, documentation, formatting, link,
+  sanitizer, and repository quality matrices.
+
+  Completed 2026-09-06. The audit adds independent empty and adjacent bounds
+  failures; exact receiver-before-index checks; explicit mutable, final,
+  nested, shadowed, returning, and throwing iteration; long monotonic cursor
+  walks; and forged HIR/MIR coverage. All 296 development and sanitizer CTests,
+  51 ordinary Rust tests, Rust 1.85 MSRV, Clippy, formatting, both 17-test
+  editor runs, documentation links, and repository checks pass. Compatibility
+  remains 6/5/7 and 2/1/1/1 with `cloth` v0.3.0.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1031,10 +1083,6 @@ active stage without first updating `ROADMAP.md`.
   contract.
 - Add floating-point bit representation and byte-order operations after the
   integer-only Stage 21 boundary is proven.
-- Align wider Unicode character literals/escapes and artifact constants across
-  lexer, scalar decoding, and emission. Current literal/artifact handling is
-  byte-oriented despite `char` having 32-bit storage; Stage 28 preserves that
-  boundary rather than implicitly expanding the character language.
 ### Optimization
 
 - Add ability to make full qualified name calls.
@@ -1062,8 +1110,8 @@ active stage without first updating `ROADMAP.md`.
 
 ### Strings, formatting, and representation
 
-- Add string indexing, slicing, and iteration over a deliberately selected
-  Unicode unit.
+- Add string slicing after Stage 39 establishes Unicode scalar indexing and
+  iteration.
 - Add interpolation and type-checked formatting.
 - Add case conversion, Unicode normalization, searching, and interning.
 - Decide how a source-defined standard-library string API layers over the

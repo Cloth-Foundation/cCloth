@@ -37,12 +37,12 @@ Nominal identity is this ordered sequence:
 6. `component("class")`, `component("interface")`, `component("enum")`, or
    `component("struct")`.
 
-Struct nominal identity is retained through native lowering and artifact format 5.
+Struct nominal identity is retained through native lowering and artifact format 6.
 Struct constructors use the ordinary `constructor` domain without a companion
 initializer or descriptor symbol.
 
 Error files use the class nominal tag, while their semantic error kind and
-ancestry remain explicit in format-5 declarations and descriptors. The
+ancestry remain explicit in format-6 declarations and descriptors. The
 compiler-known `Error` and `DivisionByZero` types use primitive-domain identity
 because they have no source package or file owner.
 

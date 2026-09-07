@@ -90,12 +90,6 @@ constexpr bool is_identifier_continue(char character) noexcept {
   return is_identifier_start(character) || is_digit(character);
 }
 
-constexpr bool is_supported_escape(char character) noexcept {
-  return character == 'n' || character == 'r' || character == 't' ||
-         character == '\\' || character == '"' || character == '\'' ||
-         character == '0';
-}
-
 std::string describe_character(char character) {
   const auto value = static_cast<unsigned char>(character);
   if (std::isprint(value) != 0) {
@@ -106,6 +100,47 @@ std::string describe_character(char character) {
   output << "byte 0x" << std::uppercase << std::hex << std::setw(2)
          << std::setfill('0') << static_cast<unsigned int>(value);
   return output.str();
+}
+
+void report_text_literal_error(const Token& token, TextLiteralKind kind,
+                               DiagnosticEngine& diagnostics) {
+  const DecodedTextLiteral decoded = decode_text_literal(token.lexeme, kind);
+  const std::string literal_name =
+      kind == TextLiteralKind::kString ? "string" : "character";
+  switch (decoded.error) {
+    case TextLiteralError::kNone:
+      return;
+    case TextLiteralError::kInvalidStructure:
+      diagnostics.error(token.range, "malformed " + literal_name + " literal");
+      return;
+    case TextLiteralError::kInvalidUtf8:
+      diagnostics.error(token.range,
+                        literal_name + " literal is not valid UTF-8");
+      return;
+    case TextLiteralError::kUnknownEscape: {
+      std::string message = "unknown escape sequence";
+      if (decoded.error_offset + 1 < token.lexeme.size()) {
+        message += " \\";
+        message.push_back(token.lexeme[decoded.error_offset + 1]);
+      }
+      diagnostics.error(token.range, std::move(message));
+      return;
+    }
+    case TextLiteralError::kInvalidUnicodeEscape:
+      diagnostics.error(token.range, "invalid Unicode escape sequence");
+      return;
+    case TextLiteralError::kInvalidUnicodeScalar:
+      diagnostics.error(token.range,
+                        "Unicode escape does not name a scalar value");
+      return;
+    case TextLiteralError::kEmptyCharacter:
+      diagnostics.error(token.range, "empty character literal");
+      return;
+    case TextLiteralError::kMultipleCharacters:
+      diagnostics.error(token.range,
+                        "character literal must contain exactly one character");
+      return;
+  }
 }
 
 }  // namespace
@@ -454,23 +489,22 @@ Token Lexer::scan_string(std::size_t start, SourceLocation location) {
   while (!at_end()) {
     if (peek() == '"') {
       advance();
-      return make_token(TokenKind::kStringLiteral, start, location);
+      const Token token =
+          make_token(TokenKind::kStringLiteral, start, location);
+      report_text_literal_error(token, TextLiteralKind::kString, diagnostics_);
+      return token;
     }
     if (peek() == '\r' || peek() == '\n') {
       diagnostics_.error(location, "unterminated string literal");
       return make_token(TokenKind::kStringLiteral, start, location);
     }
     if (peek() == '\\') {
-      const auto escape_location = current_location();
       advance();
       if (at_end() || peek() == '\r' || peek() == '\n') {
         diagnostics_.error(location, "unterminated string literal");
         return make_token(TokenKind::kStringLiteral, start, location);
       }
-      const char escaped = advance();
-      if (!is_supported_escape(escaped)) {
-        report_invalid_escape(escape_location, escaped);
-      }
+      advance();
       continue;
     }
     advance();
@@ -481,55 +515,31 @@ Token Lexer::scan_string(std::size_t start, SourceLocation location) {
 }
 
 Token Lexer::scan_character(std::size_t start, SourceLocation location) {
-  if (at_end() || peek() == '\r' || peek() == '\n') {
-    diagnostics_.error(location, "unterminated character literal");
-    return make_token(TokenKind::kCharacterLiteral, start, location);
-  }
-
-  if (peek() == '\'') {
-    advance();
-    diagnostics_.error(location, "empty character literal");
-    return make_token(TokenKind::kCharacterLiteral, start, location);
-  }
-
-  if (peek() == '\\') {
-    const auto escape_location = current_location();
-    advance();
-    if (at_end() || peek() == '\r' || peek() == '\n') {
+  while (!at_end()) {
+    if (peek() == '\'') {
+      advance();
+      const Token token =
+          make_token(TokenKind::kCharacterLiteral, start, location);
+      report_text_literal_error(token, TextLiteralKind::kCharacter,
+                                diagnostics_);
+      return token;
+    }
+    if (peek() == '\r' || peek() == '\n') {
       diagnostics_.error(location, "unterminated character literal");
       return make_token(TokenKind::kCharacterLiteral, start, location);
     }
-    const char escaped = advance();
-    if (!is_supported_escape(escaped)) {
-      report_invalid_escape(escape_location, escaped);
+    if (peek() == '\\') {
+      advance();
+      if (at_end() || peek() == '\r' || peek() == '\n') {
+        diagnostics_.error(location, "unterminated character literal");
+        return make_token(TokenKind::kCharacterLiteral, start, location);
+      }
     }
-  } else {
     advance();
   }
 
-  if (match('\'')) {
-    return make_token(TokenKind::kCharacterLiteral, start, location);
-  }
-
-  if (at_end() || peek() == '\r' || peek() == '\n') {
-    diagnostics_.error(location, "unterminated character literal");
-    return make_token(TokenKind::kCharacterLiteral, start, location);
-  }
-
-  diagnostics_.error(location,
-                     "character literal must contain exactly one character");
-  while (!at_end() && peek() != '\'' && peek() != '\r' && peek() != '\n') {
-    advance();
-  }
-  if (peek() == '\'') {
-    advance();
-  }
+  diagnostics_.error(location, "unterminated character literal");
   return make_token(TokenKind::kCharacterLiteral, start, location);
-}
-
-void Lexer::report_invalid_escape(SourceLocation location, char escaped) {
-  diagnostics_.error(location,
-                     "unknown escape sequence \\" + std::string{escaped});
 }
 
 }  // namespace cloth

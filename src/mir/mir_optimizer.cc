@@ -634,6 +634,13 @@ void remap_instruction(MirInstruction& instruction,
   } else if (auto* meta =
                  std::get_if<MirStringMetaInstruction>(&instruction.data)) {
     remap_value(meta->string, aliases, values);
+  } else if (auto* access =
+                 std::get_if<MirStringScalarAtInstruction>(&instruction.data)) {
+    remap_value(access->string, aliases, values);
+    remap_value(access->index, aliases, values);
+  } else if (auto* step = std::get_if<MirStringNextScalarInstruction>(
+                 &instruction.data)) {
+    remap_value(step->string, aliases, values);
   } else if (auto* meta =
                  std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
     remap_value(meta->object, aliases, values);

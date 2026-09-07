@@ -72,6 +72,37 @@ foreach(scenario IN ITEMS parse_kind parse_text parse_bits)
             "-DCLOTH_EXPECTED_ERROR=primitive parse"
             -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 endforeach()
+foreach(scenario IN ITEMS string_index_negative string_index_length
+                          string_index_empty string_index_after_length)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=string index is out of bounds"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
+foreach(scenario IN ITEMS string_iteration_offset string_iteration_boundary)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=string iteration cursor"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
+add_test(NAME cloth_runtime_string_iteration_output
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=string_iteration_output"
+        "-DCLOTH_EXPECTED_ERROR=string iteration output pointer is null"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+foreach(scenario IN ITEMS string_layout_encoding string_layout_scalars)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=string has an invalid layout"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
 foreach(scenario IN ITEMS parse_layout_size parse_layout_data
                           parse_layout_encoding parse_layout_scalars)
     add_test(NAME cloth_runtime_${scenario}

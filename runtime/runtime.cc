@@ -626,6 +626,29 @@ const ClothString& require_parse_text(const void* value) noexcept {
   return text;
 }
 
+bool has_valid_string_layout(const ClothString& string) noexcept {
+  constexpr std::size_t kMaximumStringSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  std::size_t scalar_count = 0;
+  return string.byte_size <= kMaximumStringSize &&
+         string.scalar_count <= kMaximumStringSize &&
+         (string.data != nullptr || string.byte_size == 0) &&
+         try_count_utf8_scalars(string.data, string.byte_size, scalar_count) &&
+         scalar_count == string.scalar_count;
+}
+
+const ClothString& require_traversable_string(const void* value) noexcept {
+  const ClothString& string = require_string(value);
+  constexpr std::size_t kMaximumStringSize =
+      static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max());
+  if (string.byte_size > kMaximumStringSize ||
+      string.scalar_count > kMaximumStringSize ||
+      (string.data == nullptr && string.byte_size != 0)) {
+    runtime_failure("string has an invalid layout");
+  }
+  return string;
+}
+
 const ClothObjectHeader& require_object(const void* value) noexcept {
   if (value == nullptr) {
     runtime_failure("null object");
@@ -1630,6 +1653,60 @@ extern "C" std::int32_t cloth_rt_string_byte_length(
 
 extern "C" std::uint8_t cloth_rt_string_is_empty(const void* value) noexcept {
   return require_string(value).byte_size == 0 ? 1 : 0;
+}
+
+extern "C" std::uint32_t cloth_rt_string_scalar_at(
+    const void* value, std::int32_t index) noexcept {
+  const ClothString& string = require_traversable_string(value);
+  if (!has_valid_string_layout(string)) {
+    runtime_failure("string has an invalid layout");
+  }
+  if (index < 0 || static_cast<std::size_t>(index) >= string.scalar_count) {
+    runtime_failure("string index is out of bounds");
+  }
+  std::size_t byte_offset = 0;
+  std::uint32_t scalar = 0;
+  for (std::int32_t scalar_index = 0; scalar_index <= index; ++scalar_index) {
+    if (!decode_utf8_scalar(string.data, string.byte_size, byte_offset,
+                            scalar)) {
+      runtime_failure("string has an invalid layout");
+    }
+  }
+  return scalar;
+}
+
+extern "C" std::uint8_t cloth_rt_string_next_scalar(
+    const void* value, std::int32_t* byte_offset,
+    std::uint32_t* scalar) noexcept {
+  if (byte_offset == nullptr || scalar == nullptr) {
+    runtime_failure("string iteration output pointer is null");
+  }
+  const ClothString& string = require_traversable_string(value);
+  if (*byte_offset < 0 ||
+      static_cast<std::size_t>(*byte_offset) > string.byte_size) {
+    runtime_failure("string iteration cursor is invalid");
+  }
+  std::size_t next = static_cast<std::size_t>(*byte_offset);
+  if (next == string.byte_size) {
+    if (!has_valid_string_layout(string)) {
+      runtime_failure("string has an invalid layout");
+    }
+    *scalar = 0;
+    return 0;
+  }
+  if (next != 0 &&
+      (static_cast<unsigned char>(string.data[next]) & 0xc0U) == 0x80U) {
+    runtime_failure("string iteration cursor is not at a scalar boundary");
+  }
+  std::uint32_t decoded = 0;
+  if (!decode_utf8_scalar(string.data, string.byte_size, next, decoded) ||
+      next >
+          static_cast<std::size_t>(std::numeric_limits<std::int32_t>::max())) {
+    runtime_failure("string has an invalid layout");
+  }
+  *byte_offset = static_cast<std::int32_t>(next);
+  *scalar = decoded;
+  return 1;
 }
 
 extern "C" void* cloth_rt_object_type_name(const void* value) noexcept {

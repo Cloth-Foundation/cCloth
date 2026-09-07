@@ -115,8 +115,8 @@ receive read-only snapshots captured before arguments. Struct returns use fresh
 caller-owned result storage. Nested writes capture their owner and index before
 the RHS; compound updates load the current field after evaluating the RHS.
 
-Compatibility is artifact format **4**, compiler ABI **4**, runtime ABI **3**.
+Compatibility is artifact format **6**, compiler ABI **5**, runtime ABI **7**.
 Process protocol **2**, receipt schema **1**, and manifest schema **1** are
 unchanged. Rebuild old artifacts. See [data layout and ABI](data_layout_and_abi.md)
-and [artifact schema v5](artifact_schema_v5.md) for layouts, maps, signatures, and
+and [artifact schema v6](artifact_schema_v6.md) for layouts, maps, signatures, and
 bounded-validation limits.

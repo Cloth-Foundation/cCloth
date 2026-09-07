@@ -38,6 +38,11 @@ Every indexed load or store obtains its address through the checked runtime
 access function. `::length` is likewise a runtime query, keeping the array header
 opaque to generated code.
 
+String indexing lowers to a dedicated scalar-access runtime call and returns
+LLVM `i32`. String `for in` retains one rooted receiver plus compiler-only
+`int32` cursor and `char` output slots. Each loop condition calls the cursor
+operation once; it does not lower to repeated scalar indexing.
+
 ## Control flow and expressions
 
 Each MIR basic block starts an LLVM basic block. Jumps, branches, returns,
@@ -174,6 +179,8 @@ declare i8 @cloth_rt_string_equal(ptr, ptr)
 declare i32 @cloth_rt_string_length(ptr)
 declare i32 @cloth_rt_string_byte_length(ptr)
 declare i8 @cloth_rt_string_is_empty(ptr)
+declare i32 @cloth_rt_string_scalar_at(ptr, i32)
+declare i8 @cloth_rt_string_next_scalar(ptr, ptr, ptr)
 declare ptr @cloth_rt_object_type_name(ptr)
 declare i8 @cloth_rt_object_is_kind(ptr, i64)
 declare i8 @cloth_rt_object_is_type(ptr, ptr)
@@ -223,6 +230,9 @@ not emit allocatable class descriptors.
 program-lifetime bytes. Concatenation returns a new managed string with owned
 bytes. Equality compares byte content, and meta-query calls expose cached scalar
 and byte lengths without revealing the runtime layout.
+Scalar access validates bounds and decodes the selected Unicode scalar.
+Cursor traversal writes one scalar and the next byte boundary per successful
+call, returning zero only at the exact end. Both operations allocate nothing.
 Checked numeric conversion passes an emitted range predicate to
 `cloth_rt_require_numeric_conversion` before executing a potentially invalid
 LLVM conversion. Integer narrowing uses `trunc`, integer/floating conversion
@@ -285,7 +295,8 @@ retained only by another predecessor when control flow joins. A collecting call
 sees all of its reference operands rooted; result roots are populated before
 any source root is cleared. Managed allocation calls, including string
 concatenation and `::typeName`, are the only automatic safepoints. Runtime
-checks, output, array access, and shadow-stack maintenance do not collect.
+checks, output, array access, string scalar access, string cursor traversal, and
+shadow-stack maintenance do not collect.
 
 ## Verification and deferred work
 

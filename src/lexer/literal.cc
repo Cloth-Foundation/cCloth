@@ -173,6 +173,95 @@ NumericLiteralSpelling parse_base_literal(std::string_view spelling,
   return result;
 }
 
+struct Utf8Scalar {
+  std::uint32_t value;
+  std::size_t width;
+};
+
+std::optional<Utf8Scalar> decode_utf8_scalar(std::string_view text,
+                                             std::size_t offset,
+                                             std::size_t limit) noexcept {
+  if (offset >= limit) return std::nullopt;
+  const auto first = static_cast<std::uint8_t>(text[offset]);
+  std::size_t width = 0;
+  std::uint32_t value = 0;
+  if (first <= 0x7F) {
+    width = 1;
+    value = first;
+  } else if (first >= 0xC2 && first <= 0xDF) {
+    width = 2;
+    value = first & 0x1FU;
+  } else if (first >= 0xE0 && first <= 0xEF) {
+    width = 3;
+    value = first & 0x0FU;
+  } else if (first >= 0xF0 && first <= 0xF4) {
+    width = 4;
+    value = first & 0x07U;
+  } else {
+    return std::nullopt;
+  }
+
+  if (width > limit - offset) return std::nullopt;
+  for (std::size_t index = 1; index < width; ++index) {
+    const auto continuation = static_cast<std::uint8_t>(text[offset + index]);
+    if ((continuation & 0xC0U) != 0x80U) return std::nullopt;
+    value = (value << 6U) | (continuation & 0x3FU);
+  }
+
+  if ((width == 3 && value < 0x800U) || (width == 4 && value < 0x10000U) ||
+      !is_unicode_scalar(value)) {
+    return std::nullopt;
+  }
+  return Utf8Scalar{value, width};
+}
+
+std::optional<std::uint32_t> decode_simple_escape(char character) noexcept {
+  switch (character) {
+    case 'n':
+      return '\n';
+    case 'r':
+      return '\r';
+    case 't':
+      return '\t';
+    case '0':
+      return 0;
+    case '\\':
+      return '\\';
+    case '\'':
+      return '\'';
+    case '"':
+      return '"';
+    default:
+      return std::nullopt;
+  }
+}
+
+void append_utf8(std::uint32_t value, std::string& output) {
+  if (value <= 0x7FU) {
+    output.push_back(static_cast<char>(value));
+  } else if (value <= 0x7FFU) {
+    output.push_back(static_cast<char>(0xC0U | (value >> 6U)));
+    output.push_back(static_cast<char>(0x80U | (value & 0x3FU)));
+  } else if (value <= 0xFFFFU) {
+    output.push_back(static_cast<char>(0xE0U | (value >> 12U)));
+    output.push_back(static_cast<char>(0x80U | ((value >> 6U) & 0x3FU)));
+    output.push_back(static_cast<char>(0x80U | (value & 0x3FU)));
+  } else {
+    output.push_back(static_cast<char>(0xF0U | (value >> 18U)));
+    output.push_back(static_cast<char>(0x80U | ((value >> 12U) & 0x3FU)));
+    output.push_back(static_cast<char>(0x80U | ((value >> 6U) & 0x3FU)));
+    output.push_back(static_cast<char>(0x80U | (value & 0x3FU)));
+  }
+}
+
+DecodedTextLiteral text_literal_error(TextLiteralError error,
+                                      std::size_t offset) {
+  DecodedTextLiteral result;
+  result.error = error;
+  result.error_offset = offset;
+  return result;
+}
+
 }  // namespace
 
 NumericLiteralSpelling parse_numeric_literal_spelling(
@@ -337,87 +426,107 @@ std::string_view numeric_literal_suffix_type_name(
   return {};
 }
 
-char decode_escape_character(char character) noexcept {
-  switch (character) {
-    case 'n':
-      return '\n';
-    case 'r':
-      return '\r';
-    case 't':
-      return '\t';
-    case '0':
-      return '\0';
-    case '\\':
-      return '\\';
-    case '\'':
-      return '\'';
-    case '"':
-      return '"';
-    default:
-      return character;
+DecodedTextLiteral decode_text_literal(std::string_view lexeme,
+                                       TextLiteralKind kind) {
+  const char delimiter = kind == TextLiteralKind::kString ? '"' : '\'';
+  if (lexeme.size() < 2 || lexeme.front() != delimiter ||
+      lexeme.back() != delimiter) {
+    return text_literal_error(TextLiteralError::kInvalidStructure, 0);
   }
-}
 
-std::string decode_string_literal(std::string_view lexeme) {
-  std::string value;
-  if (lexeme.size() < 2) {
-    return value;
-  }
-  value.reserve(lexeme.size() - 2);
-  for (std::size_t index = 1; index + 1 < lexeme.size(); ++index) {
-    if (lexeme[index] == '\\' && index + 2 < lexeme.size()) {
-      ++index;
-      value.push_back(decode_escape_character(lexeme[index]));
+  DecodedTextLiteral result;
+  result.utf8.reserve(lexeme.size() - 2);
+  const std::size_t limit = lexeme.size() - 1;
+  std::size_t offset = 1;
+  while (offset < limit) {
+    const std::size_t scalar_offset = offset;
+    std::uint32_t scalar = 0;
+    if (lexeme[offset] == '\\') {
+      ++offset;
+      if (offset >= limit) {
+        return text_literal_error(TextLiteralError::kUnknownEscape,
+                                  scalar_offset);
+      }
+      if (lexeme[offset] != 'u') {
+        const auto escaped = decode_simple_escape(lexeme[offset]);
+        if (!escaped) {
+          return text_literal_error(TextLiteralError::kUnknownEscape,
+                                    scalar_offset);
+        }
+        scalar = *escaped;
+        ++offset;
+      } else {
+        ++offset;
+        if (offset >= limit || lexeme[offset] != '{') {
+          return text_literal_error(TextLiteralError::kInvalidUnicodeEscape,
+                                    scalar_offset);
+        }
+        ++offset;
+        const std::size_t digits_begin = offset;
+        std::uint32_t value = 0;
+        while (offset < limit && lexeme[offset] != '}') {
+          const int digit = digit_value(lexeme[offset]);
+          if (digit < 0 || offset - digits_begin >= 6) {
+            return text_literal_error(TextLiteralError::kInvalidUnicodeEscape,
+                                      scalar_offset);
+          }
+          value = (value << 4U) | static_cast<std::uint32_t>(digit);
+          ++offset;
+        }
+        if (offset == digits_begin || offset >= limit ||
+            lexeme[offset] != '}') {
+          return text_literal_error(TextLiteralError::kInvalidUnicodeEscape,
+                                    scalar_offset);
+        }
+        ++offset;
+        if (!is_unicode_scalar(value)) {
+          return text_literal_error(TextLiteralError::kInvalidUnicodeScalar,
+                                    scalar_offset);
+        }
+        scalar = value;
+      }
+      append_utf8(scalar, result.utf8);
     } else {
-      value.push_back(lexeme[index]);
+      if (lexeme[offset] == delimiter || lexeme[offset] == '\r' ||
+          lexeme[offset] == '\n') {
+        return text_literal_error(TextLiteralError::kInvalidStructure,
+                                  scalar_offset);
+      }
+      const auto decoded = decode_utf8_scalar(lexeme, offset, limit);
+      if (!decoded) {
+        return text_literal_error(TextLiteralError::kInvalidUtf8,
+                                  scalar_offset);
+      }
+      scalar = decoded->value;
+      result.utf8.append(lexeme.substr(offset, decoded->width));
+      offset += decoded->width;
+    }
+
+    ++result.scalar_count;
+    result.character = scalar;
+    if (kind == TextLiteralKind::kCharacter && result.scalar_count > 1) {
+      return text_literal_error(TextLiteralError::kMultipleCharacters,
+                                scalar_offset);
     }
   }
-  return value;
+
+  if (kind == TextLiteralKind::kCharacter && result.scalar_count == 0) {
+    return text_literal_error(TextLiteralError::kEmptyCharacter, 1);
+  }
+  return result;
+}
+
+bool is_unicode_scalar(std::uint64_t value) noexcept {
+  return value <= 0x10FFFFU && !(value >= 0xD800U && value <= 0xDFFFU);
 }
 
 std::optional<std::size_t> utf8_scalar_count(std::string_view text) noexcept {
   std::size_t scalar_count = 0;
   std::size_t offset = 0;
   while (offset < text.size()) {
-    const auto first = static_cast<std::uint8_t>(text[offset]);
-    std::size_t width = 0;
-    if (first <= 0x7F) {
-      width = 1;
-    } else if (first >= 0xC2 && first <= 0xDF) {
-      width = 2;
-    } else if (first >= 0xE0 && first <= 0xEF) {
-      width = 3;
-    } else if (first >= 0xF0 && first <= 0xF4) {
-      width = 4;
-    } else {
-      return std::nullopt;
-    }
-
-    if (width > text.size() - offset) {
-      return std::nullopt;
-    }
-    for (std::size_t index = 1; index < width; ++index) {
-      const auto continuation = static_cast<std::uint8_t>(text[offset + index]);
-      if ((continuation & 0xC0U) != 0x80U) {
-        return std::nullopt;
-      }
-    }
-
-    if (width == 3) {
-      const auto second = static_cast<std::uint8_t>(text[offset + 1]);
-      if ((first == 0xE0 && second < 0xA0) ||
-          (first == 0xED && second >= 0xA0)) {
-        return std::nullopt;
-      }
-    } else if (width == 4) {
-      const auto second = static_cast<std::uint8_t>(text[offset + 1]);
-      if ((first == 0xF0 && second < 0x90) ||
-          (first == 0xF4 && second > 0x8F)) {
-        return std::nullopt;
-      }
-    }
-
-    offset += width;
+    const auto decoded = decode_utf8_scalar(text, offset, text.size());
+    if (!decoded) return std::nullopt;
+    offset += decoded->width;
     ++scalar_count;
   }
   return scalar_count;

@@ -18,7 +18,9 @@ changing the managed-reference representation. Stage 29.2 adds the checked
 integer-arithmetic guard and advances the runtime ABI to 3. Stage 34.3 adds
 managed error descriptors, `DivisionByZero` construction, and terminal error
 reporting under runtime ABI 4. Stage 37.2 adds owned portable program arguments
-and advances the runtime ABI to 5.
+and advances the runtime ABI to 5. Stage 38.2 adds line input and primitive
+parsing under runtime ABI 6. Stage 39.3 adds Unicode-scalar string indexing and
+cursor traversal under runtime ABI 7.
 
 ## Source contract
 
@@ -74,6 +76,8 @@ cloth_rt_string_equal(left, right) -> uint8
 cloth_rt_string_length(value) -> int32
 cloth_rt_string_byte_length(value) -> int32
 cloth_rt_string_is_empty(value) -> uint8
+cloth_rt_string_scalar_at(value, scalar_index) -> uint32
+cloth_rt_string_next_scalar(value, byte_cursor, scalar) -> uint8
 cloth_rt_object_type_name(value) -> string
 cloth_rt_object_is_kind(value, kind) -> uint8
 cloth_rt_object_is_type(value, type_descriptor) -> uint8
@@ -117,6 +121,14 @@ managed header while remaining opaque to generated LLVM IR. A literal string bor
 immutable program-lifetime bytes. A concatenated string owns its separately
 allocated bytes. Both cache byte and Unicode scalar lengths; collection reclaims
 owned payloads together with their managed headers.
+
+String indexing validates the complete immutable layout, interprets its index in
+Unicode scalar units, and returns one `char`. A negative index or an index at or
+beyond `::length` terminates with `string index is out of bounds`. String
+iteration keeps a caller-owned byte cursor and scalar output slot. Each call
+decodes at most one scalar and advances the cursor monotonically; reaching the
+exact byte length returns false without advancing. Both operations are
+allocation-free and are not collector safepoints.
 
 `cloth_rt_program_arguments` removes the host executable name and constructs a
 managed array of owned immutable strings. Windows entry adapters receive the
@@ -211,8 +223,8 @@ LLVM IR emission but does not yet have a WebAssembly runtime or linker path.
 ## Deferred work
 
 Stage 15 completes the first universal managed-reference contract. Primitive
-boxing, reified array casts, string indexing, slicing, iteration, formatting,
-normalization, interning, root-slot reuse,
+boxing, reified array casts, string slicing, formatting, normalization,
+interning, root-slot reuse,
 optimization levels, debug information, console input, environment access,
 argument parsing, local error handling, foreign exceptions, and platform
 packaging remain future work. These features should extend the runtime and

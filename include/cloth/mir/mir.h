@@ -168,6 +168,25 @@ struct MirStringMetaInstruction {
                          const MirStringMetaInstruction&) = default;
 };
 
+struct MirStringScalarAtInstruction {
+  MirValueId string;
+  MirValueId index;
+
+  friend bool operator==(const MirStringScalarAtInstruction&,
+                         const MirStringScalarAtInstruction&) = default;
+};
+
+// Advances a compiler-owned UTF-8 byte cursor and writes the decoded scalar to
+// the iteration local. The bool result indicates whether a scalar was written.
+struct MirStringNextScalarInstruction {
+  MirValueId string;
+  SymbolId byte_cursor;
+  SymbolId scalar;
+
+  friend bool operator==(const MirStringNextScalarInstruction&,
+                         const MirStringNextScalarInstruction&) = default;
+};
+
 struct MirObjectMetaInstruction {
   MirValueId object;
 
@@ -330,7 +349,8 @@ using MirInstructionData = std::variant<
     MirLoadStorageInstruction, MirStoreStorageInstruction,
     MirArrayLiteralInstruction, MirArrayLoadInstruction,
     MirArrayStoreInstruction, MirArrayLengthInstruction,
-    MirStringMetaInstruction, MirObjectMetaInstruction,
+    MirStringMetaInstruction, MirStringScalarAtInstruction,
+    MirStringNextScalarInstruction, MirObjectMetaInstruction,
     MirIntegerWriteInstruction, MirIntegerReadInstruction, MirUnaryInstruction,
     MirBinaryInstruction, MirConvertInstruction, MirIsNonNullInstruction,
     MirNullAssertInstruction, MirTypeTestInstruction, MirCheckedCastInstruction,

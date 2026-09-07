@@ -1,5 +1,91 @@
 # Cloth testing and diagnostic builds
 
+## Stage 39.4 Unicode string-traversal exit audit
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 296 CTests, including 36 compiler-backed Shuttle toolchain cases
+and 34 native cases. All 51 ordinary Rust tests, warning-denied Clippy, Rust
+1.85 MSRV checking, Rust and C++ formatting, both 17-test editor
+grammar/compiler runs, 345 local Markdown targets across 113 files, and
+repository whitespace checks pass.
+
+The exit matrix adds independent empty and adjacent string-index bounds deaths,
+then exercises zero and final positions on long mixed-width text. Native
+coverage proves receiver-before-index and exactly-once evaluation, explicit
+mutable and final bindings, empty, nested, shadowed, returning, and throwing
+iteration, `break` and `continue`, body collection, and a 2,048-scalar walk.
+The runtime independently verifies a monotonic 4,096-scalar UTF-8 cursor.
+Forged string-index and iteration HIR kinds, scalar-result MIR types, cursor
+locals, malformed string layouts, and invalid runtime cursors are rejected.
+
+Artifact format 6, compiler ABI 5, runtime ABI 7, schemas 2/1/1/1, and `cloth`
+v0.3.0 are unchanged. Both LLVM targets verify before and after optimization;
+whole, separate, source-free, direct, and Shuttle consumers preserve exact
+pairing, reuse, invalidation, relocated determinism, and completed outputs on
+failure. Stage 39 adds no language or standard-library surface during its exit
+audit.
+
+## Stage 39.3 Unicode string traversal and lowering
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 294 CTests, including 36 compiler-backed Shuttle toolchain cases
+and 34 native cases. All 51 ordinary Rust tests, warning-denied Clippy, Rust
+1.85 MSRV checking, Rust and C++ formatting, 17 editor grammar/compiler tests,
+345 local Markdown targets across 113 files, and repository whitespace checks
+pass.
+
+Coverage exercises checked scalar indexing, mixed-width and embedded-NUL text,
+empty strings, `var` and `final char` iteration, `continue`, `break`, exact
+receiver/index/iterable evaluation, loop-body allocation and collection, and
+terminal bounds failures. Dedicated HIR/MIR verification rejects inconsistent
+operation kinds, result types, cursors, and output locals. Runtime death tests
+cover negative and length indices, invalid cursor offsets and boundaries, null
+outputs, malformed UTF-8, and mismatched scalar metadata. Both LLVM targets pass
+verification after the default optimization pipeline.
+
+Artifact/compiler/runtime compatibility is now **6/5/7**. Package goldens,
+whole and separate compilation, source-free consumers, exact standard-library
+pairing, reuse, invalidation, and native Shuttle execution carry the transition.
+Schemas remain **2/1/1/1** and `cloth` remains v0.3.0; traversal adds no public
+standard-library declaration.
+
+## Stage 39.2 Unicode-scalar frontend and artifact checkpoint
+
+Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations
+each pass all 281 CTests, including 36 compiler-backed Shuttle toolchain cases
+and 34 native cases. All 51 ordinary Rust tests, warning-denied Clippy, Rust and
+C++ formatting, 17 editor grammar/compiler tests, 344 local Markdown targets
+across 113 files, and repository whitespace checks pass.
+
+One authoritative decoder now validates raw UTF-8, existing simple escapes, and
+`\u{...}` spellings for strings and characters. Coverage includes U+0000,
+combining, BMP, non-BMP, and U+10FFFF scalars; empty and multi-scalar
+characters; malformed, overlong, and truncated UTF-8; unknown escapes; bad
+digits and braces; excess digits; surrogates; and out-of-range values. Exact
+character bits cross semantic constants, HIR/MIR verification, both LLVM
+targets, native execution, packages, source-free consumers, and Shuttle.
+
+Artifact format 6 stores canonical character scalars and rejects format 5,
+noncanonical decimal records, surrogates, and out-of-range values. Compiler ABI
+5, runtime ABI 6, schemas 2/1/1/1, and `cloth` v0.3.0 are unchanged. Shuttle
+uses its existing opaque capability and receipt fields; exact reuse,
+invalidation, relocation, failure preservation, and standard-library pairing
+continue to pass. String indexing and iteration are not enabled before 39.3.
+
+## Stage 39.1 Unicode string traversal contract
+
+Approved and recorded on Windows on 2026-09-06. The contract freezes Unicode
+scalar `char` values, raw UTF-8 and `\u{...}` literal decoding, checked
+scalar-based string indexing, linear scalar iteration, exact evaluation and GC
+rules, artifact-format-6/compiler-ABI-5/runtime-ABI-7 transitions, coordinated
+package/Shuttle behavior, diagnostics, verification, and non-goals.
+
+This checkpoint changes documentation only. The completed Stage 38 baseline
+remains 281 development and sanitizer CTests, 51 ordinary Rust tests, 14 editor
+tests, and active artifact/compiler/runtime compatibility 5/5/6 with schemas
+2/1/1/1 and `cloth` v0.3.0. Implementation begins only after separate 39.2
+authorization.
+
 ## Stage 38.4 text-input and primitive-parsing exit audit
 
 Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations

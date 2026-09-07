@@ -126,6 +126,10 @@ The LLVM backend roots these categories:
   object widenings, checked casts, type-name strings, nullable conversions,
   member loads, and reference phi nodes.
 
+A string used by `for in` is evaluated once and its reference result stays
+rooted across the loop body. The monotonic byte cursor and current `char` occupy
+non-reference local slots and are never entered in the root frame.
+
 All root slots are initialized to null before registration. Reference-free
 callables do not create empty frames. Every reachable return pops its frame
 before returning; aborting runtime paths do not unwind because the process
@@ -149,8 +153,8 @@ managed size plus collector-only links and mark state.
 Managed allocation is the only automatic safepoint. Specifically,
 `cloth_rt_alloc`, `cloth_rt_string_literal`, `cloth_rt_string_concat`,
 `cloth_rt_object_type_name`, and `cloth_rt_array_alloc` may collect before
-reserving new storage. Type checks,
-printing, array access, root-frame
+reserving new storage. Type checks, printing, array access, string scalar access,
+string cursor traversal, root-frame
 operations, and an ordinary call boundary do not independently collect; a
 callee can still reach a managed allocation safepoint. Before an allocation
 would cross the current heap threshold, the runtime stops the single Cloth

@@ -39,7 +39,6 @@ class Lexer {
   [[nodiscard]] Token scan_string(std::size_t start, SourceLocation location);
   [[nodiscard]] Token scan_character(std::size_t start,
                                      SourceLocation location);
-  void report_invalid_escape(SourceLocation location, char escaped);
 
   const SourceFile& source_;
   DiagnosticEngine& diagnostics_;

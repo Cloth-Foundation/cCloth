@@ -298,6 +298,7 @@ struct FileSemantics {
   std::vector<MemberReference> member_order{};
   std::vector<SymbolId> enum_cases{};
   std::map<std::size_t, SwitchSemantics> switches{};
+  std::vector<std::optional<SymbolId>> string_iteration_cursors{};
 };
 
 class SemanticModel {

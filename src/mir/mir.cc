@@ -551,9 +551,46 @@ class BodyBuilder {
                       SourceRange range) {
     const HirExpression& iterable =
         hir_.storage.expression(for_statement.iterable);
-    const MirValueId array =
+    const MirValueId iterable_value =
         require_value(lower_expression(for_statement.iterable), iterable.type,
                       iterable.range);
+    if (for_statement.kind == HirIterableKind::kString) {
+      if (iterable.type != semantics_.string_type() ||
+          !for_statement.variable || !for_statement.cursor) {
+        return;
+      }
+      const TypeId int32_type = *semantics_.find_type("int32");
+      const MirValueId zero = emit_value(
+          int32_type, range, MirLiteralInstruction{LiteralKind::kInteger, "0"});
+      emit_void(range, MirDeclareLocalInstruction{*for_statement.cursor,
+                                                  std::optional{zero}});
+      emit_void(range, MirDeclareLocalInstruction{*for_statement.variable,
+                                                  std::nullopt});
+
+      const bool reachable = current_is_reachable();
+      const MirBlockId condition_block = add_block(reachable);
+      const MirBlockId body_block = add_block(reachable);
+      const MirBlockId exit_block = add_block(reachable);
+      jump_to(condition_block, range);
+
+      current_block_ = condition_block;
+      const MirValueId has_scalar = emit_value(
+          semantics_.bool_type(), range,
+          MirStringNextScalarInstruction{iterable_value, *for_statement.cursor,
+                                         *for_statement.variable});
+      terminate(MirBranchTerminator{has_scalar, body_block, exit_block}, range);
+
+      transfer_targets_.push_back(TransferTargets{condition_block, exit_block});
+      current_block_ = body_block;
+      lower_block(for_statement.body);
+      if (current_block_) {
+        jump_to(condition_block, range);
+      }
+      transfer_targets_.pop_back();
+      current_block_ = exit_block;
+      return;
+    }
+
     const SemanticType& array_type = semantics_.type(iterable.type);
     if (array_type.kind != TypeKind::kArray || !array_type.element_type ||
         !for_statement.variable) {
@@ -576,8 +613,8 @@ class BodyBuilder {
                    MirPhiInstruction{{MirPhiIncoming{preheader, zero}}});
     const std::size_t phi_instruction =
         body_.blocks[condition_block.value].instructions.size() - 1;
-    const MirValueId length =
-        emit_value(int32_type, range, MirArrayLengthInstruction{array});
+    const MirValueId length = emit_value(
+        int32_type, range, MirArrayLengthInstruction{iterable_value});
     const MirValueId condition =
         emit_value(semantics_.bool_type(), range,
                    MirBinaryInstruction{index, TokenKind::kLess, length});
@@ -586,8 +623,9 @@ class BodyBuilder {
     current_block_ = body_block;
     const TypeId variable_type =
         semantics_.symbol(*for_statement.variable).type;
-    MirValueId element = emit_value(*array_type.element_type, range,
-                                    MirArrayLoadInstruction{array, index});
+    MirValueId element =
+        emit_value(*array_type.element_type, range,
+                   MirArrayLoadInstruction{iterable_value, index});
     element = coerce(element, variable_type, range);
     emit_void(range,
               MirDeclareLocalInstruction{*for_statement.variable, element});
@@ -868,18 +906,26 @@ class BodyBuilder {
     if (const auto* index = std::get_if<HirIndexExpression>(&expression.data)) {
       const HirExpression& object = hir_.storage.expression(index->object);
       const HirExpression& subscript = hir_.storage.expression(index->index);
-      const MirValueId array = require_value(lower_expression(index->object),
-                                             object.type, object.range);
+      const MirValueId object_value = require_value(
+          lower_expression(index->object), object.type, object.range);
       MirValueId lowered_index = require_value(lower_expression(index->index),
                                                subscript.type, subscript.range);
       lowered_index = coerce(lowered_index, *semantics_.find_type("int32"),
                              subscript.range);
+      if (index->kind == HirIndexKind::kString) {
+        if (object.type != semantics_.string_type()) {
+          return invalid_value(expression.range);
+        }
+        return emit_value(
+            expression.type, expression.range,
+            MirStringScalarAtInstruction{object_value, lowered_index});
+      }
       const SemanticType& array_type = semantics_.type(object.type);
       if (array_type.kind != TypeKind::kArray || !array_type.element_type) {
         return invalid_value(expression.range);
       }
       return emit_value(expression.type, expression.range,
-                        MirArrayLoadInstruction{array, lowered_index});
+                        MirArrayLoadInstruction{object_value, lowered_index});
     }
     if (const auto* length =
             std::get_if<HirArrayLengthExpression>(&expression.data)) {
@@ -1336,6 +1382,12 @@ class BodyBuilder {
                              false,        false};
     }
     if (const auto* index = std::get_if<HirIndexExpression>(&expression.data)) {
+      if (index->kind == HirIndexKind::kString) {
+        static_cast<void>(lower_expression(id));
+        return LoweredLocation{std::nullopt, std::nullopt,
+                               std::nullopt, semantics_.error_type(),
+                               false,        false};
+      }
       const HirExpression& object = hir_.storage.expression(index->object);
       const HirExpression& subscript = hir_.storage.expression(index->index);
       const MirValueId array = require_value(lower_expression(index->object),

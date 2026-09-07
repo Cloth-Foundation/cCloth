@@ -412,7 +412,7 @@ bool is_scalar_constant_type(TypeKind type) {
 bool is_valid_scalar_bits(TypeKind type, std::uint64_t bits) {
   if (is_integer_type(type)) return is_valid_integer_bits(bits, type);
   if (type == TypeKind::kBool) return bits <= 1;
-  if (type == TypeKind::kChar) return bits <= 255;
+  if (type == TypeKind::kChar) return is_unicode_scalar(bits);
   if (type == TypeKind::kEnum) return bits < 65536;
   if (!floating(type)) return false;
   const auto f = format(type);
@@ -428,14 +428,14 @@ ConstantBits scalar_literal(LiteralKind literal, std::string_view text,
     if (text == "true") return 1;
     if (text == "false") return 0;
   }
-  if (literal == LiteralKind::kCharacter && target == TypeKind::kChar &&
-      text.front() == '\'' && text.back() == '\'' &&
-      ((text.size() == 3 && text[1] != '\\' && text[1] != '\'' &&
-        text[1] != '\r' && text[1] != '\n') ||
-       (text.size() == 4 && text[1] == '\\' &&
-        std::string_view{"nrt0\\\"'"}.contains(text[2]))))
-    return static_cast<unsigned char>(
-        text[1] == '\\' ? decode_escape_character(text[2]) : text[1]);
+  if (literal == LiteralKind::kCharacter && target == TypeKind::kChar) {
+    const DecodedTextLiteral decoded =
+        decode_text_literal(text, TextLiteralKind::kCharacter);
+    if (decoded.error != TextLiteralError::kNone) {
+      return std::unexpected(ConstantError::kInvalidLiteral);
+    }
+    return decoded.character;
+  }
   if (text.front() == '-') {
     negative = !negative;
     text.remove_prefix(1);

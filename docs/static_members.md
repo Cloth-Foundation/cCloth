@@ -96,5 +96,5 @@ checks their values, types, and dependency graph. MIR carries static scalar data
 without initializer bodies; its verifier checks claims against semantics. LLVM
 uses the bits directly, including integer-to-float constant bitcasts that preserve
 exact IEEE values. Imported declarations restore typed bits without source text.
-[Artifact format 5](artifact_schema_v5.md) retains the full signed integer
+[Artifact format 6](artifact_schema_v6.md) retains the full signed integer
 encoding; its ABI and runtime transition is owned by typed errors.

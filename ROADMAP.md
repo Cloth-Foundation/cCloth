@@ -77,11 +77,13 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 37 | Portable program arguments through managed `string[]` entry values |
 | 38 | Portable line input and strict primitive parsing |
 
-Stage 38 is the current completed native language/runtime/toolchain baseline,
-and Stage 31 is the current completed optimizer baseline. Stages 35 and 36 are
-complete, including their standard-library and prelude exit audits. Coordinated
-toolchain Stage 22 and separate-compilation Stage 23 are complete, including
-their cross-tool exit audits. Build-responsiveness Stage 24 is also complete.
+Stage 39 is complete following its separately authorized 39.4 exit audit on
+2026-09-06. It is the current completed native language/runtime/toolchain
+baseline, and Stage 31 is the current completed optimizer baseline. Stages 35
+and 36 are complete,
+including their standard-library and prelude exit audits. Coordinated toolchain
+Stage 22 and separate-compilation Stage 23 are complete, including their
+cross-tool exit audits. Build-responsiveness Stage 24 is also complete.
 
 Stage 26 is complete for value structs, including its approved source contract,
 frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
@@ -1099,9 +1101,61 @@ artifact, Shuttle, and repository quality matrices. Compatibility remains
 artifact/compiler/runtime 5/5/6 and process/receipt/manifest/toolchain schemas
 remain 2/1/1/1; the selected standard library is `cloth` v0.3.0.
 
-## Beyond Stage 38
+## Stage 39: Unicode string traversal
 
-Stage 38 is complete. The remaining backlog does not acquire priority or enter
+Status: **complete — 39.4 exit audit passed 2026-09-06**
+
+The [approved contract](docs/proposals/stage_39_unicode_string_traversal.md)
+aligns `char` literals and constants with Cloth's Unicode scalar model, adds
+checked scalar indexing to immutable strings, and extends `for in` with linear
+Unicode scalar iteration.
+
+Objective: make runtime text directly inspectable without exposing UTF-8
+storage, conflating scalars with displayed characters, or introducing a general
+iterator or string-method system.
+
+Prerequisite: Stage 38.
+
+Deliverables:
+
+1. **39.1 — Contract (complete).** Freeze Unicode scalars, literal/escape
+   grammar, indexing, iteration, complexity, runtime/GC ownership,
+   compatibility, diagnostics, verification, and non-goals.
+2. **39.2 — Scalar frontend and artifacts (complete).** Implement authoritative
+   full-range character decoding and constants, verified compiler
+   representations, artifact format 6, packages, editor support, and focused
+   documentation.
+3. **39.3 — Traversal and lowering (complete).** Implement checked string indexing and
+   linear string iteration through HIR/MIR, runtime ABI 7, LLVM, GC, native,
+   package, source-free, and Shuttle paths.
+4. **39.4 — Exit audit (complete).** Close Unicode, bounds, evaluation,
+   complexity, GC, malformed-state, compatibility, determinism,
+   failure-preservation, native/cross-target, and repository quality matrices.
+
+String indices and iteration count Unicode scalars, matching `text::length`.
+Indexing returns a non-writable `char`; traversal uses a monotonic UTF-8 cursor
+and may not lower to repeated indexing. The artifact transition widens
+canonical character constants from byte values to valid Unicode scalar values.
+
+Checkpoint 39.2 implements the Unicode-scalar literal and constant boundary.
+Checkpoint 39.3 implements checked scalar indexing and linear cursor traversal
+and advances active compatibility to artifact/compiler/runtime 6/5/7. Schemas
+remain 2/1/1/1 and `cloth` remains v0.3.0. Neither checkpoint changes the
+process, receipt, manifest, or toolchain-metadata schema.
+
+Checkpoint 39.4 closes Stage 39 without a compatibility or public-library
+change. Empty, terminal, and adjacent bounds; exact evaluation order; explicit,
+final, nested, returning, and throwing traversal; long cursor walks; GC;
+malformed state; packages; Shuttle; both targets; native execution;
+sanitizers; and repository gates pass together.
+
+Non-goals include grapheme clusters, byte indexing, mutation, slicing, search,
+normal string methods, general iterators, collections, safe indexing, typed
+bounds errors, new targets, public FFI, and unrelated language or tooling work.
+
+## Beyond Stage 39
+
+Stage 39 is complete. The remaining backlog does not acquire priority or enter
 the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:

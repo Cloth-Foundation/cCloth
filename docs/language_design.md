@@ -197,6 +197,14 @@ also trap on an unrepresentable result. Division and remainder trap on a zero
 divisor and on the signed minimum/`-1` overflow pair. A leading minus forms a
 signed literal value, so signed minimum literals remain valid; negating a runtime
 value is checked. Floating arithmetic retains IEEE behavior.
+`char` is one Unicode scalar stored as an unsigned 32-bit value. Raw character
+literals contain exactly one well-formed UTF-8 scalar. Character and string
+literals accept `\u{HEX}` with one through six digits; decoding rejects
+surrogates and values above U+10FFFF and produces canonical UTF-8 for strings.
+Indexing a non-null string counts scalars from zero, accepts an
+`int32`-compatible index, and returns a non-writable `char`. Bounds failure is
+terminal. `for in` traverses a string once with a monotonic UTF-8 byte cursor;
+it never repeats scalar indexing.
 `object` is the universal non-null managed-reference
 type for file classes, strings, and arrays; widening to it is representation
 preserving and does not box primitives. References are non-null by default. `T?` is a
@@ -373,18 +381,21 @@ linked into the compiler process or invoked as external tooling.
 the innermost loop. In a `while`, `continue` re-evaluates the condition. Both
 control statements are errors outside a loop.
 
-Array iteration uses a declaration followed by `in`:
+Array and string iteration use a declaration followed by `in`:
 
 ```cloth
 for (var value in values) { ... }
 for (int32 value in values) { ... }
+for (final char scalar in text) { ... }
 ```
 
-`var` infers the exact element type; an explicit type must accept the element
-type. The iterable expression is evaluated once. The loop binding is a mutable
-local copy scoped to the body, so reassigning it does not write the array.
-`continue` advances the hidden index before rechecking the loop condition.
-Future iteration protocols must preserve this source contract.
+`var` infers the exact array element type or `char` for a string; an explicit
+type must accept that value. The iterable expression is evaluated once. The
+loop binding is a local copy scoped to the body, so reassigning it does not
+write the source. Array traversal advances a hidden scalar index. String
+traversal advances a hidden UTF-8 byte cursor once per decoded scalar and is
+linear in byte length. `continue` advances before rechecking the loop
+condition. Future iteration protocols must preserve this source contract.
 
 Classical `for` loops use initializer, condition, and update clauses:
 

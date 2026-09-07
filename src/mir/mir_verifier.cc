@@ -6,6 +6,7 @@
 
 #include "cloth/ast/ast.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
+#include "cloth/lexer/literal.h"
 #include "cloth/mir/mir.h"
 #include "cloth/sema/numeric_types.h"
 #include "cloth/sema/scalar_constants.h"
@@ -815,6 +816,49 @@ class MirVerifier {
         report(instruction.range,
                "string meta query result has the wrong type");
       }
+    } else if (const auto* access = std::get_if<MirStringScalarAtInstruction>(
+                   &instruction.data)) {
+      verify_value(access->string, value_types, instruction.range);
+      verify_value(access->index, value_types, instruction.range);
+      verify_value_type(access->string, semantics_.string_type(), value_types,
+                        instruction.range);
+      verify_value_type(access->index, *semantics_.find_type("int32"),
+                        value_types, instruction.range);
+      require_result(instruction);
+      if (instruction.type != *semantics_.find_type("char")) {
+        report(instruction.range,
+               "string scalar access result does not have type char");
+      }
+    } else if (const auto* step = std::get_if<MirStringNextScalarInstruction>(
+                   &instruction.data)) {
+      verify_value(step->string, value_types, instruction.range);
+      verify_value_type(step->string, semantics_.string_type(), value_types,
+                        instruction.range);
+      verify_symbol(step->byte_cursor, instruction.range);
+      verify_symbol(step->scalar, instruction.range);
+      require_result(instruction);
+      if (instruction.type != semantics_.bool_type()) {
+        report(instruction.range,
+               "string iteration step does not have type bool");
+      }
+      if (step->byte_cursor == step->scalar ||
+          step->byte_cursor.value >= semantics_.symbols().size() ||
+          step->scalar.value >= semantics_.symbols().size()) {
+        report(instruction.range,
+               "string iteration step has invalid output locals");
+      } else {
+        const SemanticSymbol& cursor = semantics_.symbol(step->byte_cursor);
+        const SemanticSymbol& scalar = semantics_.symbol(step->scalar);
+        if (cursor.kind != SymbolKind::kLocal ||
+            cursor.type != *semantics_.find_type("int32") || cursor.is_final ||
+            scalar.kind != SymbolKind::kLocal ||
+            scalar.type != *semantics_.find_type("char") ||
+            !current_locals_.contains(step->byte_cursor.value) ||
+            !current_locals_.contains(step->scalar.value)) {
+          report(instruction.range,
+                 "string iteration step has inconsistent local storage");
+        }
+      }
     } else if (const auto* meta =
                    std::get_if<MirObjectMetaInstruction>(&instruction.data)) {
       verify_value(meta->object, value_types, instruction.range);
@@ -1292,6 +1336,19 @@ class MirVerifier {
           (literal->kind != LiteralKind::kEnum ||
            !enum_constant_tag(literal->lexeme, instruction.type, semantics_))) {
         report(instruction.range, "invalid nominal enum constant");
+      }
+      if (literal->kind == LiteralKind::kCharacter &&
+          (instruction.type.value >= semantics_.types().size() ||
+           semantics_.type(instruction.type).kind != TypeKind::kChar ||
+           decode_text_literal(literal->lexeme, TextLiteralKind::kCharacter)
+                   .error != TextLiteralError::kNone)) {
+        report(instruction.range, "invalid character literal");
+      }
+      if (literal->kind == LiteralKind::kString &&
+          (instruction.type != semantics_.string_type() ||
+           decode_text_literal(literal->lexeme, TextLiteralKind::kString)
+                   .error != TextLiteralError::kNone)) {
+        report(instruction.range, "invalid string literal");
       }
     }
   }

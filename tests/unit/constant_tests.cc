@@ -283,6 +283,28 @@ void scalar_boundaries(TestContext& test) {
   for (const auto text : {"'\\q'", "'\\'", "'''", "'\n'", "'\r'"})
     error(test, cloth::scalar_literal(LiteralKind::kCharacter, text, kChar),
           ConstantError::kInvalidLiteral);
+  bits(test, cloth::scalar_literal(LiteralKind::kCharacter, "'A'", kChar),
+       0x41);
+  bits(test, cloth::scalar_literal(LiteralKind::kCharacter, "'\\u{0}'", kChar),
+       0);
+  bits(test, cloth::scalar_literal(LiteralKind::kCharacter, "'🧵'", kChar),
+       0x1F9F5);
+  bits(test,
+       cloth::scalar_literal(LiteralKind::kCharacter, "'\\u{10FFFF}'", kChar),
+       0x10FFFF);
+  for (const auto text :
+       {"'\\u{}'", "'\\u{D800}'", "'\\u{110000}'", "'\\u{1234567}'", "'ab'"}) {
+    error(test, cloth::scalar_literal(LiteralKind::kCharacter, text, kChar),
+          ConstantError::kInvalidLiteral);
+  }
+  test.expect(cloth::is_valid_scalar_bits(kChar, 0) &&
+                  cloth::is_valid_scalar_bits(kChar, 0xD7FF) &&
+                  !cloth::is_valid_scalar_bits(kChar, 0xD800) &&
+                  !cloth::is_valid_scalar_bits(kChar, 0xDFFF) &&
+                  cloth::is_valid_scalar_bits(kChar, 0xE000) &&
+                  cloth::is_valid_scalar_bits(kChar, 0x10FFFF) &&
+                  !cloth::is_valid_scalar_bits(kChar, 0x110000),
+              "char scalar validation does not match Unicode scalar values");
 }
 
 void conversions(TestContext& test) {
@@ -848,7 +870,7 @@ void imported_constants(TestContext& test) {
         cloth::SourceFile::from_memory(
             "Constants.co",
             "static final bool Enabled = true; static final char Letter = "
-            "'\\n'; "
+            "'\\u{1F9F5}'; "
             "static final float32 Half = 0.5; static final float64 Wide = 1.5; "
             "static final int16 Small = 4; static final State Initial = "
             "State.Ready;"),
@@ -870,7 +892,7 @@ void imported_constants(TestContext& test) {
     consumer.add_package_source(cloth::SourceFile::from_memory("Example.co", R"(
       import dep::Constants as Values;
       import dep::State as Status;
-      static final bool Enabled = Values.Enabled && Values.Letter == '\n';
+      static final bool Enabled = Values.Enabled && Values.Letter == '\u{1F9F5}';
       static final float32 Product = Values.Half * Values.Half;
       static final float64 Wide = Values.Wide + Values.Half;
       static final int64 Count = Values.Small + 2;
@@ -915,7 +937,7 @@ void cross_target_constants(TestContext& test) {
       {"U16", 65535},
       {"U32", 4294967295},
       {"U64", UINT64_MAX},
-      {"Char", 0},
+      {"Char", 0x10FFFF},
       {"Bool", 1},
       {"Third", 0x3eaaaaab},
       {"Wide", 0x3fd5555560000000},
@@ -938,7 +960,7 @@ void cross_target_constants(TestContext& test) {
       static final uint16 U16 = ~uint16(0);
       static final uint32 U32 = ~uint32(0);
       static final uint64 U64 = ~uint64(0);
-      static final char Char = '\0';
+      static final char Char = '\u{10FFFF}';
       static final bool Bool = I8 < 0 && U64 != 0;
       static final float32 Third = 1.0 / 3.0;
       static final float64 Wide = Third;

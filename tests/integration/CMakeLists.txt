@@ -102,6 +102,20 @@ foreach(target IN ITEMS x86_64 wasm32)
         set_tests_properties(cloth_constants_verify_${target} PROPERTIES
             DEPENDS cloth_cli_constants_llvm_${target})
     endif()
+    set(string_traversal_ir
+        "${PROJECT_BINARY_DIR}/cloth-string-traversal-${target}.ll")
+    add_test(NAME cloth_cli_string_traversal_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${string_traversal_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/StringValues.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_string_traversal_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${string_traversal_ir})
+        set_tests_properties(cloth_string_traversal_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_string_traversal_llvm_${target})
+    endif()
     set(checked_arithmetic_ir
         "${PROJECT_BINARY_DIR}/cloth-checked-arithmetic-${target}.ll")
     add_test(NAME cloth_cli_checked_arithmetic_llvm_${target}
@@ -569,6 +583,11 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/StringValues.co
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/string_values.txt
         EXACT
+    )
+    cloth_add_native_failure_test(string_bounds
+        OUTPUT "cloth string bounds"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/StringBounds.co
+        ERROR "string index is out of bounds"
     )
     cloth_add_native_output_test(object_model
         OUTPUT "cloth object model"

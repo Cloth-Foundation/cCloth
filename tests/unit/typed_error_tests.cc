@@ -401,6 +401,20 @@ void bottom_control_flow(TestContext& test) {
       for (int32 value in throw Failure()) { Later(); }
     }
 
+    static func StringBody() throws Failure {
+      for (var scalar in "cloth") {
+        if (scalar == 'c') { throw Failure(); }
+      }
+    }
+
+    static func IndexReceiver(string text): char throws Failure {
+      return (throw Failure())[0];
+    }
+
+    static func IndexValue(string text): char throws Failure {
+      return text[throw Failure()];
+    }
+
     static func ForCase() throws Failure {
       for (; throw Failure(); Later()) { Later(); }
     }
