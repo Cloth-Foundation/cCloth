@@ -271,6 +271,7 @@ ExpressionId ExpressionParser::parse_primary_expression() {
   if (!at_limit()) {
     if (current().kind == TokenKind::kLeftParen)
       return parse_grouped_expression();
+    if (at_array_construction()) return parse_array_construction_expression();
     if (at_primitive_parse_target()) return parse_primitive_meta_target();
     if (is_primitive_type(current().kind) && current_ + 1 < limit_ &&
         tokens_[current_ + 1].kind == TokenKind::kColonColon) {
@@ -544,6 +545,112 @@ ExpressionId ExpressionParser::parse_array_literal_expression() {
   }
   return add_expression(Expression{
       SourceRange{begin, end}, ArrayLiteralExpression{std::move(elements)}});
+}
+
+bool ExpressionParser::at_array_construction() const noexcept {
+  if (current().kind == TokenKind::kLeftBracket) {
+    return current_ + 1 < limit_ &&
+           tokens_[current_ + 1].kind == TokenKind::kColon;
+  }
+  if (!can_start_type(current().kind)) return false;
+
+  const bool primitive = is_primitive_type(current().kind);
+  std::size_t lookahead = current_ + 1;
+  if (lookahead < limit_ &&
+      (tokens_[lookahead].kind == TokenKind::kQuestion ||
+       tokens_[lookahead].kind == TokenKind::kQuestionQuestion)) {
+    ++lookahead;
+  }
+  while (lookahead + 1 < limit_ &&
+         tokens_[lookahead].kind == TokenKind::kLeftBracket &&
+         tokens_[lookahead + 1].kind == TokenKind::kRightBracket) {
+    lookahead += 2;
+  }
+  if (lookahead < limit_ &&
+      (tokens_[lookahead].kind == TokenKind::kQuestion ||
+       tokens_[lookahead].kind == TokenKind::kQuestionQuestion)) {
+    ++lookahead;
+  }
+  if (lookahead >= limit_ ||
+      tokens_[lookahead].kind != TokenKind::kLeftBracket) {
+    return false;
+  }
+  return primitive || (lookahead + 1 < limit_ &&
+                       tokens_[lookahead + 1].kind == TokenKind::kColon);
+}
+
+ExpressionId ExpressionParser::parse_array_construction_expression() {
+  TypeSyntax element_type{"<invalid>", false,
+                          point_range(current().range.begin)};
+  SourceLocation begin = current().range.begin;
+  if (current().kind == TokenKind::kLeftBracket) {
+    diagnostics_.error(current().range, "expected an element type before '['");
+  } else {
+    const Token& type = advance();
+    SourceRange type_range = type.range;
+    const auto parse_nullable_suffix = [&]() {
+      bool nullable = false;
+      while (!at_limit() && (current().kind == TokenKind::kQuestion ||
+                             current().kind == TokenKind::kQuestionQuestion)) {
+        const Token& suffix = advance();
+        if (nullable || suffix.kind == TokenKind::kQuestionQuestion) {
+          diagnostics_.error(suffix.range,
+                             "nullable qualification cannot be repeated");
+        }
+        nullable = true;
+        type_range.end = suffix.range.end;
+      }
+      return nullable;
+    };
+    const bool inner_nullable = parse_nullable_suffix();
+    bool is_array = false;
+    while (current_ + 1 < limit_ && current().kind == TokenKind::kLeftBracket &&
+           tokens_[current_ + 1].kind == TokenKind::kRightBracket) {
+      const Token& left = advance();
+      static_cast<void>(left);
+      const Token& right = advance();
+      if (is_array) {
+        diagnostics_.error(left.range,
+                           "multidimensional array types are not supported");
+      }
+      is_array = true;
+      type_range.end = right.range.end;
+    }
+    const bool outer_nullable = is_array && parse_nullable_suffix();
+    element_type = TypeSyntax{type.lexeme,
+                              is_primitive_type(type.kind),
+                              type_range,
+                              is_array,
+                              is_array ? outer_nullable : inner_nullable,
+                              is_array && inner_nullable};
+  }
+
+  if (!match(TokenKind::kLeftBracket)) {
+    diagnostics_.error(current().range, "expected '[' in array construction");
+    return make_invalid_expression(SourceRange{begin, element_type.range.end});
+  }
+  if (!match(TokenKind::kColon)) {
+    diagnostics_.error(current().range,
+                       "expected ':' after '[' in array construction");
+  }
+
+  ExpressionId length{};
+  if (current().kind == TokenKind::kRightBracket || at_limit()) {
+    length = make_invalid_expression(point_range(current().range.begin));
+    diagnostics_.error(current().range, "expected length expression after ':'");
+  } else {
+    length = parse_expression();
+  }
+
+  SourceLocation end = expression_range(length).end;
+  if (match(TokenKind::kRightBracket)) {
+    end = tokens_[current_ - 1].range.end;
+  } else {
+    diagnostics_.error(current().range, "expected ']' after array length");
+  }
+  return add_expression(
+      Expression{SourceRange{begin, end},
+                 ArrayConstructionExpression{element_type, length}});
 }
 
 ExpressionId ExpressionParser::parse_index_expression(ExpressionId object) {

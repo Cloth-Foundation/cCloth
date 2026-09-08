@@ -113,6 +113,7 @@ std::optional<std::size_t> preflight_constant_expression(
   std::vector<std::pair<ExpressionId, std::size_t>> work{{root, 1}};
   std::size_t count = 0;
   std::optional<SourceRange> ineligible;
+  bool has_runtime_sized_array = false;
   while (!work.empty()) {
     const auto [id, depth] = work.back();
     work.pop_back();
@@ -125,8 +126,11 @@ std::optional<std::size_t> preflight_constant_expression(
         !std::holds_alternative<BinaryExpression>(data) &&
         !std::holds_alternative<NumericConversionExpression>(data) &&
         !std::holds_alternative<IntegerConversionExpression>(data) &&
-        !std::holds_alternative<ParenthesizedExpression>(data))
+        !std::holds_alternative<ParenthesizedExpression>(data)) {
       ineligible = expression.range;
+      has_runtime_sized_array =
+          std::holds_alternative<ArrayConstructionExpression>(data);
+    }
     if (!ineligible) {
       if (const auto* member = std::get_if<MemberAccessExpression>(&data)) {
         auto qualifier = member->object;
@@ -166,9 +170,12 @@ std::optional<std::size_t> preflight_constant_expression(
   // recursive analysis of calls/aggregates, whose stacks are not part of the
   // scalar-expression contract. Reference eligibility is checked after binding.
   if (ineligible) {
-    diagnostics.error(
-        *ineligible,
-        "static field initializer must be a scalar constant expression");
+    diagnostics.error(*ineligible,
+                      has_runtime_sized_array
+                          ? "runtime-sized array construction is not "
+                            "permitted in constant initializers"
+                          : "static field initializer must be a scalar "
+                            "constant expression");
     return std::nullopt;
   }
   return count;

@@ -1145,6 +1145,55 @@ void arrays(TestContext& test) {
               "indexed assignment target was not retained");
 }
 
+void runtime_sized_array_construction(TestContext& test) {
+  const ParsedSource source{"RuntimeArrays.co",
+                            "func Tokens(int32 capacity): RuntimeArrays?[] {\n"
+                            "  return RuntimeArrays?[:capacity];\n"
+                            "}\n"
+                            "func Numbers(): int32[] { return int32[:4]; }\n"};
+  test.expect(error_count(source) == 0,
+              "valid runtime-sized array construction did not parse");
+
+  std::size_t constructions = 0;
+  bool found_nullable_element = false;
+  bool found_primitive_element = false;
+  for (const cloth::Expression& expression :
+       source.ast().storage.expressions()) {
+    const auto* construction =
+        std::get_if<cloth::ArrayConstructionExpression>(&expression.data);
+    if (construction == nullptr) continue;
+    ++constructions;
+    found_nullable_element =
+        found_nullable_element ||
+        (construction->element_type.name == "RuntimeArrays" &&
+         construction->element_type.is_nullable &&
+         !construction->element_type.is_array);
+    found_primitive_element = found_primitive_element ||
+                              (construction->element_type.name == "int32" &&
+                               construction->element_type.is_primitive);
+    test.expect(!std::holds_alternative<cloth::InvalidExpression>(
+                    source.ast().storage.expression(construction->length).data),
+                "runtime-sized array lost its length expression");
+  }
+  test.expect(
+      constructions == 2 && found_nullable_element && found_primitive_element,
+      "runtime-sized array AST metadata is incomplete");
+
+  const ParsedSource malformed{
+      "MalformedRuntimeArrays.co",
+      "func MissingType(): int32[] { return [:3]; }\n"
+      "func MissingColon(): int32[] { return int32[3]; }\n"
+      "func MissingLength(): int32[] { return int32[:]; }\n"
+      "func MissingBracket(int32 count): int32[] { return int32[:count; }\n"};
+  test.expect(
+      has_diagnostic(malformed, "expected an element type before '['") &&
+          has_diagnostic(malformed,
+                         "expected ':' after '[' in array construction") &&
+          has_diagnostic(malformed, "expected length expression after ':'") &&
+          has_diagnostic(malformed, "expected ']' after array length"),
+      "malformed runtime-sized arrays produced the wrong diagnostics");
+}
+
 void nullable_types(TestContext& test) {
   const ParsedSource source{
       "Nullability.co",
@@ -1433,6 +1482,7 @@ int main() {
       {"numeric conversion expressions", numeric_conversion_expressions},
       {"integer conversion modes", integer_conversion_modes},
       {"arrays", arrays},
+      {"runtime-sized array construction", runtime_sized_array_construction},
       {"nullable types", nullable_types},
       {"null-ergonomic expressions", null_ergonomic_expressions},
       {"missing statement semicolon recover",

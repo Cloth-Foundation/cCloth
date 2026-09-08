@@ -146,6 +146,11 @@ struct HirArrayLiteralExpression {
   std::vector<HirExpressionId> elements;
 };
 
+struct HirArrayConstructionExpression {
+  TypeId element_type;
+  HirExpressionId length;
+};
+
 enum class HirIndexKind { kArray, kString };
 
 struct HirIndexExpression {
@@ -215,10 +220,11 @@ using HirExpressionData = std::variant<
     HirNumericConversionExpression, HirIntegerConversionExpression,
     HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
     HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
-    HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
-    HirStringMetaExpression, HirStringSliceExpression, HirObjectMetaExpression,
-    HirSafeMetaExpression, HirIntegerMetaExpression,
-    HirIntegerMetaCallExpression, HirGroupedExpression>;
+    HirArrayLiteralExpression, HirArrayConstructionExpression,
+    HirIndexExpression, HirArrayLengthExpression, HirStringMetaExpression,
+    HirStringSliceExpression, HirObjectMetaExpression, HirSafeMetaExpression,
+    HirIntegerMetaExpression, HirIntegerMetaCallExpression,
+    HirGroupedExpression>;
 
 struct HirExpression {
   TypeId type;

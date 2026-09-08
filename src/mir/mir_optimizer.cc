@@ -624,6 +624,9 @@ void remap_instruction(MirInstruction& instruction,
     for (MirValueId& element : array->elements) {
       remap_value(element, aliases, values);
     }
+  } else if (auto* array =
+                 std::get_if<MirArrayAllocateInstruction>(&instruction.data)) {
+    remap_value(array->length, aliases, values);
   } else if (auto* load =
                  std::get_if<MirArrayLoadInstruction>(&instruction.data)) {
     remap_value(load->array, aliases, values);

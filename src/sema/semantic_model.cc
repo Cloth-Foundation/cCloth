@@ -173,6 +173,40 @@ std::optional<TypeId> SemanticModel::find_type(
   return std::nullopt;
 }
 
+bool is_default_initializable_array_element(
+    TypeId type, const SemanticModel& semantics) noexcept {
+  if (type.value >= semantics.types().size()) return false;
+  const SemanticType& element = semantics.type(type);
+  if (element.kind == TypeKind::kNullable) {
+    if (!element.element_type ||
+        element.element_type->value >= semantics.types().size()) {
+      return false;
+    }
+    const TypeKind underlying = semantics.type(*element.element_type).kind;
+    return underlying != TypeKind::kError && underlying != TypeKind::kBottom &&
+           underlying != TypeKind::kVoid && underlying != TypeKind::kNull &&
+           underlying != TypeKind::kArray && underlying != TypeKind::kNullable;
+  }
+  switch (element.kind) {
+    case TypeKind::kBool:
+    case TypeKind::kChar:
+    case TypeKind::kByte:
+    case TypeKind::kInt8:
+    case TypeKind::kInt16:
+    case TypeKind::kInt32:
+    case TypeKind::kInt64:
+    case TypeKind::kUint8:
+    case TypeKind::kUint16:
+    case TypeKind::kUint32:
+    case TypeKind::kUint64:
+    case TypeKind::kFloat32:
+    case TypeKind::kFloat64:
+      return true;
+    default:
+      return false;
+  }
+}
+
 std::vector<SymbolId> SemanticModel::find_intrinsics(
     std::string_view name) const {
   std::vector<SymbolId> matches;

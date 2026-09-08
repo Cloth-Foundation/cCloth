@@ -1,0 +1,6 @@
+static func Main() {
+  int32 length = 0;
+  length--;
+  int32[] values = int32[:length];
+  println(values::length);
+}

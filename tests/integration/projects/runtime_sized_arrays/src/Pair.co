@@ -1,0 +1,9 @@
+struct {
+  string Text;
+  int32 Value;
+
+  Pair(string text, int32 value) {
+    Text = text;
+    Value = value;
+  }
+}

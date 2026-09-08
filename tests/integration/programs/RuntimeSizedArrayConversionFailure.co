@@ -1,0 +1,6 @@
+static func Main() {
+  println("before");
+  int64 count = 2147483648;
+  int32[] values = int32[:int32(count)];
+  println(values::length);
+}

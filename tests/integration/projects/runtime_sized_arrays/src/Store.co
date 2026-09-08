@@ -1,0 +1,15 @@
+class {
+  int32[] Values;
+
+  Store(int32 count) {
+    Values = int32[:count];
+  }
+
+  func Set(int32 index, int32 value) {
+    Values[index] = value;
+  }
+
+  func Read(int32 index): int32 {
+    return Values[index];
+  }
+}

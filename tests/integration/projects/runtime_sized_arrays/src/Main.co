@@ -1,0 +1,157 @@
+import Arrays;
+import Box;
+import Empty;
+import Fault;
+import Nested;
+import Pair;
+import Reader;
+import Status;
+import Store;
+
+static func Length(int32[] calls): int32 {
+  calls[0]++;
+  return 3;
+}
+
+static func Last(int32[] values): int32 {
+  return values[values::length - 1];
+}
+
+static func Main() {
+  int32[] calls = [0];
+  int32[] numbers = int32[:Length(calls)];
+  println(calls[0]);
+  println(numbers::length);
+  println(numbers[0]);
+  numbers[1] = 42;
+  println(numbers[1]);
+
+  int32 sum = 0;
+  for (var value in numbers) {
+    sum += value;
+  }
+  println(sum);
+
+  int32[] empty = int32[:0];
+  println(empty::length);
+  bool[] flags = bool[:2];
+  println(flags[0]);
+  float32[] decimals = float32[:1];
+  println(decimals[0] == 0.0f32);
+  char[] scalars = char[:1];
+  println(scalars[0] == '\0');
+
+  Box?[] boxes = Box?[:2];
+  println(boxes[0] == null);
+  boxes[1] = Box("kept");
+  println(boxes[1]?.Read() ?? "missing");
+
+  Status?[] statuses = Status?[:1];
+  println(statuses[0] == null);
+  statuses[0] = Status.Ready;
+  println(statuses[0] == Status.Ready);
+
+  Pair?[] pairs = Pair?[:2];
+  println(pairs[0] == null);
+  pairs[1] = Pair("nested", 7);
+  println(pairs[1]?.Value ?? -1);
+
+  byte[] bytes = byte[:1];
+  int8[] signed8 = int8[:1];
+  int16[] signed16 = int16[:1];
+  int64[] signed64 = int64[:1];
+  uint8[] unsigned8 = uint8[:1];
+  uint16[] unsigned16 = uint16[:1];
+  uint32[] unsigned32 = uint32[:1];
+  uint64[] unsigned64 = uint64[:1];
+  float64[] wideDecimals = float64[:1];
+  int[] aliasInts = int[:1];
+  uint[] aliasUints = uint[:1];
+  float[] aliasFloats = float[:1];
+  println(bytes[0] == 0 && signed8[0] == 0 && signed16[0] == 0 &&
+      signed64[0] == 0 && unsigned8[0] == 0 && unsigned16[0] == 0 &&
+      unsigned32[0] == 0 && unsigned64[0] == 0 && aliasInts[0] == 0 &&
+      aliasUints[0] == 0 && aliasFloats[0] == 0.0f32);
+  println(decimals[0]);
+  println(wideDecimals[0]);
+
+  bool?[] nullableBools = bool?[:1];
+  char?[] nullableChars = char?[:1];
+  byte?[] nullableBytes = byte?[:1];
+  int8?[] nullableSigned8 = int8?[:1];
+  int16?[] nullableSigned16 = int16?[:1];
+  int32?[] nullableSigned32 = int32?[:1];
+  int64?[] nullableSigned64 = int64?[:1];
+  uint8?[] nullableUnsigned8 = uint8?[:1];
+  uint16?[] nullableUnsigned16 = uint16?[:1];
+  uint32?[] nullableUnsigned32 = uint32?[:1];
+  uint64?[] nullableUnsigned64 = uint64?[:1];
+  float32?[] nullableFloat32 = float32?[:1];
+  float64?[] nullableFloat64 = float64?[:1];
+  println(nullableBools[0] == null && nullableChars[0] == null &&
+      nullableBytes[0] == null && nullableSigned8[0] == null &&
+      nullableSigned16[0] == null && nullableSigned32[0] == null &&
+      nullableSigned64[0] == null && nullableUnsigned8[0] == null &&
+      nullableUnsigned16[0] == null && nullableUnsigned32[0] == null &&
+      nullableUnsigned64[0] == null && nullableFloat32[0] == null &&
+      nullableFloat64[0] == null);
+
+  string?[] texts = string?[:1];
+  Reader?[] readers = Reader?[:1];
+  Fault?[] faults = Fault?[:1];
+  object?[] objects = object?[:1];
+  Empty?[] emptyStructs = Empty?[:1];
+  Nested?[] nestedStructs = Nested?[:1];
+  println(texts[0] == null && readers[0] == null && faults[0] == null &&
+      objects[0] == null && emptyStructs[0] == null &&
+      nestedStructs[0] == null);
+  texts[0] = "text";
+  readers[0] = boxes[1];
+  faults[0] = Fault("failure");
+  objects[0] = boxes[1];
+  emptyStructs[0] = Empty();
+  nestedStructs[0] = Nested(pairs[1]);
+  println(texts[0] ?? "missing");
+  println(readers[0]?.Read() ?? "missing");
+  println(faults[0] != null && objects[0] != null &&
+      emptyStructs[0] != null);
+  println(nestedStructs[0]?.Value?.Text ?? "missing");
+
+  Store store = Store(2);
+  store.Set(1, 9);
+  println(store.Read(1));
+  int32[] returned = Arrays.Make(2);
+  returned[1] = 8;
+  println(Last(returned));
+  int32[] assigned = empty;
+  assigned = int32[:2];
+  println(assigned::length);
+
+  byte[] large = byte[:65536];
+  println(large::length);
+  println(large[65535] == 0);
+
+  int32[] alias = numbers;
+  int32[] other = int32[:3];
+  println(alias == numbers);
+  println(other == numbers);
+
+  int32 index = 0;
+  while (index < 5000) {
+    Box garbage = Box("unused");
+    index++;
+  }
+  println(boxes[1]?.Read() ?? "collected");
+  println(pairs[1]?.Text ?? "collected");
+
+  boxes[1] = null;
+  pairs[1] = null;
+  texts[0] = null;
+  readers[0] = null;
+  faults[0] = null;
+  objects[0] = null;
+  emptyStructs[0] = null;
+  nestedStructs[0] = null;
+  println(boxes[1] == null);
+  println(pairs[1] == null);
+}

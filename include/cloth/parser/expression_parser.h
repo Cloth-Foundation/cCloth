@@ -59,6 +59,8 @@ class ExpressionParser {
   [[nodiscard]] ExpressionId parse_integer_conversion_expression();
   [[nodiscard]] ExpressionId parse_call_expression(ExpressionId callee);
   [[nodiscard]] ExpressionId parse_array_literal_expression();
+  [[nodiscard]] bool at_array_construction() const noexcept;
+  [[nodiscard]] ExpressionId parse_array_construction_expression();
   [[nodiscard]] ExpressionId parse_index_expression(ExpressionId object);
   [[nodiscard]] TypeSyntax parse_checked_type();
   [[nodiscard]] ExpressionId make_invalid_expression(SourceRange range);

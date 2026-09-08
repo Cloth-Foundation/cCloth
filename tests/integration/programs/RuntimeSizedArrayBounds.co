@@ -1,0 +1,5 @@
+static func Main() {
+  int32 count = 1;
+  int32[] values = int32[:count];
+  println(values[count]);
+}

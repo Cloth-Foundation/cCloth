@@ -160,6 +160,11 @@ struct ArrayLiteralExpression {
   std::vector<ExpressionId> elements;
 };
 
+struct ArrayConstructionExpression {
+  TypeSyntax element_type;
+  ExpressionId length;
+};
+
 struct IndexExpression {
   ExpressionId object;
   ExpressionId index;
@@ -176,7 +181,8 @@ using ExpressionData = std::variant<
     IntegerConversionExpression, AssignmentExpression, MemberAccessExpression,
     MetaAccessExpression, SafeMemberAccessExpression, SafeMetaAccessExpression,
     NullCoalesceExpression, NullAssertExpression, CallExpression,
-    ArrayLiteralExpression, IndexExpression, ParenthesizedExpression>;
+    ArrayLiteralExpression, ArrayConstructionExpression, IndexExpression,
+    ParenthesizedExpression>;
 
 struct Expression {
   SourceRange range;

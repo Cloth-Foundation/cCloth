@@ -540,6 +540,222 @@ void array_instructions(TestContext& test) {
               "array Length was not lowered explicitly");
 }
 
+void runtime_sized_array_lowering(TestContext& test) {
+  CompiledSources compilation;
+  compilation.add("RuntimeArrays.co",
+                  "func Make(uint16 count): int32[] {\n"
+                  "  return int32[:count];\n"
+                  "}\n"
+                  "func Once(int32 count): int32[] {\n"
+                  "  return int32[:count++];\n"
+                  "}\n"
+                  "func Flag(bool value): bool {\n"
+                  "  return value;\n"
+                  "}\n");
+  compilation.compile();
+
+  test.expect(compilation.result->is_valid,
+              "valid runtime-sized array failed MIR verification");
+  const cloth::MirBody& body =
+      compilation.result->mir.files[0].functions[0].body;
+  test.expect(body_has_instruction<cloth::MirArrayAllocateInstruction>(body),
+              "runtime-sized array was not lowered to a dedicated allocation");
+  test.expect(
+      body_has_conversion(body, cloth::MirConversionKind::kWidenNumeric),
+      "runtime-sized array length was not normalized to int32");
+
+  const cloth::MirArrayAllocateInstruction* allocation = nullptr;
+  std::optional<cloth::TypeId> length_type;
+  for (const cloth::MirBasicBlock& block : body.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* candidate =
+              std::get_if<cloth::MirArrayAllocateInstruction>(
+                  &instruction.data)) {
+        allocation = candidate;
+      }
+    }
+  }
+  if (allocation != nullptr) {
+    for (const cloth::MirBasicBlock& block : body.blocks) {
+      for (const cloth::MirInstruction& instruction : block.instructions) {
+        if (instruction.result == allocation->length) {
+          length_type = instruction.type;
+        }
+      }
+    }
+  }
+  test.expect(length_type == compilation.result->semantics.find_type("int32"),
+              "runtime-sized array MIR length is not exactly int32");
+
+  const cloth::MirBody& once =
+      compilation.result->mir.files[0].functions[1].body;
+  std::size_t count_stores = 0;
+  std::size_t once_allocations = 0;
+  for (const cloth::MirBasicBlock& block : once.blocks) {
+    for (const cloth::MirInstruction& instruction : block.instructions) {
+      if (const auto* store = std::get_if<cloth::MirStoreSymbolInstruction>(
+              &instruction.data)) {
+        count_stores +=
+            compilation.result->semantics.symbol(store->symbol).name == "count"
+                ? 1U
+                : 0U;
+      }
+      once_allocations +=
+          std::holds_alternative<cloth::MirArrayAllocateInstruction>(
+              instruction.data)
+              ? 1U
+              : 0U;
+    }
+  }
+  test.expect(count_stores == 1 && once_allocations == 1,
+              "runtime-sized array length was not evaluated exactly once");
+
+  cloth::HirModule broken_hir = compilation.result->hir;
+  bool corrupted_hir = false;
+  for (const cloth::HirExpression& stored_expression :
+       broken_hir.storage.expressions()) {
+    auto& expression = const_cast<cloth::HirExpression&>(stored_expression);
+    if (auto* array = std::get_if<cloth::HirArrayConstructionExpression>(
+            &expression.data)) {
+      array->element_type = compilation.result->semantics.string_type();
+      corrupted_hir = true;
+      break;
+    }
+  }
+  cloth::DiagnosticEngine hir_diagnostics;
+  test.expect(
+      corrupted_hir &&
+          !cloth::verify_hir(broken_hir, compilation.result->semantics,
+                             hir_diagnostics) &&
+          has_diagnostic(hir_diagnostics, "non-defaultable element type"),
+      "HIR verifier accepted a corrupt runtime-sized array");
+
+  cloth::HirModule wrong_result_hir = compilation.result->hir;
+  bool corrupted_hir_result = false;
+  for (const cloth::HirExpression& stored_expression :
+       wrong_result_hir.storage.expressions()) {
+    auto& expression = const_cast<cloth::HirExpression&>(stored_expression);
+    if (std::holds_alternative<cloth::HirArrayConstructionExpression>(
+            expression.data)) {
+      expression.type = compilation.result->semantics.string_type();
+      corrupted_hir_result = true;
+      break;
+    }
+  }
+  cloth::DiagnosticEngine hir_result_diagnostics;
+  test.expect(
+      corrupted_hir_result &&
+          !cloth::verify_hir(wrong_result_hir, compilation.result->semantics,
+                             hir_result_diagnostics) &&
+          has_diagnostic(hir_result_diagnostics,
+                         "lost its element or result type"),
+      "HIR verifier accepted a mismatched runtime-sized array result");
+
+  cloth::HirModule wrong_length_hir = compilation.result->hir;
+  std::optional<cloth::HirExpressionId> bool_expression;
+  for (std::size_t index = 0;
+       index < wrong_length_hir.storage.expressions().size(); ++index) {
+    if (wrong_length_hir.storage.expressions()[index].type ==
+        compilation.result->semantics.bool_type()) {
+      bool_expression = cloth::HirExpressionId{index};
+      break;
+    }
+  }
+  bool corrupted_hir_length = false;
+  if (bool_expression) {
+    for (const cloth::HirExpression& stored_expression :
+         wrong_length_hir.storage.expressions()) {
+      auto& expression = const_cast<cloth::HirExpression&>(stored_expression);
+      if (auto* array = std::get_if<cloth::HirArrayConstructionExpression>(
+              &expression.data)) {
+        array->length = *bool_expression;
+        corrupted_hir_length = true;
+        break;
+      }
+    }
+  }
+  cloth::DiagnosticEngine hir_length_diagnostics;
+  test.expect(
+      corrupted_hir_length &&
+          !cloth::verify_hir(wrong_length_hir, compilation.result->semantics,
+                             hir_length_diagnostics) &&
+          has_diagnostic(hir_length_diagnostics,
+                         "length is not int32-compatible"),
+      "HIR verifier accepted an incompatible runtime-sized array length");
+
+  cloth::MirModule broken_mir = compilation.result->mir;
+  bool corrupted_mir = false;
+  std::optional<cloth::MirValueId> uint16_value;
+  for (cloth::MirBasicBlock& block :
+       broken_mir.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (instruction.result &&
+          instruction.type ==
+              compilation.result->semantics.find_type("uint16")) {
+        uint16_value = instruction.result;
+      }
+      if (auto* array = std::get_if<cloth::MirArrayAllocateInstruction>(
+              &instruction.data);
+          array != nullptr && uint16_value) {
+        array->length = *uint16_value;
+        corrupted_mir = true;
+        break;
+      }
+    }
+  }
+  cloth::DiagnosticEngine mir_diagnostics;
+  test.expect(
+      corrupted_mir &&
+          !cloth::verify_mir(broken_mir, compilation.result->semantics,
+                             mir_diagnostics) &&
+          has_diagnostic(mir_diagnostics, "value type does not match its use"),
+      "MIR verifier accepted a non-int32 allocation length");
+
+  cloth::MirModule wrong_element_mir = compilation.result->mir;
+  bool corrupted_mir_element = false;
+  for (cloth::MirBasicBlock& block :
+       wrong_element_mir.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (auto* array = std::get_if<cloth::MirArrayAllocateInstruction>(
+              &instruction.data)) {
+        array->element_type = compilation.result->semantics.string_type();
+        corrupted_mir_element = true;
+        break;
+      }
+    }
+  }
+  cloth::DiagnosticEngine mir_element_diagnostics;
+  test.expect(
+      corrupted_mir_element &&
+          !cloth::verify_mir(wrong_element_mir, compilation.result->semantics,
+                             mir_element_diagnostics) &&
+          has_diagnostic(mir_element_diagnostics,
+                         "non-defaultable element type"),
+      "MIR verifier accepted a non-defaultable allocation element");
+
+  cloth::MirModule wrong_result_mir = compilation.result->mir;
+  bool corrupted_mir_result = false;
+  for (cloth::MirBasicBlock& block :
+       wrong_result_mir.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (std::holds_alternative<cloth::MirArrayAllocateInstruction>(
+              instruction.data)) {
+        instruction.type = compilation.result->semantics.string_type();
+        corrupted_mir_result = true;
+        break;
+      }
+    }
+  }
+  cloth::DiagnosticEngine mir_result_diagnostics;
+  test.expect(
+      corrupted_mir_result &&
+          !cloth::verify_mir(wrong_result_mir, compilation.result->semantics,
+                             mir_result_diagnostics) &&
+          has_diagnostic(mir_result_diagnostics,
+                         "result does not match its element type"),
+      "MIR verifier accepted a mismatched allocation result");
+}
+
 void string_instructions(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Strings.co",
@@ -2234,6 +2450,7 @@ int main() {
       {"field initializer body", field_initializer_body},
       {"member store", member_store},
       {"array instructions", array_instructions},
+      {"runtime-sized array lowering", runtime_sized_array_lowering},
       {"string instructions", string_instructions},
       {"object model instructions", object_model_instructions},
       {"for iteration control flow", for_iteration_control_flow},

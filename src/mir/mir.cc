@@ -980,6 +980,20 @@ class BodyBuilder {
           expression.type, expression.range,
           MirArrayLiteralInstruction{array->element_type, std::move(elements)});
     }
+    if (const auto* array =
+            std::get_if<HirArrayConstructionExpression>(&expression.data)) {
+      const HirExpression& length = hir_.storage.expression(array->length);
+      MirValueId lowered_length = require_value(lower_expression(array->length),
+                                                length.type, length.range);
+      lowered_length =
+          coerce(lowered_length, *semantics_.find_type("int32"), length.range);
+      if (expression.type == semantics_.bottom_type()) {
+        return poison_value(semantics_.bottom_type(), expression.range);
+      }
+      return emit_value(
+          expression.type, expression.range,
+          MirArrayAllocateInstruction{array->element_type, lowered_length});
+    }
     if (const auto* index = std::get_if<HirIndexExpression>(&expression.data)) {
       const HirExpression& object = hir_.storage.expression(index->object);
       const HirExpression& subscript = hir_.storage.expression(index->index);

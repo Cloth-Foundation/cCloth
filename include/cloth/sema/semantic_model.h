@@ -269,6 +269,7 @@ struct ExpressionSemantics {
   std::optional<StringMetaOperation> string_meta_operation{};
   bool may_divide_by_zero{false};
   bool is_safe_call{false};
+  std::optional<TypeId> array_element_type{};
 };
 
 struct InterfaceImplementation {
@@ -376,6 +377,8 @@ class SemanticModel {
                                            const SemanticModel& semantics);
 [[nodiscard]] std::optional<std::uint32_t> enum_constant_tag(
     std::string_view text, TypeId type, const SemanticModel& semantics);
+[[nodiscard]] bool is_default_initializable_array_element(
+    TypeId type, const SemanticModel& semantics) noexcept;
 
 }  // namespace cloth
 

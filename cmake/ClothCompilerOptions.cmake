@@ -22,6 +22,9 @@ function(cloth_enable_warnings target)
             -Wconversion
             -Wsign-conversion
         )
+        if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            target_compile_options(${target} PRIVATE -Wa,-mbig-obj)
+        endif()
         if(CLOTH_WARNINGS_AS_ERRORS)
             target_compile_options(${target} PRIVATE -Werror)
         endif()

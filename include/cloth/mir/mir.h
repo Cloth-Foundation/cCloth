@@ -136,6 +136,14 @@ struct MirArrayLiteralInstruction {
                          const MirArrayLiteralInstruction&) = default;
 };
 
+struct MirArrayAllocateInstruction {
+  TypeId element_type;
+  MirValueId length;
+
+  friend bool operator==(const MirArrayAllocateInstruction&,
+                         const MirArrayAllocateInstruction&) = default;
+};
+
 struct MirArrayLoadInstruction {
   MirValueId array;
   MirValueId index;
@@ -366,15 +374,15 @@ using MirInstructionData = std::variant<
     MirDeclareLocalInstruction, MirStoreSymbolInstruction,
     MirLoadMemberInstruction, MirStoreMemberInstruction,
     MirLoadStorageInstruction, MirStoreStorageInstruction,
-    MirArrayLiteralInstruction, MirArrayLoadInstruction,
-    MirArrayStoreInstruction, MirArrayLengthInstruction,
-    MirStringMetaInstruction, MirStringSliceInstruction,
-    MirStringScalarAtInstruction, MirStringNextScalarInstruction,
-    MirObjectMetaInstruction, MirIntegerWriteInstruction,
-    MirIntegerReadInstruction, MirUnaryInstruction, MirBinaryInstruction,
-    MirNullableEqualInstruction, MirConvertInstruction, MirIsNonNullInstruction,
-    MirNullAssertInstruction, MirTypeTestInstruction, MirCheckedCastInstruction,
-    MirCallInstruction, MirLoadCallResultInstruction,
+    MirArrayLiteralInstruction, MirArrayAllocateInstruction,
+    MirArrayLoadInstruction, MirArrayStoreInstruction,
+    MirArrayLengthInstruction, MirStringMetaInstruction,
+    MirStringSliceInstruction, MirStringScalarAtInstruction,
+    MirStringNextScalarInstruction, MirObjectMetaInstruction,
+    MirIntegerWriteInstruction, MirIntegerReadInstruction, MirUnaryInstruction,
+    MirBinaryInstruction, MirNullableEqualInstruction, MirConvertInstruction,
+    MirIsNonNullInstruction, MirNullAssertInstruction, MirTypeTestInstruction,
+    MirCheckedCastInstruction, MirCallInstruction, MirLoadCallResultInstruction,
     MirInitializeFieldsInstruction, MirPhiInstruction>;
 
 struct MirInstruction {

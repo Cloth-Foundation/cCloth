@@ -481,6 +481,11 @@ class FieldInitializationAnalyzer {
       }
       return;
     }
+    if (const auto* array =
+            std::get_if<ArrayConstructionExpression>(&expression.data)) {
+      analyze_expression(array->length, assignments, false);
+      return;
+    }
     if (const auto* index = std::get_if<IndexExpression>(&expression.data)) {
       analyze_expression(index->object, assignments, false);
       analyze_expression(index->index, assignments, false);

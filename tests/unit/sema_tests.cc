@@ -2555,6 +2555,156 @@ void array_semantics(TestContext& test) {
               "non-array value was indexable");
 }
 
+void runtime_sized_array_semantics(TestContext& test) {
+  AnalyzedCompilation valid;
+  valid.add("Status.co", "enum { Ready, Done }\n");
+  valid.add("RuntimeArrays.co",
+            "import Status;\n"
+            "func Values(uint16 count): int32[] {\n"
+            "  return int32[:count];\n"
+            "}\n"
+            "func References(int32 count): RuntimeArrays?[] {\n"
+            "  return RuntimeArrays?[:count];\n"
+            "}\n"
+            "func Once(int32 count): int32[] {\n"
+            "  return int32[:count++];\n"
+            "}\n"
+            "func Enums(int32 count): Status?[] {\n"
+            "  Status?[] values = Status?[:count];\n"
+            "  values[0] = Status.Ready;\n"
+            "  return values;\n"
+            "}\n");
+  valid.analyze();
+
+  test.expect(valid.error_count() == 0,
+              "valid runtime-sized arrays produced semantic errors");
+  bool found_integer = false;
+  bool found_nullable_reference = false;
+  bool found_nullable_enum = false;
+  for (const cloth::HirExpression& expression :
+       valid.result->hir.storage.expressions()) {
+    const auto* array =
+        std::get_if<cloth::HirArrayConstructionExpression>(&expression.data);
+    if (array == nullptr) continue;
+    const cloth::SemanticType& element =
+        valid.result->semantics.type(array->element_type);
+    found_integer = found_integer || element.kind == cloth::TypeKind::kInt32;
+    found_nullable_reference =
+        found_nullable_reference ||
+        (element.kind == cloth::TypeKind::kNullable && element.element_type &&
+         valid.result->semantics.type(*element.element_type).kind ==
+             cloth::TypeKind::kFileClass);
+    found_nullable_enum =
+        found_nullable_enum ||
+        (element.kind == cloth::TypeKind::kNullable && element.element_type &&
+         valid.result->semantics.type(*element.element_type).kind ==
+             cloth::TypeKind::kEnum);
+    const cloth::SemanticType& result =
+        valid.result->semantics.type(expression.type);
+    test.expect(result.kind == cloth::TypeKind::kArray &&
+                    result.element_type == array->element_type,
+                "runtime-sized array lost its exact result type");
+  }
+  test.expect(found_integer && found_nullable_reference && found_nullable_enum,
+              "runtime-sized arrays lost element metadata in HIR");
+
+  AnalyzedCompilation invalid;
+  invalid.add("BadRuntimeArrays.co",
+              "static final int32 Negative = -2;\n"
+              "func Bad(bool condition) {\n"
+              "  string[:1];\n"
+              "  BadRuntimeArrays[:1];\n"
+              "  int32[][:1];\n"
+              "  int32[]?[:1];\n"
+              "  void[:1];\n"
+              "  int32[:condition];\n"
+              "  int32[:-1];\n"
+              "  int32[:1 - 3];\n"
+              "  int32[:Negative];\n"
+              "}\n");
+  invalid.analyze();
+  test.expect(
+      invalid.has_diagnostic(
+          "array element type 'string' has no canonical default "
+          "value") &&
+          invalid.has_diagnostic("array element type 'BadRuntimeArrays' has no "
+                                 "canonical default value") &&
+          invalid.has_diagnostic(
+              "runtime-sized array elements cannot be arrays") &&
+          invalid.has_diagnostic(
+              "array element type 'void' has no canonical default "
+              "value"),
+      "non-defaultable runtime-sized array elements were accepted");
+  test.expect(
+      invalid.has_diagnostic("array length has type 'bool'; expected 'int32'"),
+      "a non-integer runtime-sized array length was accepted");
+  test.expect(
+      invalid.has_diagnostic("runtime-sized array length cannot be negative"),
+      "a constant negative runtime-sized array length was accepted");
+  test.expect(!invalid.has_diagnostic("internal"),
+              "invalid runtime-sized arrays leaked an internal diagnostic");
+
+  AnalyzedCompilation constant;
+  constant.add("ConstantRuntimeArray.co",
+               "static final int32[] Values = int32[:2];\n");
+  constant.analyze();
+  test.expect(constant.has_diagnostic(
+                  "runtime-sized array construction is not permitted in "
+                  "constant initializers"),
+              "runtime-sized array construction entered a constant "
+              "initializer");
+
+  struct RejectedElement {
+    std::string_view file;
+    std::string_view declaration;
+    std::string_view type;
+  };
+  const std::vector<RejectedElement> rejected_elements{
+      {"", "", "string"},
+      {"", "", "object"},
+      {"", "", "Error"},
+      {"User.co", "", "User"},
+      {"Mode.co", "enum { Ready }\n", "Mode"},
+      {"Record.co", "struct { Record() {} }\n", "Record"},
+      {"Reader.co", "interface { func Read(); }\n", "Reader"},
+      {"Fault.co", "error { Fault(): Error(\"fault\") {} }\n", "Fault"},
+  };
+  for (const RejectedElement& rejected : rejected_elements) {
+    AnalyzedCompilation candidate;
+    std::string source;
+    if (!rejected.file.empty()) {
+      candidate.add(std::string{rejected.file},
+                    std::string{rejected.declaration});
+      const std::filesystem::path path{rejected.file};
+      source += "import " + path.stem().string() + ";\n";
+    }
+    source += "func Bad() { " + std::string{rejected.type} + "[:0]; }\n";
+    candidate.add("Use.co", std::move(source));
+    candidate.analyze();
+    test.expect(candidate.has_diagnostic("has no canonical default value") &&
+                    !candidate.has_diagnostic("internal"),
+                "a non-defaultable runtime-sized array element was accepted");
+  }
+
+  for (const std::string_view type : {"int32[]", "int32[]?"}) {
+    AnalyzedCompilation candidate;
+    candidate.add("Nested.co",
+                  "func Bad() { " + std::string{type} + "[:0]; }\n");
+    candidate.analyze();
+    test.expect(candidate.has_diagnostic(
+                    "runtime-sized array elements cannot be arrays") &&
+                    !candidate.has_diagnostic("internal"),
+                "a nested runtime-sized array element was accepted");
+  }
+
+  AnalyzedCompilation unresolved;
+  unresolved.add("Unresolved.co", "func Bad() { Missing[:0]; }\n");
+  unresolved.analyze();
+  test.expect(unresolved.has_diagnostic("unknown type 'Missing'") &&
+                  !unresolved.has_diagnostic("internal"),
+              "an unresolved runtime-sized array element was accepted");
+}
+
 void for_iteration_semantics(TestContext& test) {
   AnalyzedCompilation valid;
   valid.add("Iteration.co",
@@ -3189,6 +3339,7 @@ int main() {
       {"null ergonomics", null_ergonomics},
       {"assignment requires location", assignment_requires_location},
       {"array semantics", array_semantics},
+      {"runtime-sized array semantics", runtime_sized_array_semantics},
       {"for iteration semantics", for_iteration_semantics},
       {"for binding scope and types", for_binding_scope_and_types},
       {"instance member binding", instance_member_binding},

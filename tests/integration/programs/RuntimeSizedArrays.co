@@ -1,0 +1,7 @@
+func Integers(uint16 count): int32[] {
+  return int32[:count];
+}
+
+func Tokens(int32 count): RuntimeSizedArrays?[] {
+  return RuntimeSizedArrays?[:count];
+}

@@ -376,6 +376,11 @@ class Lowerer {
       data = HirArrayLiteralExpression{
           type.element_type.value_or(semantics_.error_type()),
           std::move(elements)};
+    } else if (const auto* array =
+                   std::get_if<ArrayConstructionExpression>(&syntax.data);
+               array != nullptr && semantic.array_element_type) {
+      data = HirArrayConstructionExpression{*semantic.array_element_type,
+                                            expression(array->length)};
     } else if (const auto* index = std::get_if<IndexExpression>(&syntax.data)) {
       const TypeId object_type = semantics_.file(current_file_)
                                      .expressions.at(index->object.value)

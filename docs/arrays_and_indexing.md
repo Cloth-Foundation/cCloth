@@ -23,6 +23,21 @@ null-only literals are rejected because contextual literal typing is not yet
 implemented. `null` is assignable to `T[]?`, not to non-null `T[]`. `==` and
 `!=` compare array references rather than elements.
 
+Stage 42 adds runtime-sized construction:
+
+```cloth
+int32[] offsets = int32[:count];
+Token?[] tokens = Token?[:capacity];
+```
+
+The length is evaluated once and must be implicitly compatible with `int32`.
+Scalar primitives receive their zero value; nullable elements receive absent.
+Non-null managed references, enums, structs, and nested arrays have no
+canonical default and are rejected. A constant negative length is diagnosed.
+A dynamic negative length reaches the existing exact runtime failure. Stage
+42.3 lowers the dedicated MIR instruction through the existing dynamic
+allocator on x86-64 and wasm32 and supports native and package-artifact output.
+
 The index type is exactly `int32`; `int` is its canonical alias. `::length` is a
 case-sensitive, read-only `int32` meta query with no visibility. A nullable
 array must be narrowed before indexing or meta access. Indexed reads and writes
@@ -32,8 +47,9 @@ indices, and indices at or beyond `::length`.
 ## Compiler representation
 
 The semantic model interns one array `TypeId` for each used element type. HIR
-has explicit literal, index, and length nodes. MIR separates allocation, load,
-store, and length operations so backends do not reconstruct source syntax.
+has explicit literal, runtime-sized construction, index, and length nodes. MIR
+separates literal construction, runtime-sized allocation, load, store, and
+length operations so backends do not reconstruct source syntax.
 
 Arrays use the target's opaque reference ABI. Their element type remains
 available for mangling, layout, aligned loads and stores, and collector

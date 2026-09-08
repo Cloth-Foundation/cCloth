@@ -1,5 +1,116 @@
 # Cloth testing and diagnostic builds
 
+## Stage 42.4 runtime-sized array exit audit
+
+Completed on Windows on 2026-09-08. Development and ASan/UBSan builds each
+pass all 350 CTests: 80 unit and 270 integration entries, including all 38
+compiler-backed and 36 native Shuttle cases. The audit added no language,
+runtime, artifact, protocol, or standard-library production change.
+
+Source and native coverage now spans `byte`, every signed and unsigned integer
+width, both floats, `bool`, `char`, and the `int`, `uint`, and `float` aliases.
+It covers absent nullable scalar, enum, class, interface, error, `object`, and
+`string` values plus empty, nonempty, nested, and reference-bearing nullable
+structs. Zero, one, computed, variable, and 65,536-element lengths cross locals,
+fields, assignments, arguments, and returns. Exact positive floating zero,
+single evaluation, dynamic negative, checked-conversion, allocation-overflow,
+bounds, iteration, mutation, identity, and GC behavior pass.
+
+Every non-defaultable non-null category is rejected independently even at zero
+length, as are unresolved and nested-array element types. Forged HIR and MIR
+element, length, and result state fail verification. LLVM verifies before and
+after optimization on x86-64 and wasm32. Interface/object artifacts,
+source-free linking, whole/separate packages, distinct build roots and job
+schedules, exact reuse, affected invalidation, failed-output preservation, and
+byte-identical native executables pass.
+
+The real `F:\Cloth` bootstrap source passes direct checking and exact native
+token-buffer output, both Shuttle targets, warm reuse of `cloth` and `clothc`,
+and unchanged artifact hashes. All 51 ordinary Rust tests, Rust 1.85 checking,
+warning-denied Clippy, Rust and C++ formatting, all 24 compiler-backed editor
+tests, 16 standalone editor tests with eight compiler-dependent skips, all 362
+local Markdown targets across 117 files, and repository whitespace checks pass.
+
+**Stage 42 is complete.** Artifact/compiler/runtime compatibility remains
+**7/6/9**, schemas remain **2/1/1/1**, and the compiler-paired `cloth` package
+remains v0.3.0. Resizable collections, generics, nested arrays, implicit
+non-null object defaults, portable file input, and further bootstrap lexer or
+parser work remain deferred.
+
+## Stage 42.3 runtime-sized array lowering and bootstrap acceptance
+
+Completed on Windows on 2026-09-08. Development and ASan/UBSan builds each
+pass all 346 CTests: 80 unit and 266 integration entries, including the 38
+compiler-backed and 36 native Shuttle cases. Focused tests cover x86-64 and
+wasm32 LLVM verification, native execution, source-free linking, serial and
+parallel Shuttle builds, warm reuse, affected invalidation, deterministic
+artifacts, and preservation of completed outputs after invalid source.
+
+LLVM lowering now evaluates the length once and calls the existing precise
+runtime array allocator with the canonical element layout. Native coverage
+checks zero length, negative-length failure, primitive and nullable defaults,
+nullable enums, reference-bearing structs, indexing, mutation, iteration,
+identity, cleared references, and retained nested references under GC pressure.
+No runtime ABI, artifact format, compiler ABI, protocol, receipt, manifest, or
+standard-library version changed.
+
+All 51 ordinary Shuttle Rust tests pass. Rust 1.85 checking, warning-denied
+Clippy, Rust and C++ formatting, editor compilation and tests, local Markdown
+targets, and repository whitespace checks pass. The bootstrap compiler at
+`F:\Cloth` now uses a runtime-sized `Token?[]` buffer whose capacity is derived
+from source length. Direct checks, x86-64 native execution, x86-64 and wasm32
+LLVM verification, Shuttle checks, native execution, warm reuse, and artifact
+stability all pass with exact output.
+
+## Stage 42.2 runtime-sized array frontend and verified IR
+
+Completed on Windows on 2026-09-08. Development and ASan/UBSan builds each
+pass all 338 CTests, including 37 compiler-backed and 35 native Shuttle cases.
+The three new integration cases validate `--check` on x86-64 and wasm32 and
+prove that protocol-v2 x86-64 interface/object plus wasm32 interface requests
+publish no artifact before Stage 42.3.
+
+All 51 ordinary Shuttle Rust tests, Rust 1.85 checking, warning-denied Clippy,
+Rust and C++ formatting, all 362 local Markdown targets across 117 files, and
+repository whitespace checks pass. A direct `--check` of the complete
+`F:\Cloth` source root also remains green without changing bootstrap source.
+
+Unit coverage carries `T[:length]` through dedicated AST, semantic, HIR, and
+MIR nodes. It checks nullable and scalar defaults, exact result identity,
+`int32`-compatible source operands and exact MIR normalization, single update
+evaluation, literal/folded/static-constant negative lengths, constant-context
+rejection, malformed parser recovery, and forged HIR/MIR element and operand
+state. Invalid source emits no internal verifier diagnostic. LLVM emission has
+an exact Stage 42.3 gate, and ordinary `--check` remains available on both
+targets.
+
+Artifact/compiler/runtime compatibility remains 7/6/9, schemas remain
+2/1/1/1, and the unchanged compiler-paired `cloth` package remains v0.3.0.
+No runtime, standard-library source, Shuttle production code, editor surface,
+LLVM lowering, native behavior, or bootstrap source changes at this checkpoint.
+
+## Stage 42.1 runtime-sized fixed-array contract
+
+Approved and recorded on Windows on 2026-09-07. The contract freezes
+`T[:length]`, canonical element defaults, `int32`-compatible length behavior,
+exact evaluation and terminal failures, fixed-array semantics, zeroed precise
+layout, dedicated verified IR, unchanged compatibility, diagnostics, and the
+first `F:\Cloth` token-buffer acceptance target.
+
+This checkpoint changes documentation only. A read-only bootstrap check of
+`F:\Cloth\src\Main.co` succeeds against its complete source root with the
+current compiler. The existing runtime allocator already accepts a dynamic
+`int32` length, validates negative and oversized requests, derives element
+layout from compiler metadata, zeroes payload storage, and remains the planned
+42.3 lowering boundary.
+
+The completed Stage 41 baseline remains 335 development and sanitizer CTests,
+51 ordinary Rust tests, 22 compiler-backed editor tests, and active
+artifact/compiler/runtime compatibility 7/6/9 with schemas 2/1/1/1 and
+`cloth` v0.3.0. All 362 local Markdown targets across 117 files and repository
+whitespace checks pass. That checkpoint preceded the separately authorized
+42.2 implementation.
+
 ## Stage 41.4 uniform-nullability exit audit
 
 Completed on Windows on 2026-09-07. Development and ASan/UBSan builds each

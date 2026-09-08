@@ -131,6 +131,14 @@ allocation/load/store/length operations, local declarations, unary and binary
 operations, calls, explicit conversions, and phi values. Source ranges,
 `TypeId`, and `SymbolId` identities survive lowering.
 
+Stage 42 gives `T[:length]` a dedicated HIR construction and
+`MirArrayAllocateInstruction`. HIR retains the checked `int32`-compatible
+length; MIR evaluates it once and normalizes it to exact `int32` before the
+allocation instruction. Both verifiers independently check element
+defaultability, child/value identity, result type, and value category. Stage
+42.3 lowers the instruction to `cloth_rt_array_alloc` with the canonical
+target-derived element descriptor; allocation remains an observable safepoint.
+
 Stage 16.2 also carries each validated optional base `FileId` through HIR and
 MIR so ABI lowering can schedule and flatten class layouts without
 rediscovering semantic ancestry. Stage 16.3 gives constructor MIR an explicit

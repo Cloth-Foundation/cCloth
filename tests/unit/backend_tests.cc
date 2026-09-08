@@ -1370,6 +1370,31 @@ void rejects_out_of_range_literal(TestContext& test) {
       "out-of-range literal produced the wrong diagnostic");
 }
 
+void runtime_sized_array_lowering(TestContext& test) {
+  CompiledSources sources;
+  sources.add("RuntimeArrays.co",
+              "func Make(uint16 count): int32[] {\n"
+              "  return int32[:count];\n"
+              "}\n"
+              "func References(int32 count): RuntimeArrays?[] {\n"
+              "  return RuntimeArrays?[:count];\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.result->is_valid && sources.llvm.has_value(),
+              "runtime-sized array did not emit LLVM IR");
+  test.expect(
+      sources.contains("zext i16 ") &&
+          count_occurrences(sources.llvm ? sources.llvm->text : "",
+                            "call ptr @cloth_rt_array_alloc(i32 %v") == 2,
+      "runtime-sized array allocation lost its dynamic int32 length");
+  test.expect(
+      sources.contains("{ i64 4, i64 4, ptr null, i64 0 }") &&
+          sources.contains(
+              ".refs = private unnamed_addr constant [1 x i64] [i64 0]"),
+      "runtime-sized array allocation lost canonical element metadata");
+}
+
 }  // namespace
 
 int main() {
@@ -1407,6 +1432,7 @@ int main() {
        rejects_invalid_native_entry_points},
       {"rejects inconsistent input", rejects_inconsistent_input},
       {"rejects out-of-range literal", rejects_out_of_range_literal},
+      {"runtime-sized array lowering", runtime_sized_array_lowering},
   };
 
   return cloth::test::run_tests(tests);

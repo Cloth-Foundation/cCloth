@@ -75,6 +75,7 @@ struct ExpressionState {
   std::optional<StringMetaOperation> string_meta_operation{};
   bool may_divide_by_zero{false};
   bool is_safe_call{false};
+  std::optional<TypeId> array_element_type{};
 };
 
 struct ErrorEffectSource {
@@ -3094,6 +3095,8 @@ class SemanticAnalyzer {
             return analyze_call(node, expression.range);
           else if constexpr (std::is_same_v<Node, ArrayLiteralExpression>)
             return analyze_array_literal(node, expression.range, expected);
+          else if constexpr (std::is_same_v<Node, ArrayConstructionExpression>)
+            return analyze_array_construction(node, expression.range);
           else if constexpr (std::is_same_v<Node, IndexExpression>)
             return analyze_index(node, expression.range);
           else if constexpr (std::is_same_v<Node, ParenthesizedExpression>)
@@ -3415,6 +3418,70 @@ class SemanticAnalyzer {
     }
     return ExpressionState{model_.get_array_type(*element_type),
                            ValueCategory::kValue};
+  }
+
+  ExpressionState analyze_array_construction(
+      const ArrayConstructionExpression& construction, SourceRange range) {
+    const TypeId int32_type = *model_.find_type("int32");
+    const TypeId element_type =
+        resolve_type(construction.element_type, current_file_, true);
+    const ExpressionState length = analyze_expression_with_effect_reachability(
+        construction.length, true, int32_type);
+    const bool length_is_value =
+        check_value(length, expression_range(construction.length));
+
+    bool valid = element_type != model_.error_type() && length_is_value;
+    if (element_type != model_.error_type() &&
+        !is_default_initializable_array_element(element_type, model_)) {
+      const TypeKind kind = model_.type(element_type).kind;
+      diagnostics_.error(
+          construction.element_type.range,
+          kind == TypeKind::kArray ||
+                  (kind == TypeKind::kNullable &&
+                   model_.type(element_type).element_type &&
+                   model_.type(*model_.type(element_type).element_type).kind ==
+                       TypeKind::kArray)
+              ? "runtime-sized array elements cannot be arrays"
+              : "array element type '" + type_name(element_type) +
+                    "' has no canonical default value");
+      valid = false;
+    }
+    if (length.type != model_.error_type() &&
+        length.type != model_.bottom_type() &&
+        !is_assignable(int32_type, length.type)) {
+      diagnostics_.error(expression_range(construction.length),
+                         "array length has type '" + type_name(length.type) +
+                             "'; expected 'int32'");
+      valid = false;
+    }
+    if (constant_context_) {
+      diagnostics_.error(
+          range,
+          "runtime-sized array construction is not permitted in constant "
+          "initializers");
+      valid = false;
+    }
+    if (valid && length.type != model_.bottom_type()) {
+      const std::optional<ScalarConstant> constant =
+          scalar_constant_expression(construction.length);
+      if (constant) {
+        const ConstantBits converted = convert_scalar(
+            constant->bits, model_.type(constant->type).kind, TypeKind::kInt32);
+        if (converted && ((*converted >> 31U) & 1U) != 0) {
+          diagnostics_.error(expression_range(construction.length),
+                             "runtime-sized array length cannot be negative");
+          valid = false;
+        }
+      }
+    }
+    if (!valid) return ExpressionState{model_.error_type()};
+
+    ExpressionState result{length.type == model_.bottom_type()
+                               ? model_.bottom_type()
+                               : model_.get_array_type(element_type),
+                           ValueCategory::kValue};
+    result.array_element_type = element_type;
+    return result;
   }
 
   ExpressionState analyze_index(const IndexExpression& index,
@@ -4313,6 +4380,10 @@ class SemanticAnalyzer {
         }
       }
       return false;
+    }
+    if (const auto* array =
+            std::get_if<ArrayConstructionExpression>(&expression.data)) {
+      return expression_assigns_symbol(array->length, symbol);
     }
     if (const auto* index = std::get_if<IndexExpression>(&expression.data)) {
       return expression_assigns_symbol(index->object, symbol) ||
@@ -5312,7 +5383,8 @@ class SemanticAnalyzer {
                             state.integer_meta_operation,
                             state.string_meta_operation,
                             state.may_divide_by_zero,
-                            state.is_safe_call};
+                            state.is_safe_call,
+                            state.array_element_type};
     return state;
   }
 
@@ -5812,6 +5884,112 @@ class SemanticAnalyzer {
       return is_contextual_numeric_literal_expression(grouped->expression);
     }
     return false;
+  }
+
+  std::optional<ScalarConstant> scalar_constant_expression(
+      ExpressionId id) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    const ExpressionSemantics& semantic =
+        model_.file(current_file_).expressions.at(id.value);
+    if (semantic.type == model_.error_type() ||
+        semantic.type == model_.bottom_type() ||
+        semantic.type.value >= model_.types().size()) {
+      return std::nullopt;
+    }
+    const TypeKind kind = model_.type(semantic.type).kind;
+    const auto result =
+        [&](ConstantBits bits) -> std::optional<ScalarConstant> {
+      return bits ? std::optional{ScalarConstant{semantic.type, *bits}}
+                  : std::nullopt;
+    };
+    if (const std::optional<ScalarConstant> literal =
+            numeric_literal_expression_constant(id)) {
+      return literal;
+    }
+    if (const auto* literal =
+            std::get_if<LiteralExpression>(&expression.data)) {
+      return result(scalar_literal(literal->kind, literal->lexeme, kind));
+    }
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return scalar_constant_expression(grouped->expression);
+    }
+    if (std::holds_alternative<IdentifierExpression>(expression.data) ||
+        std::holds_alternative<MemberAccessExpression>(expression.data)) {
+      if (!semantic.symbol ||
+          semantic.symbol->value >= model_.symbols().size()) {
+        return std::nullopt;
+      }
+      const SemanticSymbol& symbol = model_.symbol(*semantic.symbol);
+      if (symbol.kind == SymbolKind::kEnumCase && symbol.enum_tag) {
+        return ScalarConstant{symbol.type, *symbol.enum_tag};
+      }
+      return symbol.static_constant;
+    }
+    if (const auto* conversion =
+            std::get_if<NumericConversionExpression>(&expression.data)) {
+      const std::optional<ScalarConstant> operand =
+          scalar_constant_expression(conversion->value);
+      return operand
+                 ? result(convert_scalar(operand->bits,
+                                         model_.type(operand->type).kind, kind))
+                 : std::nullopt;
+    }
+    if (const auto* conversion =
+            std::get_if<IntegerConversionExpression>(&expression.data)) {
+      const std::optional<ScalarConstant> operand =
+          scalar_constant_expression(conversion->value);
+      const IntegerConversionMode mode = conversion->operation == "wrap"
+                                             ? IntegerConversionMode::kWrap
+                                             : IntegerConversionMode::kSat;
+      return operand ? result(convert_integer_mode(
+                           operand->bits, model_.type(operand->type).kind, kind,
+                           mode))
+                     : std::nullopt;
+    }
+    if (const auto* unary = std::get_if<UnaryExpression>(&expression.data)) {
+      const std::optional<ScalarConstant> operand =
+          scalar_constant_expression(unary->operand);
+      if (!operand || operand->type != semantic.type) return std::nullopt;
+      return result(unary_scalar(unary->operation, kind, operand->bits));
+    }
+    const auto* binary = std::get_if<BinaryExpression>(&expression.data);
+    if (!binary) return std::nullopt;
+    const std::optional<ScalarConstant> left =
+        scalar_constant_expression(binary->left);
+    if (!left) return std::nullopt;
+    if ((binary->operation == TokenKind::kAmpersandAmpersand &&
+         left->bits == 0) ||
+        (binary->operation == TokenKind::kPipePipe && left->bits != 0)) {
+      return kind == TypeKind::kBool ? result(left->bits != 0) : std::nullopt;
+    }
+    const std::optional<ScalarConstant> right =
+        scalar_constant_expression(binary->right);
+    if (!right) return std::nullopt;
+    const TypeKind left_kind = model_.type(left->type).kind;
+    const TypeKind right_kind = model_.type(right->type).kind;
+    if (binary->operation == TokenKind::kShiftLeft ||
+        binary->operation == TokenKind::kShiftRight) {
+      return left->type == semantic.type
+                 ? result(binary_scalar(binary->operation, left_kind,
+                                        left->bits, right->bits, right_kind))
+                 : std::nullopt;
+    }
+    if (left->type != right->type &&
+        !can_widen_numeric(left_kind, right_kind) &&
+        !can_widen_numeric(right_kind, left_kind)) {
+      return std::nullopt;
+    }
+    const TypeKind common =
+        can_widen_numeric(left_kind, right_kind) ? right_kind : left_kind;
+    const ConstantBits converted_left =
+        convert_scalar(left->bits, left_kind, common);
+    const ConstantBits converted_right =
+        convert_scalar(right->bits, right_kind, common);
+    if (!converted_left || !converted_right) return std::nullopt;
+    return result(binary_scalar(binary->operation, common, *converted_left,
+                                *converted_right, common));
   }
 
   std::optional<ScalarConstant> numeric_literal_expression_constant(

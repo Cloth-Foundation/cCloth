@@ -77,6 +77,8 @@ Stage 40 is complete following its separately authorized 40.4 exit audit on
 2026-09-07.
 Stage 41 is complete following its separately authorized 41.4 exit audit on
 2026-09-07.
+Stage 42 is complete following its separately authorized 42.4 runtime-sized
+fixed-array exit audit on 2026-09-08.
 
 ## Scheduled work
 
@@ -1147,6 +1149,61 @@ class override validation. Existing ABI and artifact versions are unchanged.
   local Markdown targets across 116 files, and repository whitespace gates
   pass. Compatibility remains 7/6/9 and 2/1/1/1 with `cloth` v0.3.0.
 
+### Stage 42: Runtime-sized fixed arrays
+
+- [x] **42.1 — Contract.** Freeze `T[:length]` syntax, default-initializable
+  element types, length typing and failure behavior, exact evaluation,
+  representation, precise GC, verified IR, compatibility, diagnostics,
+  bootstrap acceptance, verification, and non-goals.
+
+  Approved and completed 2026-09-07. The result is the existing fixed-length
+  non-null `T[]`. Scalar primitive elements default to zero values and nullable
+  elements default to absent; non-null managed references, enums, structs, and
+  nested arrays are rejected. Compatibility is planned to remain 7/6/9 and
+  2/1/1/1 with `cloth` v0.3.0. See the
+  [contract](docs/proposals/stage_42_runtime_sized_arrays.md).
+- [x] **42.2 — Frontend and verified IR.** Implement parser/AST, semantic
+  analysis, HIR, MIR, stable diagnostics, exact length coercion/evaluation, and
+  malformed-state rejection while retaining the native/artifact gate.
+
+  Completed 2026-09-08. `T[:length]` now has dedicated nodes at every frontend
+  and target-independent IR layer. Semantic analysis enforces canonical
+  defaults, exact result types, `int32` compatibility, single evaluation,
+  constant-negative rejection, and constant-context exclusion. MIR carries an
+  exact `int32` operand; both verifiers reject forged element, operand, and
+  result state. Direct LLVM/native output and Shuttle interface/object artifact
+  publication stop at explicit 42.3 gates. Compatibility remains 7/6/9 and
+  2/1/1/1 with `cloth` v0.3.0.
+- [x] **42.3 — Lowering and bootstrap integration.** Implement dynamic-length
+  allocation for x86-64 and wasm32 through the existing runtime ABI; verify
+  default initialization, precise roots, packages, source-free consumers,
+  Shuttle and editor integration, user documentation, and the first
+  `F:\Cloth` `Token?[]` token-buffer consumer.
+
+  Completed 2026-09-08. LLVM emits the dynamic allocation through the existing
+  runtime ABI with canonical element metadata. Both targets, native execution,
+  interface/object artifacts, source-free consumers, deterministic Shuttle
+  builds, exact reuse, affected invalidation, failure preservation, editor
+  integration, and the real bootstrap token buffer pass without changing
+  compatibility 7/6/9, schemas 2/1/1/1, or `cloth` v0.3.0.
+- [x] **42.4 — Exit audit.** Complete defaulting, negative and oversized
+  failure, evaluation, indexing/iteration, layout, GC, malformed-state,
+  compatibility, determinism, failure-preservation, bootstrap,
+  native/cross-target, Rust, editor, documentation, formatting, link,
+  sanitizer, and repository quality matrices.
+
+  Completed 2026-09-08. The audit adds every scalar and alias, every nullable
+  scalar family, nullable enum/class/interface/error/object/string plus empty,
+  nonempty, nested, and reference-bearing structs; fields, arguments, returns,
+  assignments, practical maximum length, dynamic bounds and conversion
+  failures; independent non-defaultable zero-length rejection; forged HIR/MIR
+  element, operand, and result state; and relocated native executable equality.
+  Development and sanitizer configurations each pass all 350 CTests. The real
+  bootstrap project passes direct and Shuttle checks, native execution, both
+  targets, exact warm reuse, and stable artifact hashes. Rust/MSRV, editor,
+  documentation, formatting, link, and repository gates pass. Compatibility
+  remains 7/6/9 and 2/1/1/1 with `cloth` v0.3.0.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1214,7 +1271,19 @@ active stage without first updating `ROADMAP.md`.
 - Extend `for (... in ...)` beyond arrays only after defining the required
   range, binding, destructuring, async, or iterable contracts independently.
 - Allow multidimensional array types (`object[][][]`).
-- Allow setting default array size `object[:3]` (from 0 to 2, or 3 spots).
+
+### Bootstrap compiler
+
+- Design portable, bounded source-file byte input and source representation
+  after Stage 42. The contract must own path behavior, encoding, size limits,
+  deterministic I/O failures, GC, and standard-library/runtime boundaries.
+- Implement lexer parity in `F:\Cloth` only after runtime-sized storage and
+  source input are complete. Preserve current token kinds, source ranges,
+  diagnostics, bounded-token behavior, determinism, and differential tests
+  against `clothc`.
+- Define self-hosted parser and AST storage only after lexer parity. Preserve
+  the two-pass architecture and implicit file-class identity without making
+  the bootstrap source or its data structures part of the compiler ABI.
 
 ### Strings, formatting, and representation
 

@@ -773,6 +773,43 @@ class HirVerifier {
     }
   }
 
+  void verify_array_construction_expression(
+      const HirExpression& expression,
+      const HirArrayConstructionExpression& construction) {
+    if (construction.element_type.value >= semantics_.types().size() ||
+        construction.length.value >= hir_.storage.expressions().size() ||
+        expression.type.value >= semantics_.types().size()) {
+      return;
+    }
+    if (!is_default_initializable_array_element(construction.element_type,
+                                                semantics_)) {
+      report(expression.range,
+             "runtime-sized array has a non-defaultable element type");
+    }
+    const HirExpression& length = hir_.storage.expression(construction.length);
+    if (length.type != semantics_.bottom_type() &&
+        !is_int32_compatible(length.type)) {
+      report(expression.range,
+             "runtime-sized array length is not int32-compatible");
+    }
+    if (length.type == semantics_.bottom_type()) {
+      if (expression.type != semantics_.bottom_type()) {
+        report(expression.range,
+               "terminating array construction has a non-bottom result");
+      }
+    } else {
+      const SemanticType& result = semantics_.type(expression.type);
+      if (result.kind != TypeKind::kArray ||
+          result.element_type != construction.element_type) {
+        report(expression.range,
+               "runtime-sized array lost its element or result type");
+      }
+    }
+    if (expression.category != ValueCategory::kValue) {
+      report(expression.range, "runtime-sized array is not a value");
+    }
+  }
+
   void verify_string_slice_expression(const HirExpression& expression,
                                       const HirStringSliceExpression& slice) {
     if (expression.type == semantics_.error_type() ||
@@ -1011,6 +1048,9 @@ class HirVerifier {
                              hir_.storage.expression(element).type,
                              expression.range);
       }
+    } else if (const auto* array =
+                   std::get_if<HirArrayConstructionExpression>(&data)) {
+      verify_array_construction_expression(expression, *array);
     }
     if (expected_category && expression.category != *expected_category) {
       report(expression.range, "expression lost its value/storage category");
@@ -1060,6 +1100,7 @@ class HirVerifier {
             if constexpr (requires { node.string; }) enqueue(node.string);
             if constexpr (requires { node.start; }) enqueue(node.start);
             if constexpr (requires { node.end; }) enqueue(node.end);
+            if constexpr (requires { node.length; }) enqueue(node.length);
             if constexpr (requires { node.expression; })
               enqueue(node.expression);
             if constexpr (requires { node.index; }) enqueue(node.index);
@@ -1525,14 +1566,25 @@ class HirVerifier {
                    "arithmetic assignment has incompatible HIR metadata");
           }
         }
-        if (is_enum_type(expression.type) ||
-            is_enum_expression(assignment->target) ||
-            is_enum_expression(assignment->value)) {
-          if (assignment->target.value >= expressions.size() ||
-              assignment->value.value >= expressions.size() ||
-              expressions[assignment->target.value].type != expression.type ||
-              expressions[assignment->value.value].type != expression.type ||
-              assignment->operation != TokenKind::kEqual) {
+        if (assignment->target.value < expressions.size() &&
+            assignment->value.value < expressions.size()) {
+          const TypeId target_type = expressions[assignment->target.value].type;
+          const TypeId value_type = expressions[assignment->value.value].type;
+          const std::optional<TypeId> target_enum =
+              nominal_identity(target_type, TypeKind::kEnum);
+          const std::optional<TypeId> value_enum =
+              nominal_identity(value_type, TypeKind::kEnum);
+          const std::optional<TypeId> result_enum =
+              nominal_identity(expression.type, TypeKind::kEnum);
+          const bool nullable_null =
+              value_type == semantics_.null_type() &&
+              nullable_underlying(target_type).has_value();
+          if ((target_enum || value_enum || result_enum) &&
+              (assignment->operation != TokenKind::kEqual ||
+               expression.type != target_type || !target_enum || !result_enum ||
+               target_enum != result_enum ||
+               (!nullable_null &&
+                (!value_enum || target_enum != value_enum)))) {
             report(expression.range,
                    "enum assignment must preserve nominal identity");
           }
@@ -1623,6 +1675,12 @@ class HirVerifier {
         for (const HirExpressionId element : array->elements) {
           verify_expression(element, expression.range);
         }
+      } else if (const auto* array =
+                     std::get_if<HirArrayConstructionExpression>(
+                         &expression.data)) {
+        verify_type(array->element_type, expression.range);
+        verify_expression(array->length, expression.range);
+        verify_array_construction_expression(expression, *array);
       } else if (const auto* index =
                      std::get_if<HirIndexExpression>(&expression.data)) {
         verify_expression(index->object, expression.range);

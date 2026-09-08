@@ -766,6 +766,29 @@ class MirVerifier {
         verify_value_type(element, array->element_type, value_types,
                           instruction.range);
       }
+    } else if (const auto* array = std::get_if<MirArrayAllocateInstruction>(
+                   &instruction.data)) {
+      verify_type(array->element_type, instruction.range);
+      verify_value(array->length, value_types, instruction.range);
+      verify_value_type(array->length, *semantics_.find_type("int32"),
+                        value_types, instruction.range);
+      require_result(instruction);
+      if (!is_default_initializable_array_element(array->element_type,
+                                                  semantics_)) {
+        report(instruction.range,
+               "runtime-sized array has a non-defaultable element type");
+      }
+      if (instruction.type.value < semantics_.types().size() &&
+          instruction.type != semantics_.error_type() &&
+          array->element_type != semantics_.error_type()) {
+        const SemanticType& type = semantics_.type(instruction.type);
+        if (type.kind != TypeKind::kArray ||
+            type.element_type != array->element_type) {
+          report(instruction.range,
+                 "runtime-sized array result does not match its element "
+                 "type");
+        }
+      }
     } else if (const auto* load =
                    std::get_if<MirArrayLoadInstruction>(&instruction.data)) {
       verify_value(load->array, value_types, instruction.range);

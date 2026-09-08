@@ -41,6 +41,24 @@ foreach(target IN ITEMS x86_64 wasm32)
     add_test(NAME cloth_cli_check_numeric_literal_notation_${target}
         COMMAND clothc --check --target=${target}
             ${CLOTH_INTEGRATION_PROGRAMS}/NumericLiteralNotation.co)
+    add_test(NAME cloth_cli_check_runtime_sized_arrays_${target}
+        COMMAND clothc --check --target=${target}
+            ${CLOTH_INTEGRATION_PROGRAMS}/RuntimeSizedArrays.co)
+    set(runtime_sized_array_ir
+        "${PROJECT_BINARY_DIR}/cloth-runtime-sized-arrays-${target}.ll")
+    add_test(NAME cloth_cli_runtime_sized_arrays_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${runtime_sized_array_ir}
+            --source-root=${CLOTH_INTEGRATION_PROJECTS}/runtime_sized_arrays/src
+            ${CLOTH_INTEGRATION_PROJECTS}/runtime_sized_arrays/src/Main.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_runtime_sized_arrays_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${runtime_sized_array_ir})
+        set_tests_properties(cloth_runtime_sized_arrays_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_runtime_sized_arrays_llvm_${target})
+    endif()
     set(numeric_literal_notation_ir
         "${PROJECT_BINARY_DIR}/cloth-numeric-literal-notation-${target}.ll")
     add_test(NAME cloth_cli_numeric_literal_notation_llvm_${target}
@@ -271,6 +289,15 @@ add_test(NAME cloth_standard_library_artifacts
         "-DCLOTH_TEST_NATIVE=${CLOTH_TEST_STANDARD_LIBRARY_NATIVE}"
         "-DCLOTH_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
         -P ${CMAKE_CURRENT_SOURCE_DIR}/RunStandardLibrary.cmake)
+
+add_test(NAME cloth_runtime_sized_array_artifacts
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_COMPILER=$<TARGET_FILE:clothc>"
+        "-DCLOTH_SOURCE_ROOT=${CLOTH_INTEGRATION_PROJECTS}/runtime_sized_arrays/src"
+        "-DCLOTH_WORK_DIRECTORY=${PROJECT_BINARY_DIR}/runtime-sized-array-artifacts"
+        "-DCLOTH_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/runtime_sized_arrays.txt"
+        "-DCLOTH_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/RunRuntimeSizedArrayArtifacts.cmake)
 
 add_test(NAME cloth_cli_check_structs
     COMMAND clothc --check
@@ -630,6 +657,32 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         SOURCE_ROOT ${CLOTH_NULLABLE_AUDIT_PROJECT}
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/nullable_audit.txt
         EXACT
+    )
+    cloth_add_native_output_test(runtime_sized_arrays
+        OUTPUT "cloth runtime sized arrays"
+        SOURCE ${CLOTH_INTEGRATION_PROJECTS}/runtime_sized_arrays/src/Main.co
+        SOURCE_ROOT ${CLOTH_INTEGRATION_PROJECTS}/runtime_sized_arrays/src
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/runtime_sized_arrays.txt
+        EXACT
+    )
+    cloth_add_native_failure_test(runtime_sized_array_negative
+        OUTPUT "cloth runtime sized array negative"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/RuntimeSizedArrayNegative.co
+        ERROR "cloth runtime error: array length is negative"
+        EXACT
+    )
+    cloth_add_native_failure_test(runtime_sized_array_bounds
+        OUTPUT "cloth runtime sized array bounds"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/RuntimeSizedArrayBounds.co
+        ERROR "array index is out of bounds"
+    )
+    cloth_add_native_failure_test(runtime_sized_array_conversion_failure
+        OUTPUT "cloth runtime sized array conversion failure"
+        SOURCE
+            ${CLOTH_INTEGRATION_PROGRAMS}/RuntimeSizedArrayConversionFailure.co
+        ERROR "numeric conversion is out of range"
+        EXPECTED_STDOUT
+            ${CLOTH_INTEGRATION_EXPECTED}/runtime_sized_array_conversion_failure.txt
     )
     add_test(NAME cloth_nullable_value_artifacts
         COMMAND ${CMAKE_COMMAND}

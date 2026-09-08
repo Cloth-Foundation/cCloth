@@ -1,0 +1,3 @@
+static func Make(int32 count): int32[] {
+  return int32[:count];
+}

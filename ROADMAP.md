@@ -78,10 +78,14 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 38 | Portable line input and strict primitive parsing |
 | 39 | Unicode scalar literals, checked string indexing, and linear string iteration |
 | 40 | Checked Unicode-scalar string slicing |
+| 41 | Uniform nullability for primitive, enum, struct, and reference values |
+| 42 | Runtime-sized construction for fixed arrays and bootstrap token storage |
 
-Stage 41 is complete following its 41.4 exit audit on 2026-09-07.
-Stage 41 is the current native language/runtime/toolchain baseline, and Stage
-31 is the current completed optimizer baseline. Stages 35
+Stage 42 is complete following its separately authorized
+[42.4 exit audit](docs/testing.md#stage-424-runtime-sized-array-exit-audit) on
+2026-09-08. Runtime-sized fixed arrays and the first bootstrap token buffer are
+the current native language/runtime/toolchain baseline, and Stage 31 is the
+current completed optimizer baseline. Stages 35
 and 36 are complete, including their standard-library and prelude exit audits.
 Coordinated toolchain Stage 22 and separate-compilation Stage 23 are complete,
 including their cross-tool exit audits. Build-responsiveness Stage 24 is also
@@ -1268,13 +1272,77 @@ schemas remain 2/1/1/1, and `cloth` remains v0.3.0. Stage 41 adds no option
 type, safe indexing or slicing, callable safe meta operation, or unrelated
 language surface.
 
-## Beyond Stage 41
+## Stage 42: Runtime-sized fixed arrays
 
-Stage 41 is complete. The remaining backlog does not
-acquire priority or enter the Cloth 1.0 scope automatically.
+Status: **complete — 42.4 exit audit passed 2026-09-08**
+
+The [approved contract](docs/proposals/stage_42_runtime_sized_arrays.md) adds
+`T[:length]` construction for ordinary fixed-length arrays whose elements have
+a compiler-defined canonical default. It is the first storage feature selected
+against the needs of the bootstrap compiler at `F:\Cloth`.
+
+Objective: remove the bootstrap compiler's immediate variable-size token
+storage blocker without adding resizable collections, implicit object
+construction, unsafe memory, or a premature general collection abstraction.
+
+Prerequisite: Stage 41.
+
+Deliverables:
+
+1. **42.1 — Contract (complete).** Freeze syntax, valid element defaults,
+   length and failure behavior, representation, GC, IR, compatibility,
+   diagnostics, bootstrap acceptance, verification, and non-goals.
+2. **42.2 — Frontend and verified IR (complete).** Dedicated parser/AST,
+   semantics, HIR, MIR, stable diagnostics, constant-negative checks, exact
+   MIR length normalization, malformed-state rejection, and native/artifact
+   gates completed on 2026-09-08.
+3. **42.3 — Lowering and bootstrap integration (complete).** Implement
+   both-target LLVM and native behavior through the existing runtime ABI,
+   packages, source-free consumers, Shuttle and editor integration, user
+   documentation, and the first `F:\Cloth` token-buffer consumer.
+4. **42.4 — Exit audit (complete).** Close defaulting, failure, evaluation,
+   layout, GC, malformed-state, compatibility, determinism,
+   failure-preservation, bootstrap, native/cross-target, and repository quality
+   matrices.
+
+The construction result is the existing non-null `T[]`. Length is an
+`int32`-compatible expression evaluated once; zero is valid, constant negative
+lengths are diagnosed, and dynamic negative lengths retain the existing exact
+runtime failure. Scalar primitives default to zero values and nullable
+elements default to absent. Non-null managed references, enums, structs, and
+nested array elements are rejected because Stage 42 does not invent default
+constructors or cases.
+
+Compatibility remains artifact/compiler/runtime 7/6/9, schemas
+2/1/1/1, and `cloth` v0.3.0. The existing runtime allocation entry already
+accepts a dynamic `int32` length and zeroes payload storage; Shuttle and the
+standard library remain opaque coordination participants. Checkpoint 42.3
+supports both-target LLVM, native execution, interface/object artifacts,
+source-free consumers, and deterministic Shuttle builds. `F:\Cloth` now uses
+a `Token?[]`-backed buffer for an EOF-terminated token smoke path. No
+compatibility boundary changed.
+
+The 42.4 audit closes every scalar and nullable layout, zero and practical
+maximum lengths, locals/fields/arguments/returns, conversion and allocation
+failures, malformed verified IR, precise tracing, both targets, relocated
+packages, source-free execution, deterministic artifacts, and the real
+bootstrap project. Compatibility remains unchanged.
+
+Non-goals include resizable arrays, lists, generics, collection protocols,
+fill or factory initialization, multidimensional arrays, default construction
+of non-null user types, file input, a complete self-hosted lexer or parser,
+recoverable allocation errors, and unrelated language or toolchain work.
+
+## Beyond Stage 42
+
+Stage 42 is complete for the approved scope above. The remaining backlog does
+not acquire priority or enter the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 
+- portable, bounded source-file byte input for the bootstrap compiler;
+- self-hosted lexer parity after runtime-sized storage and source input;
+- self-hosted parser and AST representation after lexer parity; and
 - immutable per-case enum metadata, after its constant-data prerequisites.
 
 These candidates follow completion of their prerequisites and approved stages.

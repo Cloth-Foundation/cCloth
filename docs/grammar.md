@@ -346,6 +346,9 @@ index_suffix
 array_literal
     = "[" [ expression { "," expression } ] "]" ;
 
+array_construction
+    = type "[" ":" expression "]" ;
+
 primary_expression
     = identifier
     | "super"
@@ -359,6 +362,7 @@ primary_expression
     | "false"
     | "null"
     | array_literal
+    | array_construction
     | "(" expression ")" ;
 
 numeric_conversion
@@ -379,6 +383,11 @@ numeric_type
     | "uint" | "uint8" | "uint16" | "uint32" | "uint64"
     | "float" | "float32" | "float64" ;
 ```
+
+`array_construction` interprets the leading `type` as an element type and has
+the exact non-null result type `T[]`. The colon distinguishes it from postfix
+indexing. Stage 42 implements parsing, semantic checking, verified HIR/MIR,
+both-target LLVM lowering, native execution, and package artifacts.
 
 The precedence table, from lowest to highest, is:
 

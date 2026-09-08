@@ -1,0 +1,9 @@
+import Pair;
+
+struct {
+  Pair? Value;
+
+  Nested(Pair? value) {
+    Value = value;
+  }
+}

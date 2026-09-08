@@ -191,6 +191,9 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* array =
                  std::get_if<MirArrayLiteralInstruction>(&instruction.data)) {
     uses = array->elements;
+  } else if (const auto* array =
+                 std::get_if<MirArrayAllocateInstruction>(&instruction.data)) {
+    uses.push_back(array->length);
   } else if (const auto* load =
                  std::get_if<MirArrayLoadInstruction>(&instruction.data)) {
     uses.push_back(load->array);
@@ -387,6 +390,9 @@ class BodyEmitter {
   void emit_array_literal(const MirInstruction& instruction,
                           const MirArrayLiteralInstruction& array,
                           std::ostringstream& output);
+  void emit_array_allocate(const MirInstruction& instruction,
+                           const MirArrayAllocateInstruction& array,
+                           std::ostringstream& output);
   void emit_array_load(const MirInstruction& instruction,
                        const MirArrayLoadInstruction& load,
                        std::ostringstream& output);
@@ -2297,6 +2303,9 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* array =
                  std::get_if<MirArrayLiteralInstruction>(&instruction.data)) {
     emit_array_literal(instruction, *array, output);
+  } else if (const auto* array =
+                 std::get_if<MirArrayAllocateInstruction>(&instruction.data)) {
+    emit_array_allocate(instruction, *array, output);
   } else if (const auto* load =
                  std::get_if<MirArrayLoadInstruction>(&instruction.data)) {
     emit_array_load(instruction, *load, output);
@@ -2519,6 +2528,15 @@ void BodyEmitter::emit_array_literal(const MirInstruction& instruction,
            << result_name(instruction) << ", i32 " << index << ")\n";
     store_value(array.element_type, address, array.elements[index], output);
   }
+}
+
+void BodyEmitter::emit_array_allocate(const MirInstruction& instruction,
+                                      const MirArrayAllocateInstruction& array,
+                                      std::ostringstream& output) {
+  output << "  " << result_name(instruction)
+         << " = call ptr @cloth_rt_array_alloc(i32 " << value(array.length)
+         << ", ptr " << module_.array_element_layout(array.element_type)
+         << ")\n";
 }
 
 void BodyEmitter::emit_array_load(const MirInstruction& instruction,

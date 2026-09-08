@@ -1,0 +1,13 @@
+import Reader;
+
+class is Reader {
+  string Text;
+
+  Box(string text) {
+    Text = text;
+  }
+
+  override func Read(): string {
+    return Text;
+  }
+}
