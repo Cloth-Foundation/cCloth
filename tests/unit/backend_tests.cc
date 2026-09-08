@@ -845,6 +845,31 @@ void strings(TestContext& test) {
               "runtime string booleans were not converted to LLVM i1");
 }
 
+void string_slice_lowering(TestContext& test) {
+  CompiledSources sources;
+  sources.add("Slice.co",
+              "func Middle(string value): string {\n"
+              "  return value::slice(1, 3);\n"
+              "}\n");
+  sources.compile();
+
+  test.expect(sources.llvm.has_value(), "valid string slicing did not emit");
+  const std::string_view middle =
+      sources.llvm ? function_definition(sources.llvm->text,
+                                         cloth::test::function_name(
+                                             "Slice", "Middle", {"string"}))
+                   : std::string_view{};
+  const std::size_t root = middle.find("store ptr %v0, ptr %gc.v0");
+  const std::size_t call =
+      middle.find("call ptr @cloth_rt_string_slice(ptr %v0, i32 1, i32 3)");
+  test.expect(
+      sources.contains("declare ptr @cloth_rt_string_slice(ptr, i32, i32)") &&
+          root != std::string_view::npos && call != std::string_view::npos &&
+          root < call,
+      "string slice lowering did not root its receiver across the runtime "
+      "call");
+}
+
 void object_model(TestContext& test) {
   CompiledSources sources;
   sources.add("Objects.co",
@@ -1370,6 +1395,7 @@ int main() {
       {"interface dispatch", interface_dispatch},
       {"arrays", arrays},
       {"strings", strings},
+      {"string slice lowering", string_slice_lowering},
       {"object model", object_model},
       {"call receivers", call_receivers},
       {"static members", static_members},

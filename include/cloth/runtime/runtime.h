@@ -110,6 +110,8 @@ void cloth_rt_gc_collect() noexcept;
 [[nodiscard]] std::int32_t cloth_rt_string_byte_length(
     const void* value) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_string_is_empty(const void* value) noexcept;
+[[nodiscard]] void* cloth_rt_string_slice(const void* value, std::int32_t start,
+                                          std::int32_t end) noexcept;
 [[nodiscard]] std::uint32_t cloth_rt_string_scalar_at(
     const void* value, std::int32_t index) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_string_next_scalar(
@@ -138,6 +140,7 @@ void cloth_rt_integer_write(void* destination, std::int32_t offset,
     std::uint8_t byte_order) noexcept;
 void cloth_rt_require_receiver(const void* receiver) noexcept;
 void cloth_rt_require_non_null(const void* value) noexcept;
+void cloth_rt_require_nullable_value(std::uint8_t tag) noexcept;
 void cloth_rt_require_numeric_conversion(std::uint8_t valid) noexcept;
 void cloth_rt_require_shift_count(std::uint8_t valid) noexcept;
 void cloth_rt_require_integer_arithmetic(std::uint8_t valid,

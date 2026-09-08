@@ -1,0 +1,1 @@
+func Fail(): int32 throws AuditError { throw AuditError(99); }

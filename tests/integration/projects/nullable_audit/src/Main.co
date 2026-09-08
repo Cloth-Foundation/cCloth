@@ -1,0 +1,90 @@
+import AuditError;
+import Base;
+import Derived;
+import Garbage;
+import Inner;
+import Outer;
+import Reader;
+import Risky;
+import State;
+
+static func Maybe(bool present): Derived? {
+  println("receiver");
+  if (present) { return Derived(40); }
+  return null;
+}
+
+static func Next(string label, int32 value): int32 {
+  println(label);
+  return value;
+}
+
+static func Fallback(): int32 {
+  println("fallback");
+  return 7;
+}
+
+static func Main() throws AuditError {
+  int32? present = 5;
+  println(present ?? Fallback());
+  int32? absent;
+  println(absent ?? Fallback());
+
+  println(Maybe(false)?.Read(Next("left", 1), Next("right", 2)) ?? -1);
+  println((Maybe(true)?.Read(Next("left", 1), Next("right", 2)))!);
+
+  Derived value = Derived(10);
+  Reader? reader = value;
+  println((reader?.Read(2, 3))!);
+  Base? base = value;
+  println((base?.Read(4, 5))!);
+  AuditError? failure = AuditError(9);
+  println((failure?.CodeValue())!);
+
+  Derived? missing = null;
+  missing?.Flush();
+  Derived? available = value;
+  available?.Flush();
+
+  Risky? risky = null;
+  println(risky?.Fail() ?? 77);
+
+  Inner? inner = Inner("kept");
+  Outer? outer = Outer(inner);
+  println(outer?.Text() ?? "missing");
+  println((inner?.Length())!);
+  Inner?[] values = [null, inner];
+  println(values[0] == null);
+  println(values[1] == inner);
+
+  bool? disabled = false;
+  if (disabled) { println("bool-present"); }
+  if (disabled!) {
+    println("wrong");
+  } else {
+    println("bool-false");
+  }
+  char? scalar = 'A';
+  println(scalar == 'A');
+  float32? decimal = 1.5f32;
+  println(decimal == 1.5f32);
+  State? state = State.Ready;
+  println(state == State.Ready);
+
+  int32? count = 3;
+  while (count) {
+    println(count);
+    count = null;
+  }
+
+  int32 index = 0;
+  while (index < 5000) {
+    Garbage garbage = Garbage(index);
+    index++;
+  }
+  println(outer?.Text() ?? "collected");
+  outer = null;
+  inner = null;
+  values[1] = null;
+  println(outer == null);
+}

@@ -96,7 +96,6 @@ void invalid_programs(TestContext& test) {
       "Status value;",
       "Status value = 0;",
       "Status value = Other.Ready;",
-      "Status? value = null;",
       "object value = Status.Ready;",
       "Status value = Status(0);",
       "uint32 value = uint32(Status.Ready);",

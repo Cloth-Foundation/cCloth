@@ -1,0 +1,19 @@
+static func SliceText(): string {
+  println("receiver");
+  return "A🧵Z";
+}
+
+static func SliceStart(): int32 {
+  println("start");
+  return 2;
+}
+
+static func SliceEnd(): int32 {
+  println("end");
+  return 1;
+}
+
+static func Main() {
+  println(SliceText()::slice(SliceStart(), SliceEnd()));
+  println("unreachable");
+}

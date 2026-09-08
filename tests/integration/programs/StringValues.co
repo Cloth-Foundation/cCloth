@@ -2,6 +2,12 @@ int32 traversalCalls = 0;
 int32 indexCalls = 0;
 int32 evaluationStep = 0;
 bool receiverBeforeIndex = false;
+int32 sliceReceiverCalls = 0;
+int32 sliceStartCalls = 0;
+int32 sliceEndCalls = 0;
+int32 sliceEvaluationStep = 0;
+bool receiverBeforeSliceStart = false;
+bool startBeforeSliceEnd = false;
 
 StringValues() {}
 
@@ -17,6 +23,28 @@ func TraversalIndex(): int32 {
   CollectionPressure();
   indexCalls += 1;
   return 1;
+}
+
+func SliceText(): string {
+  sliceEvaluationStep = 1;
+  sliceReceiverCalls += 1;
+  return "A🧵BC";
+}
+
+func SliceStart(): int32 {
+  receiverBeforeSliceStart = sliceEvaluationStep == 1;
+  sliceEvaluationStep = 2;
+  CollectionPressure();
+  sliceStartCalls += 1;
+  return 1;
+}
+
+func SliceEnd(): int32 {
+  startBeforeSliceEnd = sliceEvaluationStep == 2;
+  sliceEvaluationStep = 3;
+  CollectionPressure();
+  sliceEndCalls += 1;
+  return 3;
 }
 
 static func First(string text): char {
@@ -54,6 +82,23 @@ static func Main() {
       traversal.TraversableText()[traversal.TraversalIndex()];
   println(evaluated == '🧵');
   println(traversal.receiverBeforeIndex);
+
+  string sliced = traversal.SliceText()::slice(
+      traversal.SliceStart(), traversal.SliceEnd());
+  println(sliced == "🧵B");
+  println(traversal.receiverBeforeSliceStart);
+  println(traversal.startBeforeSliceEnd);
+  println(traversal.sliceReceiverCalls);
+  println(traversal.sliceStartCalls);
+  println(traversal.sliceEndCalls);
+  println(""::slice(0, 0)::isEmpty);
+  println("A🧵BC"::slice(0, 1) == "A");
+  println("A🧵BC"::slice(3, 4) == "C");
+  println("A🧵BC"::slice(2, 2)::isEmpty);
+  println("A🧵BC"::slice(0, 4) == "A🧵BC");
+  println("A\0B"::slice(1, 2) == "\0");
+  println("e\u{301}"::slice(1, 2) == "\u{301}");
+  println("A\u{10FFFF}Z"::slice(1, 2) == "\u{10FFFF}");
 
   int32 traversed = 0;
   for (var scalar in traversal.TraversableText()) {
@@ -105,6 +150,10 @@ static func Main() {
   println(longCount);
   println(longText[0] == 'A');
   println(longText[longText::length - 1] == '🧵');
+  string longMiddle = longText::slice(1, longText::length - 1);
+  println(longMiddle::length == 2046);
+  println(longMiddle[0] == '🧵');
+  println(longMiddle[longMiddle::length - 1] == 'A');
 
   println(traversal.traversalCalls);
   println(traversal.indexCalls);

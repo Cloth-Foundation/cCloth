@@ -43,6 +43,10 @@ std::vector<MirValueId> fold_operands(const MirInstruction& instruction) {
           std::get_if<MirBinaryInstruction>(&instruction.data)) {
     return {binary->left, binary->right};
   }
+  if (const auto* comparison =
+          std::get_if<MirNullableEqualInstruction>(&instruction.data)) {
+    return {comparison->left, comparison->right};
+  }
   if (const auto* conversion =
           std::get_if<MirConvertInstruction>(&instruction.data)) {
     return {conversion->value};
@@ -287,6 +291,7 @@ class BodyScalarAnalysis {
       case MirConversionKind::kWidenReference:
       case MirConversionKind::kToNullable:
       case MirConversionKind::kFromNullable:
+      case MirConversionKind::kLiftNullable:
         return varying();
     }
     return varying();
@@ -634,6 +639,11 @@ void remap_instruction(MirInstruction& instruction,
   } else if (auto* meta =
                  std::get_if<MirStringMetaInstruction>(&instruction.data)) {
     remap_value(meta->string, aliases, values);
+  } else if (auto* slice =
+                 std::get_if<MirStringSliceInstruction>(&instruction.data)) {
+    remap_value(slice->string, aliases, values);
+    remap_value(slice->start, aliases, values);
+    remap_value(slice->end, aliases, values);
   } else if (auto* access =
                  std::get_if<MirStringScalarAtInstruction>(&instruction.data)) {
     remap_value(access->string, aliases, values);
@@ -660,6 +670,10 @@ void remap_instruction(MirInstruction& instruction,
                  std::get_if<MirBinaryInstruction>(&instruction.data)) {
     remap_value(binary->left, aliases, values);
     remap_value(binary->right, aliases, values);
+  } else if (auto* comparison =
+                 std::get_if<MirNullableEqualInstruction>(&instruction.data)) {
+    remap_value(comparison->left, aliases, values);
+    remap_value(comparison->right, aliases, values);
   } else if (auto* conversion =
                  std::get_if<MirConvertInstruction>(&instruction.data)) {
     remap_value(conversion->value, aliases, values);

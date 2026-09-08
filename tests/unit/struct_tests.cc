@@ -133,7 +133,6 @@ void invalid_values(TestContext& test) {
   const std::vector<std::string> bodies{
       "Point value;",
       "Point value = 1;",
-      "Point? value = null;",
       "Point?[] values = [];",
       "object value = Point(1, 2);",
       "Point value = Other();",
@@ -274,14 +273,17 @@ void class_and_interface_values(TestContext& test) {
       }
     }
   )");
+  add(compilation, "Holder.co", R"(
+    Point P = Point(0, 0);
+    Holder() {}
+    static func Check(Holder? holder): Point? { return holder?.P; }
+  )");
   cloth::DiagnosticEngine diagnostics;
   const auto result = compilation.analyze_frontend(diagnostics);
   test.expect(result.is_valid, messages(diagnostics));
   for (const std::string members :
        {"Point P; Holder() {}", "Point P; Holder() { P.X = 1; }",
-        "final Point P; Holder() { P = Point(0, 0); P.X++; }",
-        "Point P = Point(0, 0); static func Check(Holder? holder) { var value "
-        "= holder?.P; }"}) {
+        "final Point P; Holder() { P = Point(0, 0); P.X++; }"}) {
     cloth::Compilation invalid;
     add_point(invalid);
     add(invalid, "Holder.co", members);

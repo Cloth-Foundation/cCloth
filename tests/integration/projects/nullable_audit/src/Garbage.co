@@ -1,0 +1,3 @@
+int32 Value;
+
+Garbage(int32 value) { Value = value; }

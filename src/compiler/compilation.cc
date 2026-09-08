@@ -157,6 +157,60 @@ SourceRange source_origin(const SourceFile& source) {
   return point_range(SourceLocation{source.display_path(), 0, 1, 1});
 }
 
+bool is_non_null_reference_kind(TypeKind kind) {
+  return kind == TypeKind::kString || kind == TypeKind::kObject ||
+         kind == TypeKind::kErrorClass || kind == TypeKind::kFileClass ||
+         kind == TypeKind::kInterface || kind == TypeKind::kArray;
+}
+
+bool contains_value_nullable(TypeId type, const SemanticModel& semantics,
+                             std::size_t depth = 0) {
+  if (type.value >= semantics.types().size() ||
+      depth >= semantics.types().size()) {
+    return false;
+  }
+  const SemanticType& semantic_type = semantics.type(type);
+  if (semantic_type.kind == TypeKind::kNullable && semantic_type.element_type) {
+    const TypeId underlying = *semantic_type.element_type;
+    if (underlying.value >= semantics.types().size()) {
+      return false;
+    }
+    if (!is_non_null_reference_kind(semantics.type(underlying).kind)) {
+      return true;
+    }
+    return contains_value_nullable(underlying, semantics, depth + 1);
+  }
+  if (semantic_type.kind == TypeKind::kArray && semantic_type.element_type) {
+    return contains_value_nullable(*semantic_type.element_type, semantics,
+                                   depth + 1);
+  }
+  return false;
+}
+
+bool has_stage_41_frontend_feature(const SemanticModel& semantics,
+                                   const HirModule& hir) {
+  if (std::ranges::any_of(
+          semantics.symbols(), [&](const SemanticSymbol& symbol) {
+            return contains_value_nullable(symbol.type, semantics) ||
+                   std::ranges::any_of(
+                       symbol.parameter_types, [&](TypeId parameter) {
+                         return contains_value_nullable(parameter, semantics);
+                       });
+          })) {
+    return true;
+  }
+  return std::ranges::any_of(
+      hir.storage.expressions(), [&](const HirExpression& expression) {
+        if (contains_value_nullable(expression.type, semantics) ||
+            std::holds_alternative<HirSafeMetaExpression>(expression.data) ||
+            std::holds_alternative<HirSafeMemberExpression>(expression.data)) {
+          return true;
+        }
+        const auto* call = std::get_if<HirCallExpression>(&expression.data);
+        return call != nullptr && call->is_safe;
+      });
+}
+
 }  // namespace
 
 Compilation::Compilation() : Compilation(TargetDataLayout::llvm_x86_64()) {}
@@ -446,9 +500,11 @@ FrontendResult Compilation::analyze_frontend(DiagnosticEngine& diagnostics) {
       hir.storage.statements(), [](const HirStatement& statement) {
         return std::holds_alternative<HirSwitchStatement>(statement.data);
       });
+  const bool contains_stage_41 =
+      has_stage_41_frontend_feature(semantic_result.model, hir);
   const bool hir_is_valid =
       (semantic_result.is_valid ||
-       (!contains_structs && !contains_switch &&
+       (!contains_structs && !contains_switch && !contains_stage_41 &&
         !std::ranges::any_of(semantic_result.model.symbols(),
                              [](const SemanticSymbol& symbol) {
                                return symbol.kind == SymbolKind::kField &&

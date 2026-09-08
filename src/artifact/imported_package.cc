@@ -54,6 +54,10 @@ bool is_structural(TypeKind kind) {
   return kind == TypeKind::kArray || kind == TypeKind::kNullable;
 }
 
+bool is_aggregate_value(const ImportedType& type) {
+  return type.abi_kind == AbiTypeKind::kAggregate;
+}
+
 bool valid_source_package(std::string_view source_package) {
   if (source_package.empty()) {
     return true;
@@ -520,8 +524,9 @@ std::uint32_t pointer_bit_width(const TargetDataLayout& target) {
   return static_cast<std::uint32_t>(target.pointer.size * 8U);
 }
 
-AbiTypeLayout expected_type_layout(const ImportedType& type,
-                                   const TargetDataLayout& target) {
+AbiTypeLayout expected_type_layout(
+    const ImportedType& type, const TargetDataLayout& target,
+    const std::map<std::string, const ImportedType*>& types) {
   const auto make = [&](AbiTypeKind kind, std::uint32_t bit_width,
                         std::uint64_t size, std::uint64_t alignment) {
     return AbiTypeLayout{TypeId{0}, kind, bit_width,
@@ -543,9 +548,55 @@ AbiTypeLayout expected_type_layout(const ImportedType& type,
     case TypeKind::kFileClass:
     case TypeKind::kInterface:
     case TypeKind::kArray:
-    case TypeKind::kNullable:
       return make(AbiTypeKind::kReference, pointer_bit_width(target),
                   target.pointer.size, target.pointer.alignment);
+    case TypeKind::kNullable: {
+      if (!type.element_identity) {
+        return make(AbiTypeKind::kInvalid, 0, 0, 1);
+      }
+      const auto found = types.find(*type.element_identity);
+      if (found == types.end()) {
+        return make(AbiTypeKind::kInvalid, 0, 0, 1);
+      }
+      const ImportedType& element = *found->second;
+      if (element.abi_kind == AbiTypeKind::kReference) {
+        return make(AbiTypeKind::kReference, pointer_bit_width(target),
+                    target.pointer.size, target.pointer.alignment);
+      }
+      if ((element.abi_kind != AbiTypeKind::kInteger &&
+           element.abi_kind != AbiTypeKind::kFloat &&
+           element.abi_kind != AbiTypeKind::kAggregate) ||
+          element.storage.size == 0 ||
+          !is_power_of_two(element.storage.alignment) ||
+          element.storage.alignment - 1 >
+              std::numeric_limits<std::uint64_t>::max() - 1) {
+        return make(AbiTypeKind::kInvalid, 0, 0, 1);
+      }
+      const std::uint64_t payload =
+          (std::uint64_t{1} + element.storage.alignment - 1) &
+          ~(element.storage.alignment - 1);
+      if (element.storage.size >
+          std::numeric_limits<std::uint64_t>::max() - payload) {
+        return make(AbiTypeKind::kInvalid, 0, 0, 1);
+      }
+      const std::uint64_t end = payload + element.storage.size;
+      if (element.storage.alignment - 1 >
+          std::numeric_limits<std::uint64_t>::max() - end) {
+        return make(AbiTypeKind::kInvalid, 0, 0, 1);
+      }
+      const std::uint64_t size = (end + element.storage.alignment - 1) &
+                                 ~(element.storage.alignment - 1);
+      AbiTypeLayout result =
+          make(AbiTypeKind::kAggregate, 0, size, element.storage.alignment);
+      result.reference_offsets.reserve(element.reference_offsets.size());
+      for (const std::uint64_t reference : element.reference_offsets) {
+        if (reference > std::numeric_limits<std::uint64_t>::max() - payload) {
+          return make(AbiTypeKind::kInvalid, 0, 0, 1);
+        }
+        result.reference_offsets.push_back(payload + reference);
+      }
+      return result;
+    }
     case TypeKind::kBool:
       return make(AbiTypeKind::kInteger, 1, 1, 1);
     case TypeKind::kChar:
@@ -574,6 +625,7 @@ AbiTypeLayout expected_type_layout(const ImportedType& type,
 
 void verify_type(const ImportedType& type, const TargetDataLayout& target,
                  const std::set<std::string>& type_identities,
+                 const std::map<std::string, const ImportedType*>& types,
                  IssueCollector& issues) {
   const std::string record = "type " + mangle_canonical_identity(type.identity);
   std::string expected_identity;
@@ -635,11 +687,19 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
     issues.add(record,
                "aggregate value size or alignment exceeds the contract");
   }
+  const AbiTypeLayout expected = expected_type_layout(type, target, types);
+  const bool tagged_nullable = type.kind == TypeKind::kNullable &&
+                               expected.kind == AbiTypeKind::kAggregate;
   const std::vector<std::uint64_t> scalar_references =
       type.abi_kind == AbiTypeKind::kReference ? std::vector<std::uint64_t>{0}
                                                : std::vector<std::uint64_t>{};
-  if (type.kind != TypeKind::kStruct &&
-      type.reference_offsets != scalar_references) {
+  if (tagged_nullable) {
+    if (type.reference_offsets != expected.reference_offsets) {
+      issues.add(record,
+                 "nullable value reference map does not match its payload");
+    }
+  } else if (type.kind != TypeKind::kStruct &&
+             type.reference_offsets != scalar_references) {
     issues.add(record, "scalar value reference map is invalid");
   }
   if (!std::ranges::is_sorted(type.reference_offsets) ||
@@ -658,7 +718,6 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
       break;
     }
   }
-  const AbiTypeLayout expected = expected_type_layout(type, target);
   if (type.abi_kind != expected.kind || type.bit_width != expected.bit_width ||
       type.storage != expected.storage) {
     issues.add(record, "ABI type layout does not match the target contract");
@@ -934,12 +993,11 @@ void verify_class_abi(
           if (parameter.kind != AbiParameterKind::kExplicit ||
               parameter.type_identity !=
                   declaration.parameters[index].type_identity ||
-              parameter.passing !=
-                  (types.contains(parameter.type_identity) &&
-                           types.at(parameter.type_identity)->kind ==
-                               TypeKind::kStruct
-                       ? AbiPassingMode::kValuePointer
-                       : AbiPassingMode::kDirect)) {
+              parameter.passing != (types.contains(parameter.type_identity) &&
+                                            is_aggregate_value(*types.at(
+                                                parameter.type_identity))
+                                        ? AbiPassingMode::kValuePointer
+                                        : AbiPassingMode::kDirect)) {
             issues.add(record,
                        "constructor initializer parameter ABI is inconsistent");
           }
@@ -963,9 +1021,9 @@ void verify_class_abi(
     const AbiReturnMode return_mode =
         callable.uses_error_abi && returned->second->kind != TypeKind::kVoid
             ? AbiReturnMode::kIndirect
-        : returned->second->kind == TypeKind::kVoid   ? AbiReturnMode::kVoid
-        : returned->second->kind == TypeKind::kStruct ? AbiReturnMode::kIndirect
-                                                      : AbiReturnMode::kDirect;
+        : returned->second->kind == TypeKind::kVoid ? AbiReturnMode::kVoid
+        : is_aggregate_value(*returned->second)     ? AbiReturnMode::kIndirect
+                                                    : AbiReturnMode::kDirect;
     const bool has_receiver = !constructor && !declaration.is_static;
     const AbiReceiverMode receiver_mode =
         constructor && aggregate ? AbiReceiverMode::kConstruction
@@ -986,7 +1044,7 @@ void verify_class_abi(
       const auto type = types.find(parameter.type_identity);
       expected_parameters.push_back(
           {AbiParameterKind::kExplicit, parameter.type_identity,
-           type != types.end() && type->second->kind == TypeKind::kStruct
+           type != types.end() && is_aggregate_value(*type->second)
                ? AbiPassingMode::kValuePointer
                : AbiPassingMode::kDirect});
     }
@@ -1209,7 +1267,7 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
                  "nominal type has no declaration in dependency closure");
       return;
     }
-    if (type->kind == TypeKind::kStruct &&
+    if (is_aggregate_value(*type) &&
         (type->storage.size > kMaxStructSize ||
          type->reference_offsets.size() > kMaxLayoutReferences)) {
       issues.add("layout", "aggregate type exceeds resource limits",
@@ -1219,6 +1277,23 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
   }
   std::map<std::string, std::size_t> indegrees;
   std::map<std::string, std::vector<std::string>> dependents;
+  const auto inline_struct =
+      [&](std::string_view identity) -> std::optional<std::string> {
+    const auto found = types.find(std::string{identity});
+    if (found == types.end()) return std::nullopt;
+    if (found->second->kind == TypeKind::kStruct) {
+      return found->second->identity;
+    }
+    if (found->second->kind != TypeKind::kNullable ||
+        !found->second->element_identity) {
+      return std::nullopt;
+    }
+    const auto element = types.find(*found->second->element_identity);
+    if (element == types.end() || element->second->kind != TypeKind::kStruct) {
+      return std::nullopt;
+    }
+    return element->second->identity;
+  };
   for (const auto& [id, file] : files) {
     std::set<std::string> dependencies;
     if (file->base_identity && files.contains(*file->base_identity)) {
@@ -1227,10 +1302,9 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
     for (const auto& member : file->members) {
       if (member.kind != ImportedMemberKind::kField || member.is_static)
         continue;
-      const auto type = types.find(member.type_identity);
-      if (type != types.end() && type->second->kind == TypeKind::kStruct &&
-          files.contains(member.type_identity)) {
-        dependencies.insert(member.type_identity);
+      const auto dependency = inline_struct(member.type_identity);
+      if (dependency && files.contains(*dependency)) {
+        dependencies.insert(*dependency);
       }
     }
     indegrees.emplace(id, dependencies.size());
@@ -1328,8 +1402,9 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
             {declaration.identity, declaration.type_identity, offset});
         offset += type.storage.size;
         alignment = std::max(alignment, type.storage.alignment);
-        if (aggregate && type.kind == TypeKind::kStruct) {
-          depth = std::max(depth, depths[declaration.type_identity] + 1);
+        const auto nested = inline_struct(declaration.type_identity);
+        if (aggregate && nested) {
+          depth = std::max(depth, depths[*nested] + 1);
         }
       }
       if (aggregate) offset = std::max(offset, std::uint64_t{1});
@@ -1583,16 +1658,7 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
     types.emplace(type.identity, &type);
   }
   for (const ImportedType& type : view.types) {
-    verify_type(type, view.target, type_identities, issues);
-    if (type.kind == TypeKind::kNullable && type.element_identity) {
-      const auto element = types.find(*type.element_identity);
-      if (element != types.end() &&
-          (element->second->kind == TypeKind::kEnum ||
-           element->second->kind == TypeKind::kStruct)) {
-        issues.add("type",
-                   "nullable enum/struct value types are not supported");
-      }
-    }
+    verify_type(type, view.target, type_identities, types, issues);
   }
 
   for (const ImportedFile& file : view.files) {
@@ -1651,7 +1717,7 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
       }
       if (member.is_static && member.kind == ImportedMemberKind::kField &&
           types.contains(member.type_identity) &&
-          types.at(member.type_identity)->kind == TypeKind::kStruct) {
+          is_aggregate_value(*types.at(member.type_identity))) {
         issues.add(record, "aggregate static constants are not supported");
       }
       const auto type = types.find(member.type_identity);

@@ -144,8 +144,9 @@ initialization entry accepts `self` followed by the declared parameters and
 returns `void`. It is externally linkable for accessible constructors and
 internal for private constructors. Base chaining calls that entry on the same
 object, preventing a second allocation and preserving the most-derived
-descriptor throughout construction. Both entries root `self` for the complete initialization
-sequence. Both entries use [ABI-4 canonical identities](canonical_identity.md).
+descriptor throughout construction. Both entries root `self` for the complete
+initialization sequence. Both entries use
+[compiler-ABI-6 canonical identities](canonical_identity.md).
 
 ## Inherited member lookup
 

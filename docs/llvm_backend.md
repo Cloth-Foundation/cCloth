@@ -145,11 +145,12 @@ Allocating constructors keep their object rooted and publish it only after the
 initializer succeeds. A throwing `Main` reports its error and returns the
 runtime's nonzero status.
 
-Class descriptors use their ABI-4 canonical external symbols rather than local
-file indices. The internal package selector emits only the selected package's
-definitions and declares dependency descriptors and accessible members. It
-rejects entry-wrapper generation in package modules. This consumes verified source and/or source-free artifact declarations through
-the shared compile/link protocol. See
+Class descriptors use their compiler-ABI-6 canonical external symbols rather
+than local file indices. The internal package selector emits only the selected
+package's definitions and declares dependency descriptors and accessible
+members. It rejects entry-wrapper generation in package modules. This consumes
+verified source and/or source-free artifact declarations through the shared
+compile/link protocol. See
 [canonical identity](canonical_identity.md).
 
 ## Enum lowering

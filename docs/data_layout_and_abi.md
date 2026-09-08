@@ -37,13 +37,14 @@ has one-bit value semantics and one-byte storage.
 no storage representation. An omitted function return annotation and explicit
 `: void` produce the same semantic and ABI return type.
 
-`string`, `object`, file classes, arrays, nullable wrappers, and `null` use the target
-reference representation. A reference has the target pointer size and
+`string`, `object`, file classes, arrays, nullable references, and `null` use
+the target reference representation. A reference has the target pointer size and
 alignment. ABI references are opaque; the contract does not expose a native
 C++ object or commit the future garbage collector to non-moving addresses.
 Array element types remain structural semantic data in canonical identities.
-Nullable wrappers erase to the underlying reference encoding for overloads,
-so `T` and `T?` have identical layouts and mangling.
+Nullable wrappers erase to the underlying type for overload identity, so `T`
+and `T?` cannot distinguish overloads. Only nullable references have identical
+storage to `T`; nullable values use the tagged aggregate layout below.
 Widening a managed reference to `object` is also representation preserving.
 An explicitly declared `object` parameter uses its primitive canonical identity;
 a concrete source type keeps its own encoding.
@@ -89,6 +90,19 @@ Backend aggregate backing buffers plus their root-address slots are limited to
 256 KiB per callable. These are compiler resource limits, not source ownership
 or lifetime rules.
 
+## Nullable values
+
+Nullable primitive, enum, and struct types are `AbiTypeKind::kAggregate`. The
+wrapper stores a one-byte tag at offset zero and the inline payload at
+`align_up(1, alignof(T))`. Its alignment is `alignof(T)` and its size is rounded
+up after the payload to that alignment. Tag zero is absent with a zeroed
+payload; tag one is present. No other tag is valid.
+
+The nullable wrapper's reference offsets are the payload's offsets shifted by
+the payload offset. This lets class fields, struct fields, arrays, locals,
+parameters, and result buffers retain precise tracing without boxing. Nullable
+references continue to use the pointer layout and `[0]` value map.
+
 ## File-class objects
 
 Every file-class object begins with two opaque, reference-sized runtime words.
@@ -113,15 +127,16 @@ descriptor. Layout lowering resolves bases before dependents even when source
 files arrive in the opposite order.
 
 Nullable references appear in descriptor reference-offset tables because their
-ABI representation is still a pointer. Primitive and static fields do not.
+ABI representation is still a pointer. Nullable struct fields contribute their
+shifted payload references. Primitive and static fields do not.
 Descriptor verification recomputes these tables from the final flattened class
 layout, so a derived table covers inherited and local references.
 See [garbage_collection.md](garbage_collection.md) for the Stage 13.1 contract.
 
 Static fields are not object fields. Stage 12.2 records them in a separate ABI
-table and emits their literal value as constant global storage. Their ABI-4
-name includes the canonical owner and field name. Static field linkage is
-still determined by capitalization.
+table and emits their literal value as constant global storage. Their canonical
+native name includes the owner and field name. Static field linkage is still
+determined by capitalization.
 
 `string` and arrays remain opaque runtime types and do not use file-class field
 layout. Their private runtime representations begin with the same two-word
@@ -144,12 +159,13 @@ Every callable records `return_mode` (`void`, `direct`, `indirect`) and
 Physical parameter order is result, receiver, then explicit parameters. Each
 parameter records `direct`, `value_pointer`, or `result_pointer` passing.
 
-Struct results use a fresh, zeroed, rooted caller buffer and return LLVM `void`.
-Struct explicit parameters point to independent writable argument copies;
-read-only struct receivers point to snapshots captured before argument
-evaluation. Scalar/reference calls remain direct. These rules also apply to
-class virtual and interface signatures containing structs. There are no host
-aggregate ABI attributes, implicit boxing, or source-level pointer parameters.
+Struct and nullable-value results use a fresh, zeroed, rooted caller buffer and
+return LLVM `void`. Their explicit parameters point to independent writable
+argument copies; read-only struct receivers point to snapshots captured before
+argument evaluation. Scalar/reference calls remain direct. These rules also
+apply to class virtual and interface signatures containing aggregates. There
+are no host aggregate ABI attributes, implicit boxing, or source-level pointer
+parameters.
 
 A struct constructor has one canonical entry: its indirect result is writable
 incomplete `self`. It has no allocation wrapper or separate initializer entry.
@@ -200,7 +216,7 @@ convention so LLVM and non-Cloth tooling have a stable interoperability point.
 
 ## Mangling
 
-ABI revision 5 uses `_C5` followed by hexadecimal canonical symbol identity.
+ABI revision 6 uses `_C6` followed by hexadecimal canonical symbol identity.
 Identity includes the exact manifest package version (or a distinct standalone
 owner), source namespace, file kind/stem, member kind/name, and overload parameter
 types. Return types are omitted because Cloth does not overload on a return
@@ -229,7 +245,7 @@ their selected contract may throw, even when the implementation narrows its
 semantic effect set to empty. ABI verification compares declarations, slots,
 constructor initializers, parameters, and MIR calls before LLVM emission. The
 complete persistent encoding is specified by
-[artifact format 6](artifact_schema_v6.md).
+[artifact format 7](artifact_schema_v7.md).
 
 ## LLVM boundary
 

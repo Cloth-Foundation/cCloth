@@ -129,13 +129,15 @@ bool DefinitionPass::is_local_variable_start() const noexcept {
     return false;
   }
   ++lookahead;
-  if (peek(lookahead).kind == TokenKind::kQuestion) {
+  while (peek(lookahead).kind == TokenKind::kQuestion ||
+         peek(lookahead).kind == TokenKind::kQuestionQuestion) {
     ++lookahead;
   }
   if (peek(lookahead).kind == TokenKind::kLeftBracket &&
       peek(lookahead + 1).kind == TokenKind::kRightBracket) {
     lookahead += 2;
-    if (peek(lookahead).kind == TokenKind::kQuestion) {
+    while (peek(lookahead).kind == TokenKind::kQuestion ||
+           peek(lookahead).kind == TokenKind::kQuestionQuestion) {
       ++lookahead;
     }
   }
@@ -145,10 +147,21 @@ bool DefinitionPass::is_local_variable_start() const noexcept {
 TypeSyntax DefinitionPass::parse_type() {
   const Token& token = advance();
   SourceRange range = token.range;
-  const bool inner_nullable = match(TokenKind::kQuestion);
-  if (inner_nullable) {
-    range.end = tokens_[current_ - 1].range.end;
-  }
+  const auto parse_nullable_suffix = [&]() {
+    bool nullable = false;
+    while (current().kind == TokenKind::kQuestion ||
+           current().kind == TokenKind::kQuestionQuestion) {
+      const Token& suffix = advance();
+      if (nullable || suffix.kind == TokenKind::kQuestionQuestion) {
+        diagnostics_.error(suffix.range,
+                           "nullable qualification cannot be repeated");
+      }
+      nullable = true;
+      range.end = suffix.range.end;
+    }
+    return nullable;
+  };
+  const bool inner_nullable = parse_nullable_suffix();
   bool is_array = false;
   while (match(TokenKind::kLeftBracket)) {
     if (is_array) {
@@ -163,10 +176,7 @@ TypeSyntax DefinitionPass::parse_type() {
       break;
     }
   }
-  const bool outer_nullable = is_array && match(TokenKind::kQuestion);
-  if (outer_nullable) {
-    range.end = tokens_[current_ - 1].range.end;
-  }
+  const bool outer_nullable = is_array && parse_nullable_suffix();
   return TypeSyntax{token.lexeme,
                     is_primitive_type(token.kind),
                     range,

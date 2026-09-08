@@ -41,6 +41,48 @@ struct CompiledSource {
   std::optional<cloth::CompilationResult> result;
 };
 
+struct CompiledNullableValues {
+  explicit CompiledNullableValues(cloth::TargetDataLayout target)
+      : compilation(std::move(target)) {
+    compilation.add_source(cloth::SourceFile::from_memory(
+        "Layout.co",
+        "import Payload;\n"
+        "import Nested;\n"
+        "import Empty;\n"
+        "Payload? Value;\n"
+        "Nested? NestedValue;\n"
+        "Empty? EmptyValue;\n"
+        "func Pass(Payload? value): Payload? { return value; }\n"
+        "func Number(int32? value): int32? { return value; }\n"
+        "func PassNested(Nested? value): Nested? { return value; }\n"
+        "func PassEmpty(Empty? value): Empty? { return value; }\n"));
+    compilation.add_source(
+        cloth::SourceFile::from_memory("Payload.co",
+                                       "struct {\n"
+                                       "string Text;\n"
+                                       "int32 Count;\n"
+                                       "Payload(string text, int32 count) {\n"
+                                       "  Text = text;\n"
+                                       "  Count = count;\n"
+                                       "}\n"
+                                       "}\n"));
+    compilation.add_source(cloth::SourceFile::from_memory(
+        "Nested.co",
+        "import Payload;\n"
+        "struct {\n"
+        "Payload? Value;\n"
+        "Nested(Payload? value) { Value = value; }\n"
+        "}\n"));
+    compilation.add_source(
+        cloth::SourceFile::from_memory("Empty.co", "struct { Empty() {} }\n"));
+    result.emplace(compilation.analyze(diagnostics));
+  }
+
+  cloth::Compilation compilation;
+  cloth::DiagnosticEngine diagnostics;
+  std::optional<cloth::CompilationResult> result;
+};
+
 bool has_diagnostic(const cloth::DiagnosticEngine& diagnostics,
                     std::string_view text) {
   for (const cloth::Diagnostic& diagnostic : diagnostics.diagnostics()) {
@@ -348,6 +390,132 @@ void nullable_abi(TestContext& test) {
               "nullable ABI mangling did not erase the source qualifier");
 }
 
+void nullable_value_abi(TestContext& test) {
+  const CompiledNullableValues x86{cloth::TargetDataLayout::llvm_x86_64()};
+  const cloth::CompilationResult& result = *x86.result;
+  if (!result.is_valid) {
+    std::string message = "valid x86-64 nullable-value ABI failed verification";
+    for (const cloth::Diagnostic& diagnostic : x86.diagnostics.diagnostics()) {
+      message += ": " + diagnostic.message;
+    }
+    test.expect(false, message);
+    return;
+  }
+  const cloth::AbiCallable& pass = result.abi.files[0].functions[0];
+  const cloth::AbiCallable& number = result.abi.files[0].functions[1];
+  const cloth::AbiCallable& pass_nested = result.abi.files[0].functions[2];
+  const cloth::AbiCallable& pass_empty = result.abi.files[0].functions[3];
+  const cloth::TypeId nullable_payload =
+      result.semantics.symbol(pass.symbol).parameter_types[0];
+  const cloth::TypeId nullable_int32 =
+      result.semantics.symbol(number.symbol).parameter_types[0];
+  const cloth::TypeId nullable_nested =
+      result.semantics.symbol(pass_nested.symbol).parameter_types[0];
+  const cloth::TypeId nullable_empty =
+      result.semantics.symbol(pass_empty.symbol).parameter_types[0];
+  const cloth::AbiTypeLayout& payload_layout =
+      result.abi.types[nullable_payload.value];
+  const cloth::AbiTypeLayout& int32_layout =
+      result.abi.types[nullable_int32.value];
+  const cloth::AbiTypeLayout& nested_layout =
+      result.abi.types[nullable_nested.value];
+  const cloth::AbiTypeLayout& empty_layout =
+      result.abi.types[nullable_empty.value];
+  test.expect(
+      payload_layout.kind == cloth::AbiTypeKind::kAggregate &&
+          payload_layout.storage == cloth::SizeAlignment{24, 8} &&
+          payload_layout.reference_offsets == std::vector<std::uint64_t>{8},
+      "x86-64 nullable struct does not use the tagged value layout");
+  test.expect(int32_layout.kind == cloth::AbiTypeKind::kAggregate &&
+                  int32_layout.storage == cloth::SizeAlignment{8, 4} &&
+                  int32_layout.reference_offsets.empty(),
+              "x86-64 nullable primitive does not use the tagged value layout");
+  test.expect(
+      nested_layout.kind == cloth::AbiTypeKind::kAggregate &&
+          nested_layout.storage == cloth::SizeAlignment{32, 8} &&
+          nested_layout.reference_offsets == std::vector<std::uint64_t>{16} &&
+          empty_layout.kind == cloth::AbiTypeKind::kAggregate &&
+          empty_layout.storage == cloth::SizeAlignment{2, 1} &&
+          empty_layout.reference_offsets.empty(),
+      "nested or empty nullable struct layout is not canonical");
+  test.expect(result.abi.files[0].layout.size == 80 &&
+                  result.abi.files[0].type_descriptor->reference_offsets ==
+                      std::vector<std::uint64_t>{24, 56},
+              "nullable struct field lost its shifted GC reference map");
+  test.expect(
+      pass.return_mode == cloth::AbiReturnMode::kIndirect &&
+          pass.parameters.size() == 3 &&
+          pass.parameters[0].kind == cloth::AbiParameterKind::kResult &&
+          pass.parameters[0].passing == cloth::AbiPassingMode::kResultPointer &&
+          pass.parameters[2].kind == cloth::AbiParameterKind::kExplicit &&
+          pass.parameters[2].passing == cloth::AbiPassingMode::kValuePointer,
+      "nullable struct callable did not use aggregate passing");
+
+  const auto rejects_corruption = [&](const auto& corrupt) {
+    cloth::AbiModule broken = result.abi;
+    corrupt(broken);
+    cloth::DiagnosticEngine verifier_diagnostics;
+    return !cloth::verify_abi(broken, result.mir, result.semantics,
+                              verifier_diagnostics);
+  };
+  test.expect(
+      rejects_corruption([&](cloth::AbiModule& broken) {
+        broken.types[nullable_payload.value].reference_offsets = {0};
+      }) &&
+          rejects_corruption([&](cloth::AbiModule& broken) {
+            ++broken.types[nullable_payload.value].storage.size;
+          }) &&
+          rejects_corruption([&](cloth::AbiModule& broken) {
+            broken.types[nullable_payload.value].storage.alignment = 3;
+          }) &&
+          rejects_corruption([&](cloth::AbiModule& broken) {
+            broken.types[nullable_payload.value].kind =
+                cloth::AbiTypeKind::kReference;
+          }) &&
+          rejects_corruption([](cloth::AbiModule& broken) {
+            broken.files[0].functions[0].return_mode =
+                cloth::AbiReturnMode::kDirect;
+          }) &&
+          rejects_corruption([](cloth::AbiModule& broken) {
+            broken.files[0].functions[0].parameters[2].passing =
+                cloth::AbiPassingMode::kDirect;
+          }),
+      "ABI verifier accepted corrupted nullable layout or callable metadata");
+
+  const CompiledNullableValues wasm{cloth::TargetDataLayout::llvm_wasm32()};
+  const cloth::CompilationResult& wasm_result = *wasm.result;
+  test.expect(wasm_result.is_valid,
+              "valid wasm32 nullable-value ABI failed verification");
+  const cloth::AbiCallable& wasm_pass = wasm_result.abi.files[0].functions[0];
+  const cloth::AbiCallable& wasm_nested = wasm_result.abi.files[0].functions[2];
+  const cloth::AbiCallable& wasm_empty = wasm_result.abi.files[0].functions[3];
+  const cloth::TypeId wasm_nullable_payload =
+      wasm_result.semantics.symbol(wasm_pass.symbol).parameter_types[0];
+  const cloth::AbiTypeLayout& wasm_layout =
+      wasm_result.abi.types[wasm_nullable_payload.value];
+  const cloth::AbiTypeLayout& wasm_nested_layout =
+      wasm_result.abi.types[wasm_result.semantics.symbol(wasm_nested.symbol)
+                                .parameter_types[0]
+                                .value];
+  const cloth::AbiTypeLayout& wasm_empty_layout =
+      wasm_result.abi.types[wasm_result.semantics.symbol(wasm_empty.symbol)
+                                .parameter_types[0]
+                                .value];
+  test.expect(
+      wasm_layout.kind == cloth::AbiTypeKind::kAggregate &&
+          wasm_layout.storage == cloth::SizeAlignment{12, 4} &&
+          wasm_layout.reference_offsets == std::vector<std::uint64_t>{4} &&
+          wasm_nested_layout.storage == cloth::SizeAlignment{16, 4} &&
+          wasm_nested_layout.reference_offsets ==
+              std::vector<std::uint64_t>{8} &&
+          wasm_empty_layout.storage == cloth::SizeAlignment{2, 1} &&
+          result.abi.files[0].layout.size == 80 &&
+          wasm_result.abi.files[0].layout.size == 40 &&
+          wasm_result.abi.files[0].type_descriptor->reference_offsets ==
+              std::vector<std::uint64_t>{12, 28},
+      "wasm32 nullable struct layouts or reference maps are not canonical");
+}
+
 void package_qualified_mangling(TestContext& test) {
   cloth::Compilation compilation;
   compilation.add_source(
@@ -434,6 +602,7 @@ int main() {
       {"deterministic mangling", deterministic_mangling},
       {"array ABI", array_abi},
       {"nullable ABI", nullable_abi},
+      {"nullable value ABI", nullable_value_abi},
       {"package-qualified mangling", package_qualified_mangling},
       {"verifier rejects layout corruption",
        verifier_rejects_layout_corruption},

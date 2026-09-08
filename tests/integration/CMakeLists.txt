@@ -10,6 +10,10 @@ set(CLOTH_TYPED_ERROR_PROJECT
     "${CLOTH_INTEGRATION_PROJECTS}/typed_errors/src")
 set(CLOTH_STANDARD_LIBRARY_PROJECT
     "${CLOTH_INTEGRATION_PROJECTS}/standard_library/src")
+set(CLOTH_NULLABLE_VALUE_PROJECT
+    "${CLOTH_INTEGRATION_PROJECTS}/nullable_values/src")
+set(CLOTH_NULLABLE_AUDIT_PROJECT
+    "${CLOTH_INTEGRATION_PROJECTS}/nullable_audit/src")
 set(CLOTH_STANDARD_LIBRARY_ROOT "${PROJECT_SOURCE_DIR}/std/src")
 
 foreach(target IN ITEMS x86_64 wasm32)
@@ -73,6 +77,53 @@ foreach(target IN ITEMS x86_64 wasm32)
     add_test(NAME cloth_cli_check_integer_conversion_modes_${target}
         COMMAND clothc --check --target=${target}
             ${CLOTH_INTEGRATION_PROGRAMS}/IntegerConversionModes.co)
+    add_test(NAME cloth_cli_check_nullable_values_${target}
+        COMMAND clothc --check --target=${target}
+            ${CLOTH_INTEGRATION_PROGRAMS}/NullableValues.co)
+    set(nullable_values_ir
+        "${PROJECT_BINARY_DIR}/cloth-nullable-values-${target}.ll")
+    add_test(NAME cloth_cli_nullable_values_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${nullable_values_ir}
+            ${CLOTH_INTEGRATION_PROGRAMS}/NullableValues.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_nullable_values_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${nullable_values_ir})
+        set_tests_properties(cloth_nullable_values_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_nullable_values_llvm_${target})
+    endif()
+    set(nullable_aggregate_ir
+        "${PROJECT_BINARY_DIR}/cloth-nullable-aggregates-${target}.ll")
+    add_test(NAME cloth_cli_nullable_aggregates_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${nullable_aggregate_ir}
+            --source-root=${CLOTH_NULLABLE_VALUE_PROJECT}
+            ${CLOTH_NULLABLE_VALUE_PROJECT}/Main.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_nullable_aggregates_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${nullable_aggregate_ir})
+        set_tests_properties(cloth_nullable_aggregates_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_nullable_aggregates_llvm_${target})
+    endif()
+    set(nullable_audit_ir
+        "${PROJECT_BINARY_DIR}/cloth-nullable-audit-${target}.ll")
+    add_test(NAME cloth_cli_nullable_audit_llvm_${target}
+        COMMAND clothc --target=${target}
+            --emit-llvm=${nullable_audit_ir}
+            --source-root=${CLOTH_NULLABLE_AUDIT_PROJECT}
+            ${CLOTH_NULLABLE_AUDIT_PROJECT}/Main.co)
+    if(CLOTH_LLVM_OPT_EXECUTABLE)
+        add_test(NAME cloth_nullable_audit_verify_${target}
+            COMMAND ${CLOTH_LLVM_OPT_EXECUTABLE}
+                "-passes=verify,default<O2>,verify" -disable-output
+                ${nullable_audit_ir})
+        set_tests_properties(cloth_nullable_audit_verify_${target}
+            PROPERTIES DEPENDS cloth_cli_nullable_audit_llvm_${target})
+    endif()
     set(integer_conversion_ir
         "${PROJECT_BINARY_DIR}/cloth-integer-conversions-${target}.ll")
     add_test(NAME cloth_cli_integer_conversion_modes_llvm_${target}
@@ -560,6 +611,34 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/nullable_flow.txt
         EXACT
     )
+    cloth_add_native_output_test(nullable_values
+        OUTPUT "cloth nullable values"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NullableValues.co
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/nullable_values.txt
+        EXACT
+    )
+    cloth_add_native_output_test(nullable_aggregates
+        OUTPUT "cloth nullable aggregates"
+        SOURCE ${CLOTH_NULLABLE_VALUE_PROJECT}/Main.co
+        SOURCE_ROOT ${CLOTH_NULLABLE_VALUE_PROJECT}
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/nullable_aggregates.txt
+        EXACT
+    )
+    cloth_add_native_output_test(nullable_audit
+        OUTPUT "cloth nullable audit"
+        SOURCE ${CLOTH_NULLABLE_AUDIT_PROJECT}/Main.co
+        SOURCE_ROOT ${CLOTH_NULLABLE_AUDIT_PROJECT}
+        EXPECTED ${CLOTH_INTEGRATION_EXPECTED}/nullable_audit.txt
+        EXACT
+    )
+    add_test(NAME cloth_nullable_value_artifacts
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_COMPILER=$<TARGET_FILE:clothc>"
+            "-DCLOTH_SOURCE_ROOT=${CLOTH_NULLABLE_VALUE_PROJECT}"
+            "-DCLOTH_WORK_DIRECTORY=${PROJECT_BINARY_DIR}/nullable-value-artifacts"
+            "-DCLOTH_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/nullable_aggregates_artifact.txt"
+            "-DCLOTH_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/RunNullableValueArtifacts.cmake)
     cloth_add_native_output_test(null_ergonomics
         OUTPUT "cloth null ergonomics"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NullErgonomics.co
@@ -588,6 +667,14 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
         OUTPUT "cloth string bounds"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/StringBounds.co
         ERROR "string index is out of bounds"
+    )
+    cloth_add_native_failure_test(string_slice_bounds
+        OUTPUT "cloth string slice bounds"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/StringSliceBounds.co
+        ERROR "cloth runtime error: string slice is out of bounds"
+        EXPECTED_STDOUT
+            ${CLOTH_INTEGRATION_EXPECTED}/string_slice_bounds.txt
+        EXACT
     )
     cloth_add_native_output_test(object_model
         OUTPUT "cloth object model"
@@ -628,6 +715,11 @@ if(CLOTH_LLVM_LLC_EXECUTABLE)
     cloth_add_native_failure_test(null_assert_failure
         OUTPUT "cloth null assert failure"
         SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NullAssertFailure.co
+        ERROR "non-null assertion failed"
+    )
+    cloth_add_native_failure_test(nullable_value_assert_failure
+        OUTPUT "cloth nullable value assert failure"
+        SOURCE ${CLOTH_INTEGRATION_PROGRAMS}/NullableValueAssertFailure.co
         ERROR "non-null assertion failed"
     )
     cloth_add_native_output_test(fizzbuzz

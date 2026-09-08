@@ -200,10 +200,12 @@ and moving collection remain outside Stage 13.
 
 ## Inline aggregates
 
-Structs add no heap header or allocation. Their flattened value maps identify
-managed-reference slots inside inline data. Class descriptors include embedded
-struct slots; runtime ABI 2 arrays reference immutable element layouts and scan
-those offsets in each element.
+Structs and nullable-value wrappers add no heap header or allocation. Struct
+maps identify managed-reference slots inside inline data. A nullable struct map
+shifts those slots by the wrapper's aligned payload offset; an absent value has
+a zeroed payload, so its slots are safe to trace. Class descriptors include
+embedded aggregate slots; runtime ABI 2 arrays reference immutable element
+layouts and scan those offsets in each element.
 
 The backend zeroes owned aggregate buffers before registering their contained
 slots. Live locals, mutable argument copies, read-only receiver snapshots, SSA
@@ -211,6 +213,7 @@ temporaries, caller result buffers, and incomplete construction storage retain
 precise roots. A return copies into the already-rooted caller buffer before pop.
 Captured class/array storage owners remain roots through RHS calls and allocation.
 Dead aggregate roots are cleared only after the last value or storage-path use.
+This also clears nullable tags and payload references before later safepoints.
 
 Aggregate phi edges first copy every incoming value to scratch buffers, then
 assign every destination. No safepoint occurs between those copies, so scratch

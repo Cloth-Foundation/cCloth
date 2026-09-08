@@ -138,6 +138,7 @@ struct HirCallExpression {
   bool is_base_qualified{false};
   std::optional<FileId> interface_dispatch{};
   StructReceiverMode struct_receiver{StructReceiverMode::kNone};
+  bool is_safe{false};
 };
 
 struct HirArrayLiteralExpression {
@@ -168,8 +169,27 @@ struct HirStringMetaExpression {
   StringMetaQuery query;
 };
 
+struct HirStringSliceExpression {
+  HirExpressionId string;
+  HirExpressionId start;
+  HirExpressionId end;
+};
+
 struct HirObjectMetaExpression {
   HirExpressionId object;
+};
+
+enum class SafeMetaQueryKind {
+  kArrayLength,
+  kStringLength,
+  kStringByteLength,
+  kStringIsEmpty,
+  kTypeName,
+};
+
+struct HirSafeMetaExpression {
+  HirExpressionId object;
+  SafeMetaQueryKind query;
 };
 
 struct HirIntegerMetaExpression {
@@ -196,7 +216,8 @@ using HirExpressionData = std::variant<
     HirAssignmentExpression, HirMemberExpression, HirSafeMemberExpression,
     HirNullCoalesceExpression, HirNullAssertExpression, HirCallExpression,
     HirArrayLiteralExpression, HirIndexExpression, HirArrayLengthExpression,
-    HirStringMetaExpression, HirObjectMetaExpression, HirIntegerMetaExpression,
+    HirStringMetaExpression, HirStringSliceExpression, HirObjectMetaExpression,
+    HirSafeMetaExpression, HirIntegerMetaExpression,
     HirIntegerMetaCallExpression, HirGroupedExpression>;
 
 struct HirExpression {

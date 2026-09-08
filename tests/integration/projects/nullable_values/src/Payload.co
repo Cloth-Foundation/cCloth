@@ -1,0 +1,13 @@
+struct {
+  string Text;
+  int32 Count;
+
+  Payload(string text, int32 count) {
+    Text = text;
+    Count = count;
+  }
+
+  func Incremented(): int32 {
+    return Count + 1;
+  }
+}

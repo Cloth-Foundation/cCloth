@@ -109,7 +109,17 @@ if("${program_result}" STREQUAL "0")
     message(FATAL_ERROR
         "program unexpectedly succeeded; stdout: ${program_output}")
 endif()
-if(NOT "${program_output}" STREQUAL "")
+if(DEFINED CLOTH_EXPECTED_FAILURE_OUTPUT)
+    file(READ "${CLOTH_EXPECTED_FAILURE_OUTPUT}" expected_failure_output)
+    string(REPLACE "\r\n" "\n" program_output "${program_output}")
+    string(REPLACE "\r\n" "\n" expected_failure_output
+        "${expected_failure_output}")
+    if(NOT program_output STREQUAL expected_failure_output)
+        message(FATAL_ERROR
+            "failing program output did not match "
+            "${CLOTH_EXPECTED_FAILURE_OUTPUT}\nactual output:\n${program_output}")
+    endif()
+elseif(NOT "${program_output}" STREQUAL "")
     message(FATAL_ERROR
         "failing program produced unexpected stdout: ${program_output}")
 endif()

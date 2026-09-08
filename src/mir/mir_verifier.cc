@@ -816,6 +816,22 @@ class MirVerifier {
         report(instruction.range,
                "string meta query result has the wrong type");
       }
+    } else if (const auto* slice =
+                   std::get_if<MirStringSliceInstruction>(&instruction.data)) {
+      verify_value(slice->string, value_types, instruction.range);
+      verify_value(slice->start, value_types, instruction.range);
+      verify_value(slice->end, value_types, instruction.range);
+      verify_value_type(slice->string, semantics_.string_type(), value_types,
+                        instruction.range);
+      verify_value_type(slice->start, *semantics_.find_type("int32"),
+                        value_types, instruction.range);
+      verify_value_type(slice->end, *semantics_.find_type("int32"), value_types,
+                        instruction.range);
+      require_result(instruction);
+      if (instruction.type != semantics_.string_type()) {
+        report(instruction.range,
+               "string slice result does not have type string");
+      }
     } else if (const auto* access = std::get_if<MirStringScalarAtInstruction>(
                    &instruction.data)) {
       verify_value(access->string, value_types, instruction.range);
@@ -997,6 +1013,32 @@ class MirVerifier {
         report(instruction.range,
                "shift instruction has incompatible integer types");
       }
+    } else if (const auto* comparison =
+                   std::get_if<MirNullableEqualInstruction>(
+                       &instruction.data)) {
+      verify_value(comparison->left, value_types, instruction.range);
+      verify_value(comparison->right, value_types, instruction.range);
+      require_result(instruction);
+      const std::optional<TypeId> left_type =
+          known_value_type(comparison->left, value_types);
+      const std::optional<TypeId> right_type =
+          known_value_type(comparison->right, value_types);
+      if (instruction.type != semantics_.bool_type()) {
+        report(instruction.range, "nullable equality does not have type bool");
+      }
+      if (left_type && right_type && *left_type != semantics_.error_type() &&
+          *right_type != semantics_.error_type()) {
+        bool valid = *left_type == *right_type;
+        if (valid && left_type->value < semantics_.types().size()) {
+          const SemanticType& nullable = semantics_.type(*left_type);
+          valid = nullable.kind == TypeKind::kNullable &&
+                  nullable.element_type.has_value();
+        }
+        if (!valid) {
+          report(instruction.range,
+                 "nullable equality consumes incompatible types");
+        }
+      }
     } else if (const auto* conversion =
                    std::get_if<MirConvertInstruction>(&instruction.data)) {
       verify_value(conversion->value, value_types, instruction.range);
@@ -1055,6 +1097,24 @@ class MirVerifier {
                 *source.element_type != instruction.type) {
               report(instruction.range,
                      "nullable narrowing consumes an incompatible value");
+            }
+          }
+        } else if (conversion->kind == MirConversionKind::kLiftNullable) {
+          if (source_type && *source_type != semantics_.error_type() &&
+              source_type->value < semantics_.types().size()) {
+            const SemanticType& source = semantics_.type(*source_type);
+            const SemanticType& target = semantics_.type(instruction.type);
+            const bool valid =
+                source.kind == TypeKind::kNullable && source.element_type &&
+                target.kind == TypeKind::kNullable && target.element_type &&
+                source.element_type->value < semantics_.types().size() &&
+                target.element_type->value < semantics_.types().size() &&
+                can_widen_numeric(semantics_.type(*source.element_type).kind,
+                                  semantics_.type(*target.element_type).kind);
+            if (!valid) {
+              report(instruction.range,
+                     "lifted nullable conversion consumes incompatible "
+                     "types");
             }
           }
         } else {

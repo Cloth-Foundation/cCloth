@@ -1,0 +1,4 @@
+interface {
+  func Read(int32 left, int32 right): int32?;
+  func Flush();
+}

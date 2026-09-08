@@ -59,7 +59,9 @@ function(cloth_add_native_output_test name)
 endfunction()
 
 function(cloth_add_native_failure_test name)
-    cmake_parse_arguments(ARG "EXACT" "OUTPUT;SOURCE;SOURCE_ROOT;ERROR" "" ${ARGN})
+    cmake_parse_arguments(
+        ARG "EXACT" "OUTPUT;SOURCE;SOURCE_ROOT;ERROR;EXPECTED_STDOUT" "" ${ARGN}
+    )
     if(NOT ARG_OUTPUT OR NOT ARG_SOURCE OR NOT ARG_ERROR)
         message(FATAL_ERROR
             "cloth_add_native_failure_test requires OUTPUT, SOURCE, and ERROR"
@@ -80,6 +82,11 @@ function(cloth_add_native_failure_test name)
     )
     if(ARG_EXACT)
         list(APPEND check_command -DCLOTH_EXACT_ERROR=ON)
+    endif()
+    if(ARG_EXPECTED_STDOUT)
+        list(APPEND check_command
+            "-DCLOTH_EXPECTED_FAILURE_OUTPUT=${ARG_EXPECTED_STDOUT}"
+        )
     endif()
     list(APPEND check_command
         -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)

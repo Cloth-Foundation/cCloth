@@ -1186,13 +1186,26 @@ void nullable_types(TestContext& test) {
       "func Pick(User value) {}\nfunc Pick(User? value) {}\n"};
   test.expect(has_diagnostic(duplicate, "duplicate function signature"),
               "nullability alone created an overload distinction");
+
+  const ParsedSource repeated{
+      "RepeatedNullability.co",
+      "int32?? Value;\n"
+      "func Check(int32? ? value): bool { return value is int32??; }\n"};
+  test.expect(
+      has_diagnostic(repeated, "nullable qualification cannot be repeated"),
+      "repeated nullable qualification lacks a deliberate diagnostic");
+
+  const ParsedSource null_type{"NullType.co", "null? Value;\n"};
+  test.expect(error_count(null_type) != 0 && null_type.ast().fields.empty(),
+              "the null literal was accepted as an underlying type");
 }
 
 void null_ergonomic_expressions(TestContext& test) {
   const ParsedSource source{
       "NullErgonomics.co",
-      "func Use(User? user, User? fallback, User value): User {\n"
+      "func Use(User? user, User? fallback, User value, string? text): User {\n"
       "  string? name = user?.Name;\n"
+      "  int32? length = text?::length;\n"
       "  if (!user) {}\n"
       "  return user ?? fallback ?? value!;\n"
       "}\n"};
@@ -1200,7 +1213,7 @@ void null_ergonomic_expressions(TestContext& test) {
               "valid null-ergonomic expressions did not parse");
   const cloth::Block& body =
       source.ast().storage.block(source.ast().functions[0].body);
-  if (body.statements.size() != 3) {
+  if (body.statements.size() != 4) {
     test.expect(false, "null-ergonomics fixture has the wrong statement count");
     return;
   }
@@ -1215,8 +1228,16 @@ void null_ergonomic_expressions(TestContext& test) {
                 "safe-member AST node is missing");
   }
 
+  const auto* length = std::get_if<cloth::LocalVariableStatement>(
+      &source.ast().storage.statement(body.statements[1]).data);
+  test.expect(
+      length != nullptr && length->initializer &&
+          std::holds_alternative<cloth::SafeMetaAccessExpression>(
+              source.ast().storage.expression(*length->initializer).data),
+      "safe-meta AST node is missing");
+
   const auto* statement = std::get_if<cloth::ReturnStatement>(
-      &source.ast().storage.statement(body.statements[2]).data);
+      &source.ast().storage.statement(body.statements[3]).data);
   if (statement == nullptr || !statement->value) {
     test.expect(false, "coalescing return expression is missing");
     return;

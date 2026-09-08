@@ -1,0 +1,7 @@
+struct {
+  string Text;
+
+  Inner(string text) { Text = text; }
+
+  func Length(): int32 { return Text::length; }
+}

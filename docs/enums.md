@@ -42,8 +42,9 @@ both operands must have the same enum type. Arrays support ordinary indexing,
 mutation, and `for (var item in values)` iteration.
 
 There are no enum/integer casts, implicit conversions, ordering, arithmetic,
-bitwise operations, increment/decrement, truthiness, boxing, or reference
-`is`/`as`. `Status?` is invalid; `Status[]?` is a nullable array reference.
+bitwise operations, increment/decrement, boxing, or reference `is`/`as`.
+`Status?` is an inline tagged nullable enum; `Status[]?` is a nullable array
+reference, while `Status?[]` has nullable enum elements.
 
 ## Initialization
 
@@ -78,15 +79,16 @@ them to scalars. Printing uses module-private, bounds-checked case-name tables
 and traps on invalid tags. No enum heap descriptor or new runtime ABI is added.
 
 Source-free package consumers retain every case and static enum constant.
-The current package contract is [artifact format 6](artifact_schema_v6.md),
-compiler ABI 5, and runtime ABI 7; older artifacts must be rebuilt. Enum value
-representation is unchanged by that aggregate transition. Shuttle's process
+The current package contract is [artifact format 7](artifact_schema_v7.md),
+compiler ABI 6, and runtime ABI 9; older artifacts must be rebuilt. A non-null
+enum retains its four-byte representation; its nullable wrapper is aggregate.
+Shuttle's process
 protocol remains version 2.
 
 ## Deliberate deferrals
 
 Attached immutable per-case metadata, struct-backed metadata, runtime payload
 variants, enum members/constructors, explicit discriminants, underlying types,
-flags, matching/exhaustiveness, nullable values, and reflection are not part of
+flags, matching/exhaustiveness, and reflection are not part of
 this contract. Metadata may eventually describe a case without becoming its
 identity. These remain tracked in the [work ledger](../TODO.md).

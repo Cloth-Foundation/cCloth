@@ -1,0 +1,11 @@
+true
+true
+true
+21
+bool-present
+bool-false
+7
+-1
+42
+NullableValues
+2

@@ -1,5 +1,176 @@
 # Cloth testing and diagnostic builds
 
+## Stage 41.4 uniform-nullability exit audit
+
+Completed on Windows on 2026-09-07. Development and ASan/UBSan builds each
+pass all 335 CTests, including 37 compiler-backed Shuttle cases and 35 native
+Shuttle cases. All 51 ordinary Rust tests, Rust 1.85 checking,
+warning-denied Clippy, Rust and C++ formatting, TypeScript compilation, and all
+22 editor tests with compiler integration pass. The standalone editor run
+passes 15 grammar tests and skips its seven compiler-dependent cases. All 357
+local Markdown targets across 116 files and repository whitespace checks pass.
+
+The exit audit adds deliberate recovery and diagnostics for repeated nullable
+qualification; equality and flow checks spanning all primitive values, enums,
+structs, and reference families; safe fields and calls across classes,
+interfaces, errors, and structs; and forged safe-field, safe-call, safe-meta,
+presence, assertion, lifting, equality, ABI, and artifact metadata. Runtime
+coverage now proves shifted references inside nullable aggregates, default
+absence, and stale-root removal after overwriting a present wrapper.
+
+A dedicated end-to-end project verifies exact coalescing and safe-call
+evaluation order, nullable and void results, virtual/interface/error/struct
+dispatch, absent throwing calls, value presence and equality, nested managed
+payloads, loops, and GC pressure. LLVM verifies before and after optimization
+on x86-64 and wasm32, and native output is exact. Shuttle additionally proves
+that an invalid nullable edit preserves completed cross-target artifacts and
+the previous runnable executable. Direct, whole-project, separate-package,
+source-free, serial, parallel, and relocated paths agree.
+
+Artifact/compiler/runtime compatibility remains 7/6/9, schemas remain
+2/1/1/1, and the unchanged compiler-paired `cloth` package remains v0.3.0. The
+audit adds no language, package, protocol, schema, ABI, or library surface.
+
+## Stage 41.3 uniform-nullability lowering and integration
+
+Completed on Windows on 2026-09-07. Development and ASan/UBSan builds each
+pass all 329 CTests, including 37 compiler-backed Shuttle cases and 35 native
+Shuttle cases. All 51 ordinary Rust tests, warning-denied Clippy, Rust
+formatting, TypeScript compilation, and all 22 editor tests with compiler
+integration pass. The standalone grammar run passes its 15 independent tests
+and skips the seven compiler-dependent cases.
+
+Coverage includes target-derived tagged layouts for primitive, enum, and struct
+nullable values; shifted struct reference maps; fields, arrays, locals,
+parameters, indirect returns, copies, equality, lifted conversions, presence,
+safe fields/calls/meta queries, coalescing, assertion, and GC pressure. LLVM
+verifies before and after optimization on x86-64 and wasm32. Native tests cover
+present and absent values plus exact assertion failure; runtime tests reject
+absent and invalid presence tags.
+
+Format-7 interface and object artifacts round trip nullable layouts, reject
+noncanonical records, and link without dependency sources. Shuttle tests prove
+serial/parallel determinism, exact reuse, affected invalidation, and equivalent
+whole-project, separate-package, and source-free execution. Compiler ABI 6 uses
+`_C6`; runtime ABI 9 owns the tagged assertion guard. Schemas remain 2/1/1/1
+and the compiler-paired `cloth` package remains v0.3.0.
+
+## Stage 41.2 uniform-nullability frontend and verified IR
+
+Completed on Windows on 2026-09-07. Clean development and ASan/UBSan builds
+each pass all 312 CTests, including the compiler-backed and native Shuttle
+suites. Both x86-64 and wasm32 CLI `--check` paths accept nullable values while
+LLVM, native, and artifact emission reject the feature at the explicit Stage 41
+lowering boundary.
+
+Coverage includes all 13 value primitive kinds, aliases, enums, structs,
+nullable array elements, mixed null inference, presence narrowing, lifted
+numeric conversion, equality, coalescing, assertion, default absence, safe
+class and struct fields, safe class and struct calls, safe void and throwing
+calls, skipped argument evaluation, and `?::` meta queries. Negative and forged
+IR cases cover invalid nullable types and operations, static safe calls,
+callable safe meta access, malformed HIR metadata, nullable equality, and
+lifted MIR conversions. Compatibility remains artifact/compiler/runtime 6/5/8,
+schemas 2/1/1/1, and `cloth` v0.3.0. The repository-wide C++ format target,
+all 356 local Markdown targets across 115 files, and repository whitespace
+checks pass.
+
+## Stage 41.1 uniform-nullability contract
+
+Approved and recorded on Windows on 2026-09-07. The contract freezes nullable
+primitive, enum, and struct values; lifted conversions and inference; presence,
+equality, coalescing, and assertion; safe fields and instance calls; `?::` safe
+meta queries; deterministic tagged layout and precise tracing; the planned
+artifact/compiler/runtime 7/6/9 transition; coordinated package behavior;
+diagnostics, verification, and non-goals.
+
+This checkpoint changes documentation only. The completed Stage 40 baseline
+remains 309 development and sanitizer CTests, 51 ordinary Rust tests, 19 editor
+tests, and active artifact/compiler/runtime compatibility 6/5/8 with schemas
+2/1/1/1 and `cloth` v0.3.0. Implementation begins only after separate 41.2
+authorization. All 356 local Markdown targets across 115 files and repository
+whitespace checks pass.
+
+## Stage 40.4 Unicode string-slicing exit audit
+
+Completed on Windows on 2026-09-07. Clean development and ASan/UBSan builds
+each pass all 309 CTests, including all 36 compiler-backed Shuttle toolchain
+cases and 34 native Shuttle cases. All 51 ordinary Rust tests, warning-denied
+Clippy, Rust formatting, the Rust 1.85 MSRV check, and both 19-test editor
+grammar/compiler runs pass.
+All 352 local Markdown targets across 114 files and repository whitespace
+checks pass.
+
+The exit audit adds exact receiver/start/end output on terminal bounds failure,
+validates malformed UTF-8 that follows an already-discovered slice boundary,
+rejects array, object, and user-type slice receivers directly, and forges HIR
+and MIR bound types, value categories, references, operands, and results. The
+complete matrix covers Unicode-scalar bounds and contents, one-pass runtime
+validation, allocation and precise roots, both LLVM targets before and after
+optimization, native and source-free execution, package compatibility,
+Shuttle reuse/invalidation/determinism and failure preservation, editor
+grammar, documentation links, formatting, whitespace, and repository quality.
+
+Artifact/compiler/runtime compatibility remains 6/5/8, schemas remain
+2/1/1/1, and `cloth` remains v0.3.0. The audit adds no language, protocol,
+schema, artifact, ABI, or standard-library surface.
+
+## Stage 40.3 string-slicing runtime and toolchain checkpoint
+
+Completed on Windows on 2026-09-07. Clean development and ASan/UBSan builds
+each pass all 308 CTests, including 36 compiler-backed Shuttle toolchain cases
+and 34 native Shuttle cases. The 51 ordinary Rust tests, warning-denied Clippy,
+Rust 1.85 MSRV check, and both 19-test editor grammar/compiler runs pass.
+All 352 local Markdown targets across 114 files and repository whitespace
+checks pass.
+
+Runtime tests cover empty, prefix, suffix, interior, full, embedded-null,
+combining-scalar, maximum-scalar, and forced-collection slices. Independent
+death tests cover every invalid-bound category, null receivers, malformed
+layout metadata, malformed UTF-8, and inconsistent scalar counts. Native
+programs verify successful slicing and the exact terminal bounds failure.
+
+Verified LLVM emits `cloth_rt_string_slice` for x86-64 and wasm32. Backend
+coverage proves the receiver root is published before the allocating call;
+runtime ABI 8 validates the complete string and finds both boundaries with one
+monotonic cursor. Direct, whole-project, separate-package, source-free, and
+Shuttle execution agree, including exact reuse and invalidation. Active
+artifact/compiler/runtime compatibility is 6/5/8, schemas remain 2/1/1/1, and
+`cloth` remains v0.3.0.
+
+## Stage 40.2 string-slicing semantic and verified IR checkpoint
+
+Completed on Windows on 2026-09-06. Clean development and ASan/UBSan builds
+each pass all 296 CTests. Focused semantic, MIR, and backend coverage verifies
+value-only meta binding, exact arity, `int32`-compatible source bounds, explicit
+MIR widening, nullable/type/member/case/first-class/write diagnostics, bottom
+propagation, and left-to-right once-evaluation of the receiver and both bounds.
+
+Dedicated string-slice HIR and MIR corruption tests reject inconsistent result
+types and operands. Optimizer remapping retains all three operands, and LLVM
+emission deliberately rejects slicing with the Stage 40.3 runtime-lowering
+gate. The standard-library and Shuttle surfaces remain unchanged, and no user
+documentation advertises executable slicing yet.
+
+Artifact/compiler/runtime compatibility remains 6/5/7, schemas remain
+2/1/1/1, and `cloth` remains v0.3.0. Runtime ABI 8, allocation, GC roots,
+native/package execution, editor support, and user documentation remain owned
+by separately authorized checkpoint 40.3.
+
+## Stage 40.1 Unicode string-slicing contract
+
+Approved and recorded on Windows on 2026-09-06. The contract freezes
+`text::slice(start, end)`, half-open Unicode-scalar bounds, immutable results,
+left-to-right once-evaluation, terminal checked bounds, one-pass complexity,
+allocating runtime and GC ownership, the runtime-ABI-8 transition, coordinated
+package/Shuttle behavior, diagnostics, verification, and non-goals.
+
+This checkpoint changes documentation only. The completed Stage 39 baseline
+remains 296 development and sanitizer CTests, 51 ordinary Rust tests, 17 editor
+tests, and active artifact/compiler/runtime compatibility 6/5/7 with schemas
+2/1/1/1 and `cloth` v0.3.0. Implementation begins only after separate 40.2
+authorization.
+
 ## Stage 39.4 Unicode string-traversal exit audit
 
 Completed on Windows on 2026-09-06. Development and ASan/UBSan configurations

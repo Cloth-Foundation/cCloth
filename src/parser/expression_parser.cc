@@ -189,10 +189,14 @@ ExpressionId ExpressionParser::parse_postfix_expression() {
 ExpressionId ExpressionParser::parse_postfix_suffixes(ExpressionId expression) {
   while (!at_limit()) {
     const auto kind = current().kind;
+    const bool is_safe_meta =
+        kind == TokenKind::kQuestion && current_ + 1 < limit_ &&
+        tokens_[current_ + 1].kind == TokenKind::kColonColon;
     if (kind != TokenKind::kLeftParen && kind != TokenKind::kLeftBracket &&
         kind != TokenKind::kColonColon && kind != TokenKind::kDot &&
         kind != TokenKind::kQuestionDot && kind != TokenKind::kBang &&
-        kind != TokenKind::kPlusPlus && kind != TokenKind::kMinusMinus)
+        kind != TokenKind::kPlusPlus && kind != TokenKind::kMinusMinus &&
+        !is_safe_meta)
       break;
     if (!enter_constant_expression())
       return make_invalid_expression(current().range);
@@ -200,6 +204,8 @@ ExpressionId ExpressionParser::parse_postfix_suffixes(ExpressionId expression) {
       expression = parse_call_expression(expression);
     else if (kind == TokenKind::kLeftBracket)
       expression = parse_index_expression(expression);
+    else if (is_safe_meta)
+      expression = parse_safe_meta_suffix(expression);
     else {
       const auto previous = expression;
       expression = parse_access_suffix(expression);
@@ -209,6 +215,19 @@ ExpressionId ExpressionParser::parse_postfix_suffixes(ExpressionId expression) {
     }
   }
   return expression;
+}
+
+ExpressionId ExpressionParser::parse_safe_meta_suffix(ExpressionId expression) {
+  advance();
+  advance();
+  if (current().kind != TokenKind::kIdentifier) {
+    diagnostics_.error(current().range, "expected meta query name after '?::'");
+    return expression;
+  }
+  const Token& meta = advance();
+  const SourceRange range{expression_range(expression).begin, meta.range.end};
+  return add_expression(
+      Expression{range, SafeMetaAccessExpression{expression, meta.lexeme}});
 }
 
 ExpressionId ExpressionParser::parse_access_suffix(ExpressionId expression) {
@@ -557,10 +576,21 @@ TypeSyntax ExpressionParser::parse_checked_type() {
 
   const Token& token = advance();
   SourceRange range = token.range;
-  const bool inner_nullable = match(TokenKind::kQuestion);
-  if (inner_nullable) {
-    range.end = tokens_[current_ - 1].range.end;
-  }
+  const auto parse_nullable_suffix = [&]() {
+    bool nullable = false;
+    while (!at_limit() && (current().kind == TokenKind::kQuestion ||
+                           current().kind == TokenKind::kQuestionQuestion)) {
+      const Token& suffix = advance();
+      if (nullable || suffix.kind == TokenKind::kQuestionQuestion) {
+        diagnostics_.error(suffix.range,
+                           "nullable qualification cannot be repeated");
+      }
+      nullable = true;
+      range.end = suffix.range.end;
+    }
+    return nullable;
+  };
+  const bool inner_nullable = parse_nullable_suffix();
   bool is_array = false;
   while (match(TokenKind::kLeftBracket)) {
     if (is_array) {
@@ -575,10 +605,7 @@ TypeSyntax ExpressionParser::parse_checked_type() {
       break;
     }
   }
-  const bool outer_nullable = is_array && match(TokenKind::kQuestion);
-  if (outer_nullable) {
-    range.end = tokens_[current_ - 1].range.end;
-  }
+  const bool outer_nullable = is_array && parse_nullable_suffix();
   return TypeSyntax{token.lexeme,
                     is_primitive_type(token.kind),
                     range,

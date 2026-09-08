@@ -112,6 +112,9 @@ TypeId SemanticModel::get_array_type(TypeId element_type) {
 }
 
 TypeId SemanticModel::get_nullable_type(TypeId underlying_type) {
+  if (types_.at(underlying_type.value).kind == TypeKind::kNullable) {
+    return underlying_type;
+  }
   for (std::size_t index = 0; index < types_.size(); ++index) {
     const SemanticType& type = types_[index];
     if (type.kind == TypeKind::kNullable &&
@@ -263,7 +266,7 @@ std::string_view type_kind_name(TypeKind kind) noexcept {
     case TypeKind::kArray:
       return "array";
     case TypeKind::kNullable:
-      return "nullable reference";
+      return "nullable type";
     case TypeKind::kEnum:
       return "enum";
     case TypeKind::kStruct:

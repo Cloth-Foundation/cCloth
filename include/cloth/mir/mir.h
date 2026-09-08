@@ -168,6 +168,15 @@ struct MirStringMetaInstruction {
                          const MirStringMetaInstruction&) = default;
 };
 
+struct MirStringSliceInstruction {
+  MirValueId string;
+  MirValueId start;
+  MirValueId end;
+
+  friend bool operator==(const MirStringSliceInstruction&,
+                         const MirStringSliceInstruction&) = default;
+};
+
 struct MirStringScalarAtInstruction {
   MirValueId string;
   MirValueId index;
@@ -230,6 +239,15 @@ struct MirBinaryInstruction {
                          const MirBinaryInstruction&) = default;
 };
 
+struct MirNullableEqualInstruction {
+  MirValueId left;
+  MirValueId right;
+  bool is_negated;
+
+  friend bool operator==(const MirNullableEqualInstruction&,
+                         const MirNullableEqualInstruction&) = default;
+};
+
 enum class MirConversionKind {
   kWidenNumeric,
   kCheckedNumeric,
@@ -238,6 +256,7 @@ enum class MirConversionKind {
   kWidenReference,
   kToNullable,
   kFromNullable,
+  kLiftNullable,
 };
 
 struct MirConvertInstruction {
@@ -349,10 +368,11 @@ using MirInstructionData = std::variant<
     MirLoadStorageInstruction, MirStoreStorageInstruction,
     MirArrayLiteralInstruction, MirArrayLoadInstruction,
     MirArrayStoreInstruction, MirArrayLengthInstruction,
-    MirStringMetaInstruction, MirStringScalarAtInstruction,
-    MirStringNextScalarInstruction, MirObjectMetaInstruction,
-    MirIntegerWriteInstruction, MirIntegerReadInstruction, MirUnaryInstruction,
-    MirBinaryInstruction, MirConvertInstruction, MirIsNonNullInstruction,
+    MirStringMetaInstruction, MirStringSliceInstruction,
+    MirStringScalarAtInstruction, MirStringNextScalarInstruction,
+    MirObjectMetaInstruction, MirIntegerWriteInstruction,
+    MirIntegerReadInstruction, MirUnaryInstruction, MirBinaryInstruction,
+    MirNullableEqualInstruction, MirConvertInstruction, MirIsNonNullInstruction,
     MirNullAssertInstruction, MirTypeTestInstruction, MirCheckedCastInstruction,
     MirCallInstruction, MirLoadCallResultInstruction,
     MirInitializeFieldsInstruction, MirPhiInstruction>;

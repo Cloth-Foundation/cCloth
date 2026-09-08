@@ -73,19 +73,20 @@ names, wrong owners, noncontiguous tags, numeric/reference confusion, and
 invalid constants. External enum constant tags are checked against the loaded
 dependency declaration before consumer analysis.
 
-The version-6 `.cpa` reader/writer consumes and reconstructs this view. Its exact
+The version-7 `.cpa` reader/writer consumes and reconstructs this view. Its exact
 record schema, bounded canonical encoding, integrity checks, compatibility gate,
 and malformed-input policy are documented in
-[artifact schema v6](artifact_schema_v6.md). Stage 23.3 connects artifact
+[artifact schema v7](artifact_schema_v7.md). Stage 23.3 connects artifact
 dependency closure and direct-alias import visibility without reopening
 dependency source files.
 
 
 ## Aggregate boundaries
 
-Struct declarations retain their complete private field layouts, value reference
-maps, and physical callable modes. They carry no heap descriptor or separate
-constructor initializer. Local verification checks map shape, exact field order,
+Struct declarations and tagged nullable values retain their complete private
+layouts, value reference maps, and physical callable modes. They carry no heap
+descriptor or separate constructor initializer. Local verification checks map
+shape, exact field order,
 layout arithmetic, callable ownership/modes, and resource limits.
 
 `verify_imported_package_closure` compares dependency-owned type claims against

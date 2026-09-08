@@ -297,6 +297,32 @@ class Lowerer {
                    std::get_if<SafeMemberAccessExpression>(&syntax.data)) {
       data =
           HirSafeMemberExpression{expression(member->object), semantic.symbol};
+    } else if (const auto* meta =
+                   std::get_if<SafeMetaAccessExpression>(&syntax.data)) {
+      const TypeId object_type = semantics_.file(current_file_)
+                                     .expressions.at(meta->object.value)
+                                     .type;
+      if (object_type.value < semantics_.types().size()) {
+        const SemanticType& nullable = semantics_.type(object_type);
+        if (nullable.kind == TypeKind::kNullable && nullable.element_type &&
+            semantic.type != semantics_.error_type()) {
+          const SemanticType& underlying =
+              semantics_.type(*nullable.element_type);
+          SafeMetaQueryKind query = SafeMetaQueryKind::kTypeName;
+          if (underlying.kind == TypeKind::kArray) {
+            query = SafeMetaQueryKind::kArrayLength;
+          } else if (underlying.kind == TypeKind::kString &&
+                     meta->meta == "length") {
+            query = SafeMetaQueryKind::kStringLength;
+          } else if (underlying.kind == TypeKind::kString &&
+                     meta->meta == "byteLength") {
+            query = SafeMetaQueryKind::kStringByteLength;
+          } else if (underlying.kind == TypeKind::kString) {
+            query = SafeMetaQueryKind::kStringIsEmpty;
+          }
+          data = HirSafeMetaExpression{expression(meta->object), query};
+        }
+      }
     } else if (const auto* coalesce =
                    std::get_if<NullCoalesceExpression>(&syntax.data)) {
       data = HirNullCoalesceExpression{expression(coalesce->nullable),
@@ -310,7 +336,17 @@ class Lowerer {
       for (const ExpressionId argument : call->arguments) {
         arguments.push_back(expression(argument));
       }
-      if (semantic.integer_meta_operation) {
+      if (semantic.string_meta_operation) {
+        const Expression& callee =
+            files_[current_file_.value]->storage.expression(call->callee);
+        if (const auto* meta = std::get_if<MetaAccessExpression>(&callee.data);
+            meta != nullptr &&
+            *semantic.string_meta_operation == StringMetaOperation::kSlice &&
+            arguments.size() == 2) {
+          data = HirStringSliceExpression{expression(meta->object),
+                                          arguments[0], arguments[1]};
+        }
+      } else if (semantic.integer_meta_operation) {
         const Expression& callee =
             files_[current_file_.value]->storage.expression(call->callee);
         if (const auto* meta =
@@ -323,9 +359,11 @@ class Lowerer {
         const bool is_base_qualified = semantics_.file(current_file_)
                                            .expressions.at(call->callee.value)
                                            .is_base_qualified;
-        data = HirCallExpression{expression(call->callee), semantic.symbol,
-                                 std::move(arguments), is_base_qualified,
-                                 semantic.interface_dispatch};
+        data = HirCallExpression{
+            expression(call->callee),    semantic.symbol,
+            std::move(arguments),        is_base_qualified,
+            semantic.interface_dispatch, StructReceiverMode::kNone,
+            semantic.is_safe_call};
       }
     } else if (const auto* array =
                    std::get_if<ArrayLiteralExpression>(&syntax.data)) {

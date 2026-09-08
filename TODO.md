@@ -73,6 +73,10 @@ Stage 38 is complete following its separately authorized 38.4 exit audit on
 2026-09-06.
 Stage 39 is complete following its separately authorized 39.4 exit audit on
 2026-09-06.
+Stage 40 is complete following its separately authorized 40.4 exit audit on
+2026-09-07.
+Stage 41 is complete following its separately authorized 41.4 exit audit on
+2026-09-07.
 
 ## Scheduled work
 
@@ -1038,6 +1042,111 @@ class override validation. Existing ABI and artifact versions are unchanged.
   editor runs, documentation links, and repository checks pass. Compatibility
   remains 6/5/7 and 2/1/1/1 with `cloth` v0.3.0.
 
+### Stage 40: Unicode string slicing
+
+- [x] **40.1 — Contract.** Freeze `text::slice(start, end)`, half-open Unicode
+  scalar bounds, immutable results, evaluation and terminal failure behavior,
+  complexity, allocation and GC ownership, runtime-ABI transition, package and
+  Shuttle behavior, diagnostics, verification, and non-goals.
+
+  Approved and completed 2026-09-06. `slice` is a value intrinsic with exactly
+  two `int32`-compatible bounds and no new keyword, range, view, array behavior,
+  or standard-library declaration. Checkpoint 40.3 will advance runtime ABI 7
+  to 8. This documentation-only checkpoint leaves compatibility at 6/5/7 and
+  2/1/1/1 with `cloth` v0.3.0. See the
+  [contract](docs/proposals/stage_40_unicode_string_slicing.md).
+- [x] **40.2 — Semantic and verified IR.** Implement exact binding and typing,
+  dedicated HIR/MIR, control-flow effects, verifier invariants, deterministic
+  diagnostics, and focused tests without releasing a partial feature.
+
+  Completed 2026-09-06. Value-level `slice` binding enforces exact arity and
+  `int32`-compatible bounds, retains bottom propagation, and produces dedicated
+  typed HIR/MIR with explicit numeric coercions. HIR/MIR corruption checks,
+  left-to-right once-evaluation coverage, optimizer remapping, and a deliberate
+  Stage 40.3 LLVM gate keep the checkpoint internal. Compatibility remains
+  6/5/7 and 2/1/1/1 with `cloth` v0.3.0.
+- [x] **40.3 — Runtime and toolchain integration.** Implement runtime ABI 8,
+  allocation and precise rooting, LLVM and native lowering, both targets,
+  packages, source-free consumers, Shuttle coordination, editor support, and
+  user documentation.
+
+  Completed 2026-09-07. Runtime ABI 8 validates canonical UTF-8, scalar
+  metadata, and half-open bounds in one monotonic pass before allocating an
+  immutable managed result. LLVM retains the receiver across the safepoint and
+  emits the runtime call for x86-64 and wasm32. Direct, whole-project,
+  separate-package, source-free, and Shuttle execution agree; editor and user
+  documentation cover the callable intrinsic. Compatibility is 6/5/8 and
+  2/1/1/1 with `cloth` v0.3.0.
+- [x] **40.4 — Exit audit.** Complete Unicode, bounds, evaluation, allocation,
+  complexity, GC, malformed-state, compatibility, determinism,
+  failure-preservation, native/cross-target, Rust, editor, documentation,
+  formatting, link, sanitizer, and repository quality matrices.
+
+  Completed 2026-09-07. The audit adds exact failure-path operand ordering,
+  full-input malformed UTF-8 validation after an already-found boundary,
+  non-string receiver rejection, and dedicated forged HIR/MIR operand,
+  category, reference, and result checks. All 309 development and sanitizer
+  CTests, 51 ordinary Rust tests, Rust 1.85 MSRV, Clippy, formatting, both
+  19-test editor runs, documentation links, and repository checks pass.
+  Compatibility remains 6/5/8 and 2/1/1/1 with `cloth` v0.3.0.
+
+### Stage 41: Uniform nullability
+
+- [x] **41.1 — Contract.** Freeze supported nullable value types, conversions,
+  inference, presence, equality, coalescing, assertion, safe fields/calls/meta
+  queries, tagged layout, GC, compatibility, diagnostics, verification, and
+  non-goals.
+
+  Approved and completed 2026-09-07. Primitive, enum, and struct values gain
+  inline tagged `T?` forms without sentinels or boxing. Existing nullable
+  references retain pointer layout. Safe declared calls use `?.`; non-callable
+  safe meta queries use `?::`. Checkpoint 41.3 will advance
+  artifact/compiler/runtime compatibility from 6/5/8 to 7/6/9 while schemas
+  remain 2/1/1/1 and `cloth` remains v0.3.0. See the
+  [contract](docs/proposals/stage_41_uniform_nullability.md).
+- [x] **41.2 — Frontend and verified IR.** Implement parsing, type resolution,
+  lifted conversions, inference, narrowing, equality, safe operations,
+  dedicated HIR/MIR behavior, deterministic diagnostics, and malformed-state
+  rejection while retaining the native/artifact gate.
+
+  Completed 2026-09-07. All supported primitive values, enums, structs, and
+  array elements accept `T?`; flow narrowing, lifted conversions, inference,
+  equality, coalescing, assertion, safe fields, safe instance calls, and safe
+  meta queries are represented and verified through optimized MIR. Both
+  x86-64 and wasm32 `--check` paths accept the feature, while LLVM, native, and
+  artifact emission retain the Stage 41 gate. Development and sanitizer
+  configurations each pass all 312 CTests. Compatibility remains 6/5/8 and
+  2/1/1/1 with `cloth` v0.3.0.
+- [x] **41.3 — Lowering and integration.** Implement tagged storage and ABI,
+  runtime ABI 9, precise nullable-struct maps, native LLVM, artifact format 7,
+  compiler ABI 6, both targets, packages, source-free consumers, Shuttle,
+  editor support, and user documentation.
+
+  Completed 2026-09-07. Nullable references retain direct pointer ABI while
+  primitive, enum, and struct nullable values use target-derived tagged
+  aggregate storage, aggregate calling modes, and shifted precise GC maps.
+  LLVM verifies on x86-64 and wasm32; native, assertion-failure, array, GC,
+  package, source-free, reuse, and invalidation paths pass. Compatibility is
+  7/6/9 with `_C6` names, schemas remain 2/1/1/1, and `cloth` remains v0.3.0.
+  Development and sanitizer configurations each pass all 329 CTests; the 51
+  ordinary Rust tests, 37 compiler-backed Shuttle tests, 35 native Shuttle
+  tests, and 22 editor tests pass.
+- [x] **41.4 — Exit audit.** Complete type, conversion, inference, presence,
+  equality, safe operation, evaluation, layout, GC, malformed-state,
+  compatibility, determinism, failure-preservation, native/cross-target, Rust,
+  editor, documentation, formatting, link, sanitizer, and repository quality
+  matrices.
+
+  Completed 2026-09-07. The audit adds a deliberate repeated-nullability
+  diagnostic, all-value equality and flow coverage, safe dispatch across every
+  receiver family, malformed HIR/MIR/ABI/artifact cases, shifted nullable
+  aggregate GC and stale-root checks, and exact end-to-end evaluation/GC
+  execution. Development and sanitizer configurations each pass all 335
+  CTests, including 37 compiler-backed and 35 native Shuttle cases. All 51
+  ordinary Rust tests, Rust 1.85, Clippy, formatting, both editor modes, 357
+  local Markdown targets across 116 files, and repository whitespace gates
+  pass. Compatibility remains 7/6/9 and 2/1/1/1 with `cloth` v0.3.0.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1089,10 +1198,9 @@ active stage without first updating `ROADMAP.md`.
 
 ### Nullability
 
-- Add nullable value types. This is required before safe access or safe meta
-  queries can produce nullable primitive values.
-- Add safe function calls on nullable receivers. Until then, callers narrow or
-  assert the receiver first.
+- Safe indexing, safe slicing, and safe callable meta operations remain
+  deferred beyond Stage 41. They require independent syntax, evaluation,
+  failure, and API contracts.
 
 ### Arrays, iteration, and collections
 
@@ -1110,8 +1218,6 @@ active stage without first updating `ROADMAP.md`.
 
 ### Strings, formatting, and representation
 
-- Add string slicing after Stage 39 establishes Unicode scalar indexing and
-  iteration.
 - Add interpolation and type-checked formatting.
 - Add case conversion, Unicode normalization, searching, and interning.
 - Decide how a source-defined standard-library string API layers over the

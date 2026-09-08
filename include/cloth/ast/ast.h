@@ -137,6 +137,11 @@ struct SafeMemberAccessExpression {
   std::string_view member;
 };
 
+struct SafeMetaAccessExpression {
+  ExpressionId object;
+  std::string_view meta;
+};
+
 struct NullCoalesceExpression {
   ExpressionId nullable;
   ExpressionId fallback;
@@ -169,9 +174,9 @@ using ExpressionData = std::variant<
     ThrowExpression, UnaryExpression, UpdateExpression, BinaryExpression,
     TypeTestExpression, CheckedCastExpression, NumericConversionExpression,
     IntegerConversionExpression, AssignmentExpression, MemberAccessExpression,
-    MetaAccessExpression, SafeMemberAccessExpression, NullCoalesceExpression,
-    NullAssertExpression, CallExpression, ArrayLiteralExpression,
-    IndexExpression, ParenthesizedExpression>;
+    MetaAccessExpression, SafeMemberAccessExpression, SafeMetaAccessExpression,
+    NullCoalesceExpression, NullAssertExpression, CallExpression,
+    ArrayLiteralExpression, IndexExpression, ParenthesizedExpression>;
 
 struct Expression {
   SourceRange range;

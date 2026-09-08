@@ -29,7 +29,7 @@ error. Cloth preserves decoded code points exactly: it does not normalize
 Unicode, so canonically equivalent but differently encoded scalar sequences
 remain different values.
 
-## Meta queries
+## Meta operations
 
 Strings expose three language-defined, read-only meta queries:
 
@@ -39,14 +39,16 @@ Strings expose three language-defined, read-only meta queries:
 - `value::typeName: string` is the universal object query and returns `string`.
 
 Embedded U+0000 is ordinary string content. It contributes one to both lengths
-and does not terminate printing or comparison. A meta query requires a non-null
-`string`. Safe meta queries await nullable value types because a nullable
-`::length` result would be `int32?`; narrow or assert the string first.
+and does not terminate printing or comparison. A direct meta query requires a
+non-null `string`. Stage 41 adds safe queries such as `value?::length`; absence
+produces a nullable query result without evaluating the operation.
 
 `::` is distinct from declared member access. Meta names are supplied by the
 language, use lower camel case, have no visibility, and cannot be shadowed,
-overloaded, called, or assigned. A future declared operation such as
-`value.Contains("x")` continues to use `.` and ordinary member rules.
+overloaded, or assigned. Queries are values and cannot be called. Stage 40 adds
+the callable `value::slice(start, end)` operation, which returns the half-open
+Unicode-scalar interval as a new immutable string. A future declared operation
+such as `value.Contains("x")` continues to use `.` and ordinary member rules.
 
 ## Representation and collection
 
@@ -55,15 +57,21 @@ objects share the managed two-word header and are leaf objects for tracing.
 They cache both byte length and scalar count.
 
 Literal objects borrow immutable bytes from compiler-emitted program-lifetime
-storage. Concatenated objects own a separately allocated byte buffer. The
-collector accounts for owned payload bytes and releases that buffer when the
-string becomes unreachable. Literal construction and concatenation are managed
-allocation safepoints, so generated code keeps all operands rooted until either
-call returns.
+storage. Concatenated and sliced objects own separately allocated byte buffers.
+The collector accounts for owned payload bytes and releases them when the
+string becomes unreachable. Literal construction, concatenation, and slicing
+are managed allocation safepoints, so generated code keeps every reference
+operand rooted until the call returns.
 
 ## Deliberate boundaries
 
-Stage 14 does not add indexing, slicing, iteration, interpolation, formatting,
-case conversion, normalization, searching, interning, or a source-defined
-standard-library class. Those operations can be layered on the immutable UTF-8
-contract without exposing the runtime representation.
+The primitive representation did not itself imply traversal or slicing.
+[Stage 39](proposals/stage_39_unicode_string_traversal.md) separately added
+Unicode-scalar indexing and iteration. [Stage 40](proposals/stage_40_unicode_string_slicing.md)
+adds `value::slice(start, end)` with checked half-open scalar bounds through
+runtime ABI 8.
+
+Interpolation, formatting, case conversion, normalization, searching,
+interning, and a source-defined standard-library class remain outside this
+contract. They can be layered on immutable UTF-8 strings without exposing the
+runtime representation.

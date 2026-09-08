@@ -1,0 +1,7 @@
+struct {
+  Inner? Value;
+
+  Outer(Inner? value) { Value = value; }
+
+  func Text(): string? { return Value?.Text; }
+}

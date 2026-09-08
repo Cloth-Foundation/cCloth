@@ -1,55 +1,54 @@
-# Cloth Stage 12.3.5 nullability contract
+# Cloth Stage 41 nullability contract
 
-Cloth reference types are non-null by default. A trailing `?` admits the
-`null` value and creates a distinct semantic type:
+Cloth types are non-null by default. One trailing `?` admits `null` and creates
+a distinct semantic type:
 
 ```cloth
-User current;
 User? selected = null;
+int32? count = 3;
+Status? status = Status.Ready;
+Point? point = Point(1, 2);
 ```
 
-`?` applies to the type immediately to its left. Array and element nullability
-are therefore independent:
+Primitive, enum, struct, class, interface, string, object, and array values may
+be nullable. `void`, `null`, and an already nullable type may not be followed
+by `?`. Overloads cannot differ only by nullability.
+
+Array and element nullability are independent. `User?[]`, `User[]?`, and
+`User?[]?` therefore mean different things. Nullable value elements such as
+`int32?[]` and `Point?[]` are supported.
+
+## Compatibility and inference
+
+- `T` is assignable to `T` and compatible `T?`.
+- `null` is assignable only to a nullable type.
+- `T?` is not assignable to non-null `T` without a proof, fallback, or
+  assertion.
+- Numeric and reference widening lift through nullability; narrowing still
+  requires an explicit cast.
+
+The lifted conversion preserves absence and converts only a present payload:
 
 ```cloth
-User[] values;       // non-null array of non-null User values
-User?[] values;      // non-null array whose elements may be null
-User[]? values;      // nullable array of non-null User values
-User?[]? values;     // nullable array whose elements may be null
+int16? small = 12;
+int32? wide = small;
+var inferred = true ? 12 : null;  // int32?
 ```
 
-Only references can be nullable. `string`, file classes, and arrays are
-reference types; primitives and `void` are not. Forms such as `int32?` and
-`void?` are diagnosed.
+Array literals containing compatible non-null values and `null` infer a
+nullable element type. Empty and null-only literals still require contextual
+typing.
 
-String meta queries return value types. Safe meta syntax therefore awaits
-nullable value types. Narrow a `string?` through a presence/null check or use
-`value!::length`, `value!::byteLength`, or `value!::isEmpty`.
+Mutable nullable locals and mutable nullable fields default to `null` when no
+initializer is present. Final locals require an initializer. Constructors must
+initialize every struct field, including nullable fields.
 
-## Compatibility
+## Presence and narrowing
 
-Assignment compatibility is directional:
-
-- `T` is assignable to `T` and `T?`.
-- `null` is assignable only to `T?`.
-- `T?` is not assignable to `T`.
-- Different underlying types remain incompatible.
-
-The same rules apply to initializers, assignments, arguments, returns, array
-elements, and explicit `for` bindings. Overloads cannot differ only by
-nullability because nullable qualifiers are erased by the callable ABI.
-
-Array literals containing both non-null references and `null` infer a nullable
-element type. `[user, null]` therefore has type `User?[]`. Empty and null-only
-literals still require contextual literal typing and remain invalid.
-
-## Use and narrowing
-
-A nullable local or parameter can be narrowed after a direct comparison with
-`null`. `value != null` proves `value` non-null on the true path;
-`value == null` proves it on the false path. Reversed operands, parentheses,
-logical negation, and short-circuit `&&` and `||` compose the same facts. This
-supports both nested branches and guard clauses:
+Any nullable value can be used as an `if` or `while` condition. The condition
+tests presence, not its payload. Both `true` and `false` are therefore present
+`bool?` values. Prefix `!`, `&&`, and `||` use the same presence rule. A
+non-null value condition is rejected unless its ordinary type is `bool`.
 
 ```cloth
 func Name(User? value): string {
@@ -58,89 +57,84 @@ func Name(User? value): string {
 }
 ```
 
-The declaration remains `T?`; only reads on a proven path have type `T`.
-Assigning the binding invalidates the proof. Fields are deliberately not
-narrowed because an alias or instance call may mutate them without a local
-assignment. Copy a field to a local when a stable refinement is needed.
+Direct and reversed null comparisons, parentheses, logical negation, and
+short-circuit expressions compose flow proofs. A declaration remains nullable;
+reads on a proven path use `T`. Assigning a local or parameter invalidates its
+proof. Fields may be tested for presence but are not narrowed because aliases
+and calls can mutate them. Copy a field to a local for stable refinement.
 
-## Presence and null operators
+## Safe fields, calls, and meta queries
 
-A nullable reference is a valid `if` or `while` condition. It is true when the
-reference is non-null. Prefix `!` tests for null, and nullable operands in
-`&&` and `||` use the same presence rule. A non-null reference condition is
-rejected as always true rather than silently accepted:
-
-```cloth
-if (user) { println(user.Name); }
-if (!user) { println("missing"); }
-if (user && enabled) { println(user.Name); }
-```
-
-Presence tests narrow stable locals and parameters on the appropriate path.
-Fields may be tested for presence but are not narrowed.
-
-Safe access evaluates a nullable receiver once. It loads the reference-valued
-field only when the receiver is non-null and otherwise produces `null`:
+`receiver?.Field` evaluates the receiver once. It returns `null` on absence and
+reads the field on presence. A non-null `T` result becomes `T?`; an existing
+`T?` result stays nullable.
 
 ```cloth
 string? name = user?.Name;
+int32? age = user?.Age;
+Point? position = user?.Position;
 ```
 
-If the field has type `T`, the result is `T?`; if it already has type `T?`, the
-result remains `T?`. Safe access to primitive fields awaits nullable value
-types. Safe function calls are also deferred; narrow the receiver first.
-
-The null-coalescing operator evaluates its left operand once and evaluates the
-fallback only when that value is null:
+The same operator safely invokes declared instance functions:
 
 ```cloth
-string display = user?.Name ?? "Unknown";
+int32? age = user?.GetAge();
+Point? moved = point?.Moved(1, 2);
+logger?.Flush();
 ```
 
-`left ?? fallback` requires a `T?` left operand. It produces `T` for a `T`
-fallback, or `T?` for a compatible nullable fallback. The operator is
-right-associative.
+Arguments are not evaluated when the receiver is absent, and a skipped
+throwing call cannot throw. A safe `void` call produces `void`. Static
+functions, constructors, and unresolved members cannot be called safely.
 
-Postfix `value!` asserts that a `T?` value is present, returning `T`. It
-evaluates the operand once and traps with `non-null assertion failed` when the
-value is null. A successful assertion of a stable local or parameter also
-establishes the same flow fact for subsequent reads.
+Use `receiver?::query` for safe non-callable meta queries such as `length`,
+`byteLength`, `isEmpty`, and `typeName`. It yields a nullable query result.
+Callable meta operations such as `parse`, `slice`, `wrap`, and `sat` do not
+support `?::`. Safe indexing and slicing are also unsupported; narrow or assert
+the receiver first.
 
-Without a proof, a nullable value cannot be used for ordinary member access,
-indexing, or iteration. HIR records narrowed reads with the underlying
-`TypeId`. MIR uses
-explicit conversions for both `T` or `null` to `T?` and proof-backed `T?` to
-`T`. Presence tests, safe access, coalescing, and assertions retain explicit
-MIR operations or control flow. ABI lowering erases nullable conversions: `T`
-and `T?` use the same opaque reference layout and type encoding. This keeps
-nullability a static contract without changing pointers or mangled symbols.
+## Coalescing, assertion, and equality
 
-Stage 15 permits file-class, string, and array nullable references to widen to
-`object?`. Safe `value as T?` uses the same nullable representation, returning
-the original reference on a compatible runtime type match and `null` otherwise.
-Stage 16.4 makes derived-to-base nullable widening implicit and makes
-file-class casts follow descriptor ancestry.
+`left ?? fallback` evaluates its left operand once and evaluates the fallback
+only on absence. A compatible non-null fallback produces `T`; a nullable
+fallback produces `T?`. The operator associates to the right.
+
+Postfix `value!` asserts presence and returns the `T` payload. It terminates
+with `non-null assertion failed` on absence. A successful assertion also
+narrows subsequent reads of a stable local or parameter.
+
+Two nullable values with the same underlying type support `==` and `!=`. Two
+absent values are equal, one absent and one present value are unequal, and two
+present values use the underlying type's equality rule.
+
+## Representation and verification
+
+Nullable references retain their target-width pointer representation. Nullable
+primitive, enum, and struct values use an inline `{tag, aligned payload}`
+aggregate and are never boxed solely for nullability. Tag `0` is absent with a
+zeroed payload; tag `1` is present; all other tags are invalid. Struct payload
+reference offsets are shifted by the target-derived payload offset so the GC
+traces only canonical live slots.
+
+Nullable aggregate parameters use value-pointer passing and nullable aggregate
+returns use indirect result storage. LLVM compares or converts a payload only
+after validating and branching on the tag. Runtime ABI 9 validates nullable
+value assertions. Artifact format 7 and compiler ABI 6 preserve the distinct
+tagged layout and `_C6` native identities across packages and source-free
+linking.
+
+The representation is compiler-owned and is not a persistence or FFI format.
 
 ## Construction guarantee
 
 Every non-static field of non-null reference type must be initialized by its
-declaration or definitely assigned on every exit path of every constructor. If
-no constructor exists, each such field requires a declaration initializer.
-Nullable reference fields default to `null`; primitive fields retain their
+declaration or definitely assigned on every constructor exit. If no
+constructor exists, each such field requires a declaration initializer.
+Mutable nullable class fields default to `null`; primitive fields retain
 zero-value initialization.
 
-Constructor initialization uses a direct assignment statement to the current
-instance, such as `Name = name;` or `self.Name = name;`. Branches establish
-initialization only when every reachable path assigns the field. An assignment
-inside a loop does not establish initialization after the loop, and an early
-`return;` is checked as a constructor exit.
-
-A field cannot be read before it is initialized. Until all non-null reference
-fields are initialized, `self` cannot be used as a value and an instance
-function cannot be called on the object. Direct field initialization remains
-valid during that interval. These restrictions prevent a partially initialized
-object from escaping or being observed through an instance function.
-
-The definite-initialization analysis is shared with final fields, but the
-contracts remain distinct: a mutable non-null field may be assigned again after
-initialization, while a final field must be initialized exactly once.
+A field cannot be read before initialization. Until every required field is
+initialized, `self` cannot escape and instance functions cannot be called.
+The definite-initialization analysis is shared with final fields, but a mutable
+non-null field may be reassigned after initialization while a final field must
+be initialized exactly once.

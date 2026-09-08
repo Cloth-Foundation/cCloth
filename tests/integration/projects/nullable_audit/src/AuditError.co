@@ -1,0 +1,7 @@
+error {
+  int32 Code;
+
+  AuditError(int32 code): Error("audit") { Code = code; }
+
+  func CodeValue(): int32? { return Code; }
+}

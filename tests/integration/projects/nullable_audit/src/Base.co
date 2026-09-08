@@ -1,0 +1,11 @@
+class {
+  int32 Value;
+
+  Base(int32 value) { Value = value; }
+
+  func Read(int32 left, int32 right): int32? {
+    return Value + left + right;
+  }
+
+  func Flush() { println("base-flush"); }
+}

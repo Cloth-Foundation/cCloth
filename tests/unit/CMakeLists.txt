@@ -14,6 +14,7 @@ cloth_add_unit_test(cloth_imported_package_tests imported_package_tests.cc)
 cloth_add_unit_test(cloth_package_artifact_tests package_artifact_tests.cc)
 cloth_add_unit_test(cloth_lexer_tests lexer_tests.cc)
 cloth_add_unit_test(cloth_numeric_literal_tests numeric_literal_tests.cc)
+cloth_add_unit_test(cloth_nullable_value_tests nullable_value_tests.cc)
 cloth_add_unit_test(cloth_parser_tests parser_tests.cc)
 cloth_add_unit_test(cloth_project_tests project_tests.cc)
 target_compile_definitions(cloth_project_tests PRIVATE
@@ -55,6 +56,18 @@ foreach(scenario IN ITEMS integer_overflow integer_division_by_zero
             "-DCLOTH_EXPECTED_ERROR=integer"
             -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 endforeach()
+add_test(NAME cloth_runtime_nullable_value_absent
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=nullable_value_absent"
+        "-DCLOTH_EXPECTED_ERROR=non-null assertion failed"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+add_test(NAME cloth_runtime_nullable_value_invalid
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=nullable_value_invalid"
+        "-DCLOTH_EXPECTED_ERROR=nullable value has an invalid presence tag"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 foreach(scenario IN ITEMS program_argument_count program_argument_vector
                           program_argument_value program_argument_unicode)
     add_test(NAME cloth_runtime_${scenario}
@@ -95,6 +108,32 @@ add_test(NAME cloth_runtime_string_iteration_output
         "-DCLOTH_PROGRAM_ARGUMENTS=string_iteration_output"
         "-DCLOTH_EXPECTED_ERROR=string iteration output pointer is null"
         -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+foreach(scenario IN ITEMS string_slice_negative_start string_slice_negative_end
+                          string_slice_reversed string_slice_after_length
+                          string_slice_large)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=string slice is out of bounds"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
+add_test(NAME cloth_runtime_string_slice_null
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=string_slice_null"
+        "-DCLOTH_EXPECTED_ERROR=null string"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+foreach(scenario IN ITEMS string_slice_layout_size string_slice_layout_data
+                          string_slice_layout_encoding string_slice_layout_suffix
+                          string_slice_layout_scalars)
+    add_test(NAME cloth_runtime_${scenario}
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+            "-DCLOTH_PROGRAM_ARGUMENTS=${scenario}"
+            "-DCLOTH_EXPECTED_ERROR=string has an invalid layout"
+            -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+endforeach()
 foreach(scenario IN ITEMS string_layout_encoding string_layout_scalars)
     add_test(NAME cloth_runtime_${scenario}
         COMMAND ${CMAKE_COMMAND}

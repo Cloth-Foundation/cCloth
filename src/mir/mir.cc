@@ -220,11 +220,19 @@ class BodyBuilder {
             MirConvertInstruction{value, MirConversionKind::kToNullable});
       }
       const SemanticType& source = semantics_.type(actual);
-      if (source.kind == TypeKind::kNullable && source.element_type &&
-          can_widen_reference(*source.element_type, *target.element_type)) {
-        return emit_value(
-            expected, range,
-            MirConvertInstruction{value, MirConversionKind::kWidenReference});
+      if (source.kind == TypeKind::kNullable && source.element_type) {
+        if (can_widen_reference(*source.element_type, *target.element_type)) {
+          return emit_value(
+              expected, range,
+              MirConvertInstruction{value, MirConversionKind::kWidenReference});
+        }
+        if (can_widen_numeric(semantics_.type(*source.element_type).kind,
+                              semantics_.type(*target.element_type).kind)) {
+          return emit_value(
+              expected, range,
+              MirConvertInstruction{value, MirConversionKind::kLiftNullable});
+        }
+        return invalid_value(range);
       }
       MirValueId converted = value;
       if (actual != *target.element_type) {
@@ -245,6 +253,15 @@ class BodyBuilder {
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
            kind == TypeKind::kErrorClass || kind == TypeKind::kFileClass ||
            kind == TypeKind::kInterface || kind == TypeKind::kArray;
+  }
+
+  bool is_nullable_value(TypeId type) const {
+    if (type.value >= semantics_.types().size()) {
+      return false;
+    }
+    const SemanticType& nullable = semantics_.type(type);
+    return nullable.kind == TypeKind::kNullable && nullable.element_type &&
+           !is_non_null_reference(*nullable.element_type);
   }
 
   bool can_widen_reference(TypeId source, TypeId target) const {
@@ -421,6 +438,15 @@ class BodyBuilder {
             coerce(value, semantics_.symbol(*local.symbol).type, syntax.range);
       }
       initializer = value;
+    }
+    if (!initializer && local.symbol &&
+        semantics_.type(semantics_.symbol(*local.symbol).type).kind ==
+            TypeKind::kNullable) {
+      const MirValueId null_value =
+          emit_value(semantics_.null_type(), range,
+                     MirLiteralInstruction{LiteralKind::kNull, "null"});
+      initializer =
+          coerce(null_value, semantics_.symbol(*local.symbol).type, range);
     }
     if (local.symbol) {
       emit_void(range, MirDeclareLocalInstruction{*local.symbol, initializer});
@@ -766,6 +792,32 @@ class BodyBuilder {
       MirValueId right = require_value(
           lower_expression(binary->right),
           hir_.storage.expression(binary->right).type, expression.range);
+      if ((binary->operation == TokenKind::kEqualEqual ||
+           binary->operation == TokenKind::kBangEqual) &&
+          (is_nullable_value(value_type(left)) ||
+           is_nullable_value(value_type(right)))) {
+        TypeId comparison_type = value_type(left);
+        if (semantics_.type(comparison_type).kind != TypeKind::kNullable) {
+          comparison_type = value_type(right);
+        } else if (semantics_.type(value_type(right)).kind ==
+                   TypeKind::kNullable) {
+          const SemanticType& left_nullable = semantics_.type(comparison_type);
+          const SemanticType& right_nullable =
+              semantics_.type(value_type(right));
+          if (left_nullable.element_type && right_nullable.element_type &&
+              can_widen_numeric(
+                  semantics_.type(*left_nullable.element_type).kind,
+                  semantics_.type(*right_nullable.element_type).kind)) {
+            comparison_type = value_type(right);
+          }
+        }
+        left = coerce(left, comparison_type, expression.range);
+        right = coerce(right, comparison_type, expression.range);
+        return emit_value(
+            semantics_.bool_type(), expression.range,
+            MirNullableEqualInstruction{
+                left, right, binary->operation == TokenKind::kBangEqual});
+      }
       if (binary->operation != TokenKind::kShiftLeft &&
           binary->operation != TokenKind::kShiftRight) {
         if (const std::optional<TypeId> common =
@@ -837,6 +889,10 @@ class BodyBuilder {
             std::get_if<HirSafeMemberExpression>(&expression.data)) {
       return lower_safe_member(*member, expression);
     }
+    if (const auto* meta =
+            std::get_if<HirSafeMetaExpression>(&expression.data)) {
+      return lower_safe_meta(*meta, expression);
+    }
     if (const auto* coalesce =
             std::get_if<HirNullCoalesceExpression>(&expression.data)) {
       return lower_null_coalesce(*coalesce, expression);
@@ -885,6 +941,27 @@ class BodyBuilder {
           expression.type, expression.range,
           MirIntegerReadInstruction{lowered_object, lowered_offset,
                                     call->operation.byte_order});
+    }
+    if (const auto* slice =
+            std::get_if<HirStringSliceExpression>(&expression.data)) {
+      const HirExpression& string = hir_.storage.expression(slice->string);
+      const HirExpression& start = hir_.storage.expression(slice->start);
+      const HirExpression& end = hir_.storage.expression(slice->end);
+      const MirValueId lowered_string = require_value(
+          lower_expression(slice->string), string.type, string.range);
+      const TypeId int32_type = *semantics_.find_type("int32");
+      MirValueId lowered_start = require_value(lower_expression(slice->start),
+                                               start.type, start.range);
+      lowered_start = coerce(lowered_start, int32_type, start.range);
+      MirValueId lowered_end =
+          require_value(lower_expression(slice->end), end.type, end.range);
+      lowered_end = coerce(lowered_end, int32_type, end.range);
+      if (expression.type == semantics_.bottom_type()) {
+        return poison_value(semantics_.bottom_type(), expression.range);
+      }
+      return emit_value(expression.type, expression.range,
+                        MirStringSliceInstruction{lowered_string, lowered_start,
+                                                  lowered_end});
     }
     if (const auto* call = std::get_if<HirCallExpression>(&expression.data)) {
       return lower_call(*call, expression);
@@ -1018,6 +1095,76 @@ class BodyBuilder {
     current_block_ = merge_block;
     std::vector<MirPhiIncoming> incoming;
     incoming.push_back(MirPhiIncoming{member_end, loaded});
+    incoming.push_back(MirPhiIncoming{null_end, null_value});
+    return emit_value(expression.type, expression.range,
+                      MirPhiInstruction{std::move(incoming)});
+  }
+
+  std::optional<MirValueId> lower_safe_meta(const HirSafeMetaExpression& meta,
+                                            const HirExpression& expression) {
+    const HirExpression& object_syntax = hir_.storage.expression(meta.object);
+    const MirValueId object = require_value(
+        lower_expression(meta.object), object_syntax.type, object_syntax.range);
+    const SemanticType& nullable_type = semantics_.type(object_syntax.type);
+    if (nullable_type.kind != TypeKind::kNullable ||
+        !nullable_type.element_type) {
+      return invalid_value(expression.range);
+    }
+
+    const MirValueId has_object =
+        emit_value(semantics_.bool_type(), object_syntax.range,
+                   MirIsNonNullInstruction{object});
+    const bool branch_reachable = current_is_reachable();
+    const MirBlockId query_block = add_block(branch_reachable);
+    const MirBlockId null_block = add_block(branch_reachable);
+    const MirBlockId merge_block = add_block(branch_reachable);
+    terminate(MirBranchTerminator{has_object, query_block, null_block},
+              expression.range);
+
+    current_block_ = query_block;
+    const MirValueId narrowed = emit_value(
+        *nullable_type.element_type, object_syntax.range,
+        MirConvertInstruction{object, MirConversionKind::kFromNullable});
+    TypeId query_type = semantics_.string_type();
+    MirInstructionData query = MirObjectMetaInstruction{narrowed};
+    switch (meta.query) {
+      case SafeMetaQueryKind::kArrayLength:
+        query_type = *semantics_.find_type("int32");
+        query = MirArrayLengthInstruction{narrowed};
+        break;
+      case SafeMetaQueryKind::kStringLength:
+        query_type = *semantics_.find_type("int32");
+        query = MirStringMetaInstruction{narrowed, StringMetaQuery::kLength};
+        break;
+      case SafeMetaQueryKind::kStringByteLength:
+        query_type = *semantics_.find_type("int32");
+        query =
+            MirStringMetaInstruction{narrowed, StringMetaQuery::kByteLength};
+        break;
+      case SafeMetaQueryKind::kStringIsEmpty:
+        query_type = semantics_.bool_type();
+        query = MirStringMetaInstruction{narrowed, StringMetaQuery::kIsEmpty};
+        break;
+      case SafeMetaQueryKind::kTypeName:
+        break;
+    }
+    MirValueId result =
+        emit_value(query_type, expression.range, std::move(query));
+    result = coerce(result, expression.type, expression.range);
+    const MirBlockId query_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = null_block;
+    MirValueId null_value =
+        emit_value(semantics_.null_type(), expression.range,
+                   MirLiteralInstruction{LiteralKind::kNull, "null"});
+    null_value = coerce(null_value, expression.type, expression.range);
+    const MirBlockId null_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = merge_block;
+    std::vector<MirPhiIncoming> incoming;
+    incoming.push_back(MirPhiIncoming{query_end, result});
     incoming.push_back(MirPhiIncoming{null_end, null_value});
     return emit_value(expression.type, expression.range,
                       MirPhiInstruction{std::move(incoming)});
@@ -1411,8 +1558,120 @@ class BodyBuilder {
                            false,        false};
   }
 
+  std::optional<MirValueId> lower_safe_call(const HirCallExpression& call,
+                                            const HirExpression& expression) {
+    if (!call.callable) {
+      return invalid_value(expression.range);
+    }
+    HirExpressionId callee_id = call.callee;
+    const HirSafeMemberExpression* member = nullptr;
+    for (std::size_t depth = 0; depth < hir_.storage.expressions().size();
+         ++depth) {
+      const HirExpression& callee = hir_.storage.expression(callee_id);
+      if (const auto* grouped =
+              std::get_if<HirGroupedExpression>(&callee.data)) {
+        callee_id = grouped->expression;
+        continue;
+      }
+      member = std::get_if<HirSafeMemberExpression>(&callee.data);
+      break;
+    }
+    if (member == nullptr) {
+      return invalid_value(expression.range);
+    }
+
+    const HirExpression& object_syntax =
+        hir_.storage.expression(member->object);
+    const SemanticType& nullable_type = semantics_.type(object_syntax.type);
+    if (nullable_type.kind != TypeKind::kNullable ||
+        !nullable_type.element_type) {
+      return invalid_value(expression.range);
+    }
+    const MirValueId object =
+        require_value(lower_expression(member->object), object_syntax.type,
+                      object_syntax.range);
+    const MirValueId has_object =
+        emit_value(semantics_.bool_type(), object_syntax.range,
+                   MirIsNonNullInstruction{object});
+    const bool branch_reachable = current_is_reachable();
+    const MirBlockId call_block = add_block(branch_reachable);
+    const MirBlockId null_block = add_block(branch_reachable);
+    const MirBlockId merge_block = add_block(branch_reachable);
+    terminate(MirBranchTerminator{has_object, call_block, null_block},
+              expression.range);
+
+    current_block_ = call_block;
+    const MirValueId receiver = emit_value(
+        *nullable_type.element_type, object_syntax.range,
+        MirConvertInstruction{object, MirConversionKind::kFromNullable});
+    const SemanticSymbol& callable = semantics_.symbol(*call.callable);
+    std::vector<MirValueId> arguments;
+    arguments.reserve(call.arguments.size());
+    for (std::size_t index = 0; index < call.arguments.size(); ++index) {
+      const HirExpressionId argument_id = call.arguments[index];
+      const HirExpression& argument = hir_.storage.expression(argument_id);
+      MirValueId value = require_value(lower_expression(argument_id),
+                                       argument.type, argument.range);
+      if (index < callable.parameter_types.size()) {
+        value = coerce(value, callable.parameter_types[index], argument.range);
+      }
+      arguments.push_back(value);
+    }
+
+    std::optional<std::size_t> interface_slot;
+    if (call.interface_dispatch) {
+      const std::vector<SymbolId>& functions =
+          semantics_.file(*call.interface_dispatch).interface_functions;
+      const auto slot = std::ranges::find(functions, *call.callable);
+      if (slot != functions.end()) {
+        interface_slot = static_cast<std::size_t>(slot - functions.begin());
+      }
+    }
+    const MirDispatchKind dispatch =
+        call.interface_dispatch ? MirDispatchKind::kInterface
+        : callable.virtual_slot ? MirDispatchKind::kVirtual
+                                : MirDispatchKind::kDirect;
+    MirCallInstruction instruction{
+        MirCallKind::kInstance,  dispatch,       false,
+        *call.callable,          receiver,       std::move(arguments),
+        call.interface_dispatch, interface_slot, call.struct_receiver};
+    std::optional<MirValueId> called = emit_call_instruction(
+        callable.type, expression.range, std::move(instruction));
+    std::optional<MirValueId> present;
+    if (callable.type != semantics_.void_type()) {
+      present = coerce(require_value(called, callable.type, expression.range),
+                       expression.type, expression.range);
+    }
+    const MirBlockId call_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = null_block;
+    std::optional<MirValueId> absent;
+    if (expression.type != semantics_.void_type()) {
+      MirValueId null_value =
+          emit_value(semantics_.null_type(), expression.range,
+                     MirLiteralInstruction{LiteralKind::kNull, "null"});
+      absent = coerce(null_value, expression.type, expression.range);
+    }
+    const MirBlockId null_end = *current_block_;
+    jump_to(merge_block, expression.range);
+
+    current_block_ = merge_block;
+    if (expression.type == semantics_.void_type()) {
+      return std::nullopt;
+    }
+    std::vector<MirPhiIncoming> incoming;
+    incoming.push_back(MirPhiIncoming{call_end, *present});
+    incoming.push_back(MirPhiIncoming{null_end, *absent});
+    return emit_value(expression.type, expression.range,
+                      MirPhiInstruction{std::move(incoming)});
+  }
+
   std::optional<MirValueId> lower_call(const HirCallExpression& call,
                                        const HirExpression& expression) {
+    if (call.is_safe) {
+      return lower_safe_call(call, expression);
+    }
     MirCallKind kind = MirCallKind::kUnqualified;
     std::optional<MirValueId> receiver;
     bool receiver_is_self = false;

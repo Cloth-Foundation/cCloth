@@ -506,6 +506,16 @@ std::vector<ArtifactSymbol> artifact_symbols(
         ArtifactSymbol{"cloth_rt_parse_primitive", std::nullopt,
                        ArtifactSymbolRole::kRequirement,
                        ArtifactSymbolKind::kRuntime, "c:i8(i8,ptr,ptr)"});
+    symbols.try_emplace(
+        "cloth_rt_require_nullable_value",
+        ArtifactSymbol{"cloth_rt_require_nullable_value", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:void(i8)"});
+    symbols.try_emplace(
+        "cloth_rt_string_slice",
+        ArtifactSymbol{"cloth_rt_string_slice", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:ptr(ptr,i32,i32)"});
   }
   std::vector<ArtifactSymbol> result;
   result.reserve(symbols.size());

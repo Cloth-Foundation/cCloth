@@ -1655,6 +1655,51 @@ extern "C" std::uint8_t cloth_rt_string_is_empty(const void* value) noexcept {
   return require_string(value).byte_size == 0 ? 1 : 0;
 }
 
+extern "C" void* cloth_rt_string_slice(const void* value, std::int32_t start,
+                                       std::int32_t end) noexcept {
+  const ClothString& string = require_traversable_string(value);
+  const bool has_nonnegative_bounds = start >= 0 && end >= 0;
+  const std::size_t requested_start =
+      has_nonnegative_bounds ? static_cast<std::size_t>(start) : 0;
+  const std::size_t requested_end =
+      has_nonnegative_bounds ? static_cast<std::size_t>(end) : 0;
+
+  std::size_t byte_offset = 0;
+  std::size_t scalar_index = 0;
+  std::size_t start_byte = 0;
+  std::size_t end_byte = 0;
+  bool found_start = has_nonnegative_bounds && requested_start == 0;
+  bool found_end = has_nonnegative_bounds && requested_end == 0;
+  while (byte_offset < string.byte_size) {
+    std::uint32_t scalar = 0;
+    if (!decode_utf8_scalar(string.data, string.byte_size, byte_offset,
+                            scalar)) {
+      runtime_failure("string has an invalid layout");
+    }
+    ++scalar_index;
+    if (!found_start && scalar_index == requested_start) {
+      start_byte = byte_offset;
+      found_start = true;
+    }
+    if (!found_end && scalar_index == requested_end) {
+      end_byte = byte_offset;
+      found_end = true;
+    }
+  }
+  if (scalar_index != string.scalar_count) {
+    runtime_failure("string has an invalid layout");
+  }
+  if (!has_nonnegative_bounds || start > end || !found_start || !found_end) {
+    runtime_failure("string slice is out of bounds");
+  }
+
+  const std::size_t result_size = end_byte - start_byte;
+  const char* result_data =
+      result_size == 0 ? nullptr : string.data + start_byte;
+  return allocate_owned_string(result_data, result_size,
+                               requested_end - requested_start);
+}
+
 extern "C" std::uint32_t cloth_rt_string_scalar_at(
     const void* value, std::int32_t index) noexcept {
   const ClothString& string = require_traversable_string(value);
@@ -1961,6 +2006,14 @@ extern "C" void cloth_rt_require_non_null(const void* value) noexcept {
   if (value == nullptr) {
     runtime_failure("non-null assertion failed");
   }
+}
+
+extern "C" void cloth_rt_require_nullable_value(std::uint8_t tag) noexcept {
+  if (tag == 1) return;
+  if (tag == 0) {
+    runtime_failure("non-null assertion failed");
+  }
+  runtime_failure("nullable value has an invalid presence tag");
 }
 
 extern "C" void cloth_rt_require_numeric_conversion(

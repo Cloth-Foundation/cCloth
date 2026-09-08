@@ -20,7 +20,9 @@ managed error descriptors, `DivisionByZero` construction, and terminal error
 reporting under runtime ABI 4. Stage 37.2 adds owned portable program arguments
 and advances the runtime ABI to 5. Stage 38.2 adds line input and primitive
 parsing under runtime ABI 6. Stage 39.3 adds Unicode-scalar string indexing and
-cursor traversal under runtime ABI 7.
+cursor traversal under runtime ABI 7. Stage 40.3 adds allocating, checked
+Unicode-scalar string slicing under runtime ABI 8.
+Stage 41.3 adds tagged nullable-value assertion validation under runtime ABI 9.
 
 ## Source contract
 
@@ -88,6 +90,7 @@ cloth_rt_array_length(array) -> int32
 cloth_rt_array_element(array, index) -> element address
 cloth_rt_require_receiver(reference)
 cloth_rt_require_non_null(reference)
+cloth_rt_require_nullable_value(tag)
 cloth_rt_require_numeric_conversion(valid)
 cloth_rt_require_integer_arithmetic(valid, reason)
 cloth_rt_make_division_by_zero() -> error
@@ -101,6 +104,12 @@ cloth_rt_print_bool(uint8)
 cloth_rt_print_object(reference)
 cloth_rt_print_newline()
 ```
+
+`cloth_rt_require_nullable_value` accepts tag one, reports
+`non-null assertion failed` for tag zero, and reports
+`nullable value has an invalid presence tag` for every other byte. Generated
+code owns payload layout and extraction; the runtime never interprets payload
+bytes.
 
 Object allocation validates the immutable descriptor, honors its verified ABI
 size and alignment, and zeroes the storage. It stores the descriptor address in

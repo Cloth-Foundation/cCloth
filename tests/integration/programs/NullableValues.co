@@ -1,0 +1,51 @@
+int32 Count;
+
+NullableValues(int32 count) {
+  Count = count;
+}
+
+func Read(int32 delta): int32 {
+  return Count + delta;
+}
+
+static func SideEffect(): int32 {
+  println("argument");
+  return 1;
+}
+
+static func Widen(int16? value): int32? {
+  return value;
+}
+
+static func Main() {
+  int32? missing;
+  println(missing == null);
+  println(null == missing);
+
+  int32? present = 21;
+  println(present != null);
+  println(present!);
+
+  bool? payloadFalse = false;
+  if (payloadFalse) {
+    println("bool-present");
+  }
+  if (payloadFalse!) {
+    println("wrong");
+  } else {
+    println("bool-false");
+  }
+
+  int32? widened = Widen(7);
+  println(widened!);
+
+  NullableValues? absent = null;
+  println(absent?.Read(SideEffect()) ?? -1);
+
+  NullableValues? value = NullableValues(40);
+  println((value?.Read(2))!);
+  println(value?::typeName ?? "missing");
+
+  string? text = "A\u{1F9F5}";
+  println((text?::length)!);
+}

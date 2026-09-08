@@ -1,0 +1,38 @@
+import Garbage;
+import Payload;
+import Status;
+
+static func Echo(Payload? value): Payload? {
+  return value;
+}
+
+static func Main() {
+  Payload? absent;
+  println(absent == null);
+
+  Payload? present = Payload("kept", 41);
+  println(present != null);
+  println((present?.Count)!);
+  println((present?.Incremented())!);
+
+  Payload? copied = Echo(present);
+  println(copied == present);
+  println(copied?.Text ?? "missing");
+
+  Status? status = Status.Ready;
+  println(status != null);
+  println(status!);
+
+  Payload?[] values = [null, copied];
+  println(values[0] == null);
+  println((values[1]?.Count)!);
+
+  int32 index = 0;
+  while (index < 5000) {
+    Garbage garbage = Garbage(index);
+    index++;
+  }
+  println(copied?.Text ?? "collected");
+  copied = null;
+  println(copied == null);
+}

@@ -2271,10 +2271,8 @@ void nullable_reference_shapes(TestContext& test) {
               "for (var value in values) {} }\n");
   invalid.analyze();
 
-  test.expect(invalid.has_diagnostic(
-                  "nullable marker requires a reference type; 'int32' is a "
-                  "value type"),
-              "nullable value type was accepted");
+  test.expect(!invalid.has_diagnostic("nullable marker requires a reference"),
+              "nullable value types retained the Stage 12 restriction");
   test.expect(invalid.has_diagnostic("'void' cannot be nullable"),
               "nullable void type was accepted");
   test.expect(invalid.has_diagnostic("no matching overload"),
@@ -2467,8 +2465,6 @@ void null_ergonomics(TestContext& test) {
       "BadNullErgonomics.co",
       "func NonNullableCondition(User value) { if (value) {} }\n"
       "func SafeNonNullable(User value): string? { return value?.Name; }\n"
-      "func SafeValue(User? value): string? { value?.Count; return null; }\n"
-      "func SafeCall(User? value) { value?.Greet(); }\n"
       "func BadCoalesce(User value): User { return value ?? value; }\n"
       "func WrongFallback(User? value): User { return value ?? \"x\"; }\n"
       "func BadAssert(User value): User { return value!; }\n"
@@ -2478,17 +2474,9 @@ void null_ergonomics(TestContext& test) {
   test.expect(invalid.has_diagnostic(
                   "if condition uses a non-null reference and is always true"),
               "non-null reference condition was accepted");
-  test.expect(invalid.has_diagnostic(
-                  "safe member access requires a nullable reference"),
-              "safe access accepted a non-null receiver");
-  test.expect(invalid.has_diagnostic(
-                  "safe access to value-type field 'Count' requires nullable "
-                  "value types"),
-              "safe access accepted a value-type field");
-  test.expect(invalid.has_diagnostic(
-                  "safe function calls are not implemented; narrow the "
-                  "receiver first"),
-              "safe access accepted an instance function call");
+  test.expect(
+      invalid.has_diagnostic("safe member access requires a nullable value"),
+      "safe access accepted a non-null receiver");
   test.expect(invalid.has_diagnostic(
                   "left operand of the null-coalescing operator must be "
                   "nullable"),
@@ -2497,9 +2485,9 @@ void null_ergonomics(TestContext& test) {
                   "right operand of the null-coalescing operator has type "
                   "'string'"),
               "coalescing accepted an incompatible fallback");
-  test.expect(invalid.has_diagnostic(
-                  "non-null assertion requires a nullable reference"),
-              "non-null assertion accepted a non-null operand");
+  test.expect(
+      invalid.has_diagnostic("non-null assertion requires a nullable value"),
+      "non-null assertion accepted a non-null operand");
   test.expect(invalid.has_diagnostic("assignment target is not mutable"),
               "safe member access was accepted as an assignment target");
   test.expect(!invalid.has_diagnostic("internal"),
@@ -2798,6 +2786,13 @@ void string_value_semantics(TestContext& test) {
             "func NarrowTraverse(string? value): char {\n"
             "  if (value) { for (var scalar in value) { return scalar; } }\n"
             "  return value![0];\n"
+            "}\n"
+            "func Slice(string value, int16 start, uint8 end): string {\n"
+            "  return value::slice(start, end);\n"
+            "}\n"
+            "func NarrowSlice(string? value): string {\n"
+            "  if (value) { return value::slice(0, value::length); }\n"
+            "  return \"\";\n"
             "}\n");
   valid.analyze();
 
@@ -2808,6 +2803,7 @@ void string_value_semantics(TestContext& test) {
   bool found_is_empty = false;
   bool found_string_index = false;
   bool found_string_iteration = false;
+  bool found_string_slice = false;
   for (const cloth::HirExpression& expression :
        valid.result->hir.storage.expressions()) {
     const auto* meta =
@@ -2824,6 +2820,18 @@ void string_value_semantics(TestContext& test) {
   }
   for (const cloth::HirExpression& expression :
        valid.result->hir.storage.expressions()) {
+    if (const auto* slice =
+            std::get_if<cloth::HirStringSliceExpression>(&expression.data)) {
+      found_string_slice =
+          found_string_slice ||
+          (expression.type == valid.result->semantics.string_type() &&
+           expression.category == cloth::ValueCategory::kValue &&
+           slice->string.value <
+               valid.result->hir.storage.expressions().size() &&
+           slice->start.value <
+               valid.result->hir.storage.expressions().size() &&
+           slice->end.value < valid.result->hir.storage.expressions().size());
+    }
     const auto* index =
         std::get_if<cloth::HirIndexExpression>(&expression.data);
     found_string_index =
@@ -2844,6 +2852,37 @@ void string_value_semantics(TestContext& test) {
               "string meta queries were not retained explicitly in HIR");
   test.expect(found_string_index && found_string_iteration,
               "string traversal kinds were not retained explicitly in HIR");
+  test.expect(found_string_slice,
+              "string slicing was not retained as dedicated typed HIR");
+
+  AnalyzedCompilation terminating_slice;
+  terminating_slice.add("SliceFailure.co", "error { SliceFailure() {} }\n");
+  terminating_slice.add(
+      "TerminatingSlice.co",
+      "import SliceFailure;\n"
+      "func Stop(string value): string throws SliceFailure {\n"
+      "  return value::slice(0, throw SliceFailure());\n"
+      "}\n"
+      "func StopReceiver(): string throws SliceFailure {\n"
+      "  return (throw SliceFailure())::slice(0, 1);\n"
+      "}\n");
+  terminating_slice.analyze();
+  std::size_t bottom_slice_count = 0;
+  if (terminating_slice.result) {
+    for (const cloth::HirExpression& expression :
+         terminating_slice.result->hir.storage.expressions()) {
+      if (std::holds_alternative<cloth::HirStringSliceExpression>(
+              expression.data) &&
+          expression.type ==
+              terminating_slice.result->semantics.bottom_type()) {
+        ++bottom_slice_count;
+      }
+    }
+  }
+  test.expect(terminating_slice.error_count() == 0 &&
+                  terminating_slice.result &&
+                  terminating_slice.result->is_valid && bottom_slice_count == 2,
+              "terminating string slice operands lost bottom propagation");
 
   AnalyzedCompilation uppercase_type;
   uppercase_type.add("String.co", "int32 Value = 1;\n");
@@ -2881,8 +2920,61 @@ void string_value_semantics(TestContext& test) {
               "func FinalIteration() {\n"
               "  for (final char scalar in \"cloth\") { scalar = 'x'; }\n"
               "  print(scalar);\n"
+              "}\n"
+              "func SliceCase(string value): string {\n"
+              "  return value::Slice(0, 1);\n"
+              "}\n"
+              "func SliceMember(string value): string {\n"
+              "  return value.slice(0, 1);\n"
+              "}\n"
+              "func SliceNullable(string? value): string {\n"
+              "  return value::slice(0, 1);\n"
+              "}\n"
+              "func SliceStart(string value): string {\n"
+              "  return value::slice(true, 1);\n"
+              "}\n"
+              "func SliceEnd(string value): string {\n"
+              "  return value::slice(0, \"one\");\n"
+              "}\n"
+              "func SliceMissing(string value): string {\n"
+              "  return value::slice(0);\n"
+              "}\n"
+              "func SliceExtra(string value): string {\n"
+              "  return value::slice(0, 1, 2);\n"
+              "}\n"
+              "func SliceReference(string value) {\n"
+              "  var operation = value::slice;\n"
+              "}\n"
+              "func SliceType(): string {\n"
+              "  return string::slice(0, 1);\n"
+              "}\n"
+              "func SliceAssign(string value) {\n"
+              "  value::slice(0, 1) = \"changed\";\n"
               "}\n");
   invalid.analyze();
+
+  AnalyzedCompilation slice_qualifiers;
+  slice_qualifiers.add("SliceQualifiers.co",
+                       "func NullableSlice(string? value): string {\n"
+                       "  return value::slice(0, 1);\n"
+                       "}\n"
+                       "func AssignSlice(string value) {\n"
+                       "  value::slice(0, 1) = \"changed\";\n"
+                       "}\n");
+  slice_qualifiers.analyze();
+
+  AnalyzedCompilation rejected_slice_receivers;
+  rejected_slice_receivers.add(
+      "SliceReceivers.co",
+      "SliceReceivers() {}\n"
+      "func Reject(int32[] values, byte[] bytes, object value, "
+      "SliceReceivers instance) {\n"
+      "  values::slice(0, 1);\n"
+      "  bytes::slice(0, 1);\n"
+      "  value::slice(0, 1);\n"
+      "  instance::slice(0, 1);\n"
+      "}\n");
+  rejected_slice_receivers.analyze();
 
   test.expect(invalid.has_diagnostic(
                   "unknown type 'String'; use the built-in type 'string'"),
@@ -2901,8 +2993,7 @@ void string_value_semantics(TestContext& test) {
                   "narrowing"),
               "nullable string meta query skipped narrowing");
   test.expect(invalid.has_diagnostic(
-                  "safe meta queries are not supported; narrow the string and "
-                  "use '::length'"),
+                  "string length is a safe meta query; use '?::length'"),
               "safe string meta access produced the wrong diagnostic");
   test.expect(invalid.has_diagnostic("expression is not callable"),
               "a meta query was accepted as a method call");
@@ -2927,6 +3018,44 @@ void string_value_semantics(TestContext& test) {
               "final string iteration binding accepted reassignment");
   test.expect(invalid.has_diagnostic("unknown name 'scalar'"),
               "string iteration binding escaped its loop scope");
+  test.expect(invalid.has_diagnostic("string has no meta query 'Slice'"),
+              "string slice capitalization was ignored");
+  test.expect(invalid.has_diagnostic(
+                  "string slicing is a meta operation; use '::slice(...)'"),
+              "string slice member spelling did not receive a syntax hint");
+  test.expect(slice_qualifiers.error_count() == 2 &&
+                  slice_qualifiers.has_diagnostic(
+                      "nullable type 'string?' has no meta queries without "
+                      "narrowing"),
+              "nullable string slicing skipped narrowing");
+  test.expect(invalid.has_diagnostic(
+                  "string slice start must be assignable to 'int32'"),
+              "an incompatible string slice start was accepted");
+  test.expect(
+      invalid.has_diagnostic("string slice end must be assignable to 'int32'"),
+      "an incompatible string slice end was accepted");
+  test.expect(
+      invalid.has_diagnostic("string slice requires exactly two bounds"),
+      "an invalid string slice arity was accepted");
+  test.expect(
+      invalid.has_diagnostic("string slice meta operation must be called"),
+      "string slice was accepted as a first-class value");
+  test.expect(
+      invalid.has_diagnostic("type 'string' has no meta operation 'slice'"),
+      "string slice was accepted through the string type");
+  test.expect(
+      slice_qualifiers.has_diagnostic("assignment target is not mutable"),
+      "string slice was accepted as writable storage");
+  test.expect(rejected_slice_receivers.error_count() == 4 &&
+                  rejected_slice_receivers.has_diagnostic(
+                      "array type 'int32[]' has no meta query 'slice'") &&
+                  rejected_slice_receivers.has_diagnostic(
+                      "array type 'byte[]' has no meta query 'slice'") &&
+                  rejected_slice_receivers.has_diagnostic(
+                      "type 'object' has no Cloth meta queries") &&
+                  rejected_slice_receivers.has_diagnostic(
+                      "type 'SliceReceivers' has no Cloth meta queries"),
+              "string slicing escaped onto a non-string value");
 
   std::string malformed_source = "func Broken(): string { return \"";
   malformed_source.push_back(static_cast<char>(0xC3));

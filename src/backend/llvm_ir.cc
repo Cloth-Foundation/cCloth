@@ -206,6 +206,11 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* meta =
                  std::get_if<MirStringMetaInstruction>(&instruction.data)) {
     uses.push_back(meta->string);
+  } else if (const auto* slice =
+                 std::get_if<MirStringSliceInstruction>(&instruction.data)) {
+    uses.push_back(slice->string);
+    uses.push_back(slice->start);
+    uses.push_back(slice->end);
   } else if (const auto* access =
                  std::get_if<MirStringScalarAtInstruction>(&instruction.data)) {
     uses.push_back(access->string);
@@ -232,6 +237,10 @@ std::vector<MirValueId> instruction_value_uses(
                  std::get_if<MirBinaryInstruction>(&instruction.data)) {
     uses.push_back(binary->left);
     uses.push_back(binary->right);
+  } else if (const auto* comparison =
+                 std::get_if<MirNullableEqualInstruction>(&instruction.data)) {
+    uses.push_back(comparison->left);
+    uses.push_back(comparison->right);
   } else if (const auto* conversion =
                  std::get_if<MirConvertInstruction>(&instruction.data)) {
     uses.push_back(conversion->value);
@@ -390,6 +399,9 @@ class BodyEmitter {
   void emit_string_meta(const MirInstruction& instruction,
                         const MirStringMetaInstruction& meta,
                         std::ostringstream& output);
+  void emit_string_slice(const MirInstruction& instruction,
+                         const MirStringSliceInstruction& slice,
+                         std::ostringstream& output);
   void emit_string_scalar_at(const MirInstruction& instruction,
                              const MirStringScalarAtInstruction& access,
                              std::ostringstream& output);
@@ -413,6 +425,9 @@ class BodyEmitter {
   void emit_binary(const MirInstruction& instruction,
                    const MirBinaryInstruction& binary,
                    std::ostringstream& output);
+  void emit_nullable_equal(const MirInstruction& instruction,
+                           const MirNullableEqualInstruction& comparison,
+                           std::ostringstream& output);
   void emit_conversion(const MirInstruction& instruction,
                        const MirConvertInstruction& conversion,
                        std::ostringstream& output);
@@ -589,6 +604,7 @@ class ModuleEmitter {
            << "declare i32 @cloth_rt_string_length(ptr)\n"
            << "declare i32 @cloth_rt_string_byte_length(ptr)\n"
            << "declare i8 @cloth_rt_string_is_empty(ptr)\n"
+           << "declare ptr @cloth_rt_string_slice(ptr, i32, i32)\n"
            << "declare i32 @cloth_rt_string_scalar_at(ptr, i32)\n"
            << "declare i8 @cloth_rt_string_next_scalar(ptr, ptr, ptr)\n"
            << "declare ptr @cloth_rt_object_type_name(ptr)\n"
@@ -603,6 +619,7 @@ class ModuleEmitter {
            << "declare i64 @cloth_rt_integer_read(ptr, i32, i8, i8)\n"
            << "declare void @cloth_rt_require_receiver(ptr)\n"
            << "declare void @cloth_rt_require_non_null(ptr)\n"
+           << "declare void @cloth_rt_require_nullable_value(i8)\n"
            << "declare void @cloth_rt_require_numeric_conversion(i8)\n"
            << "declare void @cloth_rt_require_shift_count(i8)\n"
            << "declare void @cloth_rt_require_integer_arithmetic(i8, i8)\n"
@@ -653,6 +670,56 @@ class ModuleEmitter {
         aggregate_comparers_.end())
       return name;
     aggregate_comparers_.push_back(type);
+    if (is_nullable_value(type)) {
+      const TypeId element = *semantics_.type(type).element_type;
+      const std::uint64_t payload = nullable_payload_offset(type);
+      const std::string llvm = llvm_type(element);
+      std::ostringstream body;
+      body << "define internal i1 " << name
+           << "(ptr %left, ptr %right) {\nentry:\n"
+           << "  %left.tag = load i8, ptr %left, align 1\n"
+           << "  %right.tag = load i8, ptr %right, align 1\n"
+           << "  %left.valid = icmp ult i8 %left.tag, 2\n"
+           << "  %right.valid = icmp ult i8 %right.tag, 2\n"
+           << "  %valid = and i1 %left.valid, %right.valid\n"
+           << "  br i1 %valid, label %compare.tags, label %invalid\n"
+           << "invalid:\n"
+           << "  call void @llvm.trap()\n"
+           << "  unreachable\n"
+           << "compare.tags:\n"
+           << "  %tags.equal = icmp eq i8 %left.tag, %right.tag\n"
+           << "  br i1 %tags.equal, label %compare.value, label %unequal\n"
+           << "compare.value:\n"
+           << "  %present = icmp eq i8 %left.tag, 1\n"
+           << "  br i1 %present, label %compare.payload, label %equal\n"
+           << "compare.payload:\n"
+           << "  %left.payload = getelementptr i8, ptr %left, i64 " << payload
+           << "\n"
+           << "  %right.payload = getelementptr i8, ptr %right, i64 " << payload
+           << "\n";
+      if (is_aggregate(element)) {
+        body << "  %payload.equal = call i1 " << aggregate_comparer(element)
+             << "(ptr %left.payload, ptr %right.payload)\n";
+      } else {
+        body << "  %left.value = load " << llvm << ", ptr %left.payload, align "
+             << alignment(element) << "\n"
+             << "  %right.value = load " << llvm
+             << ", ptr %right.payload, align " << alignment(element) << "\n"
+             << "  %payload.equal = "
+             << (semantics_.type(element).kind == TypeKind::kFloat32 ||
+                         semantics_.type(element).kind == TypeKind::kFloat64
+                     ? "fcmp oeq "
+                     : "icmp eq ")
+             << llvm << " %left.value, %right.value\n";
+      }
+      body << "  ret i1 %payload.equal\n"
+           << "equal:\n"
+           << "  ret i1 true\n"
+           << "unequal:\n"
+           << "  ret i1 false\n}\n\n";
+      aggregate_helpers_ << body.str();
+      return name;
+    }
     const auto& fields =
         abi_.files.at(semantics_.type(type).file->value).layout.fields;
     std::ostringstream body;
@@ -843,6 +910,22 @@ class ModuleEmitter {
   bool is_aggregate(TypeId type) const {
     return type.value < abi_.types.size() &&
            abi_.types[type.value].kind == AbiTypeKind::kAggregate;
+  }
+
+  bool is_nullable_value(TypeId type) const {
+    return type.value < abi_.types.size() && is_aggregate(type) &&
+           semantics_.type(type).kind == TypeKind::kNullable &&
+           semantics_.type(type).element_type.has_value();
+  }
+
+  TypeId nullable_element(TypeId type) const {
+    return *semantics_.type(type).element_type;
+  }
+
+  std::uint64_t nullable_payload_offset(TypeId type) const {
+    const std::uint64_t alignment =
+        abi_.types.at(nullable_element(type).value).storage.alignment;
+    return (std::uint64_t{1} + alignment - 1) & ~(alignment - 1);
   }
 
   bool has_references(TypeId type) const {
@@ -2226,6 +2309,9 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* meta =
                  std::get_if<MirStringMetaInstruction>(&instruction.data)) {
     emit_string_meta(instruction, *meta, output);
+  } else if (const auto* slice =
+                 std::get_if<MirStringSliceInstruction>(&instruction.data)) {
+    emit_string_slice(instruction, *slice, output);
   } else if (const auto* access =
                  std::get_if<MirStringScalarAtInstruction>(&instruction.data)) {
     emit_string_scalar_at(instruction, *access, output);
@@ -2247,6 +2333,9 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* binary =
                  std::get_if<MirBinaryInstruction>(&instruction.data)) {
     emit_binary(instruction, *binary, output);
+  } else if (const auto* comparison =
+                 std::get_if<MirNullableEqualInstruction>(&instruction.data)) {
+    emit_nullable_equal(instruction, *comparison, output);
   } else if (const auto* conversion =
                  std::get_if<MirConvertInstruction>(&instruction.data)) {
     emit_conversion(instruction, *conversion, output);
@@ -2482,6 +2571,15 @@ void BodyEmitter::emit_string_meta(const MirInstruction& instruction,
       break;
     }
   }
+}
+
+void BodyEmitter::emit_string_slice(const MirInstruction& instruction,
+                                    const MirStringSliceInstruction& slice,
+                                    std::ostringstream& output) {
+  output << "  " << result_name(instruction)
+         << " = call ptr @cloth_rt_string_slice(ptr " << value(slice.string)
+         << ", i32 " << value(slice.start) << ", i32 " << value(slice.end)
+         << ")\n";
 }
 
 void BodyEmitter::emit_string_scalar_at(
@@ -2829,9 +2927,129 @@ void BodyEmitter::emit_binary(const MirInstruction& instruction,
          << '\n';
 }
 
+void BodyEmitter::emit_nullable_equal(
+    const MirInstruction& instruction,
+    const MirNullableEqualInstruction& comparison, std::ostringstream& output) {
+  const TypeId type = value_type(comparison.left);
+  if (type != value_type(comparison.right) ||
+      !module_.is_nullable_value(type)) {
+    module_.report(instruction.range,
+                   "invalid nullable equality reached LLVM lowering");
+    return;
+  }
+  const std::string equal =
+      comparison.is_negated ? next_address() : result_name(instruction);
+  output << "  " << equal << " = call i1 " << module_.aggregate_comparer(type)
+         << "(ptr " << value(comparison.left) << ", ptr "
+         << value(comparison.right) << ")\n";
+  if (comparison.is_negated) {
+    output << "  " << result_name(instruction) << " = xor i1 " << equal
+           << ", true\n";
+  }
+}
+
 void BodyEmitter::emit_conversion(const MirInstruction& instruction,
                                   const MirConvertInstruction& conversion,
                                   std::ostringstream& output) {
+  const TypeId source_type = value_type(conversion.value);
+  if (conversion.kind == MirConversionKind::kToNullable &&
+      module_.is_nullable_value(instruction.type)) {
+    const TypeId element = module_.nullable_element(instruction.type);
+    output << "  call void @llvm.memset.p0.i64(ptr align "
+           << module_.alignment(instruction.type) << ' '
+           << result_name(instruction) << ", i8 0, i64 "
+           << module_.abi().types.at(instruction.type.value).storage.size
+           << ", i1 false)\n";
+    if (source_type == module_.semantics().null_type()) return;
+    const std::string payload = next_address();
+    output << "  " << payload << " = getelementptr i8, ptr "
+           << result_name(instruction) << ", i64 "
+           << module_.nullable_payload_offset(instruction.type) << '\n';
+    store_value(element, payload, conversion.value, output);
+    output << "  store i8 1, ptr " << result_name(instruction) << ", align 1\n";
+    return;
+  }
+  if (conversion.kind == MirConversionKind::kFromNullable &&
+      module_.is_nullable_value(source_type)) {
+    const std::string payload = next_address();
+    output << "  " << payload << " = getelementptr i8, ptr "
+           << value(conversion.value) << ", i64 "
+           << module_.nullable_payload_offset(source_type) << '\n';
+    load_value(instruction, payload, output);
+    return;
+  }
+  if (conversion.kind == MirConversionKind::kLiftNullable) {
+    if (!module_.is_nullable_value(source_type) ||
+        !module_.is_nullable_value(instruction.type)) {
+      module_.report(
+          instruction.range,
+          "invalid lifted nullable conversion reached LLVM lowering");
+      return;
+    }
+    const TypeId source_element = module_.nullable_element(source_type);
+    const TypeId target_element = module_.nullable_element(instruction.type);
+    const TypeKind source_kind = module_.semantics().type(source_element).kind;
+    const TypeKind target_kind = module_.semantics().type(target_element).kind;
+    const auto source = numeric_type_properties(source_kind);
+    const auto target = numeric_type_properties(target_kind);
+    if (!source || !target || !can_widen_numeric(source_kind, target_kind)) {
+      module_.report(instruction.range,
+                     "invalid lifted numeric conversion reached LLVM lowering");
+      return;
+    }
+    output << "  call void @llvm.memset.p0.i64(ptr align "
+           << module_.alignment(instruction.type) << ' '
+           << result_name(instruction) << ", i8 0, i64 "
+           << module_.abi().types.at(instruction.type.value).storage.size
+           << ", i1 false)\n";
+    const std::string source_payload = next_address();
+    const std::string target_payload = next_address();
+    const std::string source_value = next_address();
+    const std::string converted = next_address();
+    const std::string tag = next_address();
+    const std::string valid = next_address();
+    const std::string present = next_address();
+    const std::string present_label = next_label("nullable.lift.present.");
+    const std::string absent_label = next_label("nullable.lift.absent.");
+    const std::string invalid_label = next_label("nullable.lift.invalid.");
+    const std::string join_label = next_label("nullable.lift.join.");
+    const std::string operation =
+        source->category == NumericCategory::kFloatingPoint   ? "fpext"
+        : source->category == NumericCategory::kSignedInteger ? "sext"
+                                                              : "zext";
+    output << "  " << tag << " = load i8, ptr " << value(conversion.value)
+           << ", align 1\n"
+           << "  " << valid << " = icmp ult i8 " << tag << ", 2\n"
+           << "  br i1 " << valid << ", label %" << absent_label << ", label %"
+           << invalid_label << "\n\n"
+           << invalid_label << ":\n"
+           << "  call void @llvm.trap()\n"
+           << "  unreachable\n\n"
+           << absent_label << ":\n"
+           << "  " << present << " = icmp eq i8 " << tag << ", 1\n"
+           << "  br i1 " << present << ", label %" << present_label
+           << ", label %" << join_label << "\n\n"
+           << present_label << ":\n"
+           << "  " << source_payload << " = getelementptr i8, ptr "
+           << value(conversion.value) << ", i64 "
+           << module_.nullable_payload_offset(source_type) << '\n'
+           << "  " << target_payload << " = getelementptr i8, ptr "
+           << result_name(instruction) << ", i64 "
+           << module_.nullable_payload_offset(instruction.type) << '\n'
+           << "  " << source_value << " = load "
+           << module_.llvm_type(source_element) << ", ptr " << source_payload
+           << ", align " << module_.alignment(source_element) << '\n'
+           << "  " << converted << " = " << operation << ' '
+           << module_.llvm_type(source_element) << ' ' << source_value << " to "
+           << module_.llvm_type(target_element) << '\n'
+           << "  store " << module_.llvm_type(target_element) << ' '
+           << converted << ", ptr " << target_payload << ", align "
+           << module_.alignment(target_element) << '\n'
+           << "  store i8 1, ptr " << result_name(instruction) << ", align 1\n"
+           << "  br label %" << join_label << "\n\n"
+           << join_label << ":\n";
+    return;
+  }
   if (conversion.kind == MirConversionKind::kCheckedNumeric) {
     emit_checked_numeric_conversion(instruction, conversion, output);
     return;
@@ -2846,7 +3064,6 @@ void BodyEmitter::emit_conversion(const MirInstruction& instruction,
     return;
   }
 
-  const TypeId source_type = value_type(conversion.value);
   const TypeKind source_kind = module_.semantics().type(source_type).kind;
   const TypeKind target_kind = module_.semantics().type(instruction.type).kind;
   const std::optional<NumericTypeProperties> source =
@@ -3174,6 +3391,14 @@ void BodyEmitter::emit_checked_numeric_conversion(
 void BodyEmitter::emit_is_non_null(const MirInstruction& instruction,
                                    const MirIsNonNullInstruction& test,
                                    std::ostringstream& output) {
+  if (module_.is_nullable_value(value_type(test.value))) {
+    const std::string tag = next_address();
+    output << "  " << tag << " = load i8, ptr " << value(test.value)
+           << ", align 1\n"
+           << "  " << result_name(instruction) << " = icmp eq i8 " << tag
+           << ", 1\n";
+    return;
+  }
   output << "  " << result_name(instruction) << " = icmp ne ptr "
          << value(test.value) << ", null\n";
 }
@@ -3182,6 +3407,17 @@ void BodyEmitter::emit_null_assert(const MirInstruction& instruction,
                                    const MirNullAssertInstruction& assertion,
                                    std::ostringstream& output) {
   const std::string operand = value(assertion.value);
+  const TypeId source_type = value_type(assertion.value);
+  if (module_.is_nullable_value(source_type)) {
+    const std::string tag = next_address();
+    const std::string payload = next_address();
+    output << "  " << tag << " = load i8, ptr " << operand << ", align 1\n"
+           << "  call void @cloth_rt_require_nullable_value(i8 " << tag << ")\n"
+           << "  " << payload << " = getelementptr i8, ptr " << operand
+           << ", i64 " << module_.nullable_payload_offset(source_type) << '\n';
+    load_value(instruction, payload, output);
+    return;
+  }
   output << "  call void @cloth_rt_require_non_null(ptr " << operand << ")\n";
   values_.at(instruction.result->value) = operand;
 }

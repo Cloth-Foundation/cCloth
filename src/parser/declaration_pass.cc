@@ -225,10 +225,22 @@ std::optional<TypeSyntax> DeclarationPass::parse_type() {
   }
   const Token& token = advance();
   SourceRange range = token.range;
-  const bool inner_nullable = match(TokenKind::kQuestion);
-  if (inner_nullable) {
-    range.end = tokens_[current_ - 1].range.end;
-  }
+  const auto parse_nullable_suffix = [&]() {
+    bool nullable = false;
+    while (current().kind == TokenKind::kQuestion ||
+           current().kind == TokenKind::kQuestionQuestion) {
+      const Token& suffix = advance();
+      if (nullable || suffix.kind == TokenKind::kQuestionQuestion) {
+        diagnostics_.error(suffix.range,
+                           "nullable qualification cannot be repeated");
+        is_valid_ = false;
+      }
+      nullable = true;
+      range.end = suffix.range.end;
+    }
+    return nullable;
+  };
+  const bool inner_nullable = parse_nullable_suffix();
   bool is_array = false;
   while (match(TokenKind::kLeftBracket)) {
     if (is_array) {
@@ -249,10 +261,7 @@ std::optional<TypeSyntax> DeclarationPass::parse_type() {
       break;
     }
   }
-  const bool outer_nullable = is_array && match(TokenKind::kQuestion);
-  if (outer_nullable) {
-    range.end = tokens_[current_ - 1].range.end;
-  }
+  const bool outer_nullable = is_array && parse_nullable_suffix();
   return TypeSyntax{token.lexeme,
                     is_primitive_type(token.kind),
                     range,

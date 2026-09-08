@@ -543,8 +543,10 @@ void array_instructions(TestContext& test) {
 void string_instructions(TestContext& test) {
   CompiledSources compilation;
   compilation.add("Strings.co",
-                  "func Inspect(string left, string right): int32 {\n"
+                  "func Inspect(string left, string right, int16 start, "
+                  "uint8 end): int32 {\n"
                   "  string joined = left + right;\n"
+                  "  string middle = joined::slice(start, end);\n"
                   "  bool equal = joined == \"cloth\";\n"
                   "  bool different = left != right;\n"
                   "  bool empty = joined::isEmpty;\n"
@@ -556,6 +558,12 @@ void string_instructions(TestContext& test) {
                   "    return joined::length;\n"
                   "  }\n"
                   "  return joined::byteLength;\n"
+                  "}\n"
+                  "static func MakeText(): string { return \"cloth\"; }\n"
+                  "static func MakeStart(): int32 { return 1; }\n"
+                  "static func MakeEnd(): int32 { return 4; }\n"
+                  "static func Ordered(): string {\n"
+                  "  return MakeText()::slice(MakeStart(), MakeEnd());\n"
                   "}\n");
   compilation.compile();
 
@@ -599,6 +607,151 @@ void string_instructions(TestContext& test) {
       body_has_instruction<cloth::MirStringScalarAtInstruction>(body) &&
           body_has_instruction<cloth::MirStringNextScalarInstruction>(body),
       "string traversal was not lowered to dedicated MIR instructions");
+  test.expect(
+      body_has_instruction<cloth::MirStringSliceInstruction>(body) &&
+          body_has_conversion(body, cloth::MirConversionKind::kWidenNumeric),
+      "string slicing did not receive dedicated coerced MIR");
+
+  const cloth::MirBody* ordered_body = nullptr;
+  for (const cloth::MirCallable& function :
+       compilation.result->mir.files[0].functions) {
+    if (compilation.result->semantics.symbol(function.symbol).name ==
+        "Ordered") {
+      ordered_body = &function.body;
+    }
+  }
+  std::vector<std::string> call_order;
+  std::vector<cloth::MirValueId> call_results;
+  std::optional<cloth::MirStringSliceInstruction> ordered_slice;
+  if (ordered_body != nullptr) {
+    for (const cloth::MirBasicBlock& block : ordered_body->blocks) {
+      for (const cloth::MirInstruction& instruction : block.instructions) {
+        if (const auto* call =
+                std::get_if<cloth::MirCallInstruction>(&instruction.data)) {
+          call_order.push_back(
+              compilation.result->semantics.symbol(call->callable).name);
+          if (instruction.result) {
+            call_results.push_back(*instruction.result);
+          }
+        } else if (const auto* slice =
+                       std::get_if<cloth::MirStringSliceInstruction>(
+                           &instruction.data)) {
+          ordered_slice = *slice;
+        }
+      }
+    }
+  }
+  test.expect(
+      call_order ==
+              std::vector<std::string>{"MakeText", "MakeStart", "MakeEnd"} &&
+          call_results.size() == 3 && ordered_slice &&
+          ordered_slice->string == call_results[0] &&
+          ordered_slice->start == call_results[1] &&
+          ordered_slice->end == call_results[2],
+      "string slice receiver and bounds lost left-to-right once evaluation");
+
+  cloth::HirModule broken_slice_hir = compilation.result->hir;
+  bool corrupted_slice_hir = false;
+  for (const cloth::HirExpression& stored :
+       broken_slice_hir.storage.expressions()) {
+    auto& expression = const_cast<cloth::HirExpression&>(stored);
+    if (std::holds_alternative<cloth::HirStringSliceExpression>(
+            expression.data)) {
+      expression.type = *compilation.result->semantics.find_type("int32");
+      corrupted_slice_hir = true;
+    }
+  }
+  cloth::DiagnosticEngine slice_hir_diagnostics;
+  test.expect(
+      corrupted_slice_hir &&
+          !cloth::verify_hir(broken_slice_hir, compilation.result->semantics,
+                             slice_hir_diagnostics) &&
+          has_diagnostic(slice_hir_diagnostics,
+                         "string slice has an inconsistent result type"),
+      "HIR verifier accepted a forged string slice result type");
+
+  const auto rejects_slice_hir_corruption =
+      [&](const auto& corrupt, std::string_view expected_diagnostic) {
+        cloth::HirModule broken = compilation.result->hir;
+        bool corrupted = false;
+        for (const cloth::HirExpression& stored :
+             broken.storage.expressions()) {
+          auto& expression = const_cast<cloth::HirExpression&>(stored);
+          if (auto* slice = std::get_if<cloth::HirStringSliceExpression>(
+                  &expression.data);
+              slice != nullptr) {
+            corrupt(broken, expression, *slice);
+            corrupted = true;
+            break;
+          }
+        }
+        cloth::DiagnosticEngine diagnostics;
+        return corrupted &&
+               !cloth::verify_hir(broken, compilation.result->semantics,
+                                  diagnostics) &&
+               has_diagnostic(diagnostics, expected_diagnostic);
+      };
+  test.expect(rejects_slice_hir_corruption(
+                  [&](cloth::HirModule& hir, cloth::HirExpression&,
+                      cloth::HirStringSliceExpression& slice) {
+                    auto& start = const_cast<cloth::HirExpression&>(
+                        hir.storage.expression(slice.start));
+                    start.type = compilation.result->semantics.bool_type();
+                  },
+                  "string slice start is not int32-compatible"),
+              "HIR verifier accepted a forged string slice start type");
+  test.expect(rejects_slice_hir_corruption(
+                  [&](cloth::HirModule& hir, cloth::HirExpression&,
+                      cloth::HirStringSliceExpression& slice) {
+                    auto& end = const_cast<cloth::HirExpression&>(
+                        hir.storage.expression(slice.end));
+                    end.type = compilation.result->semantics.string_type();
+                  },
+                  "string slice end is not int32-compatible"),
+              "HIR verifier accepted a forged string slice end type");
+  test.expect(rejects_slice_hir_corruption(
+                  [](cloth::HirModule&, cloth::HirExpression& expression,
+                     cloth::HirStringSliceExpression&) {
+                    expression.category =
+                        cloth::ValueCategory::kMutableLocation;
+                  },
+                  "string slice is not a value"),
+              "HIR verifier accepted a non-value string slice");
+  test.expect(rejects_slice_hir_corruption(
+                  [](cloth::HirModule& hir, cloth::HirExpression&,
+                     cloth::HirStringSliceExpression& slice) {
+                    slice.start = cloth::HirExpressionId{
+                        hir.storage.expressions().size()};
+                  },
+                  "node references an unknown expression"),
+              "HIR verifier accepted an unknown string slice operand");
+
+  cloth::HirModule broken_terminating_slice_hir = compilation.result->hir;
+  bool corrupted_terminating_slice_hir = false;
+  for (const cloth::HirExpression& stored :
+       broken_terminating_slice_hir.storage.expressions()) {
+    const auto* slice =
+        std::get_if<cloth::HirStringSliceExpression>(&stored.data);
+    if (slice != nullptr && !corrupted_terminating_slice_hir) {
+      auto& expression = const_cast<cloth::HirExpression&>(stored);
+      auto& string = const_cast<cloth::HirExpression&>(
+          broken_terminating_slice_hir.storage.expression(slice->string));
+      auto& start = const_cast<cloth::HirExpression&>(
+          broken_terminating_slice_hir.storage.expression(slice->start));
+      expression.type = compilation.result->semantics.bottom_type();
+      string.type = *compilation.result->semantics.find_type("int32");
+      start.type = compilation.result->semantics.bottom_type();
+      corrupted_terminating_slice_hir = true;
+    }
+  }
+  cloth::DiagnosticEngine terminating_slice_hir_diagnostics;
+  test.expect(corrupted_terminating_slice_hir &&
+                  !cloth::verify_hir(broken_terminating_slice_hir,
+                                     compilation.result->semantics,
+                                     terminating_slice_hir_diagnostics) &&
+                  has_diagnostic(terminating_slice_hir_diagnostics,
+                                 "string slice has a non-string receiver"),
+              "HIR verifier let a terminating bound hide a malformed receiver");
 
   cloth::HirModule broken_hir = compilation.result->hir;
   bool corrupted_index_kind = false;
@@ -658,6 +811,96 @@ void string_instructions(TestContext& test) {
           has_diagnostic(access_mir_diagnostics,
                          "string scalar access result does not have type char"),
       "MIR verifier accepted a forged string access result type");
+
+  cloth::MirModule broken_slice_mir = compilation.result->mir;
+  bool corrupted_slice_mir = false;
+  for (cloth::MirBasicBlock& block :
+       broken_slice_mir.files[0].functions[0].body.blocks) {
+    for (cloth::MirInstruction& instruction : block.instructions) {
+      if (std::holds_alternative<cloth::MirStringSliceInstruction>(
+              instruction.data)) {
+        instruction.type = *compilation.result->semantics.find_type("int32");
+        corrupted_slice_mir = true;
+      }
+    }
+  }
+  cloth::DiagnosticEngine slice_mir_diagnostics;
+  test.expect(
+      corrupted_slice_mir &&
+          !cloth::verify_mir(broken_slice_mir, compilation.result->semantics,
+                             slice_mir_diagnostics) &&
+          has_diagnostic(slice_mir_diagnostics,
+                         "string slice result does not have type string"),
+      "MIR verifier accepted a forged string slice result type");
+
+  const auto rejects_slice_mir_corruption =
+      [&](const auto& corrupt, std::string_view expected_diagnostic) {
+        cloth::MirModule broken = compilation.result->mir;
+        bool corrupted = false;
+        for (cloth::MirFileClass& file : broken.files) {
+          for (cloth::MirCallable& function : file.functions) {
+            for (cloth::MirBasicBlock& block : function.body.blocks) {
+              for (cloth::MirInstruction& instruction : block.instructions) {
+                if (auto* slice = std::get_if<cloth::MirStringSliceInstruction>(
+                        &instruction.data);
+                    slice != nullptr) {
+                  corrupt(function, instruction, *slice);
+                  corrupted = true;
+                  break;
+                }
+              }
+              if (corrupted) {
+                break;
+              }
+            }
+            if (corrupted) {
+              break;
+            }
+          }
+          if (corrupted) {
+            break;
+          }
+        }
+        cloth::DiagnosticEngine diagnostics;
+        return corrupted &&
+               !cloth::verify_mir(broken, compilation.result->semantics,
+                                  diagnostics) &&
+               has_diagnostic(diagnostics, expected_diagnostic);
+      };
+  test.expect(rejects_slice_mir_corruption(
+                  [](cloth::MirCallable&, cloth::MirInstruction&,
+                     cloth::MirStringSliceInstruction& slice) {
+                    slice.string = slice.start;
+                  },
+                  "value type does not match its use"),
+              "MIR verifier accepted a forged string slice receiver type");
+  test.expect(rejects_slice_mir_corruption(
+                  [](cloth::MirCallable&, cloth::MirInstruction&,
+                     cloth::MirStringSliceInstruction& slice) {
+                    slice.start = slice.string;
+                  },
+                  "value type does not match its use"),
+              "MIR verifier accepted a forged string slice start type");
+  test.expect(rejects_slice_mir_corruption(
+                  [](cloth::MirCallable&, cloth::MirInstruction&,
+                     cloth::MirStringSliceInstruction& slice) {
+                    slice.end = slice.string;
+                  },
+                  "value type does not match its use"),
+              "MIR verifier accepted a forged string slice end type");
+  test.expect(rejects_slice_mir_corruption(
+                  [](cloth::MirCallable& function, cloth::MirInstruction&,
+                     cloth::MirStringSliceInstruction& slice) {
+                    slice.end = cloth::MirValueId{function.body.value_count};
+                  },
+                  "instruction references an unknown value"),
+              "MIR verifier accepted an unknown string slice operand");
+  test.expect(
+      rejects_slice_mir_corruption(
+          [](cloth::MirCallable&, cloth::MirInstruction& instruction,
+             cloth::MirStringSliceInstruction&) { instruction.result.reset(); },
+          "value instruction has no result"),
+      "MIR verifier accepted a string slice without a result");
 
   cloth::MirModule broken_mir = compilation.result->mir;
   bool corrupted_step = false;

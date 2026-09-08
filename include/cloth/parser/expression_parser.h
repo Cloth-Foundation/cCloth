@@ -49,6 +49,7 @@ class ExpressionParser {
   [[nodiscard]] ExpressionId parse_grouped_expression();
   [[nodiscard]] ExpressionId parse_postfix_suffixes(ExpressionId expression);
   [[nodiscard]] ExpressionId parse_access_suffix(ExpressionId expression);
+  [[nodiscard]] ExpressionId parse_safe_meta_suffix(ExpressionId expression);
   [[nodiscard]] ExpressionId parse_type_relation(ExpressionId left,
                                                  TokenKind operation);
   [[nodiscard]] ExpressionId build_binary_expression(ExpressionId left,

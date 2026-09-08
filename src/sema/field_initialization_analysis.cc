@@ -450,6 +450,11 @@ class FieldInitializationAnalyzer {
       analyze_expression(meta->object, assignments, false);
       return;
     }
+    if (const auto* meta =
+            std::get_if<SafeMetaAccessExpression>(&expression.data)) {
+      analyze_expression(meta->object, assignments, false);
+      return;
+    }
     if (const auto* coalesce =
             std::get_if<NullCoalesceExpression>(&expression.data)) {
       analyze_expression(coalesce->nullable, assignments, false);

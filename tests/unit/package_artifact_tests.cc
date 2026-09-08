@@ -193,7 +193,7 @@ void canonical_interface_round_trip(TestContext& test) {
   const auto& bytes = encoded.artifact->bytes;
   test.expect(bytes.size() > 64 && bytes[0] == 0x43 && bytes[7] == 0 &&
                   read_u64(bytes, 24) == 0,
-              "format-6 envelope fields are incorrect");
+              "format-7 envelope fields are incorrect");
   const auto decoded =
       cloth::read_package_artifact(bytes, artifact.compatibility);
   test.expect(decoded.is_valid(), "canonical interface artifact did not read");
@@ -213,19 +213,19 @@ void canonical_interface_round_trip(TestContext& test) {
   test.expect(!metadata.empty() && metadata.front() == '{' &&
                   metadata.back() == '}' && !metadata.ends_with('\n') &&
                   metadata.starts_with("{\"compatibility\":") &&
-                  metadata.contains("\"runtime_abi\":\"7\"") &&
+                  metadata.contains("\"runtime_abi\":\"9\"") &&
                   metadata.contains("\"value\":\"3fc00000\"") &&
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
   test.expect(
       metadata.size() == 12377 &&
           cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-              "ae8ac4df555229616170fc0d5e240bc9"
-              "c2f7d7664ac826f696cffb4fbb0d064b" &&
+              "e1f96c626adaa064b0fe1b53a26cae93"
+              "9481d4254514a9b7630d7ca5064e37ce" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "690cb7f59f21281562e70e0cc8b9ec60"
-              "f15897366000fb2c31cfc7fc1dd433fa",
-      "canonical version-6 fixture: size=" + std::to_string(metadata.size()) +
+              "87e5e90e95f5ee097f89d148b9aa1d46"
+              "bf9be4045fb49fdfff9cfa5324582fcc",
+      "canonical version-7 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
 }
@@ -261,7 +261,7 @@ void scalar_constants_round_trip(TestContext& test) {
     test.expect(
         decoded.is_valid() && decoded.artifact->imported == artifact.imported,
         "scalar type/bits did not round trip exactly");
-    test.expect(encoded.artifact->bytes[8] == 6, "format-6 envelope");
+    test.expect(encoded.artifact->bytes[8] == 7, "format-7 envelope");
     const auto metadata = metadata_text(encoded.artifact->bytes);
     test.expect(metadata.contains("\"value\":\"-9223372036854775808\"") &&
                     metadata.contains("\"value\":\"18446744073709551615\""),
@@ -416,6 +416,77 @@ void typed_error_metadata_round_trip(TestContext& test) {
   }
 }
 
+void nullable_value_metadata_round_trip(TestContext& test) {
+  auto artifact = make_artifact(cloth::PackageArtifactKind::kInterface, R"(
+    static func Pass(int32? value): int32? { return value; }
+  )");
+  const auto nullable =
+      std::ranges::find(artifact.imported.types, cloth::TypeKind::kNullable,
+                        &cloth::ImportedType::kind);
+  test.expect(nullable != artifact.imported.types.end(),
+              "nullable type is absent from interface metadata");
+  if (nullable == artifact.imported.types.end()) return;
+  test.expect(nullable->display_name == "int32?" &&
+                  nullable->abi_kind == cloth::AbiTypeKind::kAggregate &&
+                  nullable->storage == cloth::SizeAlignment{8, 4} &&
+                  nullable->reference_offsets.empty(),
+              "nullable primitive metadata lost its tagged value layout");
+
+  const auto encoded = cloth::write_package_artifact(artifact);
+  test.expect(encoded.is_valid(), "nullable-value artifact did not encode");
+  if (!encoded.artifact) return;
+  const auto decoded = cloth::read_package_artifact(encoded.artifact->bytes);
+  test.expect(decoded.is_valid(), "nullable-value artifact did not round trip");
+
+  const std::size_t nullable_index =
+      static_cast<std::size_t>(nullable - artifact.imported.types.begin());
+  const auto rejects_writer_corruption = [&](const auto& corrupt) {
+    cloth::PackageArtifact broken = artifact;
+    corrupt(broken);
+    return !cloth::write_package_artifact(broken).is_valid();
+  };
+  test.expect(
+      rejects_writer_corruption([&](cloth::PackageArtifact& broken) {
+        broken.imported.types[nullable_index].storage.size = 4;
+      }) &&
+          rejects_writer_corruption([&](cloth::PackageArtifact& broken) {
+            broken.imported.types[nullable_index].storage.alignment = 8;
+          }) &&
+          rejects_writer_corruption([&](cloth::PackageArtifact& broken) {
+            broken.imported.types[nullable_index].abi_kind =
+                cloth::AbiTypeKind::kReference;
+          }) &&
+          rejects_writer_corruption([&](cloth::PackageArtifact& broken) {
+            broken.imported.types[nullable_index].bit_width = 32;
+          }) &&
+          rejects_writer_corruption([&](cloth::PackageArtifact& broken) {
+            broken.imported.types[nullable_index].reference_offsets = {0};
+          }) &&
+          rejects_writer_corruption([](cloth::PackageArtifact& broken) {
+            broken.imported.files[0].abi.callables[0].return_mode =
+                cloth::AbiReturnMode::kDirect;
+          }) &&
+          rejects_writer_corruption([](cloth::PackageArtifact& broken) {
+            broken.imported.files[0].abi.callables[0].parameters[1].passing =
+                cloth::AbiPassingMode::kDirect;
+          }),
+      "writer accepted malformed nullable layout or callable metadata");
+
+  std::string metadata = metadata_text(encoded.artifact->bytes);
+  const std::size_t display = metadata.find("\"display_name\":\"int32?\"");
+  const std::size_t size = metadata.find("\"size\":\"8\"", display);
+  test.expect(display != std::string::npos && size != std::string::npos,
+              "nullable-value fixture is missing its storage record");
+  if (size == std::string::npos) return;
+  metadata.replace(size, std::string_view{"\"size\":\"8\""}.size(),
+                   "\"size\":\"4\"");
+  test.expect(
+      !cloth::read_package_artifact(
+           replace_metadata(encoded.artifact->bytes, std::move(metadata)))
+           .is_valid(),
+      "reader accepted a noncanonical nullable-value layout");
+}
+
 void envelope_and_integrity_failures(TestContext& test) {
   const auto encoded = cloth::write_package_artifact(make_artifact());
   if (!encoded.artifact) {
@@ -455,6 +526,10 @@ void envelope_and_integrity_failures(TestContext& test) {
   broken[8] = 5;
   expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
                   "pre-Unicode-scalar format version was accepted");
+  broken = encoded.artifact->bytes;
+  broken[8] = 6;
+  expect_rejected(std::move(broken), cloth::ArtifactIssueCode::kIncompatible,
+                  "pre-nullable-value format version was accepted");
   broken = encoded.artifact->bytes;
   broken[12] = 1;
   expect_rejected(std::move(broken),
@@ -507,22 +582,22 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
   changed.insert(changed.size() - 1, ",\"types\":[]");
   expect_rejected(std::move(changed), "duplicate metadata field was accepted");
   changed = original;
-  changed.replace(changed.find("\"compiler_abi\":\"5\""), 18,
-                  "\"compiler_abi\":5");
+  changed.replace(changed.find("\"compiler_abi\":\"6\""), 18,
+                  "\"compiler_abi\":6");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
   changed = original;
-  const std::string_view current_runtime = "\"runtime_abi\":\"7\"";
+  const std::string_view current_runtime = "\"runtime_abi\":\"9\"";
   const std::size_t runtime = changed.find(current_runtime);
   test.expect(runtime != std::string::npos,
-              "runtime ABI fixture did not contain version 7");
+              "runtime ABI fixture did not contain version 9");
   if (runtime != std::string::npos) {
-    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"6\"");
+    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"8\"");
     const auto rejected = cloth::read_package_artifact(
         replace_metadata(encoded.artifact->bytes, std::move(changed)));
     test.expect(
         !rejected.is_valid() && !rejected.issues.empty() &&
             rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
-        "artifact with runtime ABI 6 was accepted by runtime ABI 7");
+        "artifact with runtime ABI 8 was accepted by runtime ABI 9");
   }
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");
@@ -666,6 +741,8 @@ int main() {
       {"object round trip and compatibility",
        object_round_trip_and_compatibility},
       {"typed error metadata round trip", typed_error_metadata_round_trip},
+      {"nullable value metadata round trip",
+       nullable_value_metadata_round_trip},
       {"envelope and integrity failures", envelope_and_integrity_failures},
       {"metadata canonicality and reference failures",
        metadata_canonicality_and_reference_failures},

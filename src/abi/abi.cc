@@ -95,7 +95,58 @@ AbiTypeLayout make_type_layout(TypeId type, AbiTypeKind kind,
                            : std::vector<std::uint64_t>{}};
 }
 
+bool is_reference_type(TypeId type, const SemanticModel& semantics) {
+  const TypeKind kind = semantics.type(type).kind;
+  return kind == TypeKind::kString || kind == TypeKind::kObject ||
+         kind == TypeKind::kErrorClass || kind == TypeKind::kFileClass ||
+         kind == TypeKind::kInterface || kind == TypeKind::kArray;
+}
+
+bool is_nullable_value(TypeId type, const SemanticModel& semantics) {
+  const SemanticType& nullable = semantics.type(type);
+  return nullable.kind == TypeKind::kNullable && nullable.element_type &&
+         !is_reference_type(*nullable.element_type, semantics);
+}
+
+std::optional<TypeId> inline_struct_type(TypeId type,
+                                         const SemanticModel& semantics) {
+  const SemanticType& value = semantics.type(type);
+  if (value.kind == TypeKind::kStruct) return type;
+  if (value.kind != TypeKind::kNullable || !value.element_type ||
+      semantics.type(*value.element_type).kind != TypeKind::kStruct) {
+    return std::nullopt;
+  }
+  return value.element_type;
+}
+
+std::optional<AbiTypeLayout> lower_nullable_value_layout(
+    TypeId type, const AbiTypeLayout& element) {
+  if (element.kind == AbiTypeKind::kInvalid ||
+      element.kind == AbiTypeKind::kVoid || element.storage.size == 0 ||
+      !is_power_of_two(element.storage.alignment)) {
+    return std::nullopt;
+  }
+  const auto payload = checked_align(1, element.storage.alignment);
+  const auto end =
+      payload ? checked_add(*payload, element.storage.size) : std::nullopt;
+  const auto size =
+      end ? checked_align(*end, element.storage.alignment) : std::nullopt;
+  if (!payload || !size) return std::nullopt;
+  std::vector<std::uint64_t> references;
+  references.reserve(element.reference_offsets.size());
+  for (const std::uint64_t offset : element.reference_offsets) {
+    const auto shifted = checked_add(*payload, offset);
+    if (!shifted) return std::nullopt;
+    references.push_back(*shifted);
+  }
+  return AbiTypeLayout{type, AbiTypeKind::kAggregate, 0,
+                       SizeAlignment{*size, element.storage.alignment},
+                       std::move(references)};
+}
+
 AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
+                         const SemanticModel& semantics,
+                         const std::vector<AbiTypeLayout>& types,
                          const TargetDataLayout& target) {
   switch (semantic_type.kind) {
     case TypeKind::kError:
@@ -112,10 +163,27 @@ AbiTypeLayout lower_type(TypeId type, const SemanticType& semantic_type,
     case TypeKind::kFileClass:
     case TypeKind::kInterface:
     case TypeKind::kArray:
-    case TypeKind::kNullable:
       return make_type_layout(type, AbiTypeKind::kReference,
                               pointer_bit_width(target), target.pointer.size,
                               target.pointer.alignment);
+    case TypeKind::kNullable: {
+      if (!semantic_type.element_type) {
+        return make_type_layout(type, AbiTypeKind::kInvalid, 0, 0, 1);
+      }
+      if (is_reference_type(*semantic_type.element_type, semantics)) {
+        return make_type_layout(type, AbiTypeKind::kReference,
+                                pointer_bit_width(target), target.pointer.size,
+                                target.pointer.alignment);
+      }
+      if (semantic_type.element_type->value < types.size()) {
+        if (auto layout = lower_nullable_value_layout(
+                type, types[semantic_type.element_type->value]);
+            layout) {
+          return std::move(*layout);
+        }
+      }
+      return make_type_layout(type, AbiTypeKind::kAggregate, 0, 0, 1);
+    }
     case TypeKind::kBool:
       return make_type_layout(type, AbiTypeKind::kInteger, 1, 1, 1);
     case TypeKind::kChar:
@@ -247,8 +315,10 @@ std::optional<FileLayout> lower_file_layout(
       references.push_back(*shifted);
     }
     offset = *end;
-    if (aggregate && type.kind == AbiTypeKind::kAggregate) {
-      const auto owner = semantics.type(symbol.type).file;
+    const auto nested_struct = inline_struct_type(symbol.type, semantics);
+    if (aggregate && nested_struct) {
+      const auto owner = semantics.type(*nested_struct).file;
+      if (!owner) return fail("inline struct field has no nominal owner");
       depth = std::max(depth, layouts.at(owner->value)->depth + 1);
       if (depth > kMaxStructDepth) {
         return fail("struct exceeds the inline nesting limit of 128");
@@ -307,14 +377,16 @@ AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
   const bool struct_owner = file.kind == FileTypeKind::kStruct;
   const TypeId return_type = constructor ? file.type : symbol.type;
   const TypeKind result_kind = semantics.type(return_type).kind;
+  const bool aggregate_result = result_kind == TypeKind::kStruct ||
+                                is_nullable_value(return_type, semantics);
   const bool uses_error_abi =
       callable_uses_error_abi(callable.symbol, semantics);
   const AbiReturnMode return_mode =
       uses_error_abi && result_kind != TypeKind::kVoid
           ? AbiReturnMode::kIndirect
-      : result_kind == TypeKind::kStruct ? AbiReturnMode::kIndirect
-      : result_kind == TypeKind::kVoid   ? AbiReturnMode::kVoid
-                                         : AbiReturnMode::kDirect;
+      : aggregate_result               ? AbiReturnMode::kIndirect
+      : result_kind == TypeKind::kVoid ? AbiReturnMode::kVoid
+                                       : AbiReturnMode::kDirect;
   AbiReceiverMode receiver_mode = AbiReceiverMode::kNone;
   std::vector<AbiParameter> parameters;
   parameters.reserve(callable.parameters.size() + 2);
@@ -334,10 +406,12 @@ AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
   }
   for (const SymbolId parameter : callable.parameters) {
     const TypeId type = semantics.symbol(parameter).type;
+    const bool aggregate_parameter =
+        semantics.type(type).kind == TypeKind::kStruct ||
+        is_nullable_value(type, semantics);
     parameters.push_back({AbiParameterKind::kExplicit, parameter, type,
-                          semantics.type(type).kind == TypeKind::kStruct
-                              ? AbiPassingMode::kValuePointer
-                              : AbiPassingMode::kDirect});
+                          aggregate_parameter ? AbiPassingMode::kValuePointer
+                                              : AbiPassingMode::kDirect});
   }
   const bool initializer = constructor && !struct_owner;
   return AbiCallable{
@@ -396,7 +470,8 @@ std::optional<AbiModule> lower_to_abi(const MirModule& mir,
   abi.types.reserve(semantics.types().size());
   for (std::size_t index = 0; index < semantics.types().size(); ++index) {
     const TypeId type{index};
-    abi.types.push_back(lower_type(type, semantics.type(type), abi.target));
+    abi.types.push_back(lower_type(type, semantics.type(type), semantics,
+                                   abi.types, abi.target));
   }
 
   // Kahn traversal avoids host recursion and repeatedly rescanning long chains.
@@ -414,8 +489,9 @@ std::optional<AbiModule> lower_to_abi(const MirModule& mir,
     for (const MirField& field : file.fields) {
       const SemanticSymbol& symbol = semantics.symbol(field.symbol);
       if (symbol.is_static) continue;
-      const SemanticType& type = semantics.type(symbol.type);
-      if (type.kind == TypeKind::kStruct) {
+      const auto struct_type = inline_struct_type(symbol.type, semantics);
+      if (struct_type) {
+        const SemanticType& type = semantics.type(*struct_type);
         if (!type.file) return fail("struct field has no nominal owner");
         dependencies.push_back(type.file->value);
       }
@@ -450,9 +526,25 @@ std::optional<AbiModule> lower_to_abi(const MirModule& mir,
     }
     map_entries += layout->references.size();
     if (semantics.file(file.file).kind == FileTypeKind::kStruct) {
-      AbiTypeLayout& type = abi.types.at(semantics.file(file.file).type.value);
+      const TypeId struct_type = semantics.file(file.file).type;
+      AbiTypeLayout& type = abi.types.at(struct_type.value);
       type.storage = {layout->storage.size, layout->storage.alignment};
       type.reference_offsets = layout->references;
+      for (std::size_t type_index = 0; type_index < semantics.types().size();
+           ++type_index) {
+        const TypeId nullable{type_index};
+        const SemanticType& semantic_type = semantics.type(nullable);
+        if (semantic_type.kind != TypeKind::kNullable ||
+            semantic_type.element_type != struct_type) {
+          continue;
+        }
+        const auto nullable_layout =
+            lower_nullable_value_layout(nullable, type);
+        if (!nullable_layout) {
+          return fail("nullable value layout overflows the target");
+        }
+        abi.types[type_index] = std::move(*nullable_layout);
+      }
     }
     layouts[index] = std::move(layout);
     ++completed;

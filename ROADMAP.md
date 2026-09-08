@@ -76,14 +76,16 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 36 | Recursive `cloth.lang` prelude with source-defined foundational errors |
 | 37 | Portable program arguments through managed `string[]` entry values |
 | 38 | Portable line input and strict primitive parsing |
+| 39 | Unicode scalar literals, checked string indexing, and linear string iteration |
+| 40 | Checked Unicode-scalar string slicing |
 
-Stage 39 is complete following its separately authorized 39.4 exit audit on
-2026-09-06. It is the current completed native language/runtime/toolchain
-baseline, and Stage 31 is the current completed optimizer baseline. Stages 35
-and 36 are complete,
-including their standard-library and prelude exit audits. Coordinated toolchain
-Stage 22 and separate-compilation Stage 23 are complete, including their
-cross-tool exit audits. Build-responsiveness Stage 24 is also complete.
+Stage 41 is complete following its 41.4 exit audit on 2026-09-07.
+Stage 41 is the current native language/runtime/toolchain baseline, and Stage
+31 is the current completed optimizer baseline. Stages 35
+and 36 are complete, including their standard-library and prelude exit audits.
+Coordinated toolchain Stage 22 and separate-compilation Stage 23 are complete,
+including their cross-tool exit audits. Build-responsiveness Stage 24 is also
+complete.
 
 Stage 26 is complete for value structs, including its approved source contract,
 frontend, [aggregate ABI implementation](docs/proposals/stage_26_aggregate_abi.md),
@@ -1153,10 +1155,123 @@ Non-goals include grapheme clusters, byte indexing, mutation, slicing, search,
 normal string methods, general iterators, collections, safe indexing, typed
 bounds errors, new targets, public FFI, and unrelated language or tooling work.
 
-## Beyond Stage 39
+## Stage 40: Unicode string slicing
 
-Stage 39 is complete. The remaining backlog does not acquire priority or enter
-the Cloth 1.0 scope automatically.
+Status: **complete — 40.4 exit audit passed 2026-09-07**
+
+The [approved contract](docs/proposals/stage_40_unicode_string_slicing.md) adds
+one checked intrinsic operation:
+
+```cloth
+string middle = text::slice(start, end);
+```
+
+Objective: produce immutable UTF-8 substrings through half-open Unicode-scalar
+bounds without exposing bytes, introducing ranges or views, or weakening the
+checked runtime and GC contracts established by Stage 39.
+
+Prerequisite: Stage 39.
+
+Deliverables:
+
+1. **40.1 — Contract (complete).** Freeze syntax, scalar bounds, result,
+   evaluation and failure behavior, complexity, allocation and GC ownership,
+   compatibility, diagnostics, verification, and non-goals.
+2. **40.2 — Semantic and verified IR (complete).** Implement binding, typing,
+   dedicated HIR/MIR, control-flow behavior, verifier invariants, and focused
+   compiler tests without releasing a partial feature.
+3. **40.3 — Runtime and toolchain integration (complete).** Implement runtime
+   ABI 8, LLVM/native lowering, precise roots, both targets, packages,
+   source-free consumers, Shuttle, editor support, and user documentation.
+4. **40.4 — Exit audit (complete).** Close Unicode, bounds, evaluation,
+   allocation, complexity, GC, malformed-state, compatibility, determinism,
+   failure-preservation, native/cross-target, and repository quality matrices.
+
+Bounds are zero-based and half-open in Unicode scalars:
+`0 <= start <= end <= text::length`. Equal bounds return an empty string.
+Invalid bounds terminate with the checked string-slice runtime failure. The
+receiver, start, and end evaluate left-to-right exactly once; the receiver
+remains rooted through result allocation.
+
+Checkpoints 40.2 and 40.3 recognize only value-level `string::slice`, accept
+exactly two `int32`-compatible bounds, preserve bottom propagation, and lower
+the operation to dedicated HIR and MIR with exact coerced MIR bounds. Both
+verifiers reject malformed ownership, types, categories, references, and
+operands. Runtime ABI 8 validates the complete string and scalar bounds in one
+monotonic UTF-8 pass, then allocates an immutable managed result. LLVM emits
+the operation for both supported targets while retaining the receiver as a
+precise root across the allocating call. Native, package, source-free, Shuttle,
+editor, and user-documentation paths are integrated.
+
+Current compatibility is artifact/compiler/runtime 6/5/8 and schemas 2/1/1/1
+with `cloth` v0.3.0. Checkpoint 40.3 changed no artifact format, compiler ABI,
+schema, or standard-library version.
+
+The 40.4 audit closes every approved Stage 40 criterion across development and
+sanitizer builds, exact failure ordering, malformed UTF-8 and compiler-state
+rejection, both LLVM targets, native and source-free execution, Shuttle
+determinism and publication, editor coverage, documentation, and repository
+quality gates. It introduces no additional language or compatibility surface.
+
+Non-goals include bracket/range syntax, omitted or negative-from-end bounds,
+array slicing, views, mutation, grapheme or byte slicing, safe slicing, typed
+bounds errors, searching, splitting, formatting, compile-time slicing, and
+unrelated language or toolchain work.
+
+## Stage 41: Uniform nullability
+
+Status: **complete — 41.4 exit audit passed 2026-09-07**
+
+The [approved contract](docs/proposals/stage_41_uniform_nullability.md) extends
+the existing reference-nullability model to primitive, enum, and struct values
+without sentinels or heap boxing. It also completes safe field and instance-call
+behavior and adds `?::` for non-callable safe meta queries.
+
+Objective: make absence a uniform, statically checked property of every
+supported concrete type while preserving exact evaluation, deterministic value
+layout, precise tracing, typed errors, and package compatibility.
+
+Prerequisite: Stage 40.
+
+Deliverables:
+
+1. **41.1 — Contract (complete).** Freeze supported types, conversions,
+   inference, presence, equality, operators, safe fields/calls/meta queries,
+   tagged layout, GC, compatibility, diagnostics, verification, and non-goals.
+2. **41.2 — Frontend and verified IR (complete).** Implement parsing, typing, flow,
+   equality, safe operations, dedicated HIR/MIR behavior, diagnostics, and
+   malformed-state rejection without releasing a partial native feature.
+3. **41.3 — Lowering and integration (complete).** Implement deterministic tagged ABI,
+   runtime ABI 9, LLVM/native lowering, GC maps, artifact format 7, compiler ABI
+   6, both targets, packages, source-free consumers, Shuttle, editor support,
+   and user documentation.
+4. **41.4 — Exit audit (complete).** Close type, flow, evaluation, layout, GC,
+   malformed-state, compatibility, determinism, failure-preservation,
+   native/cross-target, and repository quality matrices.
+
+Nullable references retain their pointer representation. Nullable value types
+use a one-byte zero-or-one tag followed by an aligned inline payload; absence
+has a zeroed payload so precise GC maps can safely describe references inside a
+nullable struct. Values copy normally and are never boxed merely because they
+are nullable.
+
+`T` widens to `T?`, compatible implicit conversions lift through `?`, and
+`T?` requires narrowing, `!`, or `??` before use as `T`. Nullable conditions
+test presence even for `bool?`. Safe calls skip argument evaluation on absence;
+safe `?::` access is limited to non-callable meta queries. Safe indexing,
+slicing, and callable meta operations remain outside Stage 41.
+
+The 41.4 audit closes the approved type, flow, equality, evaluation-order,
+layout, GC, malformed-state, package, Shuttle, editor, documentation, and
+repository matrices. Compatibility remains artifact/compiler/runtime 7/6/9,
+schemas remain 2/1/1/1, and `cloth` remains v0.3.0. Stage 41 adds no option
+type, safe indexing or slicing, callable safe meta operation, or unrelated
+language surface.
+
+## Beyond Stage 41
+
+Stage 41 is complete. The remaining backlog does not
+acquire priority or enter the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 

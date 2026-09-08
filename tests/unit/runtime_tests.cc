@@ -66,6 +66,11 @@ struct InlineValue {
   void* second;
 };
 
+struct NullableInlineValue {
+  std::uint8_t tag;
+  InlineValue payload;
+};
+
 struct ParseResult {
   std::uint8_t status;
   std::uint64_t bits;
@@ -180,6 +185,12 @@ int console_invalid_encoding_scenario() {
 }
 
 int runtime_failure_scenario(std::string_view scenario) {
+  if (scenario == "nullable_value_absent") {
+    cloth_rt_require_nullable_value(0);
+  }
+  if (scenario == "nullable_value_invalid") {
+    cloth_rt_require_nullable_value(UINT8_MAX);
+  }
   if (scenario == "integer_overflow") {
     cloth_rt_require_integer_arithmetic(0, kClothIntegerArithmeticOverflow);
   }
@@ -264,6 +275,48 @@ int runtime_failure_scenario(std::string_view scenario) {
     void* text = cloth_rt_string_literal("A", 1);
     std::uint32_t scalar = 0;
     static_cast<void>(cloth_rt_string_next_scalar(text, nullptr, &scalar));
+  }
+  if (scenario.starts_with("string_slice_")) {
+    constexpr char kText[] = "A\xF0\x9F\xA7\xB5Z";
+    auto* text = static_cast<TestString*>(
+        cloth_rt_string_literal(kText, sizeof(kText) - 1));
+    if (scenario == "string_slice_null") {
+      static_cast<void>(cloth_rt_string_slice(nullptr, 0, 0));
+    } else if (scenario == "string_slice_negative_start") {
+      static_cast<void>(cloth_rt_string_slice(text, -1, 1));
+    } else if (scenario == "string_slice_negative_end") {
+      static_cast<void>(cloth_rt_string_slice(text, 0, -1));
+    } else if (scenario == "string_slice_reversed") {
+      static_cast<void>(cloth_rt_string_slice(text, 2, 1));
+    } else if (scenario == "string_slice_after_length") {
+      static_cast<void>(cloth_rt_string_slice(text, 0, 4));
+    } else if (scenario == "string_slice_large") {
+      static_cast<void>(cloth_rt_string_slice(text, INT32_MAX, INT32_MAX));
+    } else if (scenario == "string_slice_layout_size") {
+      text->byte_size =
+          static_cast<std::size_t>((std::numeric_limits<std::int32_t>::max)()) +
+          1;
+      static_cast<void>(cloth_rt_string_slice(text, 0, 1));
+    } else if (scenario == "string_slice_layout_data") {
+      text->data = nullptr;
+      static_cast<void>(cloth_rt_string_slice(text, 0, 1));
+    } else if (scenario == "string_slice_layout_encoding") {
+      static constexpr char kInvalidUtf8[]{static_cast<char>(0xff)};
+      text->data = kInvalidUtf8;
+      text->byte_size = 1;
+      text->scalar_count = 1;
+      static_cast<void>(cloth_rt_string_slice(text, 0, 1));
+    } else if (scenario == "string_slice_layout_suffix") {
+      static constexpr char kInvalidSuffix[]{'A', static_cast<char>(0xc0),
+                                             static_cast<char>(0xaf)};
+      text->data = kInvalidSuffix;
+      text->byte_size = sizeof(kInvalidSuffix);
+      text->scalar_count = 2;
+      static_cast<void>(cloth_rt_string_slice(text, 0, 1));
+    } else if (scenario == "string_slice_layout_scalars") {
+      text->scalar_count = 4;
+      static_cast<void>(cloth_rt_string_slice(text, 0, 1));
+    }
   }
   if (scenario == "string_layout_encoding") {
     auto* text = static_cast<TestString*>(cloth_rt_string_literal("A", 1));
@@ -389,6 +442,7 @@ int main(int argc, char** argv) {
   }
   if (argc == 2) return runtime_failure_scenario(argv[1]);
   TestContext test{"runtime"};
+  cloth_rt_require_nullable_value(1);
   cloth_rt_require_integer_arithmetic(1, kClothIntegerArithmeticOverflow);
   cloth_rt_require_integer_arithmetic(1, kClothIntegerDivisionByZero);
   cloth_rt_require_integer_arithmetic(1, kClothIntegerRemainderByZero);
@@ -515,9 +569,16 @@ int main(int argc, char** argv) {
   void* right_string = nullptr;
   void* joined_string = nullptr;
   void* expected_string = nullptr;
-  void** string_roots[]{&empty_string, &unicode_string, &left_string,
-                        &right_string, &joined_string,  &expected_string};
-  cloth_rt_gc_push_frame(&string_frame, string_roots, 6);
+  void* slice_source = nullptr;
+  void* slice_result = nullptr;
+  void* slice_expected = nullptr;
+  void* long_slice_source = nullptr;
+  void* long_slice_result = nullptr;
+  void** string_roots[]{&empty_string,      &unicode_string,   &left_string,
+                        &right_string,      &joined_string,    &expected_string,
+                        &slice_source,      &slice_result,     &slice_expected,
+                        &long_slice_source, &long_slice_result};
+  cloth_rt_gc_push_frame(&string_frame, string_roots, 11);
 
   empty_string = cloth_rt_string_literal(nullptr, 0);
   constexpr char kUnicodeBytes[] = "\xC3\xA9\xF0\x9F\x99\x82";
@@ -562,6 +623,51 @@ int main(int argc, char** argv) {
               0 &&
           byte_offset == 6 && scalar == 0,
       "string scalar iteration violated its cursor contract");
+
+  std::string slice_text{"A\0", 2};
+  slice_text.append(
+      "\xC3\xA9\xF0\x9F\xA7\xB5"
+      "e\xCC\x81\xF4\x8F\xBF\xBFZ");
+  slice_source = cloth_rt_string_literal(slice_text.data(), slice_text.size());
+  const auto expect_slice = [&](std::int32_t start, std::int32_t end,
+                                const std::string& expected,
+                                std::string_view description) {
+    slice_result = cloth_rt_string_slice(slice_source, start, end);
+    slice_expected = cloth_rt_string_literal(expected.data(), expected.size());
+    test.expect(cloth_rt_string_equal(slice_result, slice_expected) == 1 &&
+                    cloth_rt_string_length(slice_result) == end - start,
+                description);
+  };
+  expect_slice(0, 0, "", "zero-width string slice at zero is wrong");
+  expect_slice(2, 2, "", "zero-width string slice in the middle is wrong");
+  expect_slice(8, 8, "", "zero-width string slice at length is wrong");
+  expect_slice(0, 2, std::string{"A\0", 2},
+               "string slice lost embedded U+0000");
+  expect_slice(6, 8, "\xF4\x8F\xBF\xBFZ",
+               "string slice lost U+10FFFF or its suffix");
+  expect_slice(2, 6,
+               "\xC3\xA9\xF0\x9F\xA7\xB5"
+               "e\xCC\x81",
+               "mixed-width and combining string slice is wrong");
+  expect_slice(3, 4, "\xF0\x9F\xA7\xB5", "one-scalar string slice is wrong");
+  expect_slice(0, 8, slice_text, "complete string slice changed content");
+
+  cloth_rt_gc_collect();
+  constexpr std::size_t kLongSliceSize = 128 * 1024;
+  std::string long_slice_text(kLongSliceSize, 'x');
+  long_slice_source =
+      cloth_rt_string_literal(long_slice_text.data(), long_slice_text.size());
+  const std::uint64_t slice_collections_before = cloth_rt_gc_collection_count();
+  long_slice_result = cloth_rt_string_slice(
+      long_slice_source, 1, static_cast<std::int32_t>(kLongSliceSize - 1));
+  test.expect(cloth_rt_gc_collection_count() > slice_collections_before &&
+                  cloth_rt_string_length(long_slice_result) ==
+                      static_cast<std::int32_t>(kLongSliceSize - 2) &&
+                  cloth_rt_string_scalar_at(long_slice_result, 0) == 'x' &&
+                  cloth_rt_string_scalar_at(
+                      long_slice_result,
+                      static_cast<std::int32_t>(kLongSliceSize - 3)) == 'x',
+              "allocating string slice did not preserve its rooted source");
 
   constexpr std::size_t kLongScalarCount = 4096;
   constexpr std::string_view kThread = "\xF0\x9F\xA7\xB5";
@@ -814,7 +920,7 @@ int main(int argc, char** argv) {
   }
 
   cloth_rt_gc_collect();
-  test.expect(cloth_rt_gc_live_objects() == 6 && cloth_rt_gc_live_bytes() != 0,
+  test.expect(cloth_rt_gc_live_objects() == 11 && cloth_rt_gc_live_bytes() != 0,
               "marking did not preserve rooted strings");
   empty_string = nullptr;
   unicode_string = nullptr;
@@ -822,6 +928,11 @@ int main(int argc, char** argv) {
   right_string = nullptr;
   joined_string = nullptr;
   expected_string = nullptr;
+  slice_source = nullptr;
+  slice_result = nullptr;
+  slice_expected = nullptr;
+  long_slice_source = nullptr;
+  long_slice_result = nullptr;
   cloth_rt_gc_collect();
   test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
               "sweeping did not reclaim borrowed and owned strings");
@@ -966,6 +1077,49 @@ int main(int argc, char** argv) {
   test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
               "aggregate array storage was not reclaimed");
   cloth_rt_gc_pop_frame(&aggregate_frame);
+
+  constexpr std::uint64_t kNullableInlineOffsets[]{
+      offsetof(NullableInlineValue, payload) + offsetof(InlineValue, first),
+      offsetof(NullableInlineValue, payload) + offsetof(InlineValue, second)};
+  const ClothArrayElementLayout nullable_inline_layout{
+      sizeof(NullableInlineValue), alignof(NullableInlineValue),
+      kNullableInlineOffsets, 2};
+  NullableInlineValue nullable_local{1, {7, nullptr, 9, nullptr}};
+  void* nullable_array = nullptr;
+  void** nullable_roots[]{&nullable_array, &nullable_local.payload.first,
+                          &nullable_local.payload.second};
+  ClothGcRootFrame nullable_frame{};
+  cloth_rt_gc_push_frame(&nullable_frame, nullable_roots, 3);
+  nullable_local.payload.first = cloth_rt_alloc(&node_type);
+  nullable_local.payload.second = cloth_rt_string_literal("nullable", 8);
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 2,
+              "nullable aggregate payload roots were not retained");
+
+  nullable_array = cloth_rt_array_alloc(1, &nullable_inline_layout);
+  NullableInlineValue nullable_zeroed{};
+  std::memcpy(&nullable_zeroed, cloth_rt_array_element(nullable_array, 0),
+              sizeof(nullable_zeroed));
+  test.expect(nullable_zeroed.tag == 0 &&
+                  nullable_zeroed.payload.first == nullptr &&
+                  nullable_zeroed.payload.second == nullptr,
+              "absent nullable aggregate payload was not zeroed");
+  std::memcpy(cloth_rt_array_element(nullable_array, 0), &nullable_local,
+              sizeof(nullable_local));
+  nullable_local = {};
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 3,
+              "shifted nullable aggregate map lost a present payload");
+  std::memcpy(cloth_rt_array_element(nullable_array, 0), &nullable_zeroed,
+              sizeof(nullable_zeroed));
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 1,
+              "absent nullable aggregate retained stale payload roots");
+  nullable_array = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "nullable aggregate array storage was not reclaimed");
+  cloth_rt_gc_pop_frame(&nullable_frame);
 
   ClothGcRootFrame object_frame{};
   void* meta_node = nullptr;

@@ -59,6 +59,10 @@ struct IntegerMetaOperation {
   TypeId integer_type;
 };
 
+enum class StringMetaOperation {
+  kSlice,
+};
+
 enum class TypeKind {
   kError,
   kBottom,
@@ -262,7 +266,9 @@ struct ExpressionSemantics {
   bool is_base_qualified{false};
   std::optional<FileId> interface_dispatch{};
   std::optional<IntegerMetaOperation> integer_meta_operation{};
+  std::optional<StringMetaOperation> string_meta_operation{};
   bool may_divide_by_zero{false};
+  bool is_safe_call{false};
 };
 
 struct InterfaceImplementation {

@@ -114,7 +114,7 @@ std::string canonical_member_identity(
 
 std::string mangle_canonical_identity(std::string_view identity) {
   constexpr std::string_view kHex = "0123456789abcdef";
-  std::string result = "_C4";
+  std::string result = "_C" + std::to_string(kCompilerAbiVersion);
   for (const char character : identity) {
     const auto byte = static_cast<unsigned char>(character);
     result.push_back(kHex[byte >> 4U]);

@@ -568,11 +568,104 @@ class HirVerifier {
            semantics_.type(type).kind == TypeKind::kStruct;
   }
 
+  std::optional<TypeId> nominal_identity(TypeId type, TypeKind kind) const {
+    if (type.value >= semantics_.types().size()) {
+      return std::nullopt;
+    }
+    if (semantics_.type(type).kind == kind) {
+      return type;
+    }
+    const std::optional<TypeId> underlying = nullable_underlying(type);
+    return underlying && underlying->value < semantics_.types().size() &&
+                   semantics_.type(*underlying).kind == kind
+               ? underlying
+               : std::nullopt;
+  }
+
+  bool nominal_equality_compatible(TypeId left, TypeId right,
+                                   TypeKind kind) const {
+    const std::optional<TypeId> left_identity = nominal_identity(left, kind);
+    const std::optional<TypeId> right_identity = nominal_identity(right, kind);
+    if (left_identity && right_identity) {
+      return left_identity == right_identity;
+    }
+    if (left == semantics_.null_type() && right_identity) {
+      return nullable_underlying(right).has_value();
+    }
+    if (right == semantics_.null_type() && left_identity) {
+      return nullable_underlying(left).has_value();
+    }
+    return false;
+  }
+
+  std::optional<TypeId> nullable_underlying(TypeId type) const {
+    if (type.value >= semantics_.types().size()) {
+      return std::nullopt;
+    }
+    const SemanticType& nullable = semantics_.type(type);
+    return nullable.kind == TypeKind::kNullable ? nullable.element_type
+                                                : std::nullopt;
+  }
+
+  std::optional<TypeId> nullable_type(TypeId underlying) const {
+    for (std::size_t index = 0; index < semantics_.types().size(); ++index) {
+      const SemanticType& type = semantics_.type(TypeId{index});
+      if (type.kind == TypeKind::kNullable && type.element_type == underlying) {
+        return TypeId{index};
+      }
+    }
+    return std::nullopt;
+  }
+
+  bool is_non_null_reference(TypeId type) const {
+    if (type.value >= semantics_.types().size()) {
+      return false;
+    }
+    const TypeKind kind = semantics_.type(type).kind;
+    return kind == TypeKind::kString || kind == TypeKind::kObject ||
+           kind == TypeKind::kFileClass || kind == TypeKind::kErrorClass ||
+           kind == TypeKind::kInterface || kind == TypeKind::kArray;
+  }
+
   void verify_value_binding(TypeId expected, TypeId actual, SourceRange range) {
     if (actual == semantics_.bottom_type()) {
       return;
     }
-    if ((is_struct(expected) || is_struct(actual)) && expected != actual) {
+    const std::optional<TypeId> expected_value = nullable_underlying(expected);
+    const std::optional<TypeId> actual_value = nullable_underlying(actual);
+    if (expected_value || actual_value) {
+      bool valid = expected == actual;
+      if (expected_value) {
+        TypeId source = actual;
+        if (actual == semantics_.null_type()) {
+          valid = true;
+        } else {
+          if (actual_value) {
+            source = *actual_value;
+          }
+          valid = valid || source == *expected_value;
+          if (!valid && source.value < semantics_.types().size() &&
+              expected_value->value < semantics_.types().size()) {
+            valid = can_widen_numeric(semantics_.type(source).kind,
+                                      semantics_.type(*expected_value).kind) ||
+                    (is_non_null_reference(source) &&
+                     is_non_null_reference(*expected_value));
+          }
+        }
+      }
+      if (!valid) {
+        report(range, "nullable value binding has incompatible types");
+      }
+    }
+    const std::optional<TypeId> expected_struct =
+        nominal_identity(expected, TypeKind::kStruct);
+    const std::optional<TypeId> actual_struct =
+        nominal_identity(actual, TypeKind::kStruct);
+    if ((expected_struct || actual_struct) &&
+        !(expected_struct && actual_struct &&
+          expected_struct == actual_struct) &&
+        !(expected_struct && expected_value &&
+          actual == semantics_.null_type())) {
       report(range, "struct value binding lost nominal identity");
     }
   }
@@ -680,6 +773,87 @@ class HirVerifier {
     }
   }
 
+  void verify_string_slice_expression(const HirExpression& expression,
+                                      const HirStringSliceExpression& slice) {
+    if (expression.type == semantics_.error_type() ||
+        slice.string.value >= hir_.storage.expressions().size() ||
+        slice.start.value >= hir_.storage.expressions().size() ||
+        slice.end.value >= hir_.storage.expressions().size()) {
+      return;
+    }
+    const HirExpression& string = hir_.storage.expression(slice.string);
+    const HirExpression& start = hir_.storage.expression(slice.start);
+    const HirExpression& end = hir_.storage.expression(slice.end);
+    const bool has_bottom = string.type == semantics_.bottom_type() ||
+                            start.type == semantics_.bottom_type() ||
+                            end.type == semantics_.bottom_type();
+    if (string.type != semantics_.bottom_type() &&
+        string.type != semantics_.string_type()) {
+      report(expression.range, "string slice has a non-string receiver");
+    }
+    if (start.type != semantics_.bottom_type() &&
+        !is_int32_compatible(start.type)) {
+      report(expression.range, "string slice start is not int32-compatible");
+    }
+    if (end.type != semantics_.bottom_type() &&
+        !is_int32_compatible(end.type)) {
+      report(expression.range, "string slice end is not int32-compatible");
+    }
+    if (has_bottom && expression.type != semantics_.bottom_type()) {
+      report(expression.range,
+             "terminating string slice has a non-bottom result");
+    } else if (!has_bottom && expression.type != semantics_.string_type()) {
+      report(expression.range, "string slice has an inconsistent result type");
+    }
+    if (expression.category != ValueCategory::kValue) {
+      report(expression.range, "string slice is not a value");
+    }
+  }
+
+  void verify_safe_meta_expression(const HirExpression& expression,
+                                   const HirSafeMetaExpression& meta) {
+    if (meta.object.value >= hir_.storage.expressions().size() ||
+        expression.type == semantics_.error_type()) {
+      return;
+    }
+    const HirExpression& object = hir_.storage.expression(meta.object);
+    const std::optional<TypeId> underlying = nullable_underlying(object.type);
+    if (!underlying || underlying->value >= semantics_.types().size()) {
+      report(expression.range,
+             "safe meta query consumes a non-nullable receiver");
+      return;
+    }
+    const SemanticType& type = semantics_.type(*underlying);
+    TypeId result = semantics_.error_type();
+    bool valid_query = false;
+    switch (meta.query) {
+      case SafeMetaQueryKind::kArrayLength:
+        valid_query = type.kind == TypeKind::kArray;
+        result = *semantics_.find_type("int32");
+        break;
+      case SafeMetaQueryKind::kStringLength:
+      case SafeMetaQueryKind::kStringByteLength:
+        valid_query = type.kind == TypeKind::kString;
+        result = *semantics_.find_type("int32");
+        break;
+      case SafeMetaQueryKind::kStringIsEmpty:
+        valid_query = type.kind == TypeKind::kString;
+        result = semantics_.bool_type();
+        break;
+      case SafeMetaQueryKind::kTypeName:
+        valid_query = is_non_null_reference(*underlying) ||
+                      type.kind == TypeKind::kEnum ||
+                      type.kind == TypeKind::kStruct;
+        result = semantics_.string_type();
+        break;
+    }
+    const std::optional<TypeId> expected = nullable_type(result);
+    if (!valid_query || !expected || expression.type != *expected ||
+        expression.category != ValueCategory::kValue) {
+      report(expression.range, "safe meta query has incompatible HIR metadata");
+    }
+  }
+
   void verify_struct_expression(const HirExpression& expression, FileId file,
                                 bool constructor) {
     const bool struct_owner =
@@ -766,13 +940,41 @@ class HirVerifier {
               report(expression.range,
                      "struct call has the wrong receiver type");
             }
+          } else if (const auto* member =
+                         std::get_if<HirSafeMemberExpression>(&callee.data)) {
+            const std::optional<TypeId> receiver = nullable_underlying(
+                hir_.storage.expression(member->object).type);
+            if (!receiver || *receiver != semantics_.file(*symbol.file).type) {
+              report(expression.range,
+                     "safe struct call has the wrong receiver type");
+            }
           } else if (!std::holds_alternative<HirSymbolExpression>(
                          callee.data) ||
                      symbol.file != file) {
             report(expression.range, "struct call has no instance receiver");
           }
         }
-        verify_value_binding(symbol.type, expression.type, expression.range);
+        const auto& callee = ungroup(call->callee);
+        const bool has_safe_callee =
+            std::holds_alternative<HirSafeMemberExpression>(callee.data);
+        if (call->is_safe != has_safe_callee ||
+            (call->is_safe && (symbol.kind != SymbolKind::kFunction ||
+                               symbol.is_static || call->is_base_qualified))) {
+          report(expression.range, "safe call has incompatible HIR metadata");
+        }
+        TypeId expected_result = symbol.type;
+        if (call->is_safe && expected_result != semantics_.void_type()) {
+          const std::optional<TypeId> nullable = nullable_type(expected_result);
+          if (nullable) {
+            expected_result = *nullable;
+          }
+        }
+        if (expected_result != expression.type) {
+          report(expression.range,
+                 "call result type does not match declaration");
+        }
+        verify_value_binding(expected_result, expression.type,
+                             expression.range);
         if (call->arguments.size() != symbol.parameter_types.size()) {
           report(expression.range,
                  "call argument count does not match declaration");
@@ -788,8 +990,10 @@ class HirVerifier {
     } else if (const auto* binary = std::get_if<HirBinaryExpression>(&data)) {
       const TypeId left = hir_.storage.expression(binary->left).type;
       const TypeId right = hir_.storage.expression(binary->right).type;
-      if ((is_struct(left) || is_struct(right)) &&
-          (left != right || expression.type != semantics_.bool_type() ||
+      if ((nominal_identity(left, TypeKind::kStruct) ||
+           nominal_identity(right, TypeKind::kStruct)) &&
+          (!nominal_equality_compatible(left, right, TypeKind::kStruct) ||
+           expression.type != semantics_.bool_type() ||
            (binary->operation != TokenKind::kEqualEqual &&
             binary->operation != TokenKind::kBangEqual))) {
         report(expression.range,
@@ -854,6 +1058,8 @@ class HirVerifier {
             if constexpr (requires { node.fallback; }) enqueue(node.fallback);
             if constexpr (requires { node.array; }) enqueue(node.array);
             if constexpr (requires { node.string; }) enqueue(node.string);
+            if constexpr (requires { node.start; }) enqueue(node.start);
+            if constexpr (requires { node.end; }) enqueue(node.end);
             if constexpr (requires { node.expression; })
               enqueue(node.expression);
             if constexpr (requires { node.index; }) enqueue(node.index);
@@ -1209,12 +1415,15 @@ class HirVerifier {
                    "arithmetic expression has incompatible HIR metadata");
           }
         }
-        if (is_enum_type(expression.type) || is_enum_expression(binary->left) ||
-            is_enum_expression(binary->right)) {
-          if (binary->left.value >= expressions.size() ||
-              binary->right.value >= expressions.size() ||
-              expressions[binary->left.value].type !=
-                  expressions[binary->right.value].type ||
+        if (binary->left.value < expressions.size() &&
+            binary->right.value < expressions.size() &&
+            (nominal_identity(expressions[binary->left.value].type,
+                              TypeKind::kEnum) ||
+             nominal_identity(expressions[binary->right.value].type,
+                              TypeKind::kEnum))) {
+          if (!nominal_equality_compatible(
+                  expressions[binary->left.value].type,
+                  expressions[binary->right.value].type, TypeKind::kEnum) ||
               expression.type != semantics_.bool_type() ||
               (binary->operation != TokenKind::kEqualEqual &&
                binary->operation != TokenKind::kBangEqual)) {
@@ -1336,6 +1545,33 @@ class HirVerifier {
                      std::get_if<HirSafeMemberExpression>(&expression.data)) {
         verify_expression(member->object, expression.range);
         verify_optional_symbol(member->member, expression.range);
+        if (member->object.value < expressions.size() && member->member &&
+            member->member->value < semantics_.symbols().size()) {
+          const std::optional<TypeId> receiver =
+              nullable_underlying(expressions[member->object.value].type);
+          const SemanticSymbol& symbol = semantics_.symbol(*member->member);
+          if (!receiver || symbol.is_static ||
+              (symbol.kind != SymbolKind::kField &&
+               symbol.kind != SymbolKind::kFunction)) {
+            report(expression.range,
+                   "safe member access has incompatible HIR metadata");
+          } else if (symbol.kind == SymbolKind::kField) {
+            TypeId expected = symbol.type;
+            if (const std::optional<TypeId> nullable =
+                    nullable_type(expected)) {
+              expected = *nullable;
+            }
+            if (expression.type != expected ||
+                expression.category != ValueCategory::kValue) {
+              report(expression.range,
+                     "safe field access has incompatible HIR metadata");
+            }
+          } else if (expression.type != semantics_.error_type() ||
+                     expression.category != ValueCategory::kCallable) {
+            report(expression.range,
+                   "safe function reference has incompatible HIR metadata");
+          }
+        }
       } else if (const auto* coalesce =
                      std::get_if<HirNullCoalesceExpression>(&expression.data)) {
         verify_expression(coalesce->nullable, expression.range);
@@ -1398,9 +1634,19 @@ class HirVerifier {
       } else if (const auto* meta =
                      std::get_if<HirStringMetaExpression>(&expression.data)) {
         verify_expression(meta->string, expression.range);
+      } else if (const auto* slice =
+                     std::get_if<HirStringSliceExpression>(&expression.data)) {
+        verify_expression(slice->string, expression.range);
+        verify_expression(slice->start, expression.range);
+        verify_expression(slice->end, expression.range);
+        verify_string_slice_expression(expression, *slice);
       } else if (const auto* meta =
                      std::get_if<HirObjectMetaExpression>(&expression.data)) {
         verify_expression(meta->object, expression.range);
+      } else if (const auto* meta =
+                     std::get_if<HirSafeMetaExpression>(&expression.data)) {
+        verify_expression(meta->object, expression.range);
+        verify_safe_meta_expression(expression, *meta);
       } else if (const auto* meta =
                      std::get_if<HirIntegerMetaExpression>(&expression.data)) {
         verify_expression(meta->object, expression.range);

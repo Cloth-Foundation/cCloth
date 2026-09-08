@@ -73,11 +73,13 @@ existing equality. Padding and static fields do not participate.
 evaluate their operand once. Equality includes private fields, compares
 strings by contents and other references by identity, and preserves NaN behavior.
 
-Arrays are invariant. `Point[]?` is a nullable array reference; `Point?` is not a
-supported nullable value. Structs do not widen to `object`, participate in `is`/
-`as`, provide truthiness or arithmetic, inherit, implement interfaces, or support
-virtual/abstract/final-override functions. Static fields retain the existing
-scalar-literal/enum-case `static final` contract, not aggregate constants.
+Arrays are invariant. `Point[]?` is a nullable array reference, while `Point?`
+is an inline tagged nullable struct. Nullable structs support presence tests,
+safe fields/calls/meta queries, fallback, assertion, and equality without
+boxing. Structs do not widen to `object`, participate in reference `is`/`as`,
+provide arithmetic, inherit, implement interfaces, or support virtual/abstract/
+final-override functions. Static fields retain the existing scalar-literal/
+enum-case `static final` contract, not aggregate constants.
 
 Inline field cycles are rejected with the participating field path. Class and
 array references break layout dependencies; function signatures do not add them.
@@ -115,8 +117,8 @@ receive read-only snapshots captured before arguments. Struct returns use fresh
 caller-owned result storage. Nested writes capture their owner and index before
 the RHS; compound updates load the current field after evaluating the RHS.
 
-Compatibility is artifact format **6**, compiler ABI **5**, runtime ABI **7**.
+Compatibility is artifact format **7**, compiler ABI **6**, runtime ABI **9**.
 Process protocol **2**, receipt schema **1**, and manifest schema **1** are
 unchanged. Rebuild old artifacts. See [data layout and ABI](data_layout_and_abi.md)
-and [artifact schema v6](artifact_schema_v6.md) for layouts, maps, signatures, and
+and [artifact schema v7](artifact_schema_v7.md) for layouts, maps, signatures, and
 bounded-validation limits.

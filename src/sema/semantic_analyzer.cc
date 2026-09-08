@@ -72,7 +72,9 @@ struct ExpressionState {
   std::optional<TypeId> checked_type{};
   std::optional<FileId> interface_dispatch{};
   std::optional<IntegerMetaOperation> integer_meta_operation{};
+  std::optional<StringMetaOperation> string_meta_operation{};
   bool may_divide_by_zero{false};
+  bool is_safe_call{false};
 };
 
 struct ErrorEffectSource {
@@ -1959,7 +1961,7 @@ class SemanticAnalyzer {
         }
         return *core;
       }
-      return apply_type_syntax(syntax, current_file, *core);
+      return apply_type_syntax(syntax, *core);
     }
     const std::optional<FileId> file =
         find_visible_file(current_file, syntax.name);
@@ -1987,33 +1989,18 @@ class SemanticAnalyzer {
       return model_.error_type();
     }
     const TypeId type = model_.file(*file).type;
-    return apply_type_syntax(syntax, current_file, type);
+    return apply_type_syntax(syntax, type);
   }
 
-  TypeId apply_type_syntax(const TypeSyntax& syntax, FileId current_file,
-                           TypeId base_type) {
+  TypeId apply_type_syntax(const TypeSyntax& syntax, TypeId base_type) {
     TypeId type = base_type;
     if (syntax.is_element_nullable) {
-      if (!is_reference(type)) {
-        diagnostics_.error(syntax.range,
-                           "nullable marker requires a reference type; '" +
-                               type_name(type) + "' is a value type");
-        model_.mutable_file(current_file).is_valid = false;
-        return model_.error_type();
-      }
       type = model_.get_nullable_type(type);
     }
     if (syntax.is_array) {
       type = model_.get_array_type(type);
     }
     if (syntax.is_nullable) {
-      if (!is_reference(type)) {
-        diagnostics_.error(syntax.range,
-                           "nullable marker requires a reference type; '" +
-                               type_name(type) + "' is a value type");
-        model_.mutable_file(current_file).is_valid = false;
-        return model_.error_type();
-      }
       type = model_.get_nullable_type(type);
     }
     return type;
@@ -3097,6 +3084,8 @@ class SemanticAnalyzer {
             return analyze_meta_access(node, expression.range);
           else if constexpr (std::is_same_v<Node, SafeMemberAccessExpression>)
             return analyze_safe_member_access(node, expression.range);
+          else if constexpr (std::is_same_v<Node, SafeMetaAccessExpression>)
+            return analyze_safe_meta_access(node, expression.range);
           else if constexpr (std::is_same_v<Node, NullCoalesceExpression>)
             return analyze_null_coalesce(node, expression.range);
           else if constexpr (std::is_same_v<Node, NullAssertExpression>)
@@ -3273,6 +3262,13 @@ class SemanticAnalyzer {
                                   SourceRange range,
                                   std::optional<TypeId> expected,
                                   bool is_negated) {
+    if (expected) {
+      const SemanticType& expected_type = model_.type(*expected);
+      if (expected_type.kind == TypeKind::kNullable &&
+          expected_type.element_type) {
+        expected = expected_type.element_type;
+      }
+    }
     const NumericLiteralSpelling spelling =
         parse_numeric_literal_spelling(literal.lexeme);
     if ((literal.kind == LiteralKind::kInteger ||
@@ -3404,7 +3400,7 @@ class SemanticAnalyzer {
                                 : model_.object_type();
       }
     }
-    if (contains_null && is_reference(*element_type)) {
+    if (contains_null) {
       if (model_.type(*element_type).kind != TypeKind::kNullable) {
         element_type = model_.get_nullable_type(*element_type);
       }
@@ -3570,6 +3566,13 @@ class SemanticAnalyzer {
 
   ExpressionState analyze_binary_chain(ExpressionId root,
                                        std::optional<TypeId> expected) {
+    if (expected) {
+      const SemanticType& expected_type = model_.type(*expected);
+      if (expected_type.kind == TypeKind::kNullable &&
+          expected_type.element_type) {
+        expected = expected_type.element_type;
+      }
+    }
     const std::optional<TypeId> numeric_context =
         expected && is_numeric(*expected) ? expected : std::nullopt;
     std::vector<ExpressionId> binary_ids;
@@ -4278,6 +4281,10 @@ class SemanticAnalyzer {
             std::get_if<MetaAccessExpression>(&expression.data)) {
       return expression_assigns_symbol(meta->object, symbol);
     }
+    if (const auto* meta =
+            std::get_if<SafeMetaAccessExpression>(&expression.data)) {
+      return expression_assigns_symbol(meta->object, symbol);
+    }
     if (const auto* coalesce =
             std::get_if<NullCoalesceExpression>(&expression.data)) {
       return expression_assigns_symbol(coalesce->nullable, symbol) ||
@@ -4434,7 +4441,10 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     if (object_type.kind == TypeKind::kString) {
-      if (member.member == "Length") {
+      if (member.member == "slice") {
+        diagnostics_.error(
+            range, "string slicing is a meta operation; use '::slice(...)'");
+      } else if (member.member == "Length") {
         diagnostics_.error(range,
                            "string length is a meta query; use '::length'");
       } else if (member.member == "ByteLength") {
@@ -4521,7 +4531,12 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     if (object.type == model_.bottom_type()) {
-      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+      ExpressionState state{model_.bottom_type(), ValueCategory::kValue};
+      if (meta.meta == "slice") {
+        state.category = ValueCategory::kCallable;
+        state.string_meta_operation = StringMetaOperation::kSlice;
+      }
+      return state;
     }
 
     const SemanticType& object_type = model_.type(object.type);
@@ -4598,6 +4613,11 @@ class SemanticAnalyzer {
       return ExpressionState{model_.error_type()};
     }
     if (object_type.kind == TypeKind::kString) {
+      if (meta.meta == "slice") {
+        ExpressionState state{model_.error_type(), ValueCategory::kCallable};
+        state.string_meta_operation = StringMetaOperation::kSlice;
+        return state;
+      }
       if (meta.meta == "length" || meta.meta == "byteLength") {
         return ExpressionState{*model_.find_type("int32"),
                                ValueCategory::kValue};
@@ -4628,8 +4648,8 @@ class SemanticAnalyzer {
     const SemanticType& nullable = model_.type(object.type);
     if (nullable.kind != TypeKind::kNullable || !nullable.element_type) {
       diagnostics_.error(range,
-                         "safe member access requires a nullable "
-                         "reference; found '" +
+                         "safe member access requires a nullable value; "
+                         "found '" +
                              nullable.name + "'");
       return ExpressionState{model_.error_type()};
     }
@@ -4637,9 +4657,8 @@ class SemanticAnalyzer {
     const SemanticType& object_type = model_.type(*nullable.element_type);
     if (object_type.kind == TypeKind::kArray) {
       if (member.member == "Length") {
-        diagnostics_.error(range,
-                           "safe meta queries are not supported; narrow the "
-                           "array and use '::length'");
+        diagnostics_.error(
+            range, "array length is a safe meta query; use '?::length'");
       } else {
         diagnostics_.error(range, "array type '" + object_type.name +
                                       "' has no member '" +
@@ -4650,16 +4669,16 @@ class SemanticAnalyzer {
     if (object_type.kind == TypeKind::kString) {
       if (member.member == "Length") {
         diagnostics_.error(range,
-                           "safe meta queries are not supported; narrow the "
-                           "string and use '::length'");
+                           "string length is a safe meta query; use "
+                           "'?::length'");
       } else if (member.member == "ByteLength") {
         diagnostics_.error(range,
-                           "safe meta queries are not supported; narrow the "
-                           "string and use '::byteLength'");
+                           "string byte length is a safe meta query; use "
+                           "'?::byteLength'");
       } else if (member.member == "IsEmpty") {
         diagnostics_.error(range,
-                           "safe meta queries are not supported; narrow the "
-                           "string and use '::isEmpty'");
+                           "string emptiness is a safe meta query; use "
+                           "'?::isEmpty'");
       } else {
         diagnostics_.error(
             range, "string has no member '" + std::string{member.member} + "'");
@@ -4675,7 +4694,8 @@ class SemanticAnalyzer {
     }
     if ((object_type.kind != TypeKind::kFileClass &&
          object_type.kind != TypeKind::kErrorClass &&
-         object_type.kind != TypeKind::kInterface) ||
+         object_type.kind != TypeKind::kInterface &&
+         object_type.kind != TypeKind::kStruct) ||
         !object_type.file) {
       diagnostics_.error(
           range, "type '" + object_type.name + "' has no Cloth members");
@@ -4699,11 +4719,14 @@ class SemanticAnalyzer {
 
     const SemanticSymbol& selected = model_.symbol(members.front());
     if (selected.kind != SymbolKind::kField) {
-      diagnostics_.error(
-          range,
-          "safe function calls are not implemented; narrow the receiver "
-          "first");
-      return ExpressionState{model_.error_type()};
+      ExpressionState state{model_.error_type(),
+                            ValueCategory::kCallable,
+                            {},
+                            std::move(members)};
+      if (object_type.kind == TypeKind::kInterface) {
+        state.interface_dispatch = target_file;
+      }
+      return state;
     }
     if (selected.is_static) {
       diagnostics_.error(range,
@@ -4711,17 +4734,80 @@ class SemanticAnalyzer {
                              "' must be accessed through its file class");
       return ExpressionState{model_.error_type()};
     }
-    if (!is_reference(selected.type)) {
-      diagnostics_.error(range, "safe access to value-type field '" +
-                                    selected.name +
-                                    "' requires nullable value types");
-      return ExpressionState{model_.error_type()};
-    }
-
     const TypeId result = model_.type(selected.type).kind == TypeKind::kNullable
                               ? selected.type
                               : model_.get_nullable_type(selected.type);
     return ExpressionState{result, ValueCategory::kValue, members.front(), {}};
+  }
+
+  ExpressionState analyze_safe_meta_access(const SafeMetaAccessExpression& meta,
+                                           SourceRange range) {
+    const ExpressionState object = analyze_expression(meta.object);
+    check_value(object, expression_range(meta.object));
+    if (object.type == model_.error_type()) {
+      return ExpressionState{model_.error_type()};
+    }
+    if (object.type == model_.bottom_type()) {
+      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+    }
+    const SemanticType& nullable = model_.type(object.type);
+    if (nullable.kind != TypeKind::kNullable || !nullable.element_type) {
+      diagnostics_.error(range,
+                         "safe meta access requires a nullable value; found '" +
+                             nullable.name + "'");
+      return ExpressionState{model_.error_type()};
+    }
+
+    const TypeId underlying = *nullable.element_type;
+    const SemanticType& underlying_type = model_.type(underlying);
+    const bool callable =
+        (underlying_type.kind == TypeKind::kString && meta.meta == "slice") ||
+        (is_integer(underlying) &&
+         (meta.meta == "writeLittleEndian" || meta.meta == "writeBigEndian")) ||
+        (underlying_type.kind == TypeKind::kArray &&
+         underlying_type.element_type == model_.find_type("byte") &&
+         integer_read_operation(meta.meta).has_value());
+    if (callable) {
+      diagnostics_.error(
+          range, "safe callable meta operation '?::" + std::string{meta.meta} +
+                     "' is not supported; narrow the receiver first");
+      return ExpressionState{model_.error_type()};
+    }
+
+    TypeId result = model_.error_type();
+    if (meta.meta == "typeName" &&
+        (is_reference(underlying) || underlying_type.kind == TypeKind::kEnum ||
+         underlying_type.kind == TypeKind::kStruct)) {
+      result = model_.string_type();
+    } else if (underlying_type.kind == TypeKind::kArray &&
+               meta.meta == "length") {
+      result = *model_.find_type("int32");
+    } else if (underlying_type.kind == TypeKind::kString &&
+               (meta.meta == "length" || meta.meta == "byteLength")) {
+      result = *model_.find_type("int32");
+    } else if (underlying_type.kind == TypeKind::kString &&
+               meta.meta == "isEmpty") {
+      result = model_.bool_type();
+    } else if (underlying_type.kind == TypeKind::kArray) {
+      diagnostics_.error(range, "array type '" + underlying_type.name +
+                                    "' has no safe meta query '" +
+                                    std::string{meta.meta} + "'");
+      return ExpressionState{model_.error_type()};
+    } else if (underlying_type.kind == TypeKind::kString) {
+      diagnostics_.error(range, "string has no safe meta query '" +
+                                    std::string{meta.meta} + "'");
+      return ExpressionState{model_.error_type()};
+    } else {
+      diagnostics_.error(range, "type '" + underlying_type.name +
+                                    "' has no safe meta query '" +
+                                    std::string{meta.meta} + "'");
+      return ExpressionState{model_.error_type()};
+    }
+
+    if (model_.type(result).kind != TypeKind::kNullable) {
+      result = model_.get_nullable_type(result);
+    }
+    return ExpressionState{result, ValueCategory::kValue};
   }
 
   ExpressionState analyze_null_coalesce(const NullCoalesceExpression& coalesce,
@@ -4780,7 +4866,7 @@ class SemanticAnalyzer {
     const SemanticType& nullable = model_.type(operand.type);
     if (nullable.kind != TypeKind::kNullable || !nullable.element_type) {
       diagnostics_.error(range,
-                         "non-null assertion requires a nullable reference; "
+                         "non-null assertion requires a nullable value; "
                          "found '" +
                              nullable.name + "'");
       return ExpressionState{model_.error_type()};
@@ -4814,12 +4900,18 @@ class SemanticAnalyzer {
     }
 
     if (callee.type == model_.bottom_type()) {
-      return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
+      ExpressionState state{model_.bottom_type(), ValueCategory::kValue};
+      state.string_meta_operation = callee.string_meta_operation;
+      return state;
     }
 
     if (callee.integer_meta_operation) {
       return analyze_integer_meta_call(*callee.integer_meta_operation, call,
                                        arguments, range);
+    }
+    if (callee.string_meta_operation) {
+      return analyze_string_meta_call(*callee.string_meta_operation, call,
+                                      arguments, range);
     }
 
     std::vector<SymbolId> candidates = callee.candidates;
@@ -4942,8 +5034,15 @@ class SemanticAnalyzer {
           model_.bottom_type(), ValueCategory::kValue, selected, {}};
     }
     record_call_effect(selected, range);
-    ExpressionState result{symbol.type, ValueCategory::kValue, selected, {}};
+    const bool is_safe_call = is_safe_call_callee(call.callee);
+    TypeId result_type = symbol.type;
+    if (is_safe_call && result_type != model_.void_type() &&
+        model_.type(result_type).kind != TypeKind::kNullable) {
+      result_type = model_.get_nullable_type(result_type);
+    }
+    ExpressionState result{result_type, ValueCategory::kValue, selected, {}};
     result.interface_dispatch = callee.interface_dispatch;
+    result.is_safe_call = is_safe_call;
     return result;
   }
 
@@ -4996,6 +5095,46 @@ class SemanticAnalyzer {
     }
     ExpressionState state{operation.integer_type, ValueCategory::kValue};
     state.integer_meta_operation = operation;
+    return state;
+  }
+
+  ExpressionState analyze_string_meta_call(
+      StringMetaOperation operation, const CallExpression& call,
+      const std::vector<ExpressionState>& arguments, SourceRange range) {
+    if (std::ranges::any_of(arguments, [this](const ExpressionState& argument) {
+          return argument.type == model_.error_type();
+        })) {
+      return ExpressionState{model_.error_type()};
+    }
+    if (arguments.size() != 2) {
+      diagnostics_.error(range, "string slice requires exactly two bounds");
+      return ExpressionState{model_.error_type()};
+    }
+
+    const TypeId int32_type = *model_.find_type("int32");
+    bool valid = true;
+    if (!is_assignable(int32_type, arguments[0].type)) {
+      diagnostics_.error(expression_range(call.arguments[0]),
+                         "string slice start must be assignable to 'int32'");
+      valid = false;
+    }
+    if (!is_assignable(int32_type, arguments[1].type)) {
+      diagnostics_.error(expression_range(call.arguments[1]),
+                         "string slice end must be assignable to 'int32'");
+      valid = false;
+    }
+    if (!valid) {
+      return ExpressionState{model_.error_type()};
+    }
+
+    const bool has_bottom =
+        std::ranges::any_of(arguments, [this](const ExpressionState& argument) {
+          return argument.type == model_.bottom_type();
+        });
+    ExpressionState state{
+        has_bottom ? model_.bottom_type() : model_.string_type(),
+        ValueCategory::kValue};
+    state.string_meta_operation = operation;
     return state;
   }
 
@@ -5073,6 +5212,15 @@ class SemanticAnalyzer {
       }
       return is_valid;
     }
+    if (std::holds_alternative<SafeMemberAccessExpression>(callee.data)) {
+      if (callable.kind != SymbolKind::kFunction || callable.is_static) {
+        diagnostics_.error(range,
+                           "safe calls require an instance function; found '" +
+                               callable.name + "'");
+        return false;
+      }
+      return true;
+    }
     const auto* member = std::get_if<MemberAccessExpression>(&callee.data);
     if (member == nullptr) {
       if (analyzing_base_initializer_ && !callable.is_static) {
@@ -5128,6 +5276,19 @@ class SemanticAnalyzer {
     return true;
   }
 
+  bool is_safe_call_callee(ExpressionId id) const {
+    const Expression& expression =
+        files_[current_file_.value]->storage.expression(id);
+    if (std::holds_alternative<SafeMemberAccessExpression>(expression.data)) {
+      return true;
+    }
+    if (const auto* grouped =
+            std::get_if<ParenthesizedExpression>(&expression.data)) {
+      return is_safe_call_callee(grouped->expression);
+    }
+    return false;
+  }
+
   bool is_static_scalar_type(TypeId type) const {
     const TypeKind kind = model_.type(type).kind;
     return kind == TypeKind::kBool || kind == TypeKind::kChar ||
@@ -5149,7 +5310,9 @@ class SemanticAnalyzer {
                             false,
                             state.interface_dispatch,
                             state.integer_meta_operation,
-                            state.may_divide_by_zero};
+                            state.string_meta_operation,
+                            state.may_divide_by_zero,
+                            state.is_safe_call};
     return state;
   }
 
@@ -5307,7 +5470,10 @@ class SemanticAnalyzer {
       return true;
     }
     if (state.category == ValueCategory::kCallable) {
-      diagnostics_.error(range, "function reference must be called");
+      diagnostics_.error(range,
+                         state.string_meta_operation
+                             ? "string slice meta operation must be called"
+                             : "function reference must be called");
       return false;
     }
     if (state.category == ValueCategory::kType) {
@@ -5444,11 +5610,14 @@ class SemanticAnalyzer {
   }
 
   bool is_reference(TypeId type) const {
-    const TypeKind kind = model_.type(type).kind;
+    const SemanticType& semantic_type = model_.type(type);
+    const TypeKind kind = semantic_type.kind;
+    if (kind == TypeKind::kNullable && semantic_type.element_type) {
+      return is_reference(*semantic_type.element_type);
+    }
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
            kind == TypeKind::kFileClass || kind == TypeKind::kErrorClass ||
-           kind == TypeKind::kInterface || kind == TypeKind::kArray ||
-           kind == TypeKind::kNullable;
+           kind == TypeKind::kInterface || kind == TypeKind::kArray;
   }
 
   bool is_error_type(TypeId type) const {
@@ -5709,6 +5878,10 @@ class SemanticAnalyzer {
 
   bool numeric_literal_expression_fits(ExpressionId id, TypeId target,
                                        bool is_negated = false) const {
+    const SemanticType& target_type = model_.type(target);
+    if (target_type.kind == TypeKind::kNullable && target_type.element_type) {
+      target = *target_type.element_type;
+    }
     const Expression& expression =
         files_[current_file_.value]->storage.expression(id);
     if (const auto* literal =
@@ -5809,13 +5982,21 @@ class SemanticAnalyzer {
     for (std::size_t index = 0; index < count; ++index) {
       if (arguments[index].type != model_.error_type() &&
           contextualize_numeric_expression(ids[index], parameters[index])) {
-        arguments[index].type = parameters[index];
+        const SemanticType& parameter = model_.type(parameters[index]);
+        arguments[index].type =
+            parameter.kind == TypeKind::kNullable && parameter.element_type
+                ? *parameter.element_type
+                : parameters[index];
       }
     }
   }
 
   bool contextualize_numeric_expression(ExpressionId id, TypeId target,
                                         bool is_negated = false) {
+    const SemanticType& target_type = model_.type(target);
+    if (target_type.kind == TypeKind::kNullable && target_type.element_type) {
+      target = *target_type.element_type;
+    }
     if (!is_contextual_numeric_literal_expression(id)) {
       return false;
     }
