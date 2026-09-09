@@ -1,5 +1,97 @@
 # Cloth testing and diagnostic builds
 
+## Stage 45.5d Object-model exit audit
+
+Completed on Windows on 2026-09-09. A permanent compiler-backed Shuttle case
+now exercises exact object casts and type tests, overload preference, single
+left-to-right argument evaluation, nullable lifting, heterogeneous object
+arrays, and primitive, enum, and struct equality-compatible hashes. The same
+case proves serial/parallel artifact and executable determinism, exact warm
+reuse, and source-free linking against the selected standard-library artifact.
+
+The audit removed an unused runtime value-box table and made the self-hosted
+reuse assertion derive the selected standard-library version. A sanitizer run
+also exposed recursive semantic analysis exhausting the Windows stack at the
+existing depth-256 numeric-conversion boundary; nested conversions are now
+analyzed iteratively without changing the language limit or diagnostic model.
+
+All 355 development and 355 Clang ASan/UBSan CTests pass. This includes both
+38-case compiler-backed Shuttle suites and differential parity against the real
+`F:\Cloth` bootstrap. The bootstrap checks and runs natively with development
+and sanitizer compilers and checks for x86-64 and wasm32. All 51 ordinary
+Shuttle tests, Rust formatting and warning-denied lint, Rust 1.85 compatibility,
+24 editor tests against each compiler, C++ formatting, documentation links,
+and repository whitespace gates pass. Compatibility remains
+artifact/compiler/runtime **8/7/11**, schemas **2/1/1/1**, and `cloth` v0.5.0.
+
+## Stage 45.5c value boxes
+
+Completed on Windows on 2026-09-09. The compiler emits explicit verified HIR
+and MIR boxing and exact checked unboxing for primitives, enums, structs, and
+nullable lifting. ABI descriptors and format-8 package artifacts carry the
+canonical payload type, offset, size, alignment, reference map, and value-box
+dispatch contract across x86-64 and wasm32 source-free consumers. Malformed
+payload metadata and wrapper constants are rejected deterministically.
+
+Runtime coverage checks copied primitive and struct payloads, exact unbox
+failure, equality-compatible hashes, signed zero and NaN behavior, string
+representations, nested reference tracing, and reclamation. The paired standard
+library publishes the complete `Number`, `Integer`, `FloatingPoint`, numeric,
+Boolean, and Character wrapper hierarchy as `cloth` v0.5.0. Shuttle selects it
+under artifact/compiler/runtime 8/7/11 with schemas 2/1/1/1 unchanged.
+
+The focused ABI, backend, import, artifact, semantic, standard-library, MIR, and
+runtime suites pass. Both-target standard-library checks, native value-box
+execution, all ordinary Shuttle tests, Rust formatting/lint, and C++ formatting
+also pass. The 354-test repository matrix passes; sanitizers and the final
+repository exit audit remain 45.5d work.
+
+## Stage 45.5b Object root and dispatch
+
+Completed on Windows on 2026-09-09. The exact paired
+`cloth.lang.Object` declaration is tested as both source and an imported
+package on x86-64 and wasm32. Coverage constructs `Object` directly, verifies
+that lowercase `object` is the same semantic type, checks implicit class base
+and constructor selection, replaces the `ToString` virtual slot in an override,
+and calls the root surface through object, string, array, interface, and error
+receivers. Malformed Object kind and surface declarations are rejected.
+
+Runtime coverage verifies built-in string, array, and compiler-error ancestry;
+the three-slot table; reference equality; address-independent stable allocation
+hashes; content-compatible string equality and hashing; stable default object
+and array text; and precise reclamation of produced strings. Existing direct
+programs without the paired library retain their prior descriptor behavior.
+
+The compiler builds cleanly, all 23 C++ unit targets pass, and 347 unaffected
+CTest entries pass. The five whole-standard-library entries were excluded and
+the two Shuttle targets remain expected failures because the preserved
+`Number.co` and `Byte.co` drafts are incomplete 45.5c work. Their six current
+diagnostics are isolated from the completed Object producer/consumer matrix;
+45.5b does not publish those drafts or advance compatibility versions.
+
+## Stage 45.5a Object-representation readiness
+
+Recorded on Windows on 2026-09-09. The approved contract makes
+`cloth.lang.Object` the canonical root, retains unboxed value storage, requires
+verified boxing at Object boundaries, and separates equality-compatible hashes
+from printable representations. This checkpoint changes documentation only;
+active compatibility remains artifact/compiler/runtime **7/6/10**, schemas
+**2/1/1/1**, and `cloth` v0.4.0.
+
+The ordinary Shuttle check of the local standard-library tree rejects the
+pre-contract `Object`, `Number`, and `Byte` drafts with seven semantic errors:
+one duplicated `cloth.cloth` import identity, one missing abstract override,
+one unsigned-byte range error, one invalid string-plus-integer expression, and
+three missing direct-base constructor initializers. The drafts also contain
+placeholder hash and conversion behavior. They were preserved as user work and
+are explicitly excluded from the supported v0.4.0 API until 45.5b and 45.5c
+replace them with the coordinated implementation.
+
+`git diff --check` passes in the compiler and standard-library repositories.
+The proposal is linked from both roadmaps and ledgers. No compiler, runtime,
+standard-library manifest, artifact, Shuttle, bootstrap, editor, or user-
+documentation behavior changed.
+
 ## Stage 45.4 self-hosted syntax-tree exit audit
 
 Completed on Windows on 2026-09-09. `VerifiedSyntaxTree` is now the required

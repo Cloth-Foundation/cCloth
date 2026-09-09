@@ -83,6 +83,9 @@ Stage 43 is complete following its separately authorized 43.4 exit audit on
 2026-09-08.
 Stage 44 is complete following its separately authorized 44.4 differential
 parity and exit audit on 2026-09-08.
+Stage 45 is complete following its separately authorized 45.4 syntax-tree exit
+audit on 2026-09-09. Stage 45.5 is complete following its 45.5d integration and
+exit audit on 2026-09-09.
 
 ## Scheduled work
 
@@ -1363,6 +1366,66 @@ class override validation. Existing ABI and artifact versions are unchanged.
   editor, format, documentation, and repository gates pass. Stage 45 is
   complete without a compatibility change.
 
+### Stage 45.5: Universal Object and value representation
+
+- [x] **45.5a — Contract.** Freeze `cloth.lang.Object` as the canonical root,
+  lowercase `object` as its exact alias, implicit class ancestry, unboxed value
+  storage, boxing/unboxing, wrapper identities, virtual equality, 64-bit
+  hashing, string representation, printing, ownership, compatibility,
+  verification, and non-goals.
+
+  Approved and completed 2026-09-09. `ToString()` is explicitly independent of
+  `HashCode()`; default hashes are address-independent and lifetime-stable.
+  Planned coordinated compatibility is artifact/compiler/runtime 8/7/11 and
+  `cloth` v0.5.0. Active versions remain 7/6/10 and v0.4.0 until 45.5c. See the
+  [contract](docs/proposals/stage_45_5_object_representation.md).
+- [x] **45.5b — Root and dispatch.** Bind and validate the exact paired
+  `cloth.lang.Object` declaration; implement compiler-owned root identity,
+  implicit class/error ancestry, built-in managed descriptors, the three root
+  virtual slots, overrides, and whole/source-free verification.
+
+  Completed 2026-09-09. The lowercase `object` type and exact paired
+  `cloth.lang.Object` declaration now share one semantic identity. Rootless
+  classes acquire Object ancestry and zero-argument construction, errors share
+  the root dispatch contract without losing `Error.Message`, and strings,
+  arrays, compiler errors, source classes, and interface-backed receivers use
+  the same three slots. Default equality is reference identity, allocation
+  hashes are address-independent and lifetime-stable, string equality/hashing
+  is content-based, and object printing dynamically calls `ToString`. Exact
+  source shape, malformed identity, MIR receiver, descriptor, runtime, both-
+  target whole-project, and source-free coverage pass. The unreleased numeric
+  drafts remain 45.5c work and are not treated as a supported v0.4.0 surface.
+- [x] **45.5c — Value boxes.** Add explicit verified HIR/MIR boxing and checked
+  unboxing for primitives, enums, structs, and nullable lifting; complete the
+  standard-library `Number` hierarchy and concrete wrappers; implement payload
+  equality, hashes, and formatting; and advance compatibility atomically.
+
+  Completed 2026-09-09. Primitive, enum, struct, nullable, and heterogeneous-
+  array Object conversions use verified HIR/MIR box and exact checked-unbox
+  operations. ABI descriptors and format-8 artifacts carry canonical payload
+  layouts, the runtime traces and reclaims boxed references, and value equality,
+  hash, and string operations use copied payloads. The complete wrapper
+  hierarchy is published as `cloth` v0.5.0. Whole, source-free, malformed-
+  metadata, x86-64, wasm32, native, and Shuttle checks pass under
+  artifact/compiler/runtime 8/7/11 and unchanged schemas 2/1/1/1.
+- [x] **45.5d — Integration and exit audit.** Close Object aliasing and member
+  access, overloads, evaluation order, GC maps and moving-GC readiness,
+  equality/hash laws, string and print behavior, malformed state, artifacts,
+  both targets, native and source-free consumers, Shuttle selection/reuse,
+  bootstrap, sanitizers, editor, documentation, determinism, and repository
+  quality gates.
+
+  Completed 2026-09-09. A permanent native/source-free Shuttle case now covers
+  exact casts and tests, overload preference, single left-to-right evaluation,
+  primitive/enum/struct equality-compatible hashes, nullable lifting,
+  heterogeneous arrays, serial/parallel determinism, and warm reuse. The audit
+  removed a dead runtime vtable, made bootstrap reuse checks derive the paired
+  library version, and replaced recursive nested-conversion analysis after ASan
+  exposed stack exhaustion at the existing depth-256 limit. All 355 development
+  and 355 ASan/UBSan CTests, both 38-case compiler-backed Shuttle suites, the
+  real bootstrap, editor, Rust, format, documentation, and repository gates
+  pass. Stage 45.5 is complete at 8/7/11, schemas 2/1/1/1, and `cloth` v0.5.0.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1386,7 +1449,6 @@ active stage without first updating `ROADMAP.md`.
 - Implement nested type declarations. `class`, `struct`, and `enum` are
   reserved declaration starters and currently diagnosed as unsupported.
 - Add flow-sensitive smart casts after a successful `value is T` test.
-- Add primitive boxing before primitives may widen to `object`.
 - Define the reflection surface beyond the stable `::typeName` meta query.
 - Evaluate generics, traits, or an interface-based alternative after the Cloth
   1.0 boundary.

@@ -14,6 +14,7 @@
 #include "cloth/sema/scalar_constants.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -39,6 +40,25 @@ bool is_standard_library_prelude_package(std::string_view source_package) {
          source_package.starts_with("lang.");
 }
 
+bool claims_canonical_object_identity(std::string_view package,
+                                      std::string_view version,
+                                      std::string_view source_package,
+                                      std::string_view name) noexcept {
+  return package == kStandardLibraryPackageName &&
+         version == kStandardLibraryPackageVersion &&
+         source_package == kPreludeSourcePackage && name == "Object";
+}
+
+bool is_canonical_object_identity(std::string_view package,
+                                  std::string_view version,
+                                  std::string_view source_package,
+                                  std::string_view name,
+                                  FileTypeKind kind) noexcept {
+  return claims_canonical_object_identity(package, version, source_package,
+                                          name) &&
+         kind == FileTypeKind::kClass;
+}
+
 bool is_primitive_parse_type(TypeKind kind) noexcept {
   return kind == TypeKind::kBool || kind == TypeKind::kChar ||
          kind == TypeKind::kByte || kind == TypeKind::kInt8 ||
@@ -52,6 +72,36 @@ bool is_primitive_parse_type(TypeKind kind) noexcept {
 bool is_builtin_type_expression(TypeKind kind) noexcept {
   return is_primitive_parse_type(kind) || kind == TypeKind::kString ||
          kind == TypeKind::kObject || kind == TypeKind::kVoid;
+}
+
+struct StandardValueWrapper {
+  std::string_view source_package;
+  std::string_view name;
+  std::string_view base_name;
+  TypeKind value_kind;
+};
+
+constexpr std::array kStandardValueWrappers{
+    StandardValueWrapper{"lang", "Boolean", "Object", TypeKind::kBool},
+    StandardValueWrapper{"lang", "Character", "Object", TypeKind::kChar},
+    StandardValueWrapper{"lang.number", "Byte", "Integer", TypeKind::kByte},
+    StandardValueWrapper{"lang.number", "Int8", "Integer", TypeKind::kInt8},
+    StandardValueWrapper{"lang.number", "Int16", "Integer", TypeKind::kInt16},
+    StandardValueWrapper{"lang.number", "Int32", "Integer", TypeKind::kInt32},
+    StandardValueWrapper{"lang.number", "Int64", "Integer", TypeKind::kInt64},
+    StandardValueWrapper{"lang.number", "UInt8", "Integer", TypeKind::kUint8},
+    StandardValueWrapper{"lang.number", "UInt16", "Integer", TypeKind::kUint16},
+    StandardValueWrapper{"lang.number", "UInt32", "Integer", TypeKind::kUint32},
+    StandardValueWrapper{"lang.number", "UInt64", "Integer", TypeKind::kUint64},
+    StandardValueWrapper{"lang.number", "Float32", "FloatingPoint",
+                         TypeKind::kFloat32},
+    StandardValueWrapper{"lang.number", "Float64", "FloatingPoint",
+                         TypeKind::kFloat64},
+};
+
+bool is_boxable_value_kind(TypeKind kind) noexcept {
+  return is_primitive_parse_type(kind) || kind == TypeKind::kEnum ||
+         kind == TypeKind::kStruct;
 }
 
 struct ScopeEntry {
@@ -196,6 +246,7 @@ class SemanticAnalyzer {
     register_imports();
     register_type_relationships();
     register_members();
+    register_standard_library_value_wrappers();
     register_standard_library_bridges();
     register_primitive_parse_intrinsics();
     index_members();
@@ -204,6 +255,7 @@ class SemanticAnalyzer {
     validate_overrides();
     validate_interface_conformance();
     analyze_definitions();
+    validate_standard_library_value_constants();
     analyze_error_effects();
     return SemanticAnalysisResult{std::move(model_),
                                   !diagnostics_.has_errors()};
@@ -275,6 +327,14 @@ class SemanticAnalyzer {
           syntax.owning_package == kStandardLibraryPackageName &&
           is_standard_library_prelude_package(syntax.package_name);
       const std::optional<TypeId> existing_type = model_.find_type(syntax.name);
+      if (claims_canonical_object_identity(syntax.owning_package,
+                                           syntax.owning_package_version,
+                                           syntax.package_name, syntax.name) &&
+          syntax.kind != FileTypeKind::kClass) {
+        diagnostics_.error(syntax.range,
+                           "canonical 'cloth.lang.Object' must be a class");
+        identity_valid = false;
+      }
       if (!is_prelude_declaration && existing_type &&
           model_.type(*existing_type).kind != TypeKind::kFileClass &&
           model_.type(*existing_type).kind != TypeKind::kInterface &&
@@ -288,14 +348,27 @@ class SemanticAnalyzer {
 
       TypeId type = model_.error_type();
       if (identity_valid) {
-        const TypeKind type_kind =
-            syntax.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
-            : syntax.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
-            : syntax.kind == FileTypeKind::kInterface ? TypeKind::kInterface
-            : syntax.kind == FileTypeKind::kError     ? TypeKind::kErrorClass
-                                                      : TypeKind::kFileClass;
-        type = model_.add_type(
-            SemanticType{type_kind, syntax.qualified_name, file_id});
+        const bool is_canonical_object = is_canonical_object_identity(
+            syntax.owning_package, syntax.owning_package_version,
+            syntax.package_name, syntax.name, syntax.kind);
+        if (is_canonical_object && model_.type(model_.object_type()).file) {
+          diagnostics_.error(syntax.range,
+                             "canonical 'cloth.lang.Object' is declared more "
+                             "than once");
+          identity_valid = false;
+        } else if (is_canonical_object) {
+          type = model_.object_type();
+          model_.mutable_type(type).file = file_id;
+        } else {
+          const TypeKind type_kind =
+              syntax.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
+              : syntax.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
+              : syntax.kind == FileTypeKind::kInterface ? TypeKind::kInterface
+              : syntax.kind == FileTypeKind::kError     ? TypeKind::kErrorClass
+                                                        : TypeKind::kFileClass;
+          type = model_.add_type(
+              SemanticType{type_kind, syntax.qualified_name, file_id});
+        }
       }
       const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
           syntax.kind == FileTypeKind::kStruct      ? SymbolKind::kStruct
@@ -403,8 +476,29 @@ class SemanticAnalyzer {
             qualified_file_name(imported.nominal_identity.package.name,
                                 imported.nominal_identity.source_package,
                                 imported.nominal_identity.name);
-        const TypeId type =
-            model_.add_type(SemanticType{type_kind, qualified_name, file_id});
+        TypeId type = model_.error_type();
+        const bool is_canonical_object = is_canonical_object_identity(
+            imported.nominal_identity.package.name,
+            imported.nominal_identity.package.version,
+            imported.nominal_identity.source_package,
+            imported.nominal_identity.name, imported.kind);
+        if (claims_canonical_object_identity(
+                imported.nominal_identity.package.name,
+                imported.nominal_identity.package.version,
+                imported.nominal_identity.source_package,
+                imported.nominal_identity.name) &&
+            imported.kind != FileTypeKind::kClass) {
+          report_invalid(imported.identity);
+        } else if (is_canonical_object &&
+                   model_.type(model_.object_type()).file) {
+          report_invalid(imported.identity);
+        } else if (is_canonical_object) {
+          type = model_.object_type();
+          model_.mutable_type(type).file = file_id;
+        } else {
+          type =
+              model_.add_type(SemanticType{type_kind, qualified_name, file_id});
+        }
         const SourceRange range = imported_range(imported.location);
         const SymbolId class_symbol = model_.add_symbol(SemanticSymbol{
             imported.kind == FileTypeKind::kStruct      ? SymbolKind::kStruct
@@ -967,6 +1061,12 @@ class SemanticAnalyzer {
             model_.mutable_file(file_id).base_file = *base.file;
           }
         }
+      } else if (syntax.kind == FileTypeKind::kClass &&
+                 model_.file(file_id).type != model_.object_type() &&
+                 model_.type(model_.object_type()).file) {
+        FileSemantics& file = model_.mutable_file(file_id);
+        file.base_file = model_.type(model_.object_type()).file;
+        file.has_implicit_object_base = true;
       }
 
       for (const TypeSyntax& interface_syntax : syntax.interfaces) {
@@ -1141,7 +1241,135 @@ class SemanticAnalyzer {
     }
   }
 
+  void register_standard_library_value_wrappers() {
+    const auto find_file = [&](std::string_view source_package,
+                               std::string_view name) -> std::optional<FileId> {
+      for (std::size_t index = 0; index < model_.files().size(); ++index) {
+        const FileSemantics& file = model_.file(FileId{index});
+        if (file.identity.package.name == kStandardLibraryPackageName &&
+            file.identity.package.version == kStandardLibraryPackageVersion &&
+            file.identity.source_package == source_package &&
+            file.identity.name == name) {
+          return FileId{index};
+        }
+      }
+      return std::nullopt;
+    };
+    const auto fail = [&](FileId file, std::string message) {
+      diagnostics_.error(model_.symbol(model_.file(file).symbol).range,
+                         std::move(message));
+      model_.mutable_file(file).is_valid = false;
+    };
+
+    const std::optional<FileId> object = model_.type(model_.object_type()).file;
+    const std::optional<FileId> number = find_file("lang.number", "Number");
+    const std::optional<FileId> integer = find_file("lang.number", "Integer");
+    const std::optional<FileId> floating =
+        find_file("lang.number", "FloatingPoint");
+    if (!number && !integer && !floating) {
+      return;
+    }
+    if (!object || !number || !integer || !floating) {
+      const FileId location = number.value_or(
+          integer.value_or(floating.value_or(object.value_or(FileId{0}))));
+      fail(location,
+           "compiler-paired numeric wrappers require Object, Number, "
+           "Integer, and FloatingPoint");
+      return;
+    }
+
+    const auto validate_abstract_base = [&](FileId file, FileId base,
+                                            std::string_view name) {
+      const FileSemantics& declaration = model_.file(file);
+      const bool valid_constructor =
+          declaration.constructors.size() == 1 &&
+          model_.symbol(declaration.constructors.front())
+              .parameter_types.empty() &&
+          model_.symbol(declaration.constructors.front()).visibility ==
+              Visibility::kPublic;
+      if (declaration.kind != FileTypeKind::kClass ||
+          !declaration.is_abstract || declaration.is_sealed ||
+          declaration.base_file != base || !declaration.fields.empty() ||
+          !declaration.functions.empty() || !valid_constructor) {
+        fail(file, "compiler-paired 'cloth.lang.number." + std::string{name} +
+                       "' has an invalid abstract wrapper shape");
+      }
+    };
+    validate_abstract_base(*number, *object, "Number");
+    validate_abstract_base(*integer, *number, "Integer");
+    validate_abstract_base(*floating, *number, "FloatingPoint");
+
+    const TypeId nullable_object =
+        model_.get_nullable_type(model_.object_type());
+    for (const StandardValueWrapper& wrapper : kStandardValueWrappers) {
+      const std::optional<FileId> file =
+          find_file(wrapper.source_package, wrapper.name);
+      if (!file) {
+        fail(*number, "compiler-paired value wrapper '" +
+                          std::string{wrapper.name} + "' is missing");
+        continue;
+      }
+      FileSemantics& declaration = model_.mutable_file(*file);
+      const std::optional<TypeId> value_type =
+          model_.find_type(type_kind_name(wrapper.value_kind));
+      const FileId expected_base = wrapper.base_name == "Object"    ? *object
+                                   : wrapper.base_name == "Integer" ? *integer
+                                                                    : *floating;
+      std::vector<SymbolId> instance_fields;
+      for (const SymbolId field : declaration.fields) {
+        if (!model_.symbol(field).is_static) {
+          instance_fields.push_back(field);
+        }
+      }
+      const bool valid_field =
+          instance_fields.size() == 1 && value_type &&
+          model_.symbol(instance_fields.front()).name == "value" &&
+          model_.symbol(instance_fields.front()).type == *value_type &&
+          model_.symbol(instance_fields.front()).is_final &&
+          model_.symbol(instance_fields.front()).visibility ==
+              Visibility::kPrivate;
+      const bool valid_constructor =
+          declaration.constructors.size() == 1 && value_type &&
+          model_.symbol(declaration.constructors.front()).parameter_types ==
+              std::vector<TypeId>{*value_type} &&
+          model_.symbol(declaration.constructors.front()).visibility ==
+              Visibility::kPublic;
+      const auto matches = [&](std::size_t index, std::string_view name,
+                               TypeId result, std::vector<TypeId> parameters) {
+        if (index >= declaration.functions.size()) {
+          return false;
+        }
+        const SemanticSymbol& function =
+            model_.symbol(declaration.functions[index]);
+        return function.name == name && function.type == result &&
+               function.parameter_types == parameters &&
+               function.visibility == Visibility::kPublic &&
+               !function.is_static && function.is_override &&
+               !function.is_abstract && function.thrown_types.empty();
+      };
+      const bool valid_surface =
+          value_type && declaration.kind == FileTypeKind::kClass &&
+          declaration.is_sealed && !declaration.is_abstract &&
+          declaration.base_file == expected_base && valid_field &&
+          valid_constructor && declaration.functions.size() == 3 &&
+          matches(0, "Equals", model_.bool_type(), {nullable_object}) &&
+          matches(1, "HashCode", *model_.find_type("uint64"), {}) &&
+          matches(2, "ToString", model_.string_type(), {});
+      if (!valid_surface) {
+        fail(*file, "compiler-paired value wrapper '" +
+                        std::string{wrapper.name} +
+                        "' has an invalid sealed wrapper shape");
+        continue;
+      }
+      declaration.boxed_value_type = *value_type;
+      declaration.boxed_value_field = instance_fields.front();
+      model_.bind_value_wrapper(*value_type, declaration.type);
+    }
+  }
+
   void register_standard_library_bridges() {
+    std::optional<FileId> object_file;
+    std::vector<FileId> value_wrapper_files;
     std::optional<FileId> console_file;
     std::optional<FileId> file_file;
     std::optional<FileId> io_error_file;
@@ -1152,8 +1380,15 @@ class SemanticAnalyzer {
           identity.package.version != kStandardLibraryPackageVersion) {
         continue;
       }
-      if (identity.source_package == "io" && identity.name == "Console" &&
+      if (file.boxed_value_type) {
+        value_wrapper_files.push_back(FileId{index});
+      }
+      if (identity.source_package == "lang" && identity.name == "Object" &&
           file.kind == FileTypeKind::kClass) {
+        object_file = FileId{index};
+      } else if (identity.source_package == "io" &&
+                 identity.name == "Console" &&
+                 file.kind == FileTypeKind::kClass) {
         console_file = FileId{index};
       } else if (identity.source_package == "io" && identity.name == "File" &&
                  file.kind == FileTypeKind::kClass) {
@@ -1163,6 +1398,93 @@ class SemanticAnalyzer {
                  file.kind == FileTypeKind::kError) {
         io_error_file = FileId{index};
       }
+    }
+    if (object_file) {
+      FileSemantics& object = model_.mutable_file(*object_file);
+      const TypeId nullable_object =
+          model_.get_nullable_type(model_.object_type());
+      const auto matches = [&](std::size_t index, std::string_view name,
+                               TypeId result, std::vector<TypeId> parameters) {
+        if (index >= object.functions.size()) {
+          return false;
+        }
+        const SemanticSymbol& function = model_.symbol(object.functions[index]);
+        return function.name == name && function.type == result &&
+               function.parameter_types == parameters && !function.is_static &&
+               !function.is_abstract &&
+               function.visibility == Visibility::kPublic &&
+               function.thrown_types.empty();
+      };
+      const bool valid_constructor =
+          object.constructors.size() == 1 &&
+          model_.symbol(object.constructors.front()).is_valid &&
+          model_.symbol(object.constructors.front()).parameter_types.empty() &&
+          model_.symbol(object.constructors.front()).visibility ==
+              Visibility::kPublic;
+      const bool valid_surface =
+          object.type == model_.object_type() && valid_constructor &&
+          object.functions.size() == 3 &&
+          matches(0, "Equals", model_.bool_type(), {nullable_object}) &&
+          matches(1, "HashCode", *model_.find_type("uint64"), {}) &&
+          matches(2, "ToString", model_.string_type(), {});
+      if (!valid_surface) {
+        diagnostics_.error(
+            model_.symbol(object.symbol).range,
+            "compiler-paired 'cloth.lang.Object' must declare exactly "
+            "'Object()', 'Equals(Object?): bool', 'HashCode(): uint64', and "
+            "'ToString(): string' in that order");
+        object.is_valid = false;
+      } else {
+        const SourceRange range = model_.symbol(object.symbol).range;
+        const auto add_bridge = [&](std::string name, TypeId result,
+                                    std::vector<TypeId> parameters,
+                                    IntrinsicKind intrinsic) {
+          SemanticSymbol bridge{SymbolKind::kFunction,
+                                std::move(name),
+                                result,
+                                std::move(parameters),
+                                Visibility::kPrivate,
+                                std::nullopt,
+                                range};
+          bridge.intrinsic = intrinsic;
+          bridge.is_static = true;
+          static_cast<void>(model_.add_symbol(std::move(bridge)));
+        };
+        add_bridge("__objectEquals", model_.bool_type(),
+                   {model_.object_type(), nullable_object},
+                   IntrinsicKind::kObjectEquals);
+        add_bridge("__objectHashCode", *model_.find_type("uint64"),
+                   {model_.object_type()}, IntrinsicKind::kObjectHashCode);
+        add_bridge("__objectToString", model_.string_type(),
+                   {model_.object_type()}, IntrinsicKind::kObjectToString);
+      }
+    }
+    for (const FileId wrapper_file : value_wrapper_files) {
+      const FileSemantics& wrapper = model_.file(wrapper_file);
+      const SourceRange range = model_.symbol(wrapper.symbol).range;
+      const TypeId nullable_object =
+          model_.get_nullable_type(model_.object_type());
+      const auto add_bridge = [&](std::string name, TypeId result,
+                                  std::vector<TypeId> parameters,
+                                  IntrinsicKind intrinsic) {
+        SemanticSymbol bridge{SymbolKind::kFunction,
+                              std::move(name),
+                              result,
+                              std::move(parameters),
+                              Visibility::kPrivate,
+                              std::nullopt,
+                              range};
+        bridge.intrinsic = intrinsic;
+        bridge.is_static = true;
+        static_cast<void>(model_.add_symbol(std::move(bridge)));
+      };
+      add_bridge("__valueBoxEquals", model_.bool_type(),
+                 {wrapper.type, nullable_object},
+                 IntrinsicKind::kValueBoxEquals);
+      add_bridge("__valueBoxHashCode", *model_.find_type("uint64"),
+                 {wrapper.type}, IntrinsicKind::kValueBoxHashCode);
+      add_bridge("__valueBoxToString", model_.string_type(), {wrapper.type},
+                 IntrinsicKind::kValueBoxToString);
     }
     if (!io_error_file) {
       if (file_file) {
@@ -1257,6 +1579,66 @@ class SemanticAnalyzer {
     }
   }
 
+  void validate_standard_library_value_constants() {
+    const std::optional<TypeId> int32 = model_.find_type("int32");
+    if (!int32) return;
+    for (std::size_t index = 0; index < model_.files().size(); ++index) {
+      FileSemantics& file = model_.mutable_file(FileId{index});
+      if (!file.boxed_value_type) continue;
+      const TypeId value_type = *file.boxed_value_type;
+      const std::optional<NumericTypeProperties> properties =
+          numeric_type_properties(model_.type(value_type).kind);
+      std::vector<SymbolId> static_fields;
+      for (const SymbolId field : file.fields) {
+        if (model_.symbol(field).is_static) static_fields.push_back(field);
+      }
+      if (!properties ||
+          properties->category == NumericCategory::kFloatingPoint) {
+        if (!static_fields.empty()) {
+          diagnostics_.error(model_.symbol(file.symbol).range,
+                             "compiler-paired value wrapper '" +
+                                 file.identity.name +
+                                 "' declares unsupported static constants");
+          file.is_valid = false;
+        }
+        continue;
+      }
+
+      const std::uint32_t width = properties->bit_width;
+      const bool signed_integer =
+          properties->category == NumericCategory::kSignedInteger;
+      const std::uint64_t mask = width == 64
+                                     ? std::numeric_limits<std::uint64_t>::max()
+                                     : (std::uint64_t{1} << width) - 1;
+      const std::uint64_t minimum =
+          signed_integer ? std::uint64_t{1} << (width - 1) : 0;
+      const std::uint64_t maximum =
+          signed_integer ? (std::uint64_t{1} << (width - 1)) - 1 : mask;
+      const auto has_constant = [&](std::string_view name, TypeId type,
+                                    std::uint64_t bits) {
+        return std::ranges::count_if(static_fields, [&](SymbolId field) {
+                 const SemanticSymbol& symbol = model_.symbol(field);
+                 return symbol.name == name && symbol.type == type &&
+                        symbol.visibility == Visibility::kPublic &&
+                        symbol.is_final &&
+                        symbol.static_constant == ScalarConstant{type, bits};
+               }) == 1;
+      };
+      if (static_fields.size() != 4 ||
+          !has_constant("MIN_VALUE", value_type, minimum) ||
+          !has_constant("MAX_VALUE", value_type, maximum) ||
+          !has_constant("BYTES", *int32, width / 8) ||
+          !has_constant("BITS", *int32, width)) {
+        diagnostics_.error(
+            model_.symbol(file.symbol).range,
+            "compiler-paired integer wrapper '" + file.identity.name +
+                "' must declare exact MIN_VALUE, MAX_VALUE, BYTES, and BITS "
+                "constants");
+        file.is_valid = false;
+      }
+    }
+  }
+
   void register_primitive_parse_intrinsics() {
     std::optional<TypeId> parse_error;
     SourceRange bridge_range = point_range(SourceLocation{"<core>", 0, 1, 1});
@@ -1318,6 +1700,21 @@ class SemanticAnalyzer {
            identity.package.version == kStandardLibraryPackageVersion &&
            identity.source_package == "io" && identity.name == "Console" &&
            file.kind == FileTypeKind::kClass;
+  }
+
+  bool is_standard_library_object(FileId file_id) const {
+    if (file_id.value >= files_.size()) {
+      return false;
+    }
+    const NominalIdentity& identity = model_.file(file_id).identity;
+    return is_canonical_object_identity(
+        identity.package.name, identity.package.version,
+        identity.source_package, identity.name, model_.file(file_id).kind);
+  }
+
+  bool is_standard_library_value_wrapper(FileId file_id) const {
+    return file_id.value < model_.files().size() &&
+           model_.file(file_id).boxed_value_type.has_value();
   }
 
   bool is_standard_library_file(FileId file_id) const {
@@ -1861,6 +2258,12 @@ class SemanticAnalyzer {
     std::vector<SymbolId> virtual_functions;
     if (file.base_file) {
       virtual_functions = model_.file(*file.base_file).virtual_functions;
+    } else if (file.kind == FileTypeKind::kError) {
+      const std::optional<FileId> object_file =
+          model_.type(model_.object_type()).file;
+      if (object_file) {
+        virtual_functions = model_.file(*object_file).virtual_functions;
+      }
     }
 
     for (const SymbolId symbol_id : file.functions) {
@@ -2358,6 +2761,28 @@ class SemanticAnalyzer {
     const FileSemantics& base = model_.file(*file.base_file);
     const std::string& base_name = model_.symbol(base.symbol).name;
     if (initializer == nullptr) {
+      if (file.has_implicit_object_base) {
+        const auto constructor =
+            std::ranges::find_if(base.constructors, [this](SymbolId candidate) {
+              const SemanticSymbol& symbol = model_.symbol(candidate);
+              return symbol.is_valid &&
+                     symbol.visibility == Visibility::kPublic &&
+                     symbol.parameter_types.empty();
+            });
+        if (constructor != base.constructors.end()) {
+          model_.mutable_symbol(constructor_symbol).base_constructor =
+              *constructor;
+          record_call_effect(*constructor,
+                             model_.symbol(constructor_symbol).range);
+          return true;
+        }
+        diagnostics_.error(
+            model_.symbol(constructor_symbol).range,
+            "implicit Object base requires a public zero-argument "
+            "constructor");
+        model_.mutable_file(current_file_).is_valid = false;
+        return true;
+      }
       if (model_.symbol(constructor_symbol).is_valid) {
         diagnostics_.error(model_.symbol(constructor_symbol).range,
                            "constructor for derived class '" +
@@ -3116,9 +3541,25 @@ class SemanticAnalyzer {
       bool is_negated_literal = false) {
     const Expression& expression =
         files_[current_file_.value]->storage.expression(id);
-    return record_expression(
-        id,
-        analyze_expression_value(id, expression, expected, is_negated_literal));
+    const bool boxing_context = expected && is_object_boxing_target(*expected);
+    if (!boxing_context) {
+      return record_expression(
+          id, analyze_expression_value(id, expression, expected,
+                                       is_negated_literal));
+    }
+    const bool owns_boxing_context = boxing_context_depth_ == 0;
+    ++boxing_context_depth_;
+    ExpressionState state =
+        analyze_expression_value(id, expression, expected, is_negated_literal);
+    --boxing_context_depth_;
+    state = record_expression(id, std::move(state));
+    if (owns_boxing_context && expected &&
+        requires_boxing(*expected, state.type)) {
+      model_.mutable_file(current_file_)
+          .expressions.at(id.value)
+          .boxing_target = *expected;
+    }
+    return state;
   }
 
   ExpressionState analyze_expression_with_effect_reachability(
@@ -3313,6 +3754,14 @@ class SemanticAnalyzer {
     std::erase_if(intrinsics, [this](SymbolId symbol) {
       const IntrinsicKind intrinsic = model_.symbol(symbol).intrinsic;
       return intrinsic == IntrinsicKind::kPrimitiveParse ||
+             ((intrinsic == IntrinsicKind::kValueBoxEquals ||
+               intrinsic == IntrinsicKind::kValueBoxHashCode ||
+               intrinsic == IntrinsicKind::kValueBoxToString) &&
+              !is_standard_library_value_wrapper(current_file_)) ||
+             ((intrinsic == IntrinsicKind::kObjectEquals ||
+               intrinsic == IntrinsicKind::kObjectHashCode ||
+               intrinsic == IntrinsicKind::kObjectToString) &&
+              !is_standard_library_object(current_file_)) ||
              (intrinsic == IntrinsicKind::kConsoleReadLine &&
               !is_standard_library_console(current_file_)) ||
              (intrinsic == IntrinsicKind::kFileReadBytes &&
@@ -3493,6 +3942,13 @@ class SemanticAnalyzer {
             model_.type(element.type).kind == TypeKind::kNullable;
         element_type = nullable ? model_.get_nullable_type(model_.object_type())
                                 : model_.object_type();
+      } else if (can_convert_to_object(*element_type) &&
+                 can_convert_to_object(element.type)) {
+        const bool nullable =
+            model_.type(*element_type).kind == TypeKind::kNullable ||
+            model_.type(element.type).kind == TypeKind::kNullable;
+        element_type = nullable ? model_.get_nullable_type(model_.object_type())
+                                : model_.object_type();
       }
     }
     if (contains_null) {
@@ -3504,6 +3960,8 @@ class SemanticAnalyzer {
       check_assignment(*element_type, elements[index].type,
                        expression_range(array.elements[index]),
                        "array element");
+      mark_boxing_context(array.elements[index], *element_type,
+                          elements[index]);
     }
     if (contains_bottom) {
       return ExpressionState{model_.bottom_type(), ValueCategory::kValue};
@@ -3960,24 +4418,72 @@ class SemanticAnalyzer {
 
   ExpressionState analyze_numeric_conversion(
       const NumericConversionExpression& conversion, SourceRange range) {
-    const TypeId target = resolve_type(conversion.target, current_file_);
-    if (target == model_.error_type()) {
-      return ExpressionState{model_.error_type()};
-    }
-    if (!is_numeric(target)) {
-      diagnostics_.error(conversion.target.range,
-                         "numeric conversion target must be numeric");
-      return ExpressionState{model_.error_type()};
+    struct ConversionFrame {
+      const NumericConversionExpression* conversion;
+      SourceRange range;
+      std::optional<ExpressionId> expression;
+      TypeId target;
+      bool is_literal;
+      bool is_contextual_literal;
+    };
+
+    std::vector<ConversionFrame> frames;
+    const NumericConversionExpression* current = &conversion;
+    SourceRange current_range = range;
+    std::optional<ExpressionId> current_expression;
+    while (true) {
+      const TypeId target = resolve_type(current->target, current_file_);
+      if (target == model_.error_type() || !is_numeric(target)) {
+        if (target != model_.error_type()) {
+          diagnostics_.error(current->target.range,
+                             "numeric conversion target must be numeric");
+        }
+        ExpressionState state{model_.error_type()};
+        if (current_expression) {
+          state = record_expression(*current_expression, std::move(state));
+        }
+        for (auto frame = frames.rbegin(); frame != frames.rend(); ++frame) {
+          state = finish_numeric_conversion(
+              *frame->conversion, frame->range, frame->target, state,
+              frame->is_literal, frame->is_contextual_literal);
+          if (frame->expression) {
+            state = record_expression(*frame->expression, std::move(state));
+          }
+        }
+        return state;
+      }
+
+      frames.push_back(ConversionFrame{
+          current, current_range, current_expression, target,
+          is_numeric_literal_expression(current->value),
+          is_contextual_numeric_literal_expression(current->value)});
+      const ExpressionId operand = current->value;
+      const Expression& operand_expression =
+          files_[current_file_.value]->storage.expression(operand);
+      const auto* nested =
+          std::get_if<NumericConversionExpression>(&operand_expression.data);
+      if (nested == nullptr) {
+        break;
+      }
+      current = nested;
+      current_range = operand_expression.range;
+      current_expression = operand;
     }
 
-    const bool is_literal = is_numeric_literal_expression(conversion.value);
-    const bool is_contextual_literal =
-        is_contextual_numeric_literal_expression(conversion.value);
-    const ExpressionState value =
-        is_contextual_literal ? analyze_overload_argument(conversion.value)
-                              : analyze_expression(conversion.value);
-    return finish_numeric_conversion(conversion, range, target, value,
-                                     is_literal, is_contextual_literal);
+    const ConversionFrame& inner = frames.back();
+    ExpressionState state =
+        inner.is_contextual_literal
+            ? analyze_overload_argument(inner.conversion->value)
+            : analyze_expression(inner.conversion->value);
+    for (auto frame = frames.rbegin(); frame != frames.rend(); ++frame) {
+      state = finish_numeric_conversion(*frame->conversion, frame->range,
+                                        frame->target, state, frame->is_literal,
+                                        frame->is_contextual_literal);
+      if (frame->expression) {
+        state = record_expression(*frame->expression, std::move(state));
+      }
+    }
+    return state;
   }
 
   ExpressionState finish_numeric_conversion(
@@ -4082,7 +4588,8 @@ class SemanticAnalyzer {
           range, "checked array casts require reified array type metadata");
       return false;
     }
-    if (target_kind != TypeKind::kObject && target_kind != TypeKind::kString &&
+    if (!is_boxable_value(target) && target_kind != TypeKind::kObject &&
+        target_kind != TypeKind::kString &&
         target_kind != TypeKind::kFileClass &&
         target_kind != TypeKind::kErrorClass &&
         target_kind != TypeKind::kInterface) {
@@ -4592,10 +5099,17 @@ class SemanticAnalyzer {
                                     "' has no members without narrowing");
       return ExpressionState{model_.error_type()};
     }
+    const std::vector<SymbolId> object_members =
+        find_object_members(member.member);
     if (object_type.kind == TypeKind::kArray) {
       if (member.member == "Length") {
         diagnostics_.error(range,
                            "array length is a meta query; use '::length'");
+        return ExpressionState{model_.error_type()};
+      }
+      if (!object_members.empty()) {
+        return ExpressionState{
+            model_.error_type(), ValueCategory::kCallable, {}, object_members};
       } else {
         diagnostics_.error(range, "array type '" + object_type.name +
                                       "' has no member '" +
@@ -4616,6 +5130,9 @@ class SemanticAnalyzer {
       } else if (member.member == "IsEmpty") {
         diagnostics_.error(range,
                            "string emptiness is a meta query; use '::isEmpty'");
+      } else if (!object_members.empty()) {
+        return ExpressionState{
+            model_.error_type(), ValueCategory::kCallable, {}, object_members};
       } else {
         diagnostics_.error(
             range, "string has no member '" + std::string{member.member} + "'");
@@ -4630,7 +5147,13 @@ class SemanticAnalyzer {
           error_message_symbol_,
           {}};
     }
+    if (object_type.kind == TypeKind::kErrorClass && !object_type.file &&
+        !object_members.empty()) {
+      return ExpressionState{
+          model_.error_type(), ValueCategory::kCallable, {}, object_members};
+    }
     if ((object_type.kind != TypeKind::kFileClass &&
+         object_type.kind != TypeKind::kObject &&
          object_type.kind != TypeKind::kErrorClass &&
          object_type.kind != TypeKind::kInterface &&
          object_type.kind != TypeKind::kStruct) ||
@@ -4642,6 +5165,13 @@ class SemanticAnalyzer {
 
     const FileId target_file = *object_type.file;
     std::vector<SymbolId> members = find_members(target_file, member.member);
+    bool dispatches_through_interface =
+        object_type.kind == TypeKind::kInterface;
+    if (members.empty() && !object_members.empty() &&
+        object_type.kind != TypeKind::kStruct) {
+      members = object_members;
+      dispatches_through_interface = false;
+    }
     if (members.empty()) {
       if (has_inaccessible_member(target_file, member.member)) {
         diagnostics_.error(range, "member '" + std::string{member.member} +
@@ -4681,7 +5211,7 @@ class SemanticAnalyzer {
     }
     ExpressionState state{
         model_.error_type(), ValueCategory::kCallable, {}, std::move(members)};
-    if (object_type.kind == TypeKind::kInterface) {
+    if (dispatches_through_interface) {
       state.interface_dispatch = target_file;
     }
     return state;
@@ -4818,10 +5348,17 @@ class SemanticAnalyzer {
     }
 
     const SemanticType& object_type = model_.type(*nullable.element_type);
+    const std::vector<SymbolId> object_members =
+        find_object_members(member.member);
     if (object_type.kind == TypeKind::kArray) {
       if (member.member == "Length") {
         diagnostics_.error(
             range, "array length is a safe meta query; use '?::length'");
+        return ExpressionState{model_.error_type()};
+      }
+      if (!object_members.empty()) {
+        return ExpressionState{
+            model_.error_type(), ValueCategory::kCallable, {}, object_members};
       } else {
         diagnostics_.error(range, "array type '" + object_type.name +
                                       "' has no member '" +
@@ -4842,6 +5379,9 @@ class SemanticAnalyzer {
         diagnostics_.error(range,
                            "string emptiness is a safe meta query; use "
                            "'?::isEmpty'");
+      } else if (!object_members.empty()) {
+        return ExpressionState{
+            model_.error_type(), ValueCategory::kCallable, {}, object_members};
       } else {
         diagnostics_.error(
             range, "string has no member '" + std::string{member.member} + "'");
@@ -4855,7 +5395,13 @@ class SemanticAnalyzer {
                              error_message_symbol_,
                              {}};
     }
+    if (object_type.kind == TypeKind::kErrorClass && !object_type.file &&
+        !object_members.empty()) {
+      return ExpressionState{
+          model_.error_type(), ValueCategory::kCallable, {}, object_members};
+    }
     if ((object_type.kind != TypeKind::kFileClass &&
+         object_type.kind != TypeKind::kObject &&
          object_type.kind != TypeKind::kErrorClass &&
          object_type.kind != TypeKind::kInterface &&
          object_type.kind != TypeKind::kStruct) ||
@@ -4867,6 +5413,13 @@ class SemanticAnalyzer {
 
     const FileId target_file = *object_type.file;
     std::vector<SymbolId> members = find_members(target_file, member.member);
+    bool dispatches_through_interface =
+        object_type.kind == TypeKind::kInterface;
+    if (members.empty() && !object_members.empty() &&
+        object_type.kind != TypeKind::kStruct) {
+      members = object_members;
+      dispatches_through_interface = false;
+    }
     if (members.empty()) {
       if (has_inaccessible_member(target_file, member.member)) {
         diagnostics_.error(range, "member '" + std::string{member.member} +
@@ -4886,7 +5439,7 @@ class SemanticAnalyzer {
                             ValueCategory::kCallable,
                             {},
                             std::move(members)};
-      if (object_type.kind == TypeKind::kInterface) {
+      if (dispatches_through_interface) {
         state.interface_dispatch = target_file;
       }
       return state;
@@ -5081,6 +5634,7 @@ class SemanticAnalyzer {
     if (callee.category == ValueCategory::kType) {
       const SemanticType& type = model_.type(callee.type);
       if ((type.kind == TypeKind::kFileClass ||
+           type.kind == TypeKind::kObject ||
            type.kind == TypeKind::kErrorClass ||
            type.kind == TypeKind::kStruct) &&
           type.file) {
@@ -5508,6 +6062,19 @@ class SemanticAnalyzer {
                                                        : found->second;
   }
 
+  std::vector<SymbolId> find_object_members(std::string_view name) const {
+    const std::optional<FileId> object_file =
+        model_.type(model_.object_type()).file;
+    if (!object_file) {
+      return {};
+    }
+    std::vector<SymbolId> matches = declared_members(*object_file, name);
+    std::erase_if(matches, [this](SymbolId symbol) {
+      return model_.symbol(symbol).visibility != Visibility::kPublic;
+    });
+    return matches;
+  }
+
   std::vector<SymbolId> find_members(FileId file_id,
                                      std::string_view name) const {
     if (model_.file(file_id).kind == FileTypeKind::kInterface) {
@@ -5703,7 +6270,7 @@ class SemanticAnalyzer {
              actual_type.kind == TypeKind::kFileClass ||
              actual_type.kind == TypeKind::kErrorClass ||
              actual_type.kind == TypeKind::kInterface ||
-             actual_type.kind == TypeKind::kArray;
+             actual_type.kind == TypeKind::kArray || is_boxable_value(actual);
     }
     if (expected_type.kind != TypeKind::kNullable ||
         !expected_type.element_type) {
@@ -5717,6 +6284,73 @@ class SemanticAnalyzer {
            actual_type.element_type &&
            is_assignable(*expected_type.element_type,
                          *actual_type.element_type);
+  }
+
+  bool is_boxable_value(TypeId type) const {
+    if (type.value >= model_.types().size()) {
+      return false;
+    }
+    const TypeKind kind = model_.type(type).kind;
+    if (!is_boxable_value_kind(kind)) {
+      return false;
+    }
+    if (!model_.type(model_.object_type()).file) {
+      return false;
+    }
+    return kind == TypeKind::kEnum || kind == TypeKind::kStruct ||
+           model_.value_wrapper(type).has_value();
+  }
+
+  bool can_convert_to_object(TypeId type) const {
+    if (type.value >= model_.types().size()) {
+      return false;
+    }
+    const SemanticType& value = model_.type(type);
+    if (value.kind == TypeKind::kNullable && value.element_type) {
+      return is_reference(*value.element_type) ||
+             is_boxable_value(*value.element_type);
+    }
+    return is_reference(type) || is_boxable_value(type);
+  }
+
+  bool requires_boxing(TypeId expected, TypeId actual) const {
+    if (expected.value >= model_.types().size() ||
+        actual.value >= model_.types().size()) {
+      return false;
+    }
+    const SemanticType& target = model_.type(expected);
+    if (target.kind == TypeKind::kObject) {
+      return is_boxable_value(actual);
+    }
+    if (target.kind != TypeKind::kNullable || !target.element_type ||
+        *target.element_type != model_.object_type()) {
+      return false;
+    }
+    const SemanticType& source = model_.type(actual);
+    return is_boxable_value(actual) ||
+           (source.kind == TypeKind::kNullable && source.element_type &&
+            is_boxable_value(*source.element_type));
+  }
+
+  bool is_object_boxing_target(TypeId type) const {
+    if (type.value >= model_.types().size()) {
+      return false;
+    }
+    if (type == model_.object_type()) {
+      return true;
+    }
+    const SemanticType& target = model_.type(type);
+    return target.kind == TypeKind::kNullable &&
+           target.element_type == model_.object_type();
+  }
+
+  void mark_boxing_context(ExpressionId id, TypeId expected,
+                           ExpressionState& state) {
+    if (!requires_boxing(expected, state.type)) {
+      return;
+    }
+    model_.mutable_file(current_file_).expressions.at(id.value).boxing_target =
+        expected;
   }
 
   bool is_override_return_compatible(TypeId inherited,
@@ -6258,6 +6892,7 @@ class SemanticAnalyzer {
                 ? *parameter.element_type
                 : parameters[index];
       }
+      mark_boxing_context(ids[index], parameters[index], arguments[index]);
     }
   }
 
@@ -6575,6 +7210,7 @@ class SemanticAnalyzer {
   bool has_implicit_receiver_{false};
   bool analyzing_base_initializer_{false};
   bool defer_default_numeric_literal_range_{false};
+  std::size_t boxing_context_depth_{0};
   bool constant_context_{false};
   std::map<std::string, std::pair<std::size_t, std::size_t>> constant_budgets_;
   std::vector<std::map<std::string, std::vector<SymbolId>, std::less<>>>

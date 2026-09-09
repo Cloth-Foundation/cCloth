@@ -430,6 +430,8 @@ void add_owned_symbols(
               ArtifactSymbolRole::kDefinition, ArtifactSymbolKind::kDescriptor,
               file.abi.descriptor->kind == AbiHeapObjectKind::kError
                   ? "descriptor:error"
+              : file.abi.descriptor->kind == AbiHeapObjectKind::kValueBox
+                  ? "descriptor:value_box"
                   : "descriptor:file_class"});
     }
     for (const ImportedStaticFieldAbi& field : file.abi.static_fields) {
@@ -497,6 +499,11 @@ std::vector<ArtifactSymbol> artifact_symbols(
                        ArtifactSymbolRole::kRequirement,
                        ArtifactSymbolKind::kRuntime, "c:ptr(i32,ptr)"});
     symbols.try_emplace(
+        "cloth_rt_box_value",
+        ArtifactSymbol{"cloth_rt_box_value", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:ptr(ptr,ptr,ptr)"});
+    symbols.try_emplace(
         "cloth_rt_console_read_line",
         ArtifactSymbol{"cloth_rt_console_read_line", std::nullopt,
                        ArtifactSymbolRole::kRequirement,
@@ -516,6 +523,26 @@ std::vector<ArtifactSymbol> artifact_symbols(
         ArtifactSymbol{"cloth_rt_require_nullable_value", std::nullopt,
                        ArtifactSymbolRole::kRequirement,
                        ArtifactSymbolKind::kRuntime, "c:void(i8)"});
+    symbols.try_emplace(
+        "cloth_rt_try_unbox",
+        ArtifactSymbol{"cloth_rt_try_unbox", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:i8(ptr,ptr,ptr)"});
+    symbols.try_emplace(
+        "cloth_rt_value_box_equals",
+        ArtifactSymbol{"cloth_rt_value_box_equals", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:i1(ptr,ptr)"});
+    symbols.try_emplace(
+        "cloth_rt_value_box_hash_code",
+        ArtifactSymbol{"cloth_rt_value_box_hash_code", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:i64(ptr)"});
+    symbols.try_emplace(
+        "cloth_rt_value_box_to_string",
+        ArtifactSymbol{"cloth_rt_value_box_to_string", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:ptr(ptr)"});
     symbols.try_emplace(
         "cloth_rt_string_slice",
         ArtifactSymbol{"cloth_rt_string_slice", std::nullopt,

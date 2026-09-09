@@ -1,6 +1,7 @@
 # Cloth package artifact schema, version 7
 
-This is the current `.cpa` contract. It inherits the frozen
+This is a frozen predecessor of the current
+[version-8 schema](artifact_schema_v8.md). It inherits the frozen
 [version-6 schema](artifact_schema_v6.md). Canonical JSON, record ordering,
 integrity, payload, resource-limit, target, dependency, declaration, and
 typed-error rules are unchanged except where this document extends nullable

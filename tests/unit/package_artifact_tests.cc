@@ -193,7 +193,7 @@ void canonical_interface_round_trip(TestContext& test) {
   const auto& bytes = encoded.artifact->bytes;
   test.expect(bytes.size() > 64 && bytes[0] == 0x43 && bytes[7] == 0 &&
                   read_u64(bytes, 24) == 0,
-              "format-7 envelope fields are incorrect");
+              "format-8 envelope fields are incorrect");
   const auto decoded =
       cloth::read_package_artifact(bytes, artifact.compatibility);
   test.expect(decoded.is_valid(), "canonical interface artifact did not read");
@@ -213,19 +213,19 @@ void canonical_interface_round_trip(TestContext& test) {
   test.expect(!metadata.empty() && metadata.front() == '{' &&
                   metadata.back() == '}' && !metadata.ends_with('\n') &&
                   metadata.starts_with("{\"compatibility\":") &&
-                  metadata.contains("\"runtime_abi\":\"10\"") &&
+                  metadata.contains("\"runtime_abi\":\"11\"") &&
                   metadata.contains("\"value\":\"3fc00000\"") &&
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
   test.expect(
-      metadata.size() == 12378 &&
+      metadata.size() == 12454 &&
           cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-              "813da4fca343bcc28f782b7b74bda6f2"
-              "2b26d03bee3ea4601c72da0ae87d43cb" &&
+              "18e1561d605622ad5d4fe2e17cc6b73df"
+              "ff23e2a65170493e662dd2bafaa61e5" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "f042675435b699848a7a99ffc9e4353c"
-              "3cb8b1168c74f8f51aad6cffed0875c8",
-      "canonical version-7 fixture: size=" + std::to_string(metadata.size()) +
+              "197e00f354e22f6c22d955b5aafd8916"
+              "e0b9f56dc0c6f28a5bde623783d4feb6",
+      "canonical version-8 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
 }
@@ -261,7 +261,7 @@ void scalar_constants_round_trip(TestContext& test) {
     test.expect(
         decoded.is_valid() && decoded.artifact->imported == artifact.imported,
         "scalar type/bits did not round trip exactly");
-    test.expect(encoded.artifact->bytes[8] == 7, "format-7 envelope");
+    test.expect(encoded.artifact->bytes[8] == 8, "format-8 envelope");
     const auto metadata = metadata_text(encoded.artifact->bytes);
     test.expect(metadata.contains("\"value\":\"-9223372036854775808\"") &&
                     metadata.contains("\"value\":\"18446744073709551615\""),
@@ -582,22 +582,22 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
   changed.insert(changed.size() - 1, ",\"types\":[]");
   expect_rejected(std::move(changed), "duplicate metadata field was accepted");
   changed = original;
-  changed.replace(changed.find("\"compiler_abi\":\"6\""), 18,
-                  "\"compiler_abi\":6");
+  changed.replace(changed.find("\"compiler_abi\":\"7\""), 18,
+                  "\"compiler_abi\":7");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
   changed = original;
-  const std::string_view current_runtime = "\"runtime_abi\":\"10\"";
+  const std::string_view current_runtime = "\"runtime_abi\":\"11\"";
   const std::size_t runtime = changed.find(current_runtime);
   test.expect(runtime != std::string::npos,
-              "runtime ABI fixture did not contain version 10");
+              "runtime ABI fixture did not contain version 11");
   if (runtime != std::string::npos) {
-    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"9\"");
+    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"10\"");
     const auto rejected = cloth::read_package_artifact(
         replace_metadata(encoded.artifact->bytes, std::move(changed)));
     test.expect(
         !rejected.is_valid() && !rejected.issues.empty() &&
             rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
-        "artifact with runtime ABI 9 was accepted by runtime ABI 10");
+        "artifact with runtime ABI 10 was accepted by runtime ABI 11");
   }
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");

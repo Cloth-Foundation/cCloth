@@ -85,6 +85,27 @@ class MirVerifier {
            semantics_.type(*type).kind == TypeKind::kEnum;
   }
 
+  bool is_boxable_type(std::optional<TypeId> type) const {
+    if (!type || type->value >= semantics_.types().size()) {
+      return false;
+    }
+    const TypeKind kind = semantics_.type(*type).kind;
+    return kind == TypeKind::kEnum || kind == TypeKind::kStruct ||
+           semantics_.value_wrapper(*type).has_value();
+  }
+
+  bool is_object_box_target(TypeId type) const {
+    if (type == semantics_.object_type()) {
+      return true;
+    }
+    if (type.value >= semantics_.types().size()) {
+      return false;
+    }
+    const SemanticType& target = semantics_.type(type);
+    return target.kind == TypeKind::kNullable &&
+           target.element_type == semantics_.object_type();
+  }
+
   void verify_file(const MirFileClass& file, std::size_t file_index) {
     current_file_ = file.file;
     const SourceRange range = symbol_range(file.symbol);
@@ -1145,14 +1166,58 @@ class MirVerifier {
                  "conversion instruction has an invalid kind");
         }
       }
+    } else if (const auto* box =
+                   std::get_if<MirBoxInstruction>(&instruction.data)) {
+      verify_value(box->value, value_types, instruction.range);
+      verify_type(box->value_type, instruction.range);
+      require_result(instruction);
+      const std::optional<TypeId> source_type =
+          known_value_type(box->value, value_types);
+      bool valid_source = source_type && *source_type == box->value_type;
+      if (valid_source) {
+        const SemanticType& source = semantics_.type(box->value_type);
+        valid_source =
+            is_boxable_type(box->value_type) ||
+            (source.kind == TypeKind::kNullable && source.element_type &&
+             is_boxable_type(*source.element_type));
+      }
+      if (!valid_source || !is_object_box_target(instruction.type) ||
+          (instruction.type == semantics_.object_type() && source_type &&
+           semantics_.type(*source_type).kind == TypeKind::kNullable)) {
+        report(instruction.range,
+               "box instruction has incompatible source or target types");
+      }
+    } else if (const auto* unbox =
+                   std::get_if<MirUnboxInstruction>(&instruction.data)) {
+      verify_value(unbox->value, value_types, instruction.range);
+      verify_type(unbox->value_type, instruction.range);
+      require_result(instruction);
+      const std::optional<TypeId> source_type =
+          known_value_type(unbox->value, value_types);
+      bool valid_source = false;
+      if (source_type && source_type->value < semantics_.types().size()) {
+        const SemanticType& source = semantics_.type(*source_type);
+        valid_source = source.kind == TypeKind::kObject ||
+                       (source.kind == TypeKind::kNullable &&
+                        source.element_type == semantics_.object_type());
+      }
+      bool valid_result = false;
+      if (instruction.type.value < semantics_.types().size()) {
+        const SemanticType& result = semantics_.type(instruction.type);
+        valid_result = result.kind == TypeKind::kNullable &&
+                       result.element_type == unbox->value_type;
+      }
+      if (!valid_source || !is_boxable_type(unbox->value_type) ||
+          !valid_result) {
+        report(instruction.range,
+               "unbox instruction has incompatible source or target types");
+      }
     } else if (const auto* test =
                    std::get_if<MirTypeTestInstruction>(&instruction.data)) {
       verify_value(test->value, value_types, instruction.range);
       verify_type(test->target, instruction.range);
       if (is_enum_type(known_value_type(test->value, value_types)) ||
-          is_enum_type(test->target) ||
-          is_struct_type(known_value_type(test->value, value_types)) ||
-          is_struct_type(test->target)) {
+          is_struct_type(known_value_type(test->value, value_types))) {
         report(instruction.range, "enum value used by a reference type test");
       }
       require_result(instruction);
@@ -1164,9 +1229,8 @@ class MirVerifier {
       verify_value(cast->value, value_types, instruction.range);
       verify_type(cast->target, instruction.range);
       if (is_enum_type(known_value_type(cast->value, value_types)) ||
-          is_enum_type(cast->target) ||
           is_struct_type(known_value_type(cast->value, value_types)) ||
-          is_struct_type(cast->target)) {
+          is_boxable_type(cast->target)) {
         report(instruction.range, "enum value used by a reference cast");
       }
       require_result(instruction);
@@ -1781,10 +1845,15 @@ class MirVerifier {
     const SemanticSymbol& member_symbol = semantics_.symbol(member);
     const std::optional<FileId> owner = member_symbol.file;
     bool related = false;
-    if (type.kind == TypeKind::kErrorClass && !owner &&
-        member_symbol.kind == SymbolKind::kField &&
-        member_symbol.name == "Message" && member_symbol.is_final &&
-        member_symbol.type == semantics_.string_type()) {
+    const std::optional<FileId> object_file =
+        semantics_.type(semantics_.object_type()).file;
+    if (owner && object_file && owner == object_file &&
+        is_non_null_reference(receiver_type)) {
+      related = true;
+    } else if (type.kind == TypeKind::kErrorClass && !owner &&
+               member_symbol.kind == SymbolKind::kField &&
+               member_symbol.name == "Message" && member_symbol.is_final &&
+               member_symbol.type == semantics_.string_type()) {
       related = true;
     } else if (type.kind == TypeKind::kStruct && type.file && owner) {
       related = type.file == owner;

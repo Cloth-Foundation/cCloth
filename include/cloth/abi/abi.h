@@ -62,6 +62,7 @@ enum class AbiHeapObjectKind : std::uint64_t {
   kString = 1,
   kArray = 2,
   kError = 3,
+  kValueBox = 4,
 };
 
 struct AbiTypeDescriptor {
@@ -83,6 +84,9 @@ struct AbiTypeDescriptor {
   std::vector<InterfaceDispatch> interfaces{};
   std::string mangled_name{};
   bool parent_is_error_root{false};
+  std::optional<TypeId> boxed_value_type{};
+  std::uint64_t boxed_value_offset{0};
+  bool uses_value_box_virtuals{false};
 
   friend bool operator==(const AbiTypeDescriptor&,
                          const AbiTypeDescriptor&) = default;

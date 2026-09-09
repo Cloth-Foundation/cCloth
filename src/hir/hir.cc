@@ -400,8 +400,9 @@ class Lowerer {
       call->struct_receiver =
           struct_receiver_mode(semantics_.symbol(*call->callable), semantics_);
     }
-    static_cast<void>(module_.storage.add_expression(HirExpression{
-        semantic.type, syntax.range, std::move(data), semantic.category}));
+    static_cast<void>(module_.storage.add_expression(
+        HirExpression{semantic.type, syntax.range, std::move(data),
+                      semantic.category, semantic.boxing_target}));
   }
 
   void lower_statement(StatementId id) {

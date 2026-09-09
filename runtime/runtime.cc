@@ -67,6 +67,7 @@ struct ClothAllocation {
   ClothAllocation* mark_next;
   void* object;
   std::uint64_t size;
+  std::uint64_t identity;
   bool marked;
 };
 
@@ -77,37 +78,54 @@ struct ClothAllocationIndexEntry {
 
 constexpr std::uint64_t kInitialCollectionThreshold = 64 * 1024;
 constexpr std::size_t kInitialAllocationIndexCapacity = 64;
+constexpr char kObjectTypeName[] = "cloth.lang.Object";
 constexpr char kStringTypeName[] = "string";
 constexpr char kArrayTypeName[] = "Array";
 constexpr char kArrayMetaTypeName[] = "array";
 constexpr char kErrorTypeName[] = "Error";
 constexpr char kDivisionByZeroTypeName[] = "DivisionByZero";
 constexpr std::uint64_t kErrorReferenceOffsets[]{offsetof(ClothError, message)};
-constexpr ClothTypeDescriptor kStringTypeDescriptor{
-    ClothHeapObjectKind::kString,
-    nullptr,
-    kStringTypeName,
-    sizeof(kStringTypeName) - 1,
-    sizeof(ClothString),
-    alignof(ClothString),
-    nullptr,
-    0,
-    nullptr,
-    0,
-    nullptr,
-    0};
-constexpr ClothTypeDescriptor kArrayTypeDescriptor{ClothHeapObjectKind::kArray,
-                                                   nullptr,
-                                                   kArrayTypeName,
-                                                   sizeof(kArrayTypeName) - 1,
-                                                   sizeof(ClothArray),
-                                                   alignof(ClothArray),
-                                                   nullptr,
-                                                   0,
-                                                   nullptr,
-                                                   0,
-                                                   nullptr,
-                                                   0};
+
+bool string_equals(const void* value, const void* other) noexcept;
+std::uint64_t string_hash_code(const void* value) noexcept;
+void* string_to_string(const void* value) noexcept;
+
+const void* const kObjectVirtualFunctions[]{
+    reinterpret_cast<const void*>(&cloth_rt_object_equals),
+    reinterpret_cast<const void*>(&cloth_rt_object_hash_code),
+    reinterpret_cast<const void*>(&cloth_rt_object_to_string)};
+const void* const kStringVirtualFunctions[]{
+    reinterpret_cast<const void*>(&string_equals),
+    reinterpret_cast<const void*>(&string_hash_code),
+    reinterpret_cast<const void*>(&string_to_string)};
+const ClothTypeDescriptor kStringTypeDescriptor{ClothHeapObjectKind::kString,
+                                                &cloth_rt_object_type,
+                                                kStringTypeName,
+                                                sizeof(kStringTypeName) - 1,
+                                                sizeof(ClothString),
+                                                alignof(ClothString),
+                                                nullptr,
+                                                0,
+                                                kStringVirtualFunctions,
+                                                3,
+                                                nullptr,
+                                                0,
+                                                nullptr,
+                                                0};
+const ClothTypeDescriptor kArrayTypeDescriptor{ClothHeapObjectKind::kArray,
+                                               &cloth_rt_object_type,
+                                               kArrayTypeName,
+                                               sizeof(kArrayTypeName) - 1,
+                                               sizeof(ClothArray),
+                                               alignof(ClothArray),
+                                               nullptr,
+                                               0,
+                                               kObjectVirtualFunctions,
+                                               3,
+                                               nullptr,
+                                               0,
+                                               nullptr,
+                                               0};
 constexpr std::uint64_t kProgramArgumentReferenceOffsets[]{0};
 constexpr ClothArrayElementLayout kProgramArgumentElementLayout{
     sizeof(void*), alignof(void*), kProgramArgumentReferenceOffsets, 1};
@@ -123,6 +141,7 @@ std::uint64_t live_byte_count = 0;
 std::uint64_t collection_count = 0;
 std::uint64_t peak_live_byte_count = 0;
 std::uint64_t collection_threshold = kInitialCollectionThreshold;
+std::uint64_t next_allocation_identity = 1;
 bool collection_in_progress = false;
 
 [[noreturn]] void runtime_failure(std::string_view message) noexcept {
@@ -137,9 +156,12 @@ bool is_power_of_two(std::uint64_t value) noexcept {
   return value != 0 && (value & (value - 1)) == 0;
 }
 
-bool is_user_object_kind(ClothHeapObjectKind kind) noexcept {
+bool is_heap_object_kind(ClothHeapObjectKind kind) noexcept {
   return kind == ClothHeapObjectKind::kFileClass ||
-         kind == ClothHeapObjectKind::kError;
+         kind == ClothHeapObjectKind::kString ||
+         kind == ClothHeapObjectKind::kArray ||
+         kind == ClothHeapObjectKind::kError ||
+         kind == ClothHeapObjectKind::kValueBox;
 }
 
 std::size_t native_size(std::uint64_t value,
@@ -329,18 +351,115 @@ void rebuild_allocation_index() noexcept {
   }
 }
 
+std::uint64_t scalar_value_size(ClothValueKind kind) noexcept {
+  switch (kind) {
+    case ClothValueKind::kBool:
+    case ClothValueKind::kByte:
+    case ClothValueKind::kInt8:
+    case ClothValueKind::kUint8:
+      return 1;
+    case ClothValueKind::kInt16:
+    case ClothValueKind::kUint16:
+      return 2;
+    case ClothValueKind::kChar:
+    case ClothValueKind::kInt32:
+    case ClothValueKind::kUint32:
+    case ClothValueKind::kFloat32:
+    case ClothValueKind::kEnum:
+      return 4;
+    case ClothValueKind::kInt64:
+    case ClothValueKind::kUint64:
+    case ClothValueKind::kFloat64:
+      return 8;
+    case ClothValueKind::kString:
+    case ClothValueKind::kReference:
+      return sizeof(void*);
+    case ClothValueKind::kStruct:
+    case ClothValueKind::kNullable:
+      return 0;
+  }
+  return 0;
+}
+
+void validate_value_layout(const ClothValueLayout* layout,
+                           std::size_t depth = 0) noexcept {
+  if (layout == nullptr || depth > 128 || layout->name == nullptr ||
+      layout->name_size == 0 || layout->size == 0 ||
+      !is_power_of_two(layout->alignment) ||
+      layout->size % layout->alignment != 0 ||
+      (layout->fields == nullptr) != (layout->field_count == 0) ||
+      (layout->enum_cases == nullptr) != (layout->enum_case_count == 0)) {
+    runtime_failure("value layout metadata is invalid");
+  }
+  const std::uint64_t scalar_size = scalar_value_size(layout->kind);
+  if (scalar_size != 0 &&
+      (layout->size != scalar_size || layout->field_count != 0)) {
+    runtime_failure("scalar value layout has invalid storage");
+  }
+  if (layout->kind == ClothValueKind::kEnum) {
+    if (layout->enum_case_count == 0) {
+      runtime_failure("enum value layout has no cases");
+    }
+    for (std::uint64_t index = 0; index < layout->enum_case_count; ++index) {
+      const ClothEnumCaseLayout& item = layout->enum_cases[index];
+      if (item.name == nullptr || item.name_size == 0) {
+        runtime_failure("enum case layout is invalid");
+      }
+    }
+  } else if (layout->enum_case_count != 0) {
+    runtime_failure("non-enum value layout has enum cases");
+  }
+  if (layout->kind == ClothValueKind::kNullable && layout->field_count != 1) {
+    runtime_failure("nullable value layout has the wrong payload count");
+  }
+  if (layout->kind != ClothValueKind::kStruct &&
+      layout->kind != ClothValueKind::kNullable && layout->field_count != 0) {
+    runtime_failure("non-aggregate value layout has fields");
+  }
+  std::uint64_t previous_end =
+      layout->kind == ClothValueKind::kNullable ? 1 : 0;
+  for (std::uint64_t index = 0; index < layout->field_count; ++index) {
+    const ClothValueFieldLayout& field = layout->fields[index];
+    validate_value_layout(field.type, depth + 1);
+    if (field.offset < previous_end ||
+        field.offset % field.type->alignment != 0 ||
+        field.offset > layout->size ||
+        field.type->size > layout->size - field.offset ||
+        (layout->kind == ClothValueKind::kStruct &&
+         (field.name == nullptr || field.name_size == 0)) ||
+        (layout->kind == ClothValueKind::kNullable &&
+         (field.name != nullptr || field.name_size != 0))) {
+      runtime_failure("aggregate value field layout is invalid");
+    }
+    previous_end = field.offset + field.type->size;
+  }
+}
+
+bool is_object_root_descriptor(const ClothTypeDescriptor* type) noexcept {
+  return type == &cloth_rt_object_type ||
+         (type != nullptr && type->kind == ClothHeapObjectKind::kFileClass &&
+          type->name != nullptr &&
+          type->name_size == sizeof(kObjectTypeName) - 1 &&
+          std::memcmp(type->name, kObjectTypeName,
+                      sizeof(kObjectTypeName) - 1) == 0);
+}
+
 void validate_type_descriptor(const ClothTypeDescriptor* type) noexcept {
   if (type == nullptr) {
     runtime_failure("object type descriptor is null");
   }
-  if (!is_user_object_kind(type->kind)) {
+  if (!is_heap_object_kind(type->kind)) {
     runtime_failure("object type descriptor has the wrong kind");
   }
   if (type->parent != nullptr &&
-      (type->parent == type || type->parent->kind != type->kind ||
+      (type->parent == type ||
+       (type->parent->kind != type->kind &&
+        !is_object_root_descriptor(type->parent)) ||
        type->parent->size > type->size ||
        type->parent->alignment > type->alignment ||
-       type->parent->virtual_function_count > type->virtual_function_count)) {
+       (type->parent->virtual_function_count > type->virtual_function_count &&
+        !(type->parent == &cloth_rt_error_type &&
+          type->virtual_function_count < 3)))) {
     runtime_failure("object type descriptor has an invalid parent");
   }
   if (type->name == nullptr && type->name_size != 0) {
@@ -366,6 +485,22 @@ void validate_type_descriptor(const ClothTypeDescriptor* type) noexcept {
   }
   if ((type->interfaces == nullptr) != (type->interface_count == 0)) {
     runtime_failure("object interface metadata is inconsistent");
+  }
+  if ((type->boxed_value_layout == nullptr) !=
+      (type->boxed_value_offset == 0)) {
+    runtime_failure("object boxed-value metadata is inconsistent");
+  }
+  if (type->boxed_value_layout != nullptr) {
+    validate_value_layout(type->boxed_value_layout);
+    if (type->boxed_value_offset < sizeof(ClothObjectHeader) ||
+        type->boxed_value_offset % type->boxed_value_layout->alignment != 0 ||
+        type->boxed_value_offset > type->size ||
+        type->boxed_value_layout->size >
+            type->size - type->boxed_value_offset) {
+      runtime_failure("object boxed-value payload is out of bounds");
+    }
+  } else if (type->kind == ClothHeapObjectKind::kValueBox) {
+    runtime_failure("value-box descriptor has no payload metadata");
   }
   std::uint64_t previous_interface_id = 0;
   bool has_previous_interface = false;
@@ -464,6 +599,7 @@ void mark_reachable_objects() noexcept {
     switch (header.type->kind) {
       case ClothHeapObjectKind::kFileClass:
       case ClothHeapObjectKind::kError:
+      case ClothHeapObjectKind::kValueBox:
         for (std::uint64_t index = 0; index < header.type->reference_count;
              ++index) {
           void* reference = nullptr;
@@ -511,6 +647,7 @@ void destroy_managed_object(ClothAllocation* allocation) noexcept {
   switch (header.type->kind) {
     case ClothHeapObjectKind::kFileClass:
     case ClothHeapObjectKind::kError:
+    case ClothHeapObjectKind::kValueBox:
       break;
     case ClothHeapObjectKind::kString: {
       auto& string = *static_cast<ClothString*>(allocation->object);
@@ -590,6 +727,10 @@ void register_allocation(ClothObjectHeader* object,
     free_aligned(object);
     runtime_failure("managed object count overflow");
   }
+  if (next_allocation_identity == std::numeric_limits<std::uint64_t>::max()) {
+    free_aligned(object);
+    runtime_failure("managed allocation identity overflow");
+  }
   reserve_allocation_index(live_object_count + 1);
   auto* allocation =
       static_cast<ClothAllocation*>(std::malloc(sizeof(ClothAllocation)));
@@ -597,7 +738,8 @@ void register_allocation(ClothObjectHeader* object,
     free_aligned(object);
     runtime_failure("managed allocation registry failed");
   }
-  *allocation = ClothAllocation{allocations, nullptr, object, size, false};
+  *allocation = ClothAllocation{
+      allocations, nullptr, object, size, next_allocation_identity++, false};
   allocations = allocation;
   insert_allocation_index(allocation_index, allocation_index_capacity,
                           allocation);
@@ -1665,17 +1807,490 @@ void write_float(Float value) noexcept {
   write_stdout(std::string_view{buffer.data(), result.ptr});
 }
 
+std::uint64_t mix_hash(std::uint64_t value) noexcept {
+  value ^= value >> 30U;
+  value *= UINT64_C(0xbf58476d1ce4e5b9);
+  value ^= value >> 27U;
+  value *= UINT64_C(0x94d049bb133111eb);
+  return value ^ (value >> 31U);
+}
+
+std::uint64_t hash_bytes(const char* data, std::size_t size) noexcept {
+  std::uint64_t hash = UINT64_C(0xcbf29ce484222325);
+  for (std::size_t index = 0; index < size; ++index) {
+    hash ^= static_cast<unsigned char>(data[index]);
+    hash *= UINT64_C(0x100000001b3);
+  }
+  return mix_hash(hash);
+}
+
+std::uint64_t combine_hash(std::uint64_t left, std::uint64_t right) noexcept {
+  return mix_hash(left ^ (right + UINT64_C(0x9e3779b97f4a7c15) + (left << 6U) +
+                          (left >> 2U)));
+}
+
+template <typename Value>
+Value load_value(const void* storage) noexcept {
+  Value result{};
+  std::memcpy(&result, storage, sizeof(result));
+  return result;
+}
+
+bool values_equal(const ClothValueLayout& layout, const void* left,
+                  const void* right, std::size_t depth = 0) noexcept {
+  if (depth > 128) {
+    runtime_failure("value equality exceeds the nesting limit");
+  }
+  switch (layout.kind) {
+    case ClothValueKind::kBool:
+    case ClothValueKind::kByte:
+    case ClothValueKind::kUint8:
+      return load_value<std::uint8_t>(left) == load_value<std::uint8_t>(right);
+    case ClothValueKind::kInt8:
+      return load_value<std::int8_t>(left) == load_value<std::int8_t>(right);
+    case ClothValueKind::kInt16:
+      return load_value<std::int16_t>(left) == load_value<std::int16_t>(right);
+    case ClothValueKind::kInt32:
+      return load_value<std::int32_t>(left) == load_value<std::int32_t>(right);
+    case ClothValueKind::kInt64:
+      return load_value<std::int64_t>(left) == load_value<std::int64_t>(right);
+    case ClothValueKind::kChar:
+    case ClothValueKind::kUint32:
+    case ClothValueKind::kEnum:
+      return load_value<std::uint32_t>(left) ==
+             load_value<std::uint32_t>(right);
+    case ClothValueKind::kUint16:
+      return load_value<std::uint16_t>(left) ==
+             load_value<std::uint16_t>(right);
+    case ClothValueKind::kUint64:
+      return load_value<std::uint64_t>(left) ==
+             load_value<std::uint64_t>(right);
+    case ClothValueKind::kFloat32:
+      return load_value<float>(left) == load_value<float>(right);
+    case ClothValueKind::kFloat64:
+      return load_value<double>(left) == load_value<double>(right);
+    case ClothValueKind::kString:
+      return cloth_rt_string_equal(load_value<const void*>(left),
+                                   load_value<const void*>(right)) != 0;
+    case ClothValueKind::kReference:
+      return load_value<const void*>(left) == load_value<const void*>(right);
+    case ClothValueKind::kStruct:
+      for (std::uint64_t index = 0; index < layout.field_count; ++index) {
+        const ClothValueFieldLayout& field = layout.fields[index];
+        if (!values_equal(*field.type,
+                          static_cast<const std::byte*>(left) + field.offset,
+                          static_cast<const std::byte*>(right) + field.offset,
+                          depth + 1)) {
+          return false;
+        }
+      }
+      return true;
+    case ClothValueKind::kNullable: {
+      const std::uint8_t left_tag = load_value<std::uint8_t>(left);
+      const std::uint8_t right_tag = load_value<std::uint8_t>(right);
+      if (left_tag > 1 || right_tag > 1) {
+        runtime_failure("nullable value has an invalid tag");
+      }
+      if (left_tag != right_tag || left_tag == 0) {
+        return left_tag == right_tag;
+      }
+      const ClothValueFieldLayout& payload = layout.fields[0];
+      return values_equal(
+          *payload.type, static_cast<const std::byte*>(left) + payload.offset,
+          static_cast<const std::byte*>(right) + payload.offset, depth + 1);
+    }
+  }
+  runtime_failure("value equality has an unknown kind");
+}
+
+std::uint64_t value_hash(const ClothValueLayout& layout, const void* value,
+                         std::size_t depth = 0) noexcept {
+  if (depth > 128) {
+    runtime_failure("value hashing exceeds the nesting limit");
+  }
+  switch (layout.kind) {
+    case ClothValueKind::kBool:
+    case ClothValueKind::kByte:
+    case ClothValueKind::kUint8:
+      return mix_hash(load_value<std::uint8_t>(value));
+    case ClothValueKind::kInt8:
+      return mix_hash(static_cast<std::uint64_t>(
+          static_cast<std::int64_t>(load_value<std::int8_t>(value))));
+    case ClothValueKind::kInt16:
+      return mix_hash(static_cast<std::uint64_t>(
+          static_cast<std::int64_t>(load_value<std::int16_t>(value))));
+    case ClothValueKind::kInt32:
+      return mix_hash(static_cast<std::uint64_t>(
+          static_cast<std::int64_t>(load_value<std::int32_t>(value))));
+    case ClothValueKind::kInt64:
+      return mix_hash(
+          static_cast<std::uint64_t>(load_value<std::int64_t>(value)));
+    case ClothValueKind::kChar:
+    case ClothValueKind::kUint32:
+    case ClothValueKind::kEnum:
+      return mix_hash(load_value<std::uint32_t>(value));
+    case ClothValueKind::kUint16:
+      return mix_hash(load_value<std::uint16_t>(value));
+    case ClothValueKind::kUint64:
+      return mix_hash(load_value<std::uint64_t>(value));
+    case ClothValueKind::kFloat32: {
+      const float number = load_value<float>(value);
+      return mix_hash(number == 0.0F ? 0
+                                     : std::bit_cast<std::uint32_t>(number));
+    }
+    case ClothValueKind::kFloat64: {
+      const double number = load_value<double>(value);
+      return mix_hash(number == 0.0 ? 0 : std::bit_cast<std::uint64_t>(number));
+    }
+    case ClothValueKind::kString: {
+      const void* string = load_value<const void*>(value);
+      return string == nullptr ? 0 : string_hash_code(string);
+    }
+    case ClothValueKind::kReference: {
+      const void* reference = load_value<const void*>(value);
+      if (reference == nullptr) {
+        return 0;
+      }
+      const ClothObjectHeader& object = require_object(reference);
+      ClothAllocation* allocation = find_allocation(reference);
+      if (allocation == nullptr || object.runtime_state != allocation) {
+        runtime_failure("referenced value is not a live managed allocation");
+      }
+      return mix_hash(allocation->identity);
+    }
+    case ClothValueKind::kStruct: {
+      std::uint64_t result = hash_bytes(layout.name, layout.name_size);
+      for (std::uint64_t index = 0; index < layout.field_count; ++index) {
+        const ClothValueFieldLayout& field = layout.fields[index];
+        result = combine_hash(
+            result,
+            value_hash(*field.type,
+                       static_cast<const std::byte*>(value) + field.offset,
+                       depth + 1));
+      }
+      return result;
+    }
+    case ClothValueKind::kNullable: {
+      const std::uint8_t tag = load_value<std::uint8_t>(value);
+      if (tag > 1) {
+        runtime_failure("nullable value has an invalid tag");
+      }
+      if (tag == 0) {
+        return mix_hash(0);
+      }
+      const ClothValueFieldLayout& payload = layout.fields[0];
+      return combine_hash(
+          mix_hash(1),
+          value_hash(*payload.type,
+                     static_cast<const std::byte*>(value) + payload.offset,
+                     depth + 1));
+    }
+  }
+  runtime_failure("value hashing has an unknown kind");
+}
+
+void append_bytes(NativeBuffer<char>& output, std::string_view text) noexcept {
+  for (const char byte : text) {
+    if (!output.push_back(byte)) {
+      runtime_failure("value string representation is too large");
+    }
+  }
+}
+
+template <typename Value>
+void append_number(NativeBuffer<char>& output, Value value) noexcept {
+  std::array<char, 64> buffer{};
+  const auto result =
+      std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+  if (result.ec != std::errc{}) {
+    runtime_failure("value formatting failed");
+  }
+  append_bytes(output, std::string_view{buffer.data(), result.ptr});
+}
+
+template <typename Value>
+void append_float(NativeBuffer<char>& output, Value value) noexcept {
+  if (std::isnan(value)) {
+    append_bytes(output, "nan");
+    return;
+  }
+  if (std::isinf(value)) {
+    append_bytes(output, std::signbit(value) ? "-inf" : "inf");
+    return;
+  }
+  std::array<char, 64> buffer{};
+  const auto result =
+      std::to_chars(buffer.data(), buffer.data() + buffer.size(), value,
+                    std::chars_format::general);
+  if (result.ec != std::errc{}) {
+    runtime_failure("floating-point value formatting failed");
+  }
+  append_bytes(output, std::string_view{buffer.data(), result.ptr});
+}
+
+void append_value(NativeBuffer<char>& output, const ClothValueLayout& layout,
+                  const void* value, std::size_t depth = 0) noexcept {
+  if (depth > 128) {
+    runtime_failure("value formatting exceeds the nesting limit");
+  }
+  switch (layout.kind) {
+    case ClothValueKind::kBool:
+      append_bytes(output,
+                   load_value<std::uint8_t>(value) == 0 ? "false" : "true");
+      return;
+    case ClothValueKind::kChar: {
+      const std::uint32_t scalar = load_value<std::uint32_t>(value);
+      if (scalar > 0x10ffffU || (scalar >= 0xd800U && scalar <= 0xdfffU)) {
+        runtime_failure("character value is not a Unicode scalar");
+      }
+      std::array<char, 4> bytes{};
+      std::size_t size = 0;
+      append_utf8_scalar(scalar, bytes.data(), size);
+      append_bytes(output, std::string_view{bytes.data(), size});
+      return;
+    }
+    case ClothValueKind::kByte:
+    case ClothValueKind::kUint8:
+      append_number(output, load_value<std::uint8_t>(value));
+      return;
+    case ClothValueKind::kInt8:
+      append_number(output, load_value<std::int8_t>(value));
+      return;
+    case ClothValueKind::kInt16:
+      append_number(output, load_value<std::int16_t>(value));
+      return;
+    case ClothValueKind::kInt32:
+      append_number(output, load_value<std::int32_t>(value));
+      return;
+    case ClothValueKind::kInt64:
+      append_number(output, load_value<std::int64_t>(value));
+      return;
+    case ClothValueKind::kUint16:
+      append_number(output, load_value<std::uint16_t>(value));
+      return;
+    case ClothValueKind::kUint32:
+      append_number(output, load_value<std::uint32_t>(value));
+      return;
+    case ClothValueKind::kUint64:
+      append_number(output, load_value<std::uint64_t>(value));
+      return;
+    case ClothValueKind::kFloat32:
+      append_float(output, load_value<float>(value));
+      return;
+    case ClothValueKind::kFloat64:
+      append_float(output, load_value<double>(value));
+      return;
+    case ClothValueKind::kString: {
+      const void* reference = load_value<const void*>(value);
+      if (reference == nullptr) {
+        append_bytes(output, "null");
+        return;
+      }
+      const ClothString& string = require_traversable_string(reference);
+      append_bytes(output, std::string_view{string.data, string.byte_size});
+      return;
+    }
+    case ClothValueKind::kReference: {
+      const void* reference = load_value<const void*>(value);
+      if (reference == nullptr) {
+        append_bytes(output, "null");
+        return;
+      }
+      const ClothObjectHeader& object = require_object(reference);
+      append_bytes(output, "<");
+      append_bytes(output,
+                   std::string_view{object.type->name,
+                                    native_size(object.type->name_size,
+                                                "object type name too large")});
+      append_bytes(output, ">");
+      return;
+    }
+    case ClothValueKind::kEnum: {
+      const std::uint32_t tag = load_value<std::uint32_t>(value);
+      if (tag >= layout.enum_case_count) {
+        runtime_failure("enum value has an invalid tag");
+      }
+      append_bytes(
+          output,
+          std::string_view{layout.name, native_size(layout.name_size,
+                                                    "enum name too large")});
+      append_bytes(output, ".");
+      const ClothEnumCaseLayout& item = layout.enum_cases[tag];
+      append_bytes(
+          output,
+          std::string_view{item.name, native_size(item.name_size,
+                                                  "enum case name too large")});
+      return;
+    }
+    case ClothValueKind::kStruct:
+      append_bytes(output, std::string_view{layout.name, layout.name_size});
+      append_bytes(output, "{");
+      for (std::uint64_t index = 0; index < layout.field_count; ++index) {
+        if (index != 0) {
+          append_bytes(output, ", ");
+        }
+        const ClothValueFieldLayout& field = layout.fields[index];
+        append_bytes(output, std::string_view{field.name, field.name_size});
+        append_bytes(output, "=");
+        append_value(output, *field.type,
+                     static_cast<const std::byte*>(value) + field.offset,
+                     depth + 1);
+      }
+      append_bytes(output, "}");
+      return;
+    case ClothValueKind::kNullable: {
+      const std::uint8_t tag = load_value<std::uint8_t>(value);
+      if (tag > 1) {
+        runtime_failure("nullable value has an invalid tag");
+      }
+      if (tag == 0) {
+        append_bytes(output, "null");
+        return;
+      }
+      const ClothValueFieldLayout& payload = layout.fields[0];
+      append_value(output, *payload.type,
+                   static_cast<const std::byte*>(value) + payload.offset,
+                   depth + 1);
+      return;
+    }
+  }
+  runtime_failure("value formatting has an unknown kind");
+}
+
+const ClothObjectHeader& require_value_box(const void* value) noexcept {
+  const ClothObjectHeader& object = require_object(value);
+  validate_type_descriptor(object.type);
+  if (object.type->boxed_value_layout == nullptr) {
+    runtime_failure("object has no boxed-value payload");
+  }
+  return object;
+}
+
+bool same_value_layout_identity(const ClothValueLayout& left,
+                                const ClothValueLayout& right) noexcept {
+  return left.kind == right.kind && left.size == right.size &&
+         left.alignment == right.alignment &&
+         left.name_size == right.name_size &&
+         std::memcmp(left.name, right.name,
+                     native_size(left.name_size,
+                                 "value layout name is too large")) == 0;
+}
+
+bool string_equals(const void* value, const void* other) noexcept {
+  const ClothString& left = require_traversable_string(value);
+  if (other == nullptr) {
+    return false;
+  }
+  const ClothObjectHeader& right_header = require_object(other);
+  if (right_header.type != &kStringTypeDescriptor) {
+    return false;
+  }
+  const ClothString& right = require_traversable_string(other);
+  return left.byte_size == right.byte_size &&
+         (left.byte_size == 0 ||
+          std::memcmp(left.data, right.data, left.byte_size) == 0);
+}
+
+std::uint64_t string_hash_code(const void* value) noexcept {
+  const ClothString& string = require_traversable_string(value);
+  std::uint64_t hash = UINT64_C(0xcbf29ce484222325);
+  for (std::size_t index = 0; index < string.byte_size; ++index) {
+    hash ^= static_cast<unsigned char>(string.data[index]);
+    hash *= UINT64_C(0x100000001b3);
+  }
+  return mix_hash(hash ^ UINT64_C(0x737472696e67));
+}
+
+void* string_to_string(const void* value) noexcept {
+  static_cast<void>(require_traversable_string(value));
+  return const_cast<void*>(value);
+}
+
+void* default_object_string(const ClothObjectHeader& object) noexcept {
+  const char* name = object.type->name;
+  std::size_t name_size =
+      native_size(object.type->name_size, "object type name is too large");
+  if (object.type->kind == ClothHeapObjectKind::kArray) {
+    name = kArrayMetaTypeName;
+    name_size = sizeof(kArrayMetaTypeName) - 1;
+  }
+  if (name == nullptr ||
+      name_size > std::numeric_limits<std::size_t>::max() - 2) {
+    runtime_failure("object type name has invalid storage");
+  }
+  const std::size_t scalar_count = count_utf8_scalars(name, name_size);
+  char* display = static_cast<char*>(allocate_aligned(
+      name_size + 2, alignof(char), "object string formatting failed"));
+  display[0] = '<';
+  if (name_size != 0) {
+    std::memcpy(display + 1, name, name_size);
+  }
+  display[name_size + 1] = '>';
+  void* result =
+      allocate_owned_string(display, name_size + 2, scalar_count + 2);
+  free_aligned(display);
+  return result;
+}
+
+bool has_object_dispatch(const ClothTypeDescriptor* type) noexcept {
+  if (type == nullptr || type->virtual_function_count < 3) {
+    return false;
+  }
+  const ClothTypeDescriptor* current = type;
+  const ClothTypeDescriptor* slow = type;
+  const ClothTypeDescriptor* fast = type;
+  while (current != nullptr) {
+    validate_type_descriptor(current);
+    if (current == &cloth_rt_object_type ||
+        (current->kind == ClothHeapObjectKind::kFileClass &&
+         current->name_size == sizeof(kObjectTypeName) - 1 &&
+         std::memcmp(current->name, kObjectTypeName,
+                     sizeof(kObjectTypeName) - 1) == 0)) {
+      return true;
+    }
+    current = current->parent;
+    if (slow != nullptr) {
+      slow = slow->parent;
+    }
+    for (std::size_t step = 0; step < 2 && fast != nullptr; ++step) {
+      fast = fast->parent;
+    }
+    if (slow != nullptr && slow == fast) {
+      runtime_failure("object type descriptor ancestry contains a cycle");
+    }
+  }
+  return false;
+}
+
 }  // namespace
+
+extern "C" const ClothTypeDescriptor cloth_rt_object_type{
+    ClothHeapObjectKind::kFileClass,
+    nullptr,
+    kObjectTypeName,
+    sizeof(kObjectTypeName) - 1,
+    sizeof(ClothObjectHeader),
+    alignof(ClothObjectHeader),
+    nullptr,
+    0,
+    kObjectVirtualFunctions,
+    3,
+    nullptr,
+    0,
+    nullptr,
+    0};
 
 extern "C" const ClothTypeDescriptor cloth_rt_error_type{
     ClothHeapObjectKind::kError,
-    nullptr,
+    &cloth_rt_object_type,
     kErrorTypeName,
     sizeof(kErrorTypeName) - 1,
     sizeof(ClothError),
     alignof(ClothError),
     kErrorReferenceOffsets,
     1,
+    kObjectVirtualFunctions,
+    3,
     nullptr,
     0,
     nullptr,
@@ -1690,6 +2305,8 @@ extern "C" const ClothTypeDescriptor cloth_rt_division_by_zero_type{
     alignof(ClothError),
     kErrorReferenceOffsets,
     1,
+    kObjectVirtualFunctions,
+    3,
     nullptr,
     0,
     nullptr,
@@ -2039,12 +2656,125 @@ extern "C" void* cloth_rt_object_type_name(const void* value) noexcept {
   return allocate_borrowed_string(name, name_size, scalar_count);
 }
 
+extern "C" bool cloth_rt_object_equals(const void* value,
+                                       const void* other) noexcept {
+  static_cast<void>(require_object(value));
+  if (other != nullptr) {
+    static_cast<void>(require_object(other));
+  }
+  return value == other;
+}
+
+extern "C" std::uint64_t cloth_rt_object_hash_code(const void* value) noexcept {
+  const ClothObjectHeader& object = require_object(value);
+  ClothAllocation* allocation = find_allocation(value);
+  if (allocation == nullptr || object.runtime_state != allocation) {
+    runtime_failure("object is not a live managed allocation");
+  }
+  return mix_hash(allocation->identity);
+}
+
+extern "C" void* cloth_rt_object_to_string(const void* value) noexcept {
+  return default_object_string(require_object(value));
+}
+
+extern "C" void* cloth_rt_box_value(const ClothTypeDescriptor* type,
+                                    const ClothValueLayout* value_layout,
+                                    const void* value) noexcept {
+  validate_type_descriptor(type);
+  validate_value_layout(value_layout);
+  if (value == nullptr) {
+    runtime_failure("box source storage is null");
+  }
+  if (value_layout->kind == ClothValueKind::kNullable) {
+    const std::uint8_t tag = load_value<std::uint8_t>(value);
+    if (tag > 1) {
+      runtime_failure("nullable box source has an invalid tag");
+    }
+    if (tag == 0) {
+      return nullptr;
+    }
+    const ClothValueFieldLayout& payload = value_layout->fields[0];
+    value = static_cast<const std::byte*>(value) + payload.offset;
+    value_layout = payload.type;
+  }
+  if (!same_value_layout_identity(*type->boxed_value_layout, *value_layout)) {
+    runtime_failure("box source type does not match its descriptor");
+  }
+  void* object = cloth_rt_alloc(type);
+  std::memcpy(
+      static_cast<std::byte*>(object) + type->boxed_value_offset, value,
+      native_size(value_layout->size, "boxed value payload is too large"));
+  return object;
+}
+
+extern "C" std::uint8_t cloth_rt_try_unbox(
+    const void* value, const ClothTypeDescriptor* expected_type,
+    void* output) noexcept {
+  validate_type_descriptor(expected_type);
+  if (expected_type->boxed_value_layout == nullptr || output == nullptr) {
+    runtime_failure("unbox target metadata or storage is invalid");
+  }
+  if (value == nullptr) {
+    return 0;
+  }
+  const ClothObjectHeader& object = require_object(value);
+  if (object.type != expected_type) {
+    return 0;
+  }
+  std::memcpy(
+      output,
+      static_cast<const std::byte*>(value) + expected_type->boxed_value_offset,
+      native_size(expected_type->boxed_value_layout->size,
+                  "unboxed value payload is too large"));
+  return 1;
+}
+
+extern "C" bool cloth_rt_value_box_equals(const void* value,
+                                          const void* other) noexcept {
+  const ClothObjectHeader& left = require_value_box(value);
+  if (other == nullptr) {
+    return false;
+  }
+  const ClothObjectHeader& right = require_object(other);
+  if (left.type != right.type) {
+    return false;
+  }
+  return values_equal(
+      *left.type->boxed_value_layout,
+      static_cast<const std::byte*>(value) + left.type->boxed_value_offset,
+      static_cast<const std::byte*>(other) + right.type->boxed_value_offset);
+}
+
+extern "C" std::uint64_t cloth_rt_value_box_hash_code(
+    const void* value) noexcept {
+  const ClothObjectHeader& object = require_value_box(value);
+  const std::uint64_t type_hash = hash_bytes(
+      object.type->name,
+      native_size(object.type->name_size, "box type name is too large"));
+  return combine_hash(type_hash,
+                      value_hash(*object.type->boxed_value_layout,
+                                 static_cast<const std::byte*>(value) +
+                                     object.type->boxed_value_offset));
+}
+
+extern "C" void* cloth_rt_value_box_to_string(const void* value) noexcept {
+  const ClothObjectHeader& object = require_value_box(value);
+  NativeBuffer<char> buffer;
+  append_value(
+      buffer, *object.type->boxed_value_layout,
+      static_cast<const std::byte*>(value) + object.type->boxed_value_offset);
+  const std::size_t scalar_count =
+      count_utf8_scalars(buffer.data(), buffer.size());
+  return allocate_owned_string(buffer.data(), buffer.size(), scalar_count);
+}
+
 extern "C" std::uint8_t cloth_rt_object_is_kind(const void* value,
                                                 std::uint64_t kind) noexcept {
   if (value == nullptr) {
     return 0;
   }
-  if (kind > static_cast<std::uint64_t>(ClothHeapObjectKind::kError)) {
+  if (kind > static_cast<std::uint64_t>(ClothHeapObjectKind::kValueBox)) {
     runtime_failure("invalid heap object kind");
   }
   const ClothObjectHeader& object = require_object(value);
@@ -2061,7 +2791,7 @@ extern "C" std::uint8_t cloth_rt_object_is_type(
   const ClothTypeDescriptor* slow = current;
   const ClothTypeDescriptor* fast = current;
   while (current != nullptr) {
-    if (!is_user_object_kind(current->kind)) {
+    if (!is_heap_object_kind(current->kind)) {
       return 0;
     }
     validate_type_descriptor(current);
@@ -2442,6 +3172,17 @@ extern "C" void cloth_rt_print_object(const void* value) noexcept {
   const auto& header = *static_cast<const ClothObjectHeader*>(value);
   if (header.type == nullptr) {
     runtime_failure("object has no type descriptor");
+  }
+  if (has_object_dispatch(header.type)) {
+    if (header.type->virtual_function_count < 3) {
+      runtime_failure("Object virtual dispatch table is incomplete");
+    }
+    using ToStringFunction = void* (*)(const void*);
+    const auto to_string = reinterpret_cast<ToStringFunction>(
+        const_cast<void*>(header.type->virtual_functions[2]));
+    const ClothString& display = require_traversable_string(to_string(value));
+    write_stdout(std::string_view{display.data, display.byte_size});
+    return;
   }
   write_stdout("<");
   write_stdout(std::string_view{

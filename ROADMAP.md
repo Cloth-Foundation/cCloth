@@ -88,6 +88,8 @@ Stage 45 is complete following its separately authorized
 [45.4 exit audit](docs/testing.md#stage-454-self-hosted-syntax-tree-exit-audit)
 on 2026-09-09. Verified managed syntax trees are the current self-hosted
 compiler baseline, and Stage 31 is the current completed optimizer baseline.
+Stage 45.5 is complete following its integration and exit audit on 2026-09-09.
+The universal Object and value-box model is now the baseline for Stage 46.
 Stages 35 and 36 are complete, including their standard-library and prelude
 exit audits.
 Coordinated toolchain Stage 22 and separate-compilation Stage 23 are complete,
@@ -1479,10 +1481,48 @@ rejection and GC reachability. Tree records agree across direct, serial,
 repeated, and parallel builds; the complete native, wasm32, Shuttle, sanitizer,
 editor, formatting, documentation, and repository gates pass.
 
-## Beyond Stage 45
+## Stage 45.5: Universal Object and value representation
 
-Stage 45 is complete. The remaining backlog does not acquire priority or enter
-the Cloth 1.0 scope automatically.
+Status: **complete — 45.5d exit audit passed 2026-09-09**
+
+The [approved contract](docs/proposals/stage_45_5_object_representation.md)
+makes `cloth.lang.Object` the canonical runtime root, retains lowercase
+`object` as its exact source alias, preserves unboxed value storage, and adds
+verified boxing at Object boundaries.
+
+Objective: give every concrete Cloth value a coherent Object representation
+with virtual equality, lifetime-stable hashing, correct string conversion, and
+precise GC behavior before the self-hosted parser begins consuming the model.
+
+Prerequisites: Stages 15, 26, 34, 35, 41, and 45.
+
+Deliverables:
+
+1. **45.5a — Contract (complete).** Freeze root identity, aliasing, storage,
+   boxing, wrappers, equality, hashing, representation, printing, ownership,
+   compatibility, verification, and non-goals.
+2. **45.5b — Root and dispatch (complete).** Bind the canonical library
+   declaration, implement the implicit root and three virtual slots across
+   every managed descriptor, and preserve whole and source-free builds.
+3. **45.5c — Value boxes (complete).** Implement verified primitive, enum, struct, and
+   nullable boxing/unboxing plus the complete standard-library wrapper
+   hierarchy and value behavior.
+4. **45.5d — Integration and exit audit (complete).** Advance compatibility atomically and
+   close semantics, IR, ABI, GC, native, both-target, package, Shuttle,
+   bootstrap, sanitizer, documentation, determinism, and repository gates.
+
+Active compatibility is artifact/compiler/runtime **8/7/11**, schemas
+**2/1/1/1**, and `cloth` **v0.5.0**.
+
+`HashCode()` is not a value representation. The default `ToString()` remains
+`<qualified.Type>` without an address or hash; concrete value boxes format their
+payload. A future public `Hash` utility and hash collections remain separate
+API and security contracts.
+
+## Beyond Stage 45.5
+
+Stages 45 and 45.5 are complete. The remaining backlog does not acquire
+priority or enter the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 

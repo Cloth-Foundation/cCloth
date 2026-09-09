@@ -58,6 +58,16 @@ bool is_aggregate_value(const ImportedType& type) {
   return type.abi_kind == AbiTypeKind::kAggregate;
 }
 
+bool is_canonical_object(const ImportedType& type) {
+  return type.kind == TypeKind::kObject && type.nominal_identity &&
+         type.nominal_identity->package.name == kStandardLibraryPackageName &&
+         type.nominal_identity->package.version ==
+             kStandardLibraryPackageVersion &&
+         type.nominal_identity->source_package == "lang" &&
+         type.nominal_identity->name == "Object" &&
+         type.nominal_identity->kind == NominalKind::kClass;
+}
+
 bool valid_source_package(std::string_view source_package) {
   if (source_package.empty()) {
     return true;
@@ -383,7 +393,13 @@ ImportedClassAbi import_class_abi(const AbiFileClass& file,
         symbol_identities(file.type_descriptor->virtual_functions, semantics),
         std::move(interfaces),
         file.type_descriptor->mangled_name,
-        file.type_descriptor->parent_is_error_root};
+        file.type_descriptor->parent_is_error_root,
+        file.type_descriptor->boxed_value_type
+            ? std::optional<std::string>{canonical_type_identity(
+                  *file.type_descriptor->boxed_value_type, semantics)}
+            : std::nullopt,
+        file.type_descriptor->boxed_value_offset,
+        file.type_descriptor->uses_value_box_virtuals};
   }
 
   std::vector<ImportedStaticFieldAbi> static_fields;
@@ -638,7 +654,8 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
       return;
     }
     expected_identity = canonical_primitive_identity(type.display_name);
-  } else if (is_nominal(type.kind)) {
+  } else if (is_nominal(type.kind) ||
+             (type.kind == TypeKind::kObject && type.nominal_identity)) {
     if (!type.nominal_identity || type.element_identity ||
         !valid_nominal_identity(*type.nominal_identity)) {
       issues.add(record, "nominal type record is malformed");
@@ -651,6 +668,14 @@ void verify_type(const ImportedType& type, const TargetDataLayout& target,
                                             : NominalKind::kClass;
     if (type.nominal_identity->kind != expected_kind) {
       issues.add(record, "semantic and nominal kinds disagree");
+    }
+    if (type.kind == TypeKind::kObject &&
+        (type.nominal_identity->package.name != kStandardLibraryPackageName ||
+         type.nominal_identity->package.version !=
+             kStandardLibraryPackageVersion ||
+         type.nominal_identity->source_package != "lang" ||
+         type.nominal_identity->name != "Object")) {
+      issues.add(record, "object type does not have the canonical identity");
     }
     expected_identity = canonical_nominal_identity(*type.nominal_identity);
   } else if (is_structural(type.kind)) {
@@ -817,6 +842,16 @@ void verify_class_abi(
     IssueCollector& issues) {
   const std::string record = "ABI " + file.logical_path;
   const ImportedClassAbi& abi = file.abi;
+  const auto object_type = std::ranges::find_if(types, [](const auto& entry) {
+    return entry.second->kind == TypeKind::kObject;
+  });
+  const std::optional<std::string> object_identity =
+      object_type == types.end()
+          ? std::nullopt
+          : std::optional<std::string>{object_type->first};
+  const bool nominal_value_box =
+      object_identity &&
+      (file.kind == FileTypeKind::kEnum || file.kind == FileTypeKind::kStruct);
   if (abi.alignment == 0 || !is_power_of_two(abi.alignment) ||
       abi.header_size > abi.size || abi.size % abi.alignment != 0) {
     issues.add(record, "class size or alignment is invalid");
@@ -829,7 +864,7 @@ void verify_class_abi(
                ImportedPackageIssueCode::kLimitExceeded);
     return;
   }
-  if (aggregate ? abi.descriptor.has_value() : !abi.descriptor.has_value()) {
+  if ((!aggregate || nominal_value_box) && !abi.descriptor) {
     issues.add(record, "heap descriptor presence disagrees with nominal kind");
     return;
   }
@@ -837,26 +872,61 @@ void verify_class_abi(
     const ImportedTypeDescriptor& descriptor = *abi.descriptor;
     const std::string descriptor_identity = canonical_member_identity(
         file.nominal_identity, CanonicalMemberKind::kDescriptor, "");
-    const AbiHeapObjectKind expected_kind = file.kind == FileTypeKind::kError
-                                                ? AbiHeapObjectKind::kError
-                                                : AbiHeapObjectKind::kFileClass;
+    const bool value_box = descriptor.kind == AbiHeapObjectKind::kValueBox;
+    const AbiHeapObjectKind expected_kind =
+        file.kind == FileTypeKind::kError ? AbiHeapObjectKind::kError
+        : nominal_value_box               ? AbiHeapObjectKind::kValueBox
+                                          : AbiHeapObjectKind::kFileClass;
     const bool expected_error_root =
         file.kind == FileTypeKind::kError && !file.base_identity;
+    const bool descriptor_storage_matches =
+        value_box
+            ? descriptor.boxed_value_type_identity == file.identity &&
+                  descriptor.parent_identity == object_identity &&
+                  descriptor.boxed_value_offset <= descriptor.size &&
+                  abi.size <= descriptor.size - descriptor.boxed_value_offset
+            : descriptor.size == abi.size &&
+                  descriptor.alignment == abi.alignment &&
+                  descriptor.parent_identity == file.base_identity;
     if (descriptor.kind != expected_kind ||
         descriptor.identity != descriptor_identity ||
         descriptor.display_name !=
             nominal_display_name(file.nominal_identity) ||
-        descriptor.size != abi.size || descriptor.alignment != abi.alignment ||
-        descriptor.parent_identity != file.base_identity ||
-        descriptor.parent_is_error_root != expected_error_root) {
+        !descriptor_storage_matches ||
+        descriptor.parent_is_error_root != expected_error_root ||
+        (value_box && (file.kind != FileTypeKind::kEnum &&
+                       file.kind != FileTypeKind::kStruct)) ||
+        (value_box && (!descriptor.uses_value_box_virtuals ||
+                       !descriptor.virtual_function_identities.empty() ||
+                       !descriptor.interfaces.empty()))) {
       issues.add(record, "descriptor does not match the owning file layout");
     }
     const std::string expected_descriptor_name =
-        (file.kind == FileTypeKind::kClass || file.kind == FileTypeKind::kError)
+        (file.kind == FileTypeKind::kClass ||
+         file.kind == FileTypeKind::kError || value_box)
             ? mangle_canonical_identity(descriptor_identity)
             : std::string{};
     if (descriptor.mangled_name != expected_descriptor_name) {
       issues.add(record, "descriptor linkage name is not canonical");
+    }
+    if (!value_box) {
+      if (descriptor.uses_value_box_virtuals) {
+        issues.add(record,
+                   "file-class descriptor uses compiler value-box virtuals");
+      }
+      if (descriptor.boxed_value_type_identity) {
+        const auto field = std::ranges::find_if(
+            abi.fields, [&](const ImportedFieldLayout& candidate) {
+              return candidate.type_identity ==
+                         descriptor.boxed_value_type_identity &&
+                     candidate.offset == descriptor.boxed_value_offset;
+            });
+        if (field == abi.fields.end()) {
+          issues.add(record, "value-wrapper payload does not match a field");
+        }
+      } else if (descriptor.boxed_value_offset != 0) {
+        issues.add(record, "ordinary descriptor carries a boxed-value offset");
+      }
     }
   }
   std::set<std::uint64_t> offsets;
@@ -897,8 +967,15 @@ void verify_class_abi(
     }
   }
   const auto own_type = types.find(file.identity);
+  std::vector<std::uint64_t> expected_descriptor_references =
+      expected_references;
+  if (abi.descriptor && abi.descriptor->kind == AbiHeapObjectKind::kValueBox) {
+    for (std::uint64_t& offset : expected_descriptor_references) {
+      offset += abi.descriptor->boxed_value_offset;
+    }
+  }
   if ((abi.descriptor &&
-       abi.descriptor->reference_offsets != expected_references) ||
+       abi.descriptor->reference_offsets != expected_descriptor_references) ||
       (aggregate &&
        (own_type == types.end() ||
         own_type->second->reference_offsets != expected_references ||
@@ -1261,8 +1338,9 @@ void verify_layout_graph(std::span<const ImportedPackageView* const> packages,
     }
   }
   for (const auto& [id, type] : types) {
-    if (require_owners && is_nominal(type->kind) && type->nominal_identity &&
-        !files.contains(id)) {
+    if (require_owners &&
+        (is_nominal(type->kind) || type->kind == TypeKind::kObject) &&
+        type->nominal_identity && !files.contains(id)) {
       issues.add("closure",
                  "nominal type has no declaration in dependency closure");
       return;
@@ -1681,13 +1759,22 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
           "file identity, ownership, path, kind, or visibility is invalid");
     }
     const auto own_type = types.find(file.identity);
+    const TypeKind expected_type =
+        file.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
+        : file.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
+        : file.kind == FileTypeKind::kInterface ? TypeKind::kInterface
+        : file.kind == FileTypeKind::kError     ? TypeKind::kErrorClass
+                                                : TypeKind::kFileClass;
+    const bool canonical_object =
+        file.nominal_identity.package.name == kStandardLibraryPackageName &&
+        file.nominal_identity.package.version ==
+            kStandardLibraryPackageVersion &&
+        file.nominal_identity.source_package == "lang" &&
+        file.nominal_identity.name == "Object" &&
+        file.kind == FileTypeKind::kClass;
     if (own_type == types.end() ||
-        own_type->second->kind !=
-            (file.kind == FileTypeKind::kStruct      ? TypeKind::kStruct
-             : file.kind == FileTypeKind::kEnum      ? TypeKind::kEnum
-             : file.kind == FileTypeKind::kInterface ? TypeKind::kInterface
-             : file.kind == FileTypeKind::kError     ? TypeKind::kErrorClass
-                                                     : TypeKind::kFileClass)) {
+        (own_type->second->kind != expected_type &&
+         !(canonical_object && own_type->second->kind == TypeKind::kObject))) {
       issues.add(record, "owning nominal type is absent or has the wrong kind");
     }
     if (file.kind == FileTypeKind::kInterface) {
@@ -1753,7 +1840,9 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
       const TypeKind expected_base = file.kind == FileTypeKind::kError
                                          ? TypeKind::kErrorClass
                                          : TypeKind::kFileClass;
-      if (base == types.end() || base->second->kind != expected_base) {
+      if (base == types.end() || (base->second->kind != expected_base &&
+                                  !(file.kind == FileTypeKind::kClass &&
+                                    is_canonical_object(*base->second)))) {
         issues.add(record, "base type is absent or is not a class");
       }
     }
@@ -1788,7 +1877,7 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
     if (file.kind == FileTypeKind::kEnum) {
       const auto& descriptor = file.abi.descriptor;
       if (!descriptor) {
-        issues.add(record, "enum ABI placeholder descriptor is missing");
+        issues.add(record, "enum value-box descriptor is missing");
         continue;
       }
       if (file.enum_cases.empty() || file.enum_cases.size() > kMaxEnumCases ||
@@ -1801,19 +1890,7 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
           !file.interface_implementations.empty() ||
           file.abi.header_size != 0 || file.abi.size != 0 ||
           file.abi.alignment != 1 || !file.abi.fields.empty() ||
-          !file.abi.static_fields.empty() || !file.abi.callables.empty() ||
-          descriptor->kind != AbiHeapObjectKind::kFileClass ||
-          !descriptor->mangled_name.empty() || descriptor->parent_identity ||
-          descriptor->parent_is_error_root || descriptor->size != 0 ||
-          descriptor->alignment != 1 ||
-          !descriptor->reference_offsets.empty() ||
-          !descriptor->virtual_function_identities.empty() ||
-          !descriptor->interfaces.empty() ||
-          descriptor->identity !=
-              canonical_member_identity(file.nominal_identity,
-                                        CanonicalMemberKind::kDescriptor, "") ||
-          descriptor->display_name !=
-              nominal_display_name(file.nominal_identity)) {
+          !file.abi.static_fields.empty() || !file.abi.callables.empty()) {
         issues.add(record,
                    "enum declaration or scalar ABI metadata is invalid");
       }
@@ -1833,6 +1910,7 @@ std::vector<ImportedPackageIssue> verify_imported_package_view(
               "enum case identity, name, tag, order, or location is invalid");
         }
       }
+      verify_class_abi(file, members, types, issues);
     } else {
       if (!file.enum_cases.empty())
         issues.add(record, "non-enum file contains enum cases");

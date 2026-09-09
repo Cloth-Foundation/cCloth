@@ -627,8 +627,35 @@ class HirVerifier {
            kind == TypeKind::kInterface || kind == TypeKind::kArray;
   }
 
+  bool is_boxable_value(TypeId type) const {
+    if (type.value >= semantics_.types().size()) {
+      return false;
+    }
+    const TypeKind kind = semantics_.type(type).kind;
+    return kind == TypeKind::kEnum || kind == TypeKind::kStruct ||
+           semantics_.value_wrapper(type).has_value();
+  }
+
+  bool is_boxing_binding(TypeId expected, TypeId actual) const {
+    if (expected == semantics_.object_type()) {
+      return is_boxable_value(actual);
+    }
+    const std::optional<TypeId> expected_value = nullable_underlying(expected);
+    if (!expected_value || *expected_value != semantics_.object_type()) {
+      return false;
+    }
+    if (is_boxable_value(actual)) {
+      return true;
+    }
+    const std::optional<TypeId> actual_value = nullable_underlying(actual);
+    return actual_value && is_boxable_value(*actual_value);
+  }
+
   void verify_value_binding(TypeId expected, TypeId actual, SourceRange range) {
     if (actual == semantics_.bottom_type()) {
+      return;
+    }
+    if (is_boxing_binding(expected, actual)) {
       return;
     }
     const std::optional<TypeId> expected_value = nullable_underlying(expected);
@@ -1220,6 +1247,13 @@ class HirVerifier {
     for (std::size_t index = 0; index < expressions.size(); ++index) {
       const HirExpression& expression = expressions[index];
       verify_type(expression.type, expression.range);
+      if (expression.boxing_target) {
+        verify_type(*expression.boxing_target, expression.range);
+        if (!is_boxing_binding(*expression.boxing_target, expression.type)) {
+          report(expression.range,
+                 "boxing metadata has incompatible source and target types");
+        }
+      }
       if ((expression.category == ValueCategory::kMutableLocation ||
            expression.category == ValueCategory::kReadOnlyLocation) &&
           !(std::holds_alternative<HirSymbolExpression>(expression.data) ||

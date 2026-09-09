@@ -707,6 +707,8 @@ int runtime_failure_scenario(std::string_view scenario) {
                                        nullptr,
                                        0,
                                        nullptr,
+                                       0,
+                                       nullptr,
                                        0};
   if (scenario == "report_non_error") {
     static_cast<void>(cloth_rt_report_error(cloth_rt_alloc(&plain_type)));
@@ -718,6 +720,8 @@ int runtime_failure_scenario(std::string_view scenario) {
                                                kInvalidErrorName.size(),
                                                sizeof(TestError),
                                                alignof(TestError),
+                                               nullptr,
+                                               0,
                                                nullptr,
                                                0,
                                                nullptr,
@@ -850,6 +854,8 @@ int main(int argc, char** argv) {
       0,
       &interface_dispatch,
       1,
+      nullptr,
+      0,
   };
   constexpr std::string_view kNodeName = "TestNode";
   const ClothTypeDescriptor node_type{
@@ -865,6 +871,8 @@ int main(int argc, char** argv) {
       0,
       &interface_dispatch,
       1,
+      nullptr,
+      0,
   };
 
   ClothGcRootFrame managed_frame{};
@@ -1471,21 +1479,38 @@ int main(int argc, char** argv) {
   ClothGcRootFrame object_frame{};
   void* meta_node = nullptr;
   void* meta_string = nullptr;
+  void* equal_string = nullptr;
   void* meta_array = nullptr;
   void* node_name = nullptr;
   void* string_name = nullptr;
   void* array_name = nullptr;
+  void* node_display = nullptr;
+  void* array_display = nullptr;
   void* expected_node_name = nullptr;
   void* expected_string_name = nullptr;
   void* expected_array_name = nullptr;
-  void** object_roots[]{
-      &meta_node,          &meta_string,          &meta_array,
-      &node_name,          &string_name,          &array_name,
-      &expected_node_name, &expected_string_name, &expected_array_name};
-  cloth_rt_gc_push_frame(&object_frame, object_roots, 9);
+  void* expected_node_display = nullptr;
+  void* expected_array_display = nullptr;
+  void** object_roots[]{&meta_node,
+                        &meta_string,
+                        &equal_string,
+                        &meta_array,
+                        &node_name,
+                        &string_name,
+                        &array_name,
+                        &node_display,
+                        &array_display,
+                        &expected_node_name,
+                        &expected_string_name,
+                        &expected_array_name,
+                        &expected_node_display,
+                        &expected_array_display};
+  cloth_rt_gc_push_frame(&object_frame, object_roots, 14);
   meta_node = cloth_rt_alloc(&node_type);
   constexpr std::string_view kMetaString = "value";
   meta_string = cloth_rt_string_literal(kMetaString.data(), kMetaString.size());
+  equal_string =
+      cloth_rt_string_literal(kMetaString.data(), kMetaString.size());
   meta_array = cloth_rt_array_alloc(1, &kPointerElement);
   node_name = cloth_rt_object_type_name(meta_node);
   string_name = cloth_rt_object_type_name(meta_string);
@@ -1498,11 +1523,36 @@ int main(int argc, char** argv) {
   constexpr std::string_view kArrayName = "array";
   expected_array_name =
       cloth_rt_string_literal(kArrayName.data(), kArrayName.size());
+  node_display = cloth_rt_object_to_string(meta_node);
+  const ClothTypeDescriptor* string_type =
+      static_cast<const TestString*>(meta_string)->type;
+  const ClothTypeDescriptor* array_type =
+      static_cast<const TestNode*>(meta_array)->type;
+  using EqualsFunction = bool (*)(const void*, const void*);
+  using HashFunction = std::uint64_t (*)(const void*);
+  using ToStringFunction = void* (*)(const void*);
+  const auto string_equals = reinterpret_cast<EqualsFunction>(
+      const_cast<void*>(string_type->virtual_functions[0]));
+  const auto string_hash = reinterpret_cast<HashFunction>(
+      const_cast<void*>(string_type->virtual_functions[1]));
+  const auto array_to_string = reinterpret_cast<ToStringFunction>(
+      const_cast<void*>(array_type->virtual_functions[2]));
+  array_display = array_to_string(meta_array);
+  constexpr std::string_view kNodeDisplay = "<TestNode>";
+  expected_node_display =
+      cloth_rt_string_literal(kNodeDisplay.data(), kNodeDisplay.size());
+  constexpr std::string_view kArrayDisplay = "<array>";
+  expected_array_display =
+      cloth_rt_string_literal(kArrayDisplay.data(), kArrayDisplay.size());
 
   test.expect(cloth_rt_object_is_type(meta_node, &node_type) == 1 &&
                   cloth_rt_object_is_type(meta_node, &base_type) == 1 &&
                   cloth_rt_object_is_type(meta_string, &node_type) == 0,
               "runtime descriptor ancestry is wrong");
+  test.expect(
+      cloth_rt_object_is_type(meta_string, &cloth_rt_object_type) == 1 &&
+          cloth_rt_object_is_type(meta_array, &cloth_rt_object_type) == 1,
+      "built-in managed descriptors do not inherit Object");
   test.expect(
       cloth_rt_object_is_kind(
           meta_string,
@@ -1519,6 +1569,19 @@ int main(int argc, char** argv) {
           cloth_rt_string_equal(string_name, expected_string_name) == 1 &&
           cloth_rt_string_equal(array_name, expected_array_name) == 1,
       "stable object type names are wrong");
+  test.expect(cloth_rt_object_equals(meta_node, meta_node) &&
+                  !cloth_rt_object_equals(meta_node, meta_string) &&
+                  !cloth_rt_object_equals(meta_node, nullptr) &&
+                  cloth_rt_object_hash_code(meta_node) ==
+                      cloth_rt_object_hash_code(meta_node),
+              "default Object equality or lifetime-stable hashing is wrong");
+  test.expect(
+      cloth_rt_string_equal(meta_string, equal_string) == 1 &&
+          string_equals(meta_string, equal_string) &&
+          string_hash(meta_string) == string_hash(equal_string) &&
+          cloth_rt_string_equal(node_display, expected_node_display) == 1 &&
+          cloth_rt_string_equal(array_display, expected_array_display) == 1,
+      "managed value Object behavior is wrong");
 
   for (void** root : object_roots) {
     *root = nullptr;
@@ -1527,6 +1590,181 @@ int main(int argc, char** argv) {
   test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
               "object metadata queries leaked managed strings");
   cloth_rt_gc_pop_frame(&object_frame);
+
+  const void* value_box_virtuals[]{
+      reinterpret_cast<const void*>(&cloth_rt_value_box_equals),
+      reinterpret_cast<const void*>(&cloth_rt_value_box_hash_code),
+      reinterpret_cast<const void*>(&cloth_rt_value_box_to_string)};
+  static constexpr ClothValueLayout kInt32Value{
+      ClothValueKind::kInt32, "int32", 5, 4, 4, nullptr, 0, nullptr, 0};
+  static constexpr ClothValueLayout kUint32Value{
+      ClothValueKind::kUint32, "uint32", 6, 4, 4, nullptr, 0, nullptr, 0};
+  static constexpr ClothValueLayout kFloat32Value{
+      ClothValueKind::kFloat32, "float32", 7, 4, 4, nullptr, 0, nullptr, 0};
+  const ClothTypeDescriptor int32_box_type{ClothHeapObjectKind::kValueBox,
+                                           &cloth_rt_object_type,
+                                           "cloth.lang.number.Int32",
+                                           23,
+                                           24,
+                                           8,
+                                           nullptr,
+                                           0,
+                                           value_box_virtuals,
+                                           3,
+                                           nullptr,
+                                           0,
+                                           &kInt32Value,
+                                           16};
+  const ClothTypeDescriptor uint32_box_type{ClothHeapObjectKind::kValueBox,
+                                            &cloth_rt_object_type,
+                                            "cloth.lang.number.UInt32",
+                                            24,
+                                            24,
+                                            8,
+                                            nullptr,
+                                            0,
+                                            value_box_virtuals,
+                                            3,
+                                            nullptr,
+                                            0,
+                                            &kUint32Value,
+                                            16};
+  const ClothTypeDescriptor float32_box_type{ClothHeapObjectKind::kValueBox,
+                                             &cloth_rt_object_type,
+                                             "cloth.lang.number.Float32",
+                                             25,
+                                             24,
+                                             8,
+                                             nullptr,
+                                             0,
+                                             value_box_virtuals,
+                                             3,
+                                             nullptr,
+                                             0,
+                                             &kFloat32Value,
+                                             16};
+
+  ClothGcRootFrame value_box_frame{};
+  void* int_box = nullptr;
+  void* equal_int_box = nullptr;
+  void* uint_box = nullptr;
+  void* positive_zero_box = nullptr;
+  void* negative_zero_box = nullptr;
+  void* nan_box = nullptr;
+  void* int_text = nullptr;
+  void* expected_int_text = nullptr;
+  void** value_box_roots[]{&int_box,           &equal_int_box,     &uint_box,
+                           &positive_zero_box, &negative_zero_box, &nan_box,
+                           &int_text,          &expected_int_text};
+  cloth_rt_gc_push_frame(&value_box_frame, value_box_roots, 8);
+  const std::int32_t integer = -42;
+  const std::uint32_t unsigned_integer = static_cast<std::uint32_t>(integer);
+  const float positive_zero = 0.0F;
+  const float negative_float_zero = -0.0F;
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  int_box = cloth_rt_box_value(&int32_box_type, &kInt32Value, &integer);
+  equal_int_box = cloth_rt_box_value(&int32_box_type, &kInt32Value, &integer);
+  uint_box =
+      cloth_rt_box_value(&uint32_box_type, &kUint32Value, &unsigned_integer);
+  positive_zero_box =
+      cloth_rt_box_value(&float32_box_type, &kFloat32Value, &positive_zero);
+  negative_zero_box = cloth_rt_box_value(&float32_box_type, &kFloat32Value,
+                                         &negative_float_zero);
+  nan_box = cloth_rt_box_value(&float32_box_type, &kFloat32Value, &nan);
+  int_text = cloth_rt_value_box_to_string(int_box);
+  expected_int_text = cloth_rt_string_literal("-42", 3);
+  std::int32_t unboxed = 0;
+  std::uint32_t mismatched = 0;
+  test.expect(cloth_rt_value_box_equals(int_box, equal_int_box) &&
+                  !cloth_rt_value_box_equals(int_box, uint_box) &&
+                  cloth_rt_value_box_hash_code(int_box) ==
+                      cloth_rt_value_box_hash_code(equal_int_box) &&
+                  cloth_rt_string_equal(int_text, expected_int_text) == 1,
+              "primitive value-box equality, hash, or formatting is wrong");
+  test.expect(
+      cloth_rt_try_unbox(int_box, &int32_box_type, &unboxed) == 1 &&
+          unboxed == integer &&
+          cloth_rt_try_unbox(int_box, &uint32_box_type, &mismatched) == 0,
+      "value-box unboxing was not exact");
+  test.expect(cloth_rt_value_box_equals(positive_zero_box, negative_zero_box) &&
+                  cloth_rt_value_box_hash_code(positive_zero_box) ==
+                      cloth_rt_value_box_hash_code(negative_zero_box) &&
+                  !cloth_rt_value_box_equals(nan_box, nan_box),
+              "floating value-box equality or hash rules are wrong");
+  for (void** root : value_box_roots) {
+    *root = nullptr;
+  }
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "primitive value boxes were not reclaimed");
+  cloth_rt_gc_pop_frame(&value_box_frame);
+
+  static constexpr ClothValueLayout kReferenceValue{ClothValueKind::kReference,
+                                                    "object",
+                                                    6,
+                                                    sizeof(void*),
+                                                    alignof(void*),
+                                                    nullptr,
+                                                    0,
+                                                    nullptr,
+                                                    0};
+  static constexpr ClothValueFieldLayout kInlineFields[]{
+      {&kInt32Value, offsetof(InlineValue, tag), "Tag", 3},
+      {&kReferenceValue, offsetof(InlineValue, first), "First", 5},
+      {&kInt32Value, offsetof(InlineValue, count), "Count", 5},
+      {&kReferenceValue, offsetof(InlineValue, second), "Second", 6}};
+  static constexpr ClothValueLayout kInlineValue{ClothValueKind::kStruct,
+                                                 "fixture.InlineValue",
+                                                 19,
+                                                 sizeof(InlineValue),
+                                                 alignof(InlineValue),
+                                                 kInlineFields,
+                                                 4,
+                                                 nullptr,
+                                                 0};
+  constexpr std::uint64_t kBoxedInlineReferences[]{
+      16 + offsetof(InlineValue, first), 16 + offsetof(InlineValue, second)};
+  const ClothTypeDescriptor inline_box_type{ClothHeapObjectKind::kValueBox,
+                                            &cloth_rt_object_type,
+                                            "fixture.InlineValue",
+                                            19,
+                                            16 + sizeof(InlineValue),
+                                            alignof(InlineValue),
+                                            kBoxedInlineReferences,
+                                            2,
+                                            value_box_virtuals,
+                                            3,
+                                            nullptr,
+                                            0,
+                                            &kInlineValue,
+                                            16};
+  ClothGcRootFrame aggregate_box_frame{};
+  void* aggregate_box = nullptr;
+  void* aggregate_first = cloth_rt_alloc(&node_type);
+  void* aggregate_second = cloth_rt_string_literal("held", 4);
+  void** aggregate_box_roots[]{&aggregate_box, &aggregate_first,
+                               &aggregate_second};
+  cloth_rt_gc_push_frame(&aggregate_box_frame, aggregate_box_roots, 3);
+  const InlineValue aggregate{7, aggregate_first, 9, aggregate_second};
+  aggregate_box =
+      cloth_rt_box_value(&inline_box_type, &kInlineValue, &aggregate);
+  aggregate_first = nullptr;
+  aggregate_second = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 3,
+              "struct value box did not trace its copied references");
+  InlineValue aggregate_copy{};
+  test.expect(
+      cloth_rt_try_unbox(aggregate_box, &inline_box_type, &aggregate_copy) ==
+              1 &&
+          aggregate_copy.tag == 7 && aggregate_copy.count == 9 &&
+          aggregate_copy.first != nullptr && aggregate_copy.second != nullptr,
+      "struct value box did not preserve its inline payload");
+  aggregate_box = nullptr;
+  cloth_rt_gc_collect();
+  test.expect(cloth_rt_gc_live_objects() == 0 && cloth_rt_gc_live_bytes() == 0,
+              "struct value box or its payload references were not reclaimed");
+  cloth_rt_gc_pop_frame(&aggregate_box_frame);
 
   ClothGcRootFrame error_frame{};
   void* error = cloth_rt_make_division_by_zero();
@@ -1539,6 +1777,8 @@ int main(int argc, char** argv) {
               1 &&
           cloth_rt_object_is_type(error, &cloth_rt_error_type) == 1,
       "compiler-known error descriptors have the wrong runtime identity");
+  test.expect(cloth_rt_object_is_type(error, &cloth_rt_object_type) == 1,
+              "compiler Error does not inherit Object");
   cloth_rt_gc_collect();
   test.expect(cloth_rt_gc_live_objects() == 2,
               "error tracing did not retain its managed message");

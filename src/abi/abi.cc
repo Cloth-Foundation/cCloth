@@ -352,6 +352,15 @@ AbiTypeDescriptor lower_type_descriptor(
   }
   std::ranges::sort(interfaces, {},
                     &AbiTypeDescriptor::InterfaceDispatch::interface_id);
+  std::optional<TypeId> boxed_value_type = file.boxed_value_type;
+  std::uint64_t boxed_value_offset = 0;
+  if (file.boxed_value_field) {
+    const auto field = std::ranges::find(layout.fields, *file.boxed_value_field,
+                                         &AbiFieldLayout::symbol);
+    if (field != layout.fields.end()) {
+      boxed_value_offset = field->offset;
+    }
+  }
   return AbiTypeDescriptor{
       file.kind == FileTypeKind::kError ? AbiHeapObjectKind::kError
                                         : AbiHeapObjectKind::kFileClass,
@@ -366,7 +375,51 @@ AbiTypeDescriptor lower_type_descriptor(
           ? mangle_canonical_identity(canonical_member_identity(
                 file.identity, CanonicalMemberKind::kDescriptor, ""))
           : std::string{},
-      file.kind == FileTypeKind::kError && !parent_file};
+      file.kind == FileTypeKind::kError && !parent_file,
+      boxed_value_type,
+      boxed_value_offset,
+      false};
+}
+
+std::optional<AbiTypeDescriptor> lower_value_box_descriptor(
+    TypeId value_type, const AbiTypeLayout& value_layout,
+    const SemanticSymbol& symbol, FileId object_file, const FileSemantics& file,
+    const TargetDataLayout& target) {
+  const std::uint64_t header = target.pointer.size * target.object_header_words;
+  const auto payload = checked_align(header, value_layout.storage.alignment);
+  const auto end =
+      payload ? checked_add(*payload, value_layout.storage.size) : std::nullopt;
+  const auto size =
+      end ? checked_align(*end, std::max(target.pointer.alignment,
+                                         value_layout.storage.alignment))
+          : std::nullopt;
+  if (!payload || !size || value_layout.storage.size == 0) {
+    return std::nullopt;
+  }
+  std::vector<std::uint64_t> references;
+  references.reserve(value_layout.reference_offsets.size());
+  for (const std::uint64_t offset : value_layout.reference_offsets) {
+    const auto shifted = checked_add(*payload, offset);
+    if (!shifted) {
+      return std::nullopt;
+    }
+    references.push_back(*shifted);
+  }
+  return AbiTypeDescriptor{
+      AbiHeapObjectKind::kValueBox,
+      object_file,
+      symbol.name,
+      *size,
+      std::max(target.pointer.alignment, value_layout.storage.alignment),
+      std::move(references),
+      {},
+      {},
+      mangle_canonical_identity(canonical_member_identity(
+          file.identity, CanonicalMemberKind::kDescriptor, "")),
+      false,
+      value_type,
+      *payload,
+      true};
 }
 
 AbiCallable lower_callable(const MirCallable& callable, AbiCallableKind kind,
@@ -562,7 +615,19 @@ std::optional<AbiModule> lower_to_abi(const MirModule& mir,
     FileLayout& computed = *layouts.at(mir_file.file.value);
     AbiClassLayout layout = std::move(computed.storage);
     std::optional<AbiTypeDescriptor> type_descriptor;
-    if (semantic_file.kind != FileTypeKind::kStruct) {
+    const std::optional<FileId> object_file =
+        semantics.type(semantics.object_type()).file;
+    if ((semantic_file.kind == FileTypeKind::kEnum ||
+         semantic_file.kind == FileTypeKind::kStruct) &&
+        object_file) {
+      type_descriptor = lower_value_box_descriptor(
+          semantic_file.type, abi.types.at(semantic_file.type.value),
+          semantics.symbol(mir_file.symbol), *object_file, semantic_file,
+          abi.target);
+      if (!type_descriptor) {
+        return fail("value-box descriptor layout overflows the target");
+      }
+    } else if (semantic_file.kind != FileTypeKind::kStruct) {
       type_descriptor =
           lower_type_descriptor(layout, semantics.symbol(mir_file.symbol),
                                 std::move(computed.references),

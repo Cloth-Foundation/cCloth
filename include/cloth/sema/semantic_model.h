@@ -118,6 +118,12 @@ enum class IntrinsicKind {
   kNone,
   kConsoleReadLine,
   kFileReadBytes,
+  kObjectEquals,
+  kObjectHashCode,
+  kObjectToString,
+  kValueBoxEquals,
+  kValueBoxHashCode,
+  kValueBoxToString,
   kPrimitiveParse,
   kPrintString,
   kPrintBool,
@@ -271,6 +277,9 @@ struct ExpressionSemantics {
   bool may_divide_by_zero{false};
   bool is_safe_call{false};
   std::optional<TypeId> array_element_type{};
+  // A contextual conversion from this expression's value type to Object or
+  // Object?. The source expression remains unboxed until HIR/MIR lowering.
+  std::optional<TypeId> boxing_target{};
 };
 
 struct InterfaceImplementation {
@@ -292,6 +301,10 @@ struct FileSemantics {
   std::vector<std::optional<SymbolId>> statement_symbols;
   bool is_valid{true};
   std::optional<FileId> base_file{};
+  bool has_implicit_object_base{false};
+  // Present only on the compiler-paired standard-library value wrappers.
+  std::optional<TypeId> boxed_value_type{};
+  std::optional<SymbolId> boxed_value_field{};
   std::vector<SymbolId> virtual_functions{};
   std::vector<SymbolId> abstract_functions{};
   bool is_abstract{false};
@@ -323,6 +336,8 @@ class SemanticModel {
   [[nodiscard]] TypeId bool_type() const noexcept;
   [[nodiscard]] TypeId string_type() const noexcept;
   [[nodiscard]] TypeId object_type() const noexcept;
+  [[nodiscard]] std::optional<TypeId> value_wrapper(TypeId type) const noexcept;
+  [[nodiscard]] std::optional<TypeId> wrapped_value(TypeId type) const noexcept;
 
   [[nodiscard]] std::optional<TypeId> find_type(
       std::string_view name) const noexcept;
@@ -349,14 +364,18 @@ class SemanticModel {
   [[nodiscard]] TypeId get_array_type(TypeId element_type);
   [[nodiscard]] TypeId get_nullable_type(TypeId underlying_type);
   void add_type_alias(std::string name, TypeId type);
+  void bind_value_wrapper(TypeId value_type, TypeId wrapper_type);
   void add_intrinsic(std::string name, std::vector<TypeId> parameter_types,
                      IntrinsicKind intrinsic);
   [[nodiscard]] SymbolId add_symbol(SemanticSymbol symbol);
   [[nodiscard]] FileId add_file(FileSemantics file);
   [[nodiscard]] FileSemantics& mutable_file(FileId id);
+  [[nodiscard]] SemanticType& mutable_type(TypeId id);
   [[nodiscard]] SemanticSymbol& mutable_symbol(SymbolId id);
 
   std::vector<SemanticType> types_;
+  std::vector<std::optional<TypeId>> value_wrappers_;
+  std::vector<std::optional<TypeId>> wrapped_values_;
   std::vector<TypeName> type_names_;
   std::vector<SemanticSymbol> symbols_;
   std::vector<FileSemantics> files_;

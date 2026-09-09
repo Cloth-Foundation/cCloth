@@ -202,6 +202,9 @@ class BodyBuilder {
       return poison_value(expected, range);
     }
     const SemanticType& target = semantics_.type(expected);
+    if (is_boxing_conversion(expected, actual)) {
+      return emit_value(expected, range, MirBoxInstruction{value, actual});
+    }
     if (can_widen_numeric(semantics_.type(actual).kind, target.kind)) {
       return emit_value(
           expected, range,
@@ -253,6 +256,32 @@ class BodyBuilder {
     return kind == TypeKind::kString || kind == TypeKind::kObject ||
            kind == TypeKind::kErrorClass || kind == TypeKind::kFileClass ||
            kind == TypeKind::kInterface || kind == TypeKind::kArray;
+  }
+
+  bool is_boxable_value(TypeId type) const {
+    if (type.value >= semantics_.types().size()) {
+      return false;
+    }
+    const TypeKind kind = semantics_.type(type).kind;
+    return kind == TypeKind::kEnum || kind == TypeKind::kStruct ||
+           semantics_.value_wrapper(type).has_value();
+  }
+
+  bool is_boxing_conversion(TypeId expected, TypeId actual) const {
+    if (expected == semantics_.object_type()) {
+      return is_boxable_value(actual);
+    }
+    const SemanticType& target = semantics_.type(expected);
+    if (target.kind != TypeKind::kNullable || !target.element_type ||
+        *target.element_type != semantics_.object_type()) {
+      return false;
+    }
+    if (is_boxable_value(actual)) {
+      return true;
+    }
+    const SemanticType& source = semantics_.type(actual);
+    return source.kind == TypeKind::kNullable && source.element_type &&
+           is_boxable_value(*source.element_type);
   }
 
   bool is_nullable_value(TypeId type) const {
@@ -718,6 +747,15 @@ class BodyBuilder {
 
   std::optional<MirValueId> lower_expression(HirExpressionId id) {
     const HirExpression& expression = hir_.storage.expression(id);
+    std::optional<MirValueId> value = lower_expression_value(id);
+    if (value && expression.boxing_target) {
+      value = coerce(*value, *expression.boxing_target, expression.range);
+    }
+    return value;
+  }
+
+  std::optional<MirValueId> lower_expression_value(HirExpressionId id) {
+    const HirExpression& expression = hir_.storage.expression(id);
     if (std::holds_alternative<HirInvalidExpression>(expression.data)) {
       return invalid_value(expression.range);
     }
@@ -846,6 +884,10 @@ class BodyBuilder {
       const HirExpression& value_syntax = hir_.storage.expression(cast->value);
       const MirValueId value = require_value(
           lower_expression(cast->value), value_syntax.type, value_syntax.range);
+      if (is_boxable_value(cast->target)) {
+        return emit_value(expression.type, expression.range,
+                          MirUnboxInstruction{value, cast->target});
+      }
       return emit_value(expression.type, expression.range,
                         MirCheckedCastInstruction{value, cast->target});
     }

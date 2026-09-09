@@ -275,6 +275,25 @@ struct MirConvertInstruction {
                          const MirConvertInstruction&) = default;
 };
 
+// Copies an unboxed value into its canonical managed representation. Nullable
+// inputs produce null when absent and box the exact payload when present.
+struct MirBoxInstruction {
+  MirValueId value;
+  TypeId value_type;
+
+  friend bool operator==(const MirBoxInstruction&,
+                         const MirBoxInstruction&) = default;
+};
+
+// Performs an exact descriptor check and returns a nullable copied value.
+struct MirUnboxInstruction {
+  MirValueId value;
+  TypeId value_type;
+
+  friend bool operator==(const MirUnboxInstruction&,
+                         const MirUnboxInstruction&) = default;
+};
+
 struct MirIsNonNullInstruction {
   MirValueId value;
 
@@ -381,8 +400,9 @@ using MirInstructionData = std::variant<
     MirStringNextScalarInstruction, MirObjectMetaInstruction,
     MirIntegerWriteInstruction, MirIntegerReadInstruction, MirUnaryInstruction,
     MirBinaryInstruction, MirNullableEqualInstruction, MirConvertInstruction,
-    MirIsNonNullInstruction, MirNullAssertInstruction, MirTypeTestInstruction,
-    MirCheckedCastInstruction, MirCallInstruction, MirLoadCallResultInstruction,
+    MirBoxInstruction, MirUnboxInstruction, MirIsNonNullInstruction,
+    MirNullAssertInstruction, MirTypeTestInstruction, MirCheckedCastInstruction,
+    MirCallInstruction, MirLoadCallResultInstruction,
     MirInitializeFieldsInstruction, MirPhiInstruction>;
 
 struct MirInstruction {

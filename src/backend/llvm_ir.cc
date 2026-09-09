@@ -247,6 +247,12 @@ std::vector<MirValueId> instruction_value_uses(
   } else if (const auto* conversion =
                  std::get_if<MirConvertInstruction>(&instruction.data)) {
     uses.push_back(conversion->value);
+  } else if (const auto* box =
+                 std::get_if<MirBoxInstruction>(&instruction.data)) {
+    uses.push_back(box->value);
+  } else if (const auto* unbox =
+                 std::get_if<MirUnboxInstruction>(&instruction.data)) {
+    uses.push_back(unbox->value);
   } else if (const auto* test =
                  std::get_if<MirIsNonNullInstruction>(&instruction.data)) {
     uses.push_back(test->value);
@@ -437,6 +443,10 @@ class BodyEmitter {
   void emit_conversion(const MirInstruction& instruction,
                        const MirConvertInstruction& conversion,
                        std::ostringstream& output);
+  void emit_box(const MirInstruction& instruction, const MirBoxInstruction& box,
+                std::ostringstream& output);
+  void emit_unbox(const MirInstruction& instruction,
+                  const MirUnboxInstruction& unbox, std::ostringstream& output);
   void emit_integer_conversion(const MirInstruction& instruction,
                                const MirConvertInstruction& conversion,
                                std::ostringstream& output);
@@ -556,20 +566,20 @@ class ModuleEmitter {
       return std::nullopt;
     }
     type_descriptor_globals_.resize(mir_.files.size());
+    value_layout_globals_.resize(abi_.types.size());
     for (std::size_t index = 0; index < type_descriptor_globals_.size();
          ++index) {
       type_descriptor_globals_[index] =
           type_descriptor_global_name(FileId{index});
     }
     for (const AbiFileClass& file : abi_.files) {
-      if (file.kind == FileTypeKind::kClass ||
-          file.kind == FileTypeKind::kError) {
+      if (file.type_descriptor && !file.type_descriptor->mangled_name.empty()) {
         if (owns(file)) {
           add_type_descriptor(file.file, *file.type_descriptor);
         } else {
           globals_.push_back(type_descriptor_global_name(file.file) +
                              " = external constant { i64, ptr, ptr, i64, i64, "
-                             "i64, ptr, i64, ptr, i64, ptr, i64 }");
+                             "i64, ptr, i64, ptr, i64, ptr, i64, ptr, i64 }");
         }
       }
     }
@@ -599,9 +609,9 @@ class ModuleEmitter {
            << "declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1)\n"
            << "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n"
            << "@cloth_rt_error_type = external constant { i64, ptr, ptr, i64, "
-              "i64, i64, ptr, i64, ptr, i64, ptr, i64 }\n"
+              "i64, i64, ptr, i64, ptr, i64, ptr, i64, ptr, i64 }\n"
            << "@cloth_rt_division_by_zero_type = external constant { i64, ptr, "
-              "ptr, i64, i64, i64, ptr, i64, ptr, i64, ptr, i64 }\n"
+              "ptr, i64, i64, i64, ptr, i64, ptr, i64, ptr, i64, ptr, i64 }\n"
            << "declare ptr @cloth_rt_alloc(ptr)\n"
            << "declare ptr @cloth_rt_make_division_by_zero()\n"
            << "declare i32 @cloth_rt_report_error(ptr)\n"
@@ -618,6 +628,14 @@ class ModuleEmitter {
            << "declare i32 @cloth_rt_string_scalar_at(ptr, i32)\n"
            << "declare i8 @cloth_rt_string_next_scalar(ptr, ptr, ptr)\n"
            << "declare ptr @cloth_rt_object_type_name(ptr)\n"
+           << "declare i1 @cloth_rt_object_equals(ptr, ptr)\n"
+           << "declare i64 @cloth_rt_object_hash_code(ptr)\n"
+           << "declare ptr @cloth_rt_object_to_string(ptr)\n"
+           << "declare ptr @cloth_rt_box_value(ptr, ptr, ptr)\n"
+           << "declare i8 @cloth_rt_try_unbox(ptr, ptr, ptr)\n"
+           << "declare i1 @cloth_rt_value_box_equals(ptr, ptr)\n"
+           << "declare i64 @cloth_rt_value_box_hash_code(ptr)\n"
+           << "declare ptr @cloth_rt_value_box_to_string(ptr)\n"
            << "declare i8 @cloth_rt_object_is_kind(ptr, i64)\n"
            << "declare i8 @cloth_rt_object_is_type(ptr, ptr)\n"
            << "declare i8 @cloth_rt_object_is_interface(ptr, i64)\n"
@@ -1002,6 +1020,192 @@ class ModuleEmitter {
     return name;
   }
 
+  std::string value_layout_global(TypeId type) {
+    if (type.value >= abi_.types.size()) {
+      report(fallback_range(), "value layout references an unknown type");
+      return "null";
+    }
+    if (!value_layout_globals_[type.value].empty()) {
+      return value_layout_globals_[type.value];
+    }
+    const SemanticType& semantic = semantics_.type(type);
+    const AbiTypeLayout& layout = abi_.types[type.value];
+    const std::string global =
+        "@.cloth.value.layout." + std::to_string(type.value);
+    value_layout_globals_[type.value] = global;
+
+    std::optional<ClothValueKind> kind;
+    switch (semantic.kind) {
+      case TypeKind::kBool:
+        kind = ClothValueKind::kBool;
+        break;
+      case TypeKind::kChar:
+        kind = ClothValueKind::kChar;
+        break;
+      case TypeKind::kByte:
+        kind = ClothValueKind::kByte;
+        break;
+      case TypeKind::kInt8:
+        kind = ClothValueKind::kInt8;
+        break;
+      case TypeKind::kInt16:
+        kind = ClothValueKind::kInt16;
+        break;
+      case TypeKind::kInt32:
+        kind = ClothValueKind::kInt32;
+        break;
+      case TypeKind::kInt64:
+        kind = ClothValueKind::kInt64;
+        break;
+      case TypeKind::kUint8:
+        kind = ClothValueKind::kUint8;
+        break;
+      case TypeKind::kUint16:
+        kind = ClothValueKind::kUint16;
+        break;
+      case TypeKind::kUint32:
+        kind = ClothValueKind::kUint32;
+        break;
+      case TypeKind::kUint64:
+        kind = ClothValueKind::kUint64;
+        break;
+      case TypeKind::kFloat32:
+        kind = ClothValueKind::kFloat32;
+        break;
+      case TypeKind::kFloat64:
+        kind = ClothValueKind::kFloat64;
+        break;
+      case TypeKind::kString:
+        kind = ClothValueKind::kString;
+        break;
+      case TypeKind::kObject:
+      case TypeKind::kErrorClass:
+      case TypeKind::kFileClass:
+      case TypeKind::kInterface:
+      case TypeKind::kArray:
+        kind = ClothValueKind::kReference;
+        break;
+      case TypeKind::kEnum:
+        kind = ClothValueKind::kEnum;
+        break;
+      case TypeKind::kStruct:
+        kind = ClothValueKind::kStruct;
+        break;
+      case TypeKind::kNullable:
+        kind = ClothValueKind::kNullable;
+        break;
+      case TypeKind::kError:
+      case TypeKind::kBottom:
+      case TypeKind::kVoid:
+      case TypeKind::kNull:
+        break;
+    }
+    if (!kind || layout.storage.size == 0) {
+      report(fallback_range(), "type has no runtime value layout");
+      return "null";
+    }
+
+    std::string fields_global = "null";
+    std::size_t field_count = 0;
+    std::ostringstream fields;
+    if (semantic.kind == TypeKind::kStruct && semantic.file) {
+      const auto& members = abi_.files.at(semantic.file->value).layout.fields;
+      field_count = members.size();
+      if (!members.empty()) {
+        fields_global = "@.cloth.value.fields." + std::to_string(type.value);
+        fields << fields_global << " = private constant [" << members.size()
+               << " x { ptr, i64, ptr, i64 }] [";
+        for (std::size_t index = 0; index < members.size(); ++index) {
+          if (index != 0) {
+            fields << ", ";
+          }
+          const AbiFieldLayout& field = members[index];
+          const SemanticSymbol& symbol = semantics_.symbol(field.symbol);
+          const std::string field_name = add_string_literal(symbol.name);
+          fields << "{ ptr, i64, ptr, i64 } { ptr "
+                 << value_layout_global(field.type) << ", i64 " << field.offset
+                 << ", ptr " << field_name << ", i64 " << symbol.name.size()
+                 << " }";
+        }
+        fields << ']';
+      }
+    } else if (semantic.kind == TypeKind::kNullable && semantic.element_type) {
+      field_count = 1;
+      fields_global = "@.cloth.value.fields." + std::to_string(type.value);
+      fields << fields_global
+             << " = private constant [1 x { ptr, i64, ptr, i64 }] "
+                "[{ ptr, i64, ptr, i64 } { ptr "
+             << value_layout_global(*semantic.element_type) << ", i64 "
+             << nullable_payload_offset(type) << ", ptr null, i64 0 }]";
+    }
+    if (!fields.str().empty()) {
+      globals_.push_back(fields.str());
+    }
+
+    std::string cases_global = "null";
+    std::size_t case_count = 0;
+    if (semantic.kind == TypeKind::kEnum && semantic.file) {
+      const FileSemantics& enum_file = semantics_.file(*semantic.file);
+      case_count = enum_file.enum_cases.size();
+      if (case_count != 0) {
+        cases_global = "@.cloth.value.cases." + std::to_string(type.value);
+        std::ostringstream cases;
+        cases << cases_global << " = private constant [" << case_count
+              << " x { ptr, i64 }] [";
+        for (std::size_t index = 0; index < case_count; ++index) {
+          if (index != 0) {
+            cases << ", ";
+          }
+          const std::string& name =
+              semantics_.symbol(enum_file.enum_cases[index]).name;
+          const std::string name_global = add_string_literal(name);
+          cases << "{ ptr, i64 } { ptr " << name_global << ", i64 "
+                << name.size() << " }";
+        }
+        cases << ']';
+        globals_.push_back(cases.str());
+      }
+    }
+
+    const std::string name_global = add_string_literal(semantic.name);
+    std::ostringstream metadata;
+    metadata << global
+             << " = private constant { i64, ptr, i64, i64, i64, ptr, i64, "
+                "ptr, i64 } { i64 "
+             << static_cast<std::uint64_t>(*kind) << ", ptr " << name_global
+             << ", i64 " << semantic.name.size() << ", i64 "
+             << layout.storage.size << ", i64 " << layout.storage.alignment
+             << ", ptr " << fields_global << ", i64 " << field_count << ", ptr "
+             << cases_global << ", i64 " << case_count << " }";
+    globals_.push_back(metadata.str());
+    return global;
+  }
+
+  std::string box_descriptor_global(TypeId type) {
+    if (type.value >= semantics_.types().size()) {
+      report(fallback_range(), "box references an unknown value type");
+      return "null";
+    }
+    const SemanticType& semantic = semantics_.type(type);
+    if (semantic.kind == TypeKind::kNullable && semantic.element_type) {
+      type = *semantic.element_type;
+    }
+    if (const std::optional<TypeId> wrapper = semantics_.value_wrapper(type)) {
+      const SemanticType& wrapper_type = semantics_.type(*wrapper);
+      if (wrapper_type.file) {
+        return type_descriptor_global(*wrapper_type.file);
+      }
+    }
+    const SemanticType& value_type = semantics_.type(type);
+    if ((value_type.kind == TypeKind::kEnum ||
+         value_type.kind == TypeKind::kStruct) &&
+        value_type.file) {
+      return type_descriptor_global(*value_type.file);
+    }
+    report(fallback_range(), "value type has no canonical box descriptor");
+    return "null";
+  }
+
   std::string add_type_descriptor(FileId file,
                                   const AbiTypeDescriptor& descriptor) {
     const std::string name_global = add_string_literal(descriptor.name);
@@ -1024,7 +1228,16 @@ class ModuleEmitter {
     }
 
     std::string virtuals_global = "null";
-    if (!descriptor.virtual_functions.empty()) {
+    std::size_t virtual_function_count = descriptor.virtual_functions.size();
+    if (descriptor.uses_value_box_virtuals) {
+      virtual_function_count = 3;
+      virtuals_global = "@.cloth.type.virtuals." + std::to_string(file.value);
+      globals_.push_back(
+          virtuals_global +
+          " = private constant [3 x ptr] [ptr "
+          "@cloth_rt_value_box_equals, ptr @cloth_rt_value_box_hash_code, "
+          "ptr @cloth_rt_value_box_to_string]");
+    } else if (!descriptor.virtual_functions.empty()) {
       virtuals_global = "@.cloth.type.virtuals." + std::to_string(file.value);
       std::ostringstream virtuals;
       virtuals << virtuals_global << " = private constant ["
@@ -1111,18 +1324,23 @@ class ModuleEmitter {
             ? type_descriptor_global_name(*descriptor.parent_file)
         : descriptor.parent_is_error_root ? "@cloth_rt_error_type"
                                           : "null";
+    const std::string boxed_value_layout =
+        descriptor.boxed_value_type
+            ? value_layout_global(*descriptor.boxed_value_type)
+            : "null";
     std::ostringstream global;
     global << descriptor_global
            << " = constant { i64, ptr, ptr, i64, i64, i64, ptr, i64, "
-              "ptr, i64, ptr, i64 } { i64 "
+              "ptr, i64, ptr, i64, ptr, i64 } { i64 "
            << static_cast<std::uint64_t>(descriptor.kind) << ", ptr "
            << parent_global << ", ptr " << name_global << ", i64 "
            << descriptor.name.size() << ", i64 " << descriptor.size << ", i64 "
            << descriptor.alignment << ", ptr " << references_global << ", i64 "
            << descriptor.reference_offsets.size() << ", ptr " << virtuals_global
-           << ", i64 " << descriptor.virtual_functions.size() << ", ptr "
+           << ", i64 " << virtual_function_count << ", ptr "
            << interfaces_global << ", i64 " << descriptor.interfaces.size()
-           << " }";
+           << ", ptr " << boxed_value_layout << ", i64 "
+           << descriptor.boxed_value_offset << " }";
     globals_.push_back(global.str());
     return descriptor_global;
   }
@@ -1467,6 +1685,7 @@ class ModuleEmitter {
   std::ostringstream definitions_;
   std::vector<std::string> globals_;
   std::vector<std::string> type_descriptor_globals_;
+  std::vector<std::string> value_layout_globals_;
   std::ostringstream enum_helpers_;
   std::ostringstream aggregate_helpers_;
   std::vector<TypeId> aggregate_comparers_;
@@ -2353,6 +2572,12 @@ void BodyEmitter::emit_instruction(const MirInstruction& instruction,
   } else if (const auto* conversion =
                  std::get_if<MirConvertInstruction>(&instruction.data)) {
     emit_conversion(instruction, *conversion, output);
+  } else if (const auto* box =
+                 std::get_if<MirBoxInstruction>(&instruction.data)) {
+    emit_box(instruction, *box, output);
+  } else if (const auto* unbox =
+                 std::get_if<MirUnboxInstruction>(&instruction.data)) {
+    emit_unbox(instruction, *unbox, output);
   } else if (const auto* test =
                  std::get_if<MirIsNonNullInstruction>(&instruction.data)) {
     emit_is_non_null(instruction, *test, output);
@@ -3445,6 +3670,51 @@ void BodyEmitter::emit_null_assert(const MirInstruction& instruction,
   values_.at(instruction.result->value) = operand;
 }
 
+void BodyEmitter::emit_box(const MirInstruction& instruction,
+                           const MirBoxInstruction& box,
+                           std::ostringstream& output) {
+  std::string storage = value(box.value);
+  if (!module_.is_aggregate(box.value_type)) {
+    storage = next_address();
+    output << "  " << storage << " = alloca "
+           << module_.llvm_type(box.value_type) << ", align "
+           << module_.alignment(box.value_type) << '\n'
+           << "  store " << module_.llvm_type(box.value_type) << ' '
+           << value(box.value) << ", ptr " << storage << ", align "
+           << module_.alignment(box.value_type) << '\n';
+  }
+  output << "  " << result_name(instruction)
+         << " = call ptr @cloth_rt_box_value(ptr "
+         << module_.box_descriptor_global(box.value_type) << ", ptr "
+         << module_.value_layout_global(box.value_type) << ", ptr " << storage
+         << ")\n";
+}
+
+void BodyEmitter::emit_unbox(const MirInstruction& instruction,
+                             const MirUnboxInstruction& unbox,
+                             std::ostringstream& output) {
+  if (!module_.is_aggregate(instruction.type)) {
+    module_.report(instruction.range,
+                   "unbox result does not have nullable value storage");
+    return;
+  }
+  const std::string result = result_name(instruction);
+  const std::string payload = next_address();
+  const std::string present = next_address();
+  output << "  call void @llvm.memset.p0.i64(ptr align "
+         << module_.alignment(instruction.type) << ' ' << result
+         << ", i8 0, i64 "
+         << module_.abi().types.at(instruction.type.value).storage.size
+         << ", i1 false)\n"
+         << "  " << payload << " = getelementptr i8, ptr " << result << ", i64 "
+         << module_.nullable_payload_offset(instruction.type) << '\n'
+         << "  " << present << " = call i8 @cloth_rt_try_unbox(ptr "
+         << value(unbox.value) << ", ptr "
+         << module_.box_descriptor_global(unbox.value_type) << ", ptr "
+         << payload << ")\n"
+         << "  store i8 " << present << ", ptr " << result << ", align 1\n";
+}
+
 void BodyEmitter::emit_type_test(const MirInstruction& instruction,
                                  const MirTypeTestInstruction& test,
                                  std::ostringstream& output) {
@@ -3478,7 +3748,14 @@ void BodyEmitter::emit_type_condition(std::string_view result,
   }
 
   const std::string raw = next_address();
-  if (type.kind == TypeKind::kString) {
+  const bool boxable = type.kind == TypeKind::kEnum ||
+                       type.kind == TypeKind::kStruct ||
+                       module_.semantics().value_wrapper(target).has_value();
+  if (boxable) {
+    output << "  " << raw << " = call i8 @cloth_rt_object_is_type(ptr "
+           << value(source) << ", ptr " << module_.box_descriptor_global(target)
+           << ")\n";
+  } else if (type.kind == TypeKind::kString) {
     output << "  " << raw << " = call i8 @cloth_rt_object_is_kind(ptr "
            << value(source) << ", i64 "
            << static_cast<std::uint64_t>(ClothHeapObjectKind::kString) << ")\n";
@@ -3949,6 +4226,53 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
       emit_primitive_parse(instruction, call, symbol, output);
       return;
     }
+    if (symbol.intrinsic == IntrinsicKind::kObjectEquals ||
+        symbol.intrinsic == IntrinsicKind::kObjectHashCode ||
+        symbol.intrinsic == IntrinsicKind::kObjectToString) {
+      const std::size_t expected_arguments =
+          symbol.intrinsic == IntrinsicKind::kObjectEquals ? 2U : 1U;
+      if (call.arguments.size() != expected_arguments || !instruction.result) {
+        module_.report(instruction.range,
+                       "invalid Object intrinsic reached LLVM lowering");
+        return;
+      }
+      output << "  " << result_name(instruction) << " = call ";
+      if (symbol.intrinsic == IntrinsicKind::kObjectEquals) {
+        output << "i1 @cloth_rt_object_equals(ptr " << value(call.arguments[0])
+               << ", ptr " << value(call.arguments[1]) << ")\n";
+      } else if (symbol.intrinsic == IntrinsicKind::kObjectHashCode) {
+        output << "i64 @cloth_rt_object_hash_code(ptr "
+               << value(call.arguments[0]) << ")\n";
+      } else {
+        output << "ptr @cloth_rt_object_to_string(ptr "
+               << value(call.arguments[0]) << ")\n";
+      }
+      return;
+    }
+    if (symbol.intrinsic == IntrinsicKind::kValueBoxEquals ||
+        symbol.intrinsic == IntrinsicKind::kValueBoxHashCode ||
+        symbol.intrinsic == IntrinsicKind::kValueBoxToString) {
+      const std::size_t expected_arguments =
+          symbol.intrinsic == IntrinsicKind::kValueBoxEquals ? 2U : 1U;
+      if (call.arguments.size() != expected_arguments || !instruction.result) {
+        module_.report(instruction.range,
+                       "invalid value-box intrinsic reached LLVM lowering");
+        return;
+      }
+      output << "  " << result_name(instruction) << " = call ";
+      if (symbol.intrinsic == IntrinsicKind::kValueBoxEquals) {
+        output << "i1 @cloth_rt_value_box_equals(ptr "
+               << value(call.arguments[0]) << ", ptr "
+               << value(call.arguments[1]) << ")\n";
+      } else if (symbol.intrinsic == IntrinsicKind::kValueBoxHashCode) {
+        output << "i64 @cloth_rt_value_box_hash_code(ptr "
+               << value(call.arguments[0]) << ")\n";
+      } else {
+        output << "ptr @cloth_rt_value_box_to_string(ptr "
+               << value(call.arguments[0]) << ")\n";
+      }
+      return;
+    }
     const std::size_t expected_arguments =
         symbol.intrinsic == IntrinsicKind::kPrintNewline ? 0U : 1U;
     if (call.arguments.size() != expected_arguments || instruction.result) {
@@ -4027,6 +4351,12 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
         break;
       case IntrinsicKind::kConsoleReadLine:
       case IntrinsicKind::kFileReadBytes:
+      case IntrinsicKind::kObjectEquals:
+      case IntrinsicKind::kObjectHashCode:
+      case IntrinsicKind::kObjectToString:
+      case IntrinsicKind::kValueBoxEquals:
+      case IntrinsicKind::kValueBoxHashCode:
+      case IntrinsicKind::kValueBoxToString:
       case IntrinsicKind::kPrimitiveParse:
       case IntrinsicKind::kPrintNewline:
       case IntrinsicKind::kNone:
@@ -4155,7 +4485,7 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
     output << "  " << descriptor << " = load ptr, ptr " << receiver << "\n"
            << "  " << virtuals_address
            << " = getelementptr inbounds { i64, ptr, ptr, i64, i64, i64, ptr, "
-              "i64, ptr, i64, ptr, i64 }, ptr "
+              "i64, ptr, i64, ptr, i64, ptr, i64 }, ptr "
            << descriptor << ", i32 0, i32 8\n"
            << "  " << virtuals << " = load ptr, ptr " << virtuals_address
            << "\n"

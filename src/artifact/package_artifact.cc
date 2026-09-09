@@ -685,19 +685,25 @@ JsonValue encode_descriptor(const ImportedTypeDescriptor& descriptor) {
   }
   return JsonValue{JsonValue::Object{
       {"alignment", json_integer(descriptor.alignment)},
+      {"boxed_value_offset", json_integer(descriptor.boxed_value_offset)},
+      {"boxed_value_type",
+       json_optional_identity(descriptor.boxed_value_type_identity)},
       {"display_name", json_string(descriptor.display_name)},
       {"id", json_identity(descriptor.identity)},
       {"interfaces", JsonValue{std::move(interfaces)}},
-      {"kind", json_string(descriptor.kind == AbiHeapObjectKind::kError
-                               ? "error"
-                               : "file_class")},
+      {"kind",
+       json_string(descriptor.kind == AbiHeapObjectKind::kError ? "error"
+                   : descriptor.kind == AbiHeapObjectKind::kValueBox
+                       ? "value_box"
+                       : "file_class")},
       {"mangled_name", json_string(descriptor.mangled_name)},
       {"parent", json_optional_identity(descriptor.parent_identity)},
       {"parent_is_error_root", JsonValue{descriptor.parent_is_error_root}},
       {"reference_offsets", JsonValue{std::move(references)}},
       {"size", json_integer(descriptor.size)},
       {"virtual_functions",
-       json_string_array(descriptor.virtual_function_identities, true)}}};
+       json_string_array(descriptor.virtual_function_identities, true)},
+      {"value_box_virtuals", JsonValue{descriptor.uses_value_box_virtuals}}}};
 }
 
 JsonValue encode_static_field_abi(const ImportedStaticFieldAbi& field) {
@@ -1502,7 +1508,11 @@ std::optional<ImportedFile> MetadataDecoder::decode_file_declaration(
                                     {},
                                     {},
                                     {},
-                                    {}};
+                                    {},
+                                    false,
+                                    std::nullopt,
+                                    0,
+                                    false};
   return ImportedFile{
       nominal,
       std::move(*id),
@@ -1849,12 +1859,17 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
   constexpr std::string_view kRecord = "layouts.descriptor";
   const auto* fields =
       object(value,
-             {"alignment", "display_name", "id", "interfaces", "kind",
-              "mangled_name", "parent", "parent_is_error_root",
-              "reference_offsets", "size", "virtual_functions"},
+             {"alignment", "boxed_value_offset", "boxed_value_type",
+              "display_name", "id", "interfaces", "kind", "mangled_name",
+              "parent", "parent_is_error_root", "reference_offsets", "size",
+              "value_box_virtuals", "virtual_functions"},
              kRecord);
   if (fields == nullptr) return std::nullopt;
   const auto alignment = integer(fields->at("alignment"), kRecord);
+  const auto boxed_value_offset =
+      integer(fields->at("boxed_value_offset"), kRecord);
+  auto boxed_value_type =
+      optional_identity(fields->at("boxed_value_type"), kRecord);
   const std::string* display = text(fields->at("display_name"), kRecord);
   auto id = identity(fields->at("id"), kRecord);
   const std::string* kind = text(fields->at("kind"), kRecord);
@@ -1864,14 +1879,18 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
       boolean(fields->at("parent_is_error_root"), kRecord);
   const auto size = integer(fields->at("size"), kRecord);
   auto virtuals = identity_array(fields->at("virtual_functions"), kRecord);
+  const auto value_box_virtuals =
+      boolean(fields->at("value_box_virtuals"), kRecord);
   const JsonValue::Array* reference_values =
       array(fields->at("reference_offsets"), kRecord);
   const JsonValue::Array* interface_values =
       array(fields->at("interfaces"), kRecord);
   if (!alignment || display == nullptr || !id || kind == nullptr ||
-      (*kind != "file_class" && *kind != "error") || mangled == nullptr ||
-      !parent || !parent_is_error_root || !size || !virtuals ||
-      reference_values == nullptr || interface_values == nullptr) {
+      (*kind != "file_class" && *kind != "error" && *kind != "value_box") ||
+      mangled == nullptr || !parent || !parent_is_error_root || !size ||
+      !virtuals || !boxed_value_offset || !boxed_value_type ||
+      !value_box_virtuals || reference_values == nullptr ||
+      interface_values == nullptr) {
     issue(std::string{kRecord}, "descriptor ABI is invalid");
     return std::nullopt;
   }
@@ -1900,8 +1919,9 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
     interfaces.push_back(ImportedInterfaceDispatch{
         std::move(*interface_identity), *interface_id, std::move(*functions)});
   }
-  return ImportedTypeDescriptor{*kind == "error"
-                                    ? AbiHeapObjectKind::kError
+  return ImportedTypeDescriptor{*kind == "error" ? AbiHeapObjectKind::kError
+                                : *kind == "value_box"
+                                    ? AbiHeapObjectKind::kValueBox
                                     : AbiHeapObjectKind::kFileClass,
                                 std::move(*id),
                                 std::move(*parent),
@@ -1912,7 +1932,10 @@ std::optional<ImportedTypeDescriptor> MetadataDecoder::decode_descriptor(
                                 std::move(*virtuals),
                                 std::move(interfaces),
                                 *mangled,
-                                *parent_is_error_root};
+                                *parent_is_error_root,
+                                std::move(*boxed_value_type),
+                                *boxed_value_offset,
+                                *value_box_virtuals};
 }
 
 std::optional<ImportedClassAbi> MetadataDecoder::decode_layout(
@@ -2404,6 +2427,8 @@ std::vector<ArtifactIssue> verify_package_artifact(
           file.abi.descriptor->identity,
           file.abi.descriptor->kind == AbiHeapObjectKind::kError
               ? "descriptor:error"
+          : file.abi.descriptor->kind == AbiHeapObjectKind::kValueBox
+              ? "descriptor:value_box"
               : "descriptor:file_class");
       expected_definitions.emplace(file.abi.descriptor->identity,
                                    ArtifactSymbolKind::kDescriptor);

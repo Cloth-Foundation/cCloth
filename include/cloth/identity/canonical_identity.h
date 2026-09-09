@@ -12,7 +12,7 @@
 
 namespace cloth {
 
-inline constexpr std::uint32_t kCompilerAbiVersion = 6;
+inline constexpr std::uint32_t kCompilerAbiVersion = 7;
 
 struct PackageIdentity {
   // Both fields are empty only for the distinct standalone compilation domain.

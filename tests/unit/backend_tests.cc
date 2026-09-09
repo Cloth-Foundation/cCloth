@@ -523,11 +523,12 @@ void object_construction(TestContext& test) {
           sources.contains("@" + cloth::test::descriptor_name("Model") +
                            " = constant { i64, ptr, "
                            "ptr, i64, i64, i64, ptr, i64, ptr, i64, ptr, "
-                           "i64 } { i64 "
+                           "i64, ptr, i64 } { i64 "
                            "0, ptr "
                            "null, ptr @.cloth.str.0, i64 5, i64 32, i64 8, ptr "
                            "@.cloth.type.references.0, i64 1, ptr "
-                           "@.cloth.type.virtuals.0, i64 1, ptr null, i64 0 }"),
+                           "@.cloth.type.virtuals.0, i64 1, ptr null, i64 0, "
+                           "ptr null, i64 0 }"),
       "file-class type descriptor metadata is missing");
   test.expect(sources.contains("define internal ptr @_C1I5_Model4_Name") &&
                   sources.contains("call ptr @_C1I5_Model4_Name(ptr %self)"),
@@ -552,18 +553,19 @@ void inherited_type_descriptors(TestContext& test) {
           sources.contains(
               "@" + cloth::test::descriptor_name("Derived") +
               " = constant { i64, ptr, ptr, i64, i64, "
-              "i64, ptr, i64, ptr, i64, ptr, i64 } { i64 0, ptr "
+              "i64, ptr, i64, ptr, i64, ptr, i64, ptr, i64 } { i64 0, ptr "
               "@" +
               cloth::test::descriptor_name("Base") +
               ", ptr "
               "@.cloth.str.0, i64 7, i64 48, i64 8, ptr "
               "@.cloth.type.references.0, i64 2, ptr null, i64 0, ptr null, "
-              "i64 0 }"),
+              "i64 0, ptr null, i64 0 }"),
       "derived descriptor lost its parent pointer or inherited GC map");
   test.expect(
       sources.contains("@" + cloth::test::descriptor_name("Base") +
                        " = constant { i64, ptr, ptr, i64, "
-                       "i64, i64, ptr, i64, ptr, i64, ptr, i64 } { i64 0, ptr "
+                       "i64, i64, ptr, i64, ptr, i64, ptr, i64, ptr, i64 } { "
+                       "i64 0, ptr "
                        "null, ptr "),
       "root descriptor unexpectedly gained a parent pointer");
 }
@@ -672,7 +674,7 @@ void virtual_dispatch(TestContext& test) {
       "derived vtable did not replace and extend stable base slots");
   test.expect(sources.contains(
                   "getelementptr inbounds { i64, ptr, ptr, i64, i64, i64, ptr, "
-                  "i64, ptr, i64, ptr, i64 }, ptr ") &&
+                  "i64, ptr, i64, ptr, i64, ptr, i64 }, ptr ") &&
                   sources.contains("getelementptr inbounds ptr, ptr ") &&
                   sources.contains("call i32 %"),
               "virtual call was not emitted through descriptor slot zero");
@@ -1090,12 +1092,13 @@ void wasm32_module(TestContext& test) {
   test.expect(
       sources.contains("@" + cloth::test::descriptor_name("Small") +
                        " = constant { i64, ptr, ptr, "
-                       "i64, i64, i64, ptr, i64, ptr, i64, ptr, i64 } { i64 "
+                       "i64, i64, i64, ptr, i64, ptr, i64, ptr, i64, ptr, "
+                       "i64 } { i64 "
                        "0, ptr "
                        "null, ptr "
                        "@.cloth.str.0, i64 5, i64 12, i64 4, ptr null, "
                        "i64 0, ptr @.cloth.type.virtuals.0, i64 2, ptr null, "
-                       "i64 0 }") &&
+                       "i64 0, ptr null, i64 0 }") &&
           sources.contains("call ptr @cloth_rt_alloc(ptr @" +
                            cloth::test::descriptor_name("Small") + ")"),
       "wasm32 object descriptor did not preserve its ABI layout");

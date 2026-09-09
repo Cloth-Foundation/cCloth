@@ -106,9 +106,12 @@ class AbiVerifier {
       report(range, "member order does not match MIR");
     }
     if (file.kind == FileTypeKind::kStruct) {
-      if (file.type_descriptor || file.base_file ||
-          file.layout.header_size != 0) {
-        report(range, "struct ABI contains a heap descriptor or base storage");
+      if (file.base_file || file.layout.header_size != 0) {
+        report(range, "struct ABI contains base or managed inline storage");
+      }
+      if (file.type_descriptor) {
+        verify_value_box_descriptor(*file.type_descriptor,
+                                    semantics_.file(file.file).type, range);
       }
       verify_class_layout(file.layout, range);
       verify_callables(file.functions, expected.functions, range, "function");
@@ -125,9 +128,14 @@ class AbiVerifier {
           file.layout.header_size != 0 || file.layout.alignment != 1 ||
           !file.layout.fields.empty() || !file.static_fields.empty() ||
           !file.functions.empty() || !file.constructors.empty() ||
-          !file.member_order.empty() ||
-          !file.type_descriptor->mangled_name.empty()) {
+          !file.member_order.empty()) {
         report(range, "enum ABI contains class storage or members");
+      }
+      if (file.type_descriptor->kind == AbiHeapObjectKind::kValueBox) {
+        verify_value_box_descriptor(*file.type_descriptor,
+                                    semantics_.file(file.file).type, range);
+      } else if (!file.type_descriptor->mangled_name.empty()) {
+        report(range, "unboxed enum descriptor has a linkage name");
       }
       return;
     }
@@ -142,6 +150,23 @@ class AbiVerifier {
     }
     verify_class_layout(file.layout, range);
     verify_type_descriptor(*file.type_descriptor, file.layout, range);
+    const FileSemantics& semantic_file = semantics_.file(file.file);
+    if (file.type_descriptor->boxed_value_type !=
+            semantic_file.boxed_value_type ||
+        file.type_descriptor->uses_value_box_virtuals) {
+      report(range, "file-class value-box metadata does not match semantics");
+    }
+    if (semantic_file.boxed_value_field) {
+      const auto field = std::ranges::find(file.layout.fields,
+                                           *semantic_file.boxed_value_field,
+                                           &AbiFieldLayout::symbol);
+      if (field == file.layout.fields.end() ||
+          file.type_descriptor->boxed_value_offset != field->offset) {
+        report(range, "value wrapper payload offset is invalid");
+      }
+    } else if (file.type_descriptor->boxed_value_offset != 0) {
+      report(range, "ordinary class descriptor carries a box payload offset");
+    }
     verify_interface_dispatches(file, range);
     verify_inheritance(file, range);
     verify_callables(file.functions, expected.functions, range, "function");
@@ -215,6 +240,46 @@ class AbiVerifier {
           symbol.visibility != Visibility::kPublic ||
           symbol.virtual_slot != slot) {
         report(range, "type descriptor has an invalid virtual function");
+      }
+    }
+  }
+
+  void verify_value_box_descriptor(const AbiTypeDescriptor& descriptor,
+                                   TypeId value_type, SourceRange range) {
+    if (value_type.value >= abi_.types.size()) {
+      report(range, "value-box descriptor has an unknown payload type");
+      return;
+    }
+    const AbiTypeLayout& value = abi_.types[value_type.value];
+    const std::optional<FileId> object_file =
+        semantics_.type(semantics_.object_type()).file;
+    const std::uint64_t header =
+        abi_.target.pointer.size * abi_.target.object_header_words;
+    const bool payload_fits =
+        descriptor.boxed_value_offset >= header &&
+        descriptor.boxed_value_offset <= descriptor.size &&
+        value.storage.size <= descriptor.size - descriptor.boxed_value_offset;
+    if (descriptor.kind != AbiHeapObjectKind::kValueBox ||
+        descriptor.parent_file != object_file || descriptor.name.empty() ||
+        descriptor.mangled_name.empty() || !descriptor.boxed_value_type ||
+        *descriptor.boxed_value_type != value_type || !payload_fits ||
+        descriptor.boxed_value_offset % value.storage.alignment != 0 ||
+        !descriptor.virtual_functions.empty() ||
+        !descriptor.interfaces.empty() || !descriptor.uses_value_box_virtuals ||
+        descriptor.parent_is_error_root) {
+      report(range, "value-box type descriptor is invalid");
+      return;
+    }
+    if (descriptor.reference_offsets.size() != value.reference_offsets.size()) {
+      report(range, "value-box reference map has the wrong size");
+      return;
+    }
+    for (std::size_t index = 0; index < value.reference_offsets.size();
+         ++index) {
+      if (descriptor.reference_offsets[index] !=
+          descriptor.boxed_value_offset + value.reference_offsets[index]) {
+        report(range, "value-box reference map is not payload-relative");
+        return;
       }
     }
   }

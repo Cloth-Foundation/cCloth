@@ -233,6 +233,9 @@ struct HirExpression {
   // Reading a struct location as a value copies it. Member/index nodes retain
   // the location path for writes; value results never provide writable storage.
   ValueCategory category{ValueCategory::kValue};
+  // Explicit contextual boxing conversion. The expression data produces
+  // `type`; lowering boxes it to this Object/Object? target at its use site.
+  std::optional<TypeId> boxing_target{};
 };
 
 struct HirInvalidStatement {};

@@ -119,7 +119,7 @@ traces only canonical live slots.
 Nullable aggregate parameters use value-pointer passing and nullable aggregate
 returns use indirect result storage. LLVM compares or converts a payload only
 after validating and branching on the tag. Runtime ABI 9 validates nullable
-value assertions. Artifact format 7 and compiler ABI 6 preserve the distinct
+value assertions. Artifact format 8 and compiler ABI 7 preserve the distinct
 tagged layout and `_C6` native identities across packages and source-free
 linking.
 

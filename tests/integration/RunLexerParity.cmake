@@ -210,7 +210,10 @@ run_required("warm Shuttle bootstrap build" "${serial_source}"
     "${CLOTH_SHUTTLE}" build --manifest-path
     "${serial_source}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
     --target x86_64 --jobs 4)
-if(NOT CLOTH_LAST_PROCESS_OUTPUT MATCHES "reusing cloth v0\\.4\\.0" OR
+string(REPLACE "." "\\." standard_library_version_pattern
+    "${CLOTH_STANDARD_LIBRARY_VERSION}")
+if(NOT CLOTH_LAST_PROCESS_OUTPUT MATCHES
+       "reusing cloth v${standard_library_version_pattern}" OR
    NOT CLOTH_LAST_PROCESS_OUTPUT MATCHES "reusing clothc v0\\.0\\.1")
     message(FATAL_ERROR
         "warm Shuttle build did not reuse both cloth and clothc exactly")

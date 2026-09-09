@@ -39,6 +39,61 @@ std::string messages(const cloth::DiagnosticEngine& diagnostics) {
   return result;
 }
 
+bool add_value_object_sources(cloth::Compilation& compilation,
+                              TestContext& test) {
+  struct SourceEntry {
+    std::string_view source_package;
+    std::string_view name;
+  };
+  constexpr std::array kSources{
+      SourceEntry{"lang", "Object"},
+      SourceEntry{"lang", "Boolean"},
+      SourceEntry{"lang", "Character"},
+      SourceEntry{"lang.number", "Number"},
+      SourceEntry{"lang.number", "Integer"},
+      SourceEntry{"lang.number", "FloatingPoint"},
+      SourceEntry{"lang.number", "Byte"},
+      SourceEntry{"lang.number", "Int8"},
+      SourceEntry{"lang.number", "Int16"},
+      SourceEntry{"lang.number", "Int32"},
+      SourceEntry{"lang.number", "Int64"},
+      SourceEntry{"lang.number", "UInt8"},
+      SourceEntry{"lang.number", "UInt16"},
+      SourceEntry{"lang.number", "UInt32"},
+      SourceEntry{"lang.number", "UInt64"},
+      SourceEntry{"lang.number", "Float32"},
+      SourceEntry{"lang.number", "Float64"},
+  };
+  const std::filesystem::path source_root{CLOTH_STANDARD_LIBRARY_SOURCE_DIR};
+  bool valid = true;
+  for (const SourceEntry& entry : kSources) {
+    std::filesystem::path path = source_root;
+    std::size_t begin = 0;
+    while (begin < entry.source_package.size()) {
+      const std::size_t end = entry.source_package.find('.', begin);
+      path /= entry.source_package.substr(
+          begin, end == std::string_view::npos
+                     ? entry.source_package.size() - begin
+                     : end - begin);
+      if (end == std::string_view::npos) break;
+      begin = end + 1;
+    }
+    path /= std::string{entry.name} + ".co";
+    auto source = cloth::SourceFile::load(path);
+    test.expect(source.has_value(), "standard-library value source '" +
+                                        std::string{entry.name} +
+                                        "' could not be read");
+    if (!source) {
+      valid = false;
+      continue;
+    }
+    compilation.add_package_source(
+        std::move(*source), "cloth", std::string{entry.source_package},
+        std::string{cloth::kStandardLibraryPackageVersion});
+  }
+  return valid;
+}
+
 const cloth::SemanticSymbol* find_function(
     const cloth::SemanticModel& semantics, const cloth::FileSemantics& file,
     std::string_view name) {
@@ -1141,6 +1196,365 @@ void math_package_and_source_free_consumer(TestContext& test) {
   }
 }
 
+void object_root_and_dispatch(TestContext& test) {
+  const std::filesystem::path object_path =
+      std::filesystem::path{CLOTH_STANDARD_LIBRARY_SOURCE_DIR} / "lang" /
+      "Object.co";
+  const auto add_object = [&](cloth::Compilation& compilation) {
+    auto source = cloth::SourceFile::load(object_path);
+    test.expect(source.has_value(),
+                "standard-library Object.co could not be read");
+    if (source) {
+      compilation.add_package_source(
+          std::move(*source), "cloth", "lang",
+          std::string{cloth::kStandardLibraryPackageVersion});
+    }
+  };
+  constexpr std::string_view kWidget = R"(
+    class {
+      Widget() {}
+      override func ToString(): string { return "widget"; }
+    }
+  )";
+  constexpr std::string_view kConsumer = R"(
+    static func Exercise(object value, string text, string[] values,
+                         Error err): uint64 {
+      value.Equals(null);
+      text.Equals("text");
+      values.ToString();
+      err.Equals(value);
+      return value.HashCode();
+    }
+    static func Main() {
+      object plain = Object();
+      object value = Widget();
+      plain.Equals(value);
+      println(value);
+    }
+  )";
+
+  for (const cloth::TargetDataLayout& target :
+       {cloth::TargetDataLayout::llvm_x86_64(),
+        cloth::TargetDataLayout::llvm_wasm32()}) {
+    cloth::Compilation producer{target};
+    add_object(producer);
+    cloth::DiagnosticEngine producer_diagnostics;
+    cloth::CompilationResult produced = producer.analyze(producer_diagnostics);
+    test.expect(produced.is_valid, messages(producer_diagnostics));
+    if (!produced.is_valid) continue;
+
+    const cloth::SemanticType& object =
+        produced.semantics.type(produced.semantics.object_type());
+    test.expect(object.file.has_value(),
+                "cloth.lang.Object was not bound to the object type");
+    if (!object.file) continue;
+    const cloth::FileSemantics& root = produced.semantics.file(*object.file);
+    test.expect(root.identity.name == "Object" &&
+                    root.identity.source_package == "lang" &&
+                    root.virtual_functions.size() == 3,
+                "Object root identity or virtual table is incomplete");
+    for (std::size_t slot = 0; slot < root.virtual_functions.size(); ++slot) {
+      test.expect(produced.semantics.symbol(root.virtual_functions[slot])
+                          .virtual_slot == slot,
+                  "Object virtual slot order is unstable");
+    }
+
+    const cloth::ImportedPackageResult imported =
+        cloth::build_imported_package_view(
+            {"cloth", std::string{cloth::kStandardLibraryPackageVersion}},
+            produced.semantics, produced.mir, produced.abi);
+    test.expect(imported.is_valid(),
+                "Object package interface could not be exported");
+    if (!imported.view) continue;
+
+    const auto check_consumer = [&](cloth::Compilation& compilation,
+                                    std::string_view mode) {
+      compilation.add_package_source(
+          cloth::SourceFile::from_memory("Widget.co", std::string{kWidget}),
+          "app", "", "0.1.0");
+      compilation.add_package_source(
+          cloth::SourceFile::from_memory("Main.co", std::string{kConsumer}),
+          "app", "", "0.1.0");
+      cloth::DiagnosticEngine diagnostics;
+      cloth::CompilationResult result = compilation.analyze(diagnostics);
+      test.expect(result.is_valid,
+                  std::string{mode} + ":\n" + messages(diagnostics));
+      if (!result.is_valid) return;
+      const auto widget = std::ranges::find_if(
+          result.semantics.files(), [&](const cloth::FileSemantics& file) {
+            return file.identity.package.name == "app" &&
+                   file.identity.name == "Widget";
+          });
+      test.expect(
+          widget != result.semantics.files().end() &&
+              widget->base_file ==
+                  result.semantics.type(result.semantics.object_type()).file &&
+              widget->virtual_functions.size() == 3 &&
+              result.semantics.symbol(widget->virtual_functions[2]).name ==
+                  "ToString" &&
+              result.semantics.symbol(widget->constructors.front())
+                  .base_constructor.has_value(),
+          std::string{mode} + " lost implicit Object construction or dispatch");
+      cloth::LlvmIrOptions options;
+      options.package = cloth::PackageIdentity{"app", "0.1.0"};
+      const auto ir = cloth::emit_llvm_ir(
+          result.mir, result.abi, result.semantics, diagnostics, options);
+      test.expect(ir.has_value() &&
+                      ir->text.contains("@cloth_rt_object_hash_code") &&
+                      ir->text.contains("@cloth_rt_object_to_string"),
+                  std::string{mode} + " Object IR is incomplete");
+    };
+
+    cloth::Compilation source_free{target};
+    source_free.set_package_dependencies({{"app", "cloth", "cloth"}});
+    source_free.add_imported_package(*imported.view);
+    check_consumer(source_free, "source-free");
+
+    cloth::Compilation whole{target};
+    whole.set_package_dependencies({{"app", "cloth", "cloth"}});
+    add_object(whole);
+    check_consumer(whole, "whole-project");
+  }
+
+  cloth::Compilation malformed_surface;
+  malformed_surface.add_package_source(
+      cloth::SourceFile::from_memory("Object.co", R"(
+        class {
+          Object() {}
+          func HashCode(): int32 { return 0; }
+        }
+      )"),
+      "cloth", "lang", std::string{cloth::kStandardLibraryPackageVersion});
+  cloth::DiagnosticEngine surface_diagnostics;
+  test.expect(
+      !malformed_surface.analyze(surface_diagnostics).is_valid &&
+          messages(surface_diagnostics)
+              .contains("compiler-paired 'cloth.lang.Object' must declare "
+                        "exactly"),
+      "an incompatible compiler-paired Object declaration was accepted");
+
+  cloth::Compilation malformed_kind;
+  malformed_kind.add_package_source(
+      cloth::SourceFile::from_memory("Object.co", "struct { Object() {} }"),
+      "cloth", "lang", std::string{cloth::kStandardLibraryPackageVersion});
+  cloth::DiagnosticEngine kind_diagnostics;
+  test.expect(!malformed_kind.analyze(kind_diagnostics).is_valid &&
+                  messages(kind_diagnostics)
+                      .contains("cloth.lang.Object' must be a class"),
+              "a non-class declaration claimed the Object identity");
+}
+
+void value_boxing_and_source_free_consumer(TestContext& test) {
+  constexpr std::string_view kEnum = "enum { FIRST, SECOND }";
+  constexpr std::string_view kStruct = R"(
+    struct {
+      final int32 Count;
+      Data(int32 count) { Count = count; }
+    }
+  )";
+  constexpr std::string_view kConsumer = R"(
+    static func Main() {
+      object integer = 42;
+      println(integer);
+      println(integer.Equals(Int32(42)));
+      println(integer is int32);
+      println(integer is uint32);
+      int32? restored = integer as int32?;
+      uint32? rejected = integer as uint32?;
+      println(restored!);
+      println(rejected);
+
+      object choice = Type.SECOND;
+      object data = Data(7);
+      println(choice);
+      println(data);
+
+      int32? present = 9;
+      object? lifted = present;
+      int32? absent = null;
+      object? empty = absent;
+      println(lifted);
+      println(empty);
+
+      object[] values = [1, Type.FIRST, Data(3)];
+      println(values[0]);
+    }
+  )";
+  constexpr std::array kWrappers{
+      std::pair{"bool", "Boolean"},   std::pair{"char", "Character"},
+      std::pair{"byte", "Byte"},      std::pair{"int8", "Int8"},
+      std::pair{"int16", "Int16"},    std::pair{"int32", "Int32"},
+      std::pair{"int64", "Int64"},    std::pair{"uint8", "UInt8"},
+      std::pair{"uint16", "UInt16"},  std::pair{"uint32", "UInt32"},
+      std::pair{"uint64", "UInt64"},  std::pair{"float32", "Float32"},
+      std::pair{"float64", "Float64"}};
+
+  for (const cloth::TargetDataLayout& target :
+       {cloth::TargetDataLayout::llvm_x86_64(),
+        cloth::TargetDataLayout::llvm_wasm32()}) {
+    cloth::Compilation producer{target};
+    if (!add_value_object_sources(producer, test)) continue;
+    cloth::DiagnosticEngine producer_diagnostics;
+    cloth::CompilationResult produced = producer.analyze(producer_diagnostics);
+    test.expect(produced.is_valid, messages(producer_diagnostics));
+    if (!produced.is_valid) continue;
+
+    for (const auto& [primitive_name, wrapper_name] : kWrappers) {
+      const std::optional<cloth::TypeId> primitive =
+          produced.semantics.find_type(primitive_name);
+      const std::optional<cloth::TypeId> wrapper =
+          primitive ? produced.semantics.value_wrapper(*primitive)
+                    : std::nullopt;
+      test.expect(
+          wrapper && produced.semantics.type(*wrapper).file &&
+              produced.semantics.file(*produced.semantics.type(*wrapper).file)
+                      .identity.name == wrapper_name,
+          "primitive '" + std::string{primitive_name} +
+              "' lost its canonical value wrapper");
+    }
+
+    const cloth::ImportedPackageResult imported =
+        cloth::build_imported_package_view(
+            {"cloth", std::string{cloth::kStandardLibraryPackageVersion}},
+            produced.semantics, produced.mir, produced.abi);
+    test.expect(imported.is_valid(),
+                "value-wrapper package interface could not be exported");
+    if (!imported.view) continue;
+    const auto imported_int32 = std::ranges::find_if(
+        imported.view->files, [](const cloth::ImportedFile& file) {
+          return file.nominal_identity.source_package == "lang.number" &&
+                 file.nominal_identity.name == "Int32";
+        });
+    test.expect(imported_int32 != imported.view->files.end() &&
+                    imported_int32->abi.descriptor &&
+                    imported_int32->abi.descriptor->boxed_value_type_identity &&
+                    imported_int32->abi.descriptor->boxed_value_offset != 0 &&
+                    !imported_int32->abi.descriptor->uses_value_box_virtuals,
+                "wrapper artifact lost its exact boxed payload metadata");
+
+    cloth::ImportedPackageView malformed = *imported.view;
+    const auto malformed_int32 = std::ranges::find_if(
+        malformed.files, [](const cloth::ImportedFile& file) {
+          return file.nominal_identity.source_package == "lang.number" &&
+                 file.nominal_identity.name == "Int32";
+        });
+    if (malformed_int32 != malformed.files.end() &&
+        malformed_int32->abi.descriptor) {
+      ++malformed_int32->abi.descriptor->boxed_value_offset;
+    }
+    cloth::Compilation malformed_consumer{target};
+    malformed_consumer.add_imported_package(std::move(malformed));
+    malformed_consumer.add_package_source(
+        cloth::SourceFile::from_memory("Main.co", "static func Main() {}"),
+        "app", "", "0.1.0");
+    cloth::DiagnosticEngine malformed_diagnostics;
+    test.expect(!malformed_consumer.analyze(malformed_diagnostics).is_valid,
+                "malformed boxed-value artifact metadata was accepted");
+
+    cloth::ImportedPackageView malformed_constants = *imported.view;
+    const auto constant_owner = std::ranges::find_if(
+        malformed_constants.files, [](const cloth::ImportedFile& file) {
+          return file.nominal_identity.source_package == "lang.number" &&
+                 file.nominal_identity.name == "Int32";
+        });
+    if (constant_owner != malformed_constants.files.end()) {
+      const auto maximum = std::ranges::find(
+          constant_owner->members, "MAX_VALUE", &cloth::ImportedMember::name);
+      if (maximum != constant_owner->members.end() && maximum->static_value) {
+        maximum->static_value->bits ^= 1;
+      }
+    }
+    cloth::Compilation constant_consumer{target};
+    constant_consumer.add_imported_package(std::move(malformed_constants));
+    constant_consumer.add_package_source(
+        cloth::SourceFile::from_memory("Main.co", "static func Main() {}"),
+        "app", "", "0.1.0");
+    cloth::DiagnosticEngine constant_diagnostics;
+    const cloth::CompilationResult constant_result =
+        constant_consumer.analyze(constant_diagnostics);
+    test.expect(
+        !constant_result.is_valid &&
+            messages(constant_diagnostics)
+                .contains("must declare exact MIN_VALUE, MAX_VALUE, BYTES, "
+                          "and BITS constants"),
+        "malformed integer-wrapper constants were accepted");
+
+    cloth::Compilation consumer{target};
+    consumer.set_package_dependencies({{"app", "cloth", "cloth"}});
+    consumer.add_imported_package(*imported.view);
+    consumer.add_package_source(
+        cloth::SourceFile::from_memory("Type.co", std::string{kEnum}), "app",
+        "", "0.1.0");
+    consumer.add_package_source(
+        cloth::SourceFile::from_memory("Data.co", std::string{kStruct}), "app",
+        "", "0.1.0");
+    consumer.add_package_source(
+        cloth::SourceFile::from_memory("Main.co", std::string{kConsumer}),
+        "app", "", "0.1.0");
+    cloth::DiagnosticEngine consumer_diagnostics;
+    cloth::CompilationResult consumed = consumer.analyze(consumer_diagnostics);
+    test.expect(consumed.is_valid, messages(consumer_diagnostics));
+    if (!consumed.is_valid) continue;
+
+    std::size_t boxes = 0;
+    std::size_t unboxes = 0;
+    for (const cloth::MirFileClass& file : consumed.mir.files) {
+      for (const cloth::MirCallable& callable : file.functions) {
+        for (const cloth::MirBasicBlock& block : callable.body.blocks) {
+          for (const cloth::MirInstruction& instruction : block.instructions) {
+            boxes += std::holds_alternative<cloth::MirBoxInstruction>(
+                         instruction.data)
+                         ? std::size_t{1}
+                         : std::size_t{0};
+            unboxes += std::holds_alternative<cloth::MirUnboxInstruction>(
+                           instruction.data)
+                           ? std::size_t{1}
+                           : std::size_t{0};
+          }
+        }
+      }
+    }
+    test.expect(boxes >= 8 && unboxes == 2,
+                "explicit MIR boxing or exact unboxing is incomplete");
+
+    for (const std::string_view name : {"Type", "Data"}) {
+      const auto file = std::ranges::find_if(
+          consumed.semantics.files(), [&](const cloth::FileSemantics& value) {
+            return value.identity.package.name == "app" &&
+                   value.identity.name == name;
+          });
+      const std::size_t file_index = static_cast<std::size_t>(
+          std::distance(consumed.semantics.files().begin(), file));
+      test.expect(file != consumed.semantics.files().end() &&
+                      consumed.abi.files[file_index].type_descriptor,
+                  "boxed nominal descriptor is missing");
+      if (file != consumed.semantics.files().end()) {
+        const cloth::AbiTypeDescriptor* descriptor =
+            consumed.abi.files[file_index].type_descriptor
+                ? &*consumed.abi.files[file_index].type_descriptor
+                : nullptr;
+        test.expect(
+            descriptor &&
+                descriptor->kind == cloth::AbiHeapObjectKind::kValueBox &&
+                descriptor->uses_value_box_virtuals &&
+                descriptor->boxed_value_type == file->type,
+            "enum or struct value-box descriptor is malformed");
+      }
+    }
+
+    cloth::LlvmIrOptions options;
+    options.package = cloth::PackageIdentity{"app", "0.1.0"};
+    const auto ir =
+        cloth::emit_llvm_ir(consumed.mir, consumed.abi, consumed.semantics,
+                            consumer_diagnostics, options);
+    test.expect(ir && ir->text.contains("@cloth_rt_box_value") &&
+                    ir->text.contains("@cloth_rt_try_unbox") &&
+                    ir->text.contains("@cloth_rt_value_box_equals") &&
+                    ir->text.contains(".cloth.value.layout"),
+                "value-box LLVM lowering is incomplete");
+  }
+}
+
 void reserved_source_package(TestContext& test) {
   for (const std::string_view source_package :
        {"cloth", "Cloth.math", "CLOTH.internal"}) {
@@ -1177,6 +1591,9 @@ int main() {
       {"primitive parse rejections", primitive_parse_rejections},
       {"Math package and source-free consumer",
        math_package_and_source_free_consumer},
+      {"Object root and dispatch", object_root_and_dispatch},
+      {"value boxing and source-free consumer",
+       value_boxing_and_source_free_consumer},
       {"prelude whole and source-free", prelude_whole_and_source_free},
       {"prelude precedence and boundaries", prelude_precedence_and_boundaries},
       {"prelude collisions", prelude_collisions},

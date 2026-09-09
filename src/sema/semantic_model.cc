@@ -56,12 +56,14 @@ SemanticModel::SemanticModel() {
       std::pair{float32, IntrinsicKind::kPrintFloat32},
       std::pair{float64, IntrinsicKind::kPrintFloat64},
       std::pair{null_type_, IntrinsicKind::kPrintObject},
-      std::pair{object_type_, IntrinsicKind::kPrintObject},
   };
   for (const auto& [type, intrinsic] : primitive_prints) {
     add_intrinsic("print", {type}, intrinsic);
     add_intrinsic("println", {type}, intrinsic);
   }
+  const TypeId nullable_object = get_nullable_type(object_type_);
+  add_intrinsic("print", {nullable_object}, IntrinsicKind::kPrintObject);
+  add_intrinsic("println", {nullable_object}, IntrinsicKind::kPrintObject);
   add_intrinsic("println", {}, IntrinsicKind::kPrintNewline);
 }
 
@@ -91,10 +93,22 @@ TypeId SemanticModel::string_type() const noexcept { return string_type_; }
 
 TypeId SemanticModel::object_type() const noexcept { return object_type_; }
 
+std::optional<TypeId> SemanticModel::value_wrapper(TypeId type) const noexcept {
+  return type.value < value_wrappers_.size() ? value_wrappers_[type.value]
+                                             : std::nullopt;
+}
+
+std::optional<TypeId> SemanticModel::wrapped_value(TypeId type) const noexcept {
+  return type.value < wrapped_values_.size() ? wrapped_values_[type.value]
+                                             : std::nullopt;
+}
+
 TypeId SemanticModel::add_type(SemanticType type) {
   const TypeId id{types_.size()};
   type_names_.push_back(TypeName{type.name, id});
   types_.push_back(std::move(type));
+  value_wrappers_.push_back(std::nullopt);
+  wrapped_values_.push_back(std::nullopt);
   return id;
 }
 
@@ -130,6 +144,11 @@ TypeId SemanticModel::get_nullable_type(TypeId underlying_type) {
 
 void SemanticModel::add_type_alias(std::string name, TypeId type) {
   type_names_.push_back(TypeName{std::move(name), type});
+}
+
+void SemanticModel::bind_value_wrapper(TypeId value_type, TypeId wrapper_type) {
+  value_wrappers_.at(value_type.value) = wrapper_type;
+  wrapped_values_.at(wrapper_type.value) = value_type;
 }
 
 void SemanticModel::add_intrinsic(std::string name,
@@ -233,6 +252,10 @@ const FileSemantics& SemanticModel::file(FileId id) const {
 
 FileSemantics& SemanticModel::mutable_file(FileId id) {
   return files_.at(id.value);
+}
+
+SemanticType& SemanticModel::mutable_type(TypeId id) {
+  return types_.at(id.value);
 }
 
 SemanticSymbol& SemanticModel::mutable_symbol(SymbolId id) {

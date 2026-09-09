@@ -133,6 +133,9 @@ struct ImportedTypeDescriptor {
   std::vector<ImportedInterfaceDispatch> interfaces;
   std::string mangled_name;
   bool parent_is_error_root{false};
+  std::optional<std::string> boxed_value_type_identity{};
+  std::uint64_t boxed_value_offset{0};
+  bool uses_value_box_virtuals{false};
 
   friend bool operator==(const ImportedTypeDescriptor&,
                          const ImportedTypeDescriptor&) = default;

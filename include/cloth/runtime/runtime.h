@@ -12,6 +12,56 @@ enum class ClothHeapObjectKind : std::uint64_t {
   kString = 1,
   kArray = 2,
   kError = 3,
+  kValueBox = 4,
+};
+
+enum class ClothValueKind : std::uint64_t {
+  kBool = 0,
+  kChar = 1,
+  kByte = 2,
+  kInt8 = 3,
+  kInt16 = 4,
+  kInt32 = 5,
+  kInt64 = 6,
+  kUint8 = 7,
+  kUint16 = 8,
+  kUint32 = 9,
+  kUint64 = 10,
+  kFloat32 = 11,
+  kFloat64 = 12,
+  kString = 13,
+  kReference = 14,
+  kEnum = 15,
+  kStruct = 16,
+  kNullable = 17,
+};
+
+struct ClothValueLayout;
+
+struct ClothValueFieldLayout {
+  const ClothValueLayout* type;
+  std::uint64_t offset;
+  const char* name;
+  std::uint64_t name_size;
+};
+
+struct ClothEnumCaseLayout {
+  const char* name;
+  std::uint64_t name_size;
+};
+
+// Immutable compiler-emitted metadata for exact value equality, hashing,
+// formatting, and copying. Field offsets are relative to the value payload.
+struct ClothValueLayout {
+  ClothValueKind kind;
+  const char* name;
+  std::uint64_t name_size;
+  std::uint64_t size;
+  std::uint64_t alignment;
+  const ClothValueFieldLayout* fields;
+  std::uint64_t field_count;
+  const ClothEnumCaseLayout* enum_cases;
+  std::uint64_t enum_case_count;
 };
 
 struct ClothInterfaceDispatch {
@@ -34,6 +84,8 @@ struct ClothTypeDescriptor {
   std::uint64_t virtual_function_count;
   const ClothInterfaceDispatch* interfaces;
   std::uint64_t interface_count;
+  const ClothValueLayout* boxed_value_layout;
+  std::uint64_t boxed_value_offset;
 };
 
 // One frame in the per-thread precise-root stack. Roots point to pointer-sized
@@ -90,6 +142,7 @@ inline constexpr std::uint8_t kClothParseFloat64 = 12;
 
 extern "C" {
 
+extern const ClothTypeDescriptor cloth_rt_object_type;
 extern const ClothTypeDescriptor cloth_rt_error_type;
 extern const ClothTypeDescriptor cloth_rt_division_by_zero_type;
 
@@ -127,6 +180,22 @@ void cloth_rt_gc_collect() noexcept;
     const void* value, std::int32_t* byte_offset,
     std::uint32_t* scalar) noexcept;
 [[nodiscard]] void* cloth_rt_object_type_name(const void* value) noexcept;
+[[nodiscard]] bool cloth_rt_object_equals(const void* value,
+                                          const void* other) noexcept;
+[[nodiscard]] std::uint64_t cloth_rt_object_hash_code(
+    const void* value) noexcept;
+[[nodiscard]] void* cloth_rt_object_to_string(const void* value) noexcept;
+[[nodiscard]] void* cloth_rt_box_value(const ClothTypeDescriptor* type,
+                                       const ClothValueLayout* value_layout,
+                                       const void* value) noexcept;
+[[nodiscard]] std::uint8_t cloth_rt_try_unbox(
+    const void* value, const ClothTypeDescriptor* expected_type,
+    void* output) noexcept;
+[[nodiscard]] bool cloth_rt_value_box_equals(const void* value,
+                                             const void* other) noexcept;
+[[nodiscard]] std::uint64_t cloth_rt_value_box_hash_code(
+    const void* value) noexcept;
+[[nodiscard]] void* cloth_rt_value_box_to_string(const void* value) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_object_is_kind(const void* value,
                                                    std::uint64_t kind) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_object_is_type(

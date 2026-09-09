@@ -51,6 +51,12 @@ std::vector<MirValueId> fold_operands(const MirInstruction& instruction) {
           std::get_if<MirConvertInstruction>(&instruction.data)) {
     return {conversion->value};
   }
+  if (const auto* box = std::get_if<MirBoxInstruction>(&instruction.data)) {
+    return {box->value};
+  }
+  if (const auto* unbox = std::get_if<MirUnboxInstruction>(&instruction.data)) {
+    return {unbox->value};
+  }
   if (const auto* phi = std::get_if<MirPhiInstruction>(&instruction.data)) {
     std::vector<MirValueId> operands;
     operands.reserve(phi->incoming.size());
@@ -680,6 +686,11 @@ void remap_instruction(MirInstruction& instruction,
   } else if (auto* conversion =
                  std::get_if<MirConvertInstruction>(&instruction.data)) {
     remap_value(conversion->value, aliases, values);
+  } else if (auto* box = std::get_if<MirBoxInstruction>(&instruction.data)) {
+    remap_value(box->value, aliases, values);
+  } else if (auto* unbox =
+                 std::get_if<MirUnboxInstruction>(&instruction.data)) {
+    remap_value(unbox->value, aliases, values);
   } else if (auto* test =
                  std::get_if<MirIsNonNullInstruction>(&instruction.data)) {
     remap_value(test->value, aliases, values);

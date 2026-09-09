@@ -79,8 +79,8 @@ them to scalars. Printing uses module-private, bounds-checked case-name tables
 and traps on invalid tags. No enum heap descriptor or new runtime ABI is added.
 
 Source-free package consumers retain every case and static enum constant.
-The current package contract is [artifact format 7](artifact_schema_v7.md),
-compiler ABI 6, and runtime ABI 10; older artifacts must be rebuilt. A non-null
+The current package contract is [artifact format 8](artifact_schema_v8.md),
+compiler ABI 7, and runtime ABI 11; older artifacts must be rebuilt. A non-null
 enum retains its four-byte representation; its nullable wrapper is aggregate.
 Shuttle's process
 protocol remains version 2.

@@ -146,7 +146,7 @@ internal for private constructors. Base chaining calls that entry on the same
 object, preventing a second allocation and preserving the most-derived
 descriptor throughout construction. Both entries root `self` for the complete
 initialization sequence. Both entries use
-[compiler-ABI-6 canonical identities](canonical_identity.md).
+[compiler-ABI-7 canonical identities](canonical_identity.md).
 
 ## Inherited member lookup
 

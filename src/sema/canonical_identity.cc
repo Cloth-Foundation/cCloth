@@ -12,7 +12,8 @@ namespace cloth {
 std::string canonical_type_identity(TypeId type, const SemanticModel& semantics,
                                     TypeIdentityMode mode) {
   const SemanticType& value = semantics.type(type);
-  if (value.kind == TypeKind::kFileClass ||
+  if ((value.kind == TypeKind::kObject && value.file) ||
+      value.kind == TypeKind::kFileClass ||
       (value.kind == TypeKind::kErrorClass && value.file) ||
       value.kind == TypeKind::kInterface || value.kind == TypeKind::kEnum ||
       value.kind == TypeKind::kStruct) {
