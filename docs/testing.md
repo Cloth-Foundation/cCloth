@@ -1,5 +1,113 @@
 # Cloth testing and diagnostic builds
 
+## Stage 45.4 self-hosted syntax-tree exit audit
+
+Completed on Windows on 2026-09-09. `VerifiedSyntaxTree` is now the required
+publication wrapper for a complete self-hosted syntax root. Its factory runs a
+whole-tree verifier over the sealed storage and checks file identity, exact
+source ownership, nested half-open ranges, nonempty valid spellings, import and
+type shapes, validity propagation, typed-handle ownership, declaration and
+switch structure, and expression/statement kind-to-payload agreement. A
+visited ordinal table handles shared arena nodes without changing storage or
+handle identity.
+
+Ten subprocess fixtures preserve exact internal failures for an out-of-parent
+range, foreign expression, statement, and block handles, mismatched expression,
+statement, and block payloads, an invalid child beneath a valid parent, a span
+backed by another source object, and nullable-element syntax on a non-array
+type. A 256-tree allocation stress check repeatedly verifies and retains the
+current complete graph while prior graphs become unreachable. The 46 canonical
+tree records agree across direct, serial Shuttle, repeated serial, and parallel
+Shuttle executables. Native and wasm32 builds, warm reuse, failed-output
+preservation, and lexer parity pass across 511 inputs.
+
+The development configuration passes all **355** CTests: 84 unit and 271
+integration entries. During the parallel sanitizer run, an unrelated untracked
+`std/src/lang/Object.co` appeared and was read while it was still being written;
+352 unaffected entries passed, while the three standard-library-consuming
+entries reported changing parse errors. The file was preserved. Those exact
+three gates were rerun against the standard-library submodule's clean tracked
+snapshot: bootstrap parity passed, all 38 Shuttle toolchain tests passed, and
+all 37 Shuttle native tests passed under the sanitizer compiler.
+
+Shuttle's 51 ordinary Rust tests, Rust 1.85 checking, warning-denied Clippy,
+Rust and C++ formatting, TypeScript compilation, and all 24 editor tests against
+both development and sanitizer compilers pass. All 142 self-hosted source and
+fixture files meet whitespace and 100-column rules, all 382 local Markdown
+targets across 124 files resolve, and repository whitespace checks pass.
+
+No parser grammar, user syntax, standard-library or runtime API, package
+artifact, protocol, receipt, manifest, cache, or editor behavior changed.
+Compatibility remains artifact/compiler/runtime **7/6/10**, schemas
+**2/1/1/1**, and `cloth` v0.4.0. **Stage 45 is complete.**
+
+## Stage 45.3 self-hosted syntax tree
+
+Completed on Windows on 2026-09-09. The self-hosted compiler now owns a
+grammar-neutral abstract syntax tree over the managed storage introduced in
+45.2. The tree includes the source root, unresolved and source-backed type
+syntax, imports and aliases, enum cases, ordered declarations, blocks, all 24
+expression forms, all 12 statement forms, and explicit invalid expression and
+statement nodes. A direct declaration sequence preserves source order without
+reproducing the C++ oracle's parallel field/function/constructor vectors.
+
+Bootstrap checks construct every node kind and inspect representative payloads,
+nullable children, modifiers, ranges, source spans, block contents, and direct
+declaration order. A temporary adapter emits 46 canonical tree records covering
+the root, two imports, two enum cases, three declarations, 24 expressions, 12
+statements, and two blocks. The cross-repository audit requires exact record
+shape and repeat-run determinism while retaining direct and Shuttle x86-64 and
+wasm32 builds, serial/parallel and warm-reuse checks, failure-output
+preservation, and lexer parity across 503 inputs.
+
+Development and ASan/UBSan configurations each pass all **355** CTests: 84
+unit and 271 integration entries. Shuttle's 51 ordinary Rust tests, Rust 1.85
+checking, warning-denied Clippy, Rust and C++ format checks, TypeScript
+compilation, and all 24 editor tests pass against both compilers. All 134
+self-hosted source and fixture files meet whitespace and 100-column rules, all
+382 local Markdown targets across 124 files resolve, and repository whitespace
+checks pass.
+
+No parser grammar, user syntax, standard-library or runtime API, package
+artifact, protocol, receipt, manifest, cache, or editor behavior changed.
+Malformed whole-graph rejection and GC reachability remain explicit 45.4 exit-
+audit work. Compatibility remains artifact/compiler/runtime **7/6/10**,
+schemas **2/1/1/1**, and `cloth` v0.4.0. **Stage 45.3 is complete.**
+
+## Stage 45.2 self-hosted syntax storage
+
+Completed on Windows on 2026-09-08. The self-hosted compiler now owns one
+managed heterogeneous syntax arena with 64-node pages, stable monotonic
+ordinals, and distinct expression, statement, and block handle types. Handles
+resolve directly through a checked owner/page/slot tuple. Specialized
+expression and statement builders use segmented construction pages, reject
+foreign owners, finish once, and copy into exact-sized read-only sequences.
+Only node-family interfaces are present; concrete syntax kinds and parser
+grammar remain deferred to their approved checkpoints.
+
+Bootstrap checks cover empty storage, the 64/65 node and child boundaries,
+mixed node families, foreign owners, stable order and ordinals, empty child
+sequences, sealing, and post-seal reads. Four subprocess checks preserve the
+terminal `StateError` behavior for append after sealing, foreign resolution,
+mixed-owner child construction, and child-index bounds. The cross-repository
+audit builds the real `F:\Cloth` compiler twice for x86-64 and wasm32, exercises
+serial, parallel, and warm Shuttle builds, checks byte determinism and failed-
+output preservation, runs the native storage checks, and retains lexer parity
+across 425 inputs.
+
+Development and ASan/UBSan configurations each pass all **355** CTests: 84
+unit and 271 integration entries. Shuttle's 51 ordinary Rust tests, Rust 1.85
+checking, warning-denied Clippy, Rust and C++ format checks, TypeScript
+compilation, and all 24 editor tests pass against both compilers. All 56
+self-hosted source and fixture files meet whitespace and 100-column rules, all
+382 local Markdown targets across 124 files resolve, and repository whitespace
+checks pass.
+
+No user syntax, standard-library or runtime API, package artifact, protocol,
+receipt, manifest, cache, or editor behavior changed. Compatibility remains
+artifact/compiler/runtime **7/6/10**, schemas **2/1/1/1**, and `cloth` v0.4.0.
+**Stage 45.2 is complete.**
+
 ## Stage 44.4 self-hosted lexer parity and exit audit
 
 Completed on Windows on 2026-09-08. A test-only C++ oracle and the bootstrap's

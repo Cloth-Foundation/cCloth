@@ -250,6 +250,125 @@ if(NOT native_result EQUAL 0 OR
         "stdout: ${native_output}\nstderr: ${native_error}")
 endif()
 
+function(require_storage_failure mode expected)
+    execute_process(
+        COMMAND "${serial_executable}" --syntax-storage-failure "${mode}"
+        WORKING_DIRECTORY "${serial_source}"
+        RESULT_VARIABLE failure_result
+        OUTPUT_VARIABLE failure_output
+        ERROR_VARIABLE failure_error
+        ENCODING UTF-8
+    )
+    if(failure_result EQUAL 0 OR NOT failure_output STREQUAL "" OR
+       NOT failure_error MATCHES "${expected}")
+        message(FATAL_ERROR
+            "syntax storage failure '${mode}' was not preserved\n"
+            "status: ${failure_result}\nstdout: ${failure_output}\n"
+            "stderr: ${failure_error}")
+    endif()
+endfunction()
+
+require_storage_failure("sealed-append" "syntax storage is sealed")
+require_storage_failure(
+    "foreign-read" "expression handle does not belong to syntax storage")
+require_storage_failure(
+    "mixed-children" "syntax child builder rejects this handle")
+require_storage_failure(
+    "child-bounds" "syntax child sequence index is out of bounds")
+
+function(require_tree_failure mode expected)
+    execute_process(
+        COMMAND "${serial_executable}" --syntax-tree-failure "${mode}"
+        WORKING_DIRECTORY "${serial_source}"
+        RESULT_VARIABLE failure_result
+        OUTPUT_VARIABLE failure_output
+        ERROR_VARIABLE failure_error
+        ENCODING UTF-8
+    )
+    if(failure_result EQUAL 0 OR NOT failure_output STREQUAL "" OR
+       NOT failure_error MATCHES "${expected}")
+        message(FATAL_ERROR
+            "syntax tree failure '${mode}' was not preserved\n"
+            "status: ${failure_result}\nstdout: ${failure_output}\n"
+            "stderr: ${failure_error}")
+    endif()
+endfunction()
+
+require_tree_failure("range" "syntax range is outside its parent")
+require_tree_failure(
+    "foreign-child" "syntax tree contains a foreign expression handle")
+require_tree_failure(
+    "foreign-statement" "syntax tree contains a foreign statement handle")
+require_tree_failure(
+    "foreign-block" "syntax tree contains a foreign block handle")
+require_tree_failure(
+    "kind-mismatch" "expression kind does not match its node type")
+require_tree_failure(
+    "statement-kind" "statement kind does not match its node type")
+require_tree_failure(
+    "block-kind" "block handle does not contain a block node")
+require_tree_failure(
+    "validity" "valid syntax node contains an invalid child")
+require_tree_failure(
+    "span-source" "syntax span belongs to another source")
+require_tree_failure(
+    "type-flags" "only array syntax may have nullable elements")
+
+execute_process(
+    COMMAND "${serial_executable}" --syntax-tree-gc-check
+    WORKING_DIRECTORY "${serial_source}"
+    RESULT_VARIABLE gc_result
+    OUTPUT_VARIABLE gc_output
+    ERROR_VARIABLE gc_error
+    ENCODING UTF-8
+)
+if(NOT gc_result EQUAL 0 OR NOT gc_output STREQUAL "" OR
+   NOT gc_error STREQUAL "")
+    message(FATAL_ERROR
+        "syntax tree GC check failed with status ${gc_result}\n"
+        "stdout: ${gc_output}\nstderr: ${gc_error}")
+endif()
+
+function(read_tree_records output_name executable)
+    execute_process(
+        COMMAND "${executable}" --syntax-tree-records
+        WORKING_DIRECTORY "${serial_source}"
+        RESULT_VARIABLE record_result
+        OUTPUT_VARIABLE records
+        ERROR_VARIABLE record_error
+        ENCODING UTF-8
+    )
+    string(REPLACE "\r\n" "\n" records "${records}")
+    if(NOT record_result EQUAL 0 OR NOT record_error STREQUAL "" OR
+       records STREQUAL "")
+        message(FATAL_ERROR
+            "syntax tree record adapter failed with status ${record_result}\n"
+            "stdout: ${records}\nstderr: ${record_error}")
+    endif()
+    string(REGEX MATCHALL "[^\n]+" record_lines "${records}")
+    list(LENGTH record_lines record_count)
+    if(NOT record_count EQUAL 46 OR
+       NOT records MATCHES "^F\\|0\\|1\\|0\\|0\\|64\\|Fixture" OR
+       NOT records MATCHES "X\\|23\\|23\\|1\\|0\\|64\\|7" OR
+       NOT records MATCHES "B\\|37\\|0\\|0\\|64\\|12")
+        message(FATAL_ERROR
+            "syntax tree records have an unexpected shape (${record_count})\n"
+            "${records}")
+    endif()
+    set(${output_name} "${records}" PARENT_SCOPE)
+endfunction()
+
+read_tree_records(direct_tree_records "${direct_executable}")
+read_tree_records(first_serial_tree_records "${serial_executable}")
+read_tree_records(second_serial_tree_records "${serial_executable}")
+read_tree_records(parallel_tree_records "${parallel_executable}")
+if(NOT direct_tree_records STREQUAL first_serial_tree_records OR
+   NOT first_serial_tree_records STREQUAL second_serial_tree_records OR
+   NOT first_serial_tree_records STREQUAL parallel_tree_records)
+    message(FATAL_ERROR
+        "syntax tree records differ across direct, serial, or parallel builds")
+endif()
+
 set(generated_directory "${CLOTH_WORK_DIRECTORY}/generated")
 run_required("generate bounded lexer corpus" "${CLOTH_WORK_DIRECTORY}"
     "${CLOTH_ORACLE}" generate "${generated_directory}")

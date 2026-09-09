@@ -1315,6 +1315,54 @@ class override validation. Existing ABI and artifact versions are unchanged.
   documentation-link, and repository gates pass. Stage 44 is complete with no
   compatibility change.
 
+### Stage 45: Self-hosted parser storage and syntax tree foundations
+
+- [x] **45.1 — Contract.** Freeze the bootstrap boundary, abstract syntax-tree
+  model, declaration/definition pass split, append-only segmented storage,
+  stable typed handles, immutable child order, GC lifetime, recovery,
+  organization, compatibility, verification, and non-goals.
+
+  Approved and completed 2026-09-08. New compiler implementation now belongs
+  in Cloth; the C++ parser remains the temporary observable-behavior oracle,
+  with its representation explicitly outside the contract. Stage 45 retains
+  compatibility at 7/6/10 and 2/1/1/1 with `cloth` v0.4.0. See the
+  [contract](docs/proposals/stage_45_self_hosted_parser_foundations.md).
+- [x] **45.2 — Syntax storage.** Implement typed expression, statement, and
+  block handles; append-only segmented arenas; specialized child builders and
+  immutable sequences; publication; checked access; and focused storage tests
+  without adding parser grammar.
+
+  Completed 2026-09-08. One managed heterogeneous arena uses fixed 64-node
+  pages and constant-time owner/page/slot resolution through distinct managed
+  handle types. Specialized expression and statement builders reject foreign
+  owners and publish exact immutable sequences. Bootstrap checks cover both
+  page boundaries, stable order, families, owners, sealing, and preserved
+  internal failures through native, wasm32, direct, and Shuttle builds.
+- [x] **45.3 — Syntax tree.** Implement the source root, unresolved type
+  syntax, imports, declarations, blocks, statements, expressions, explicit
+  invalid nodes, source-backed spellings, and deterministic tree records.
+
+  Completed 2026-09-09. The managed tree now covers the file root, unresolved
+  types, imports and aliases, enum cases, fields, functions, constructors,
+  blocks, all 24 expression forms, and all 12 statement forms. Direct
+  declarations preserve source order without reproducing the C++ oracle's
+  parallel storage layout. A temporary 46-record adapter exercises every node
+  family and is checked for exact shape and repeat-run determinism. Parser
+  grammar remains deferred until Stage 45 exits.
+- [x] **45.4 — Exit audit.** Close storage and tree invariants, ranges,
+  malformed graphs, GC reachability, determinism, native execution, both
+  targets, Shuttle builds, sanitizers, documentation, and repository gates.
+
+  Completed 2026-09-09. `VerifiedSyntaxTree` now gates publication through a
+  whole-tree verifier that checks source identity, nested half-open ranges,
+  source spans, validity propagation, handle ownership, kind/payload agreement,
+  type flags, imports, switch arms, declarations, statements, expressions, and
+  blocks. Ten deterministic malformed-graph subprocess cases and a 256-tree GC
+  stress check pass. Direct, serial Shuttle, repeated serial, and parallel
+  Shuttle builds emit identical tree records; native, wasm32, sanitizer,
+  editor, format, documentation, and repository gates pass. Stage 45 is
+  complete without a compatibility change.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an

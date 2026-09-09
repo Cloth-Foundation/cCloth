@@ -80,13 +80,16 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 40 | Checked Unicode-scalar string slicing |
 | 41 | Uniform nullability for primitive, enum, struct, and reference values |
 | 42 | Runtime-sized construction for fixed arrays and bootstrap token storage |
+| 43 | Portable file-byte input and bootstrap source representation |
+| 44 | Self-hosted lexer parity with the C++ bootstrap oracle |
+| 45 | Managed self-hosted parser storage and verified syntax-tree foundations |
 
-Stage 42 is complete following its separately authorized
-[42.4 exit audit](docs/testing.md#stage-424-runtime-sized-array-exit-audit) on
-2026-09-08. Runtime-sized fixed arrays and the first bootstrap token buffer are
-the current native language/runtime/toolchain baseline, and Stage 31 is the
-current completed optimizer baseline. Stages 35
-and 36 are complete, including their standard-library and prelude exit audits.
+Stage 45 is complete following its separately authorized
+[45.4 exit audit](docs/testing.md#stage-454-self-hosted-syntax-tree-exit-audit)
+on 2026-09-09. Verified managed syntax trees are the current self-hosted
+compiler baseline, and Stage 31 is the current completed optimizer baseline.
+Stages 35 and 36 are complete, including their standard-library and prelude
+exit audits.
 Coordinated toolchain Stage 22 and separate-compilation Stage 23 are complete,
 including their cross-tool exit audits. Build-responsiveness Stage 24 is also
 complete.
@@ -1416,14 +1419,74 @@ Non-goals include a parser or AST, Unicode identifiers, incremental lexing,
 editor services, a language server, general collections, streaming input,
 public token APIs, and unrelated language or toolchain work.
 
-## Beyond Stage 44
+## Stage 45: Self-hosted parser storage and syntax tree foundations
 
-Stage 44 is complete. The remaining backlog does not acquire priority or enter
+Status: **complete — 45.4 exit audit completed 2026-09-09**
+
+The [approved contract](docs/proposals/stage_45_self_hosted_parser_foundations.md)
+establishes the managed, deterministic syntax representation required by the
+self-hosted parser at `F:\Cloth` and formalizes the C++ compiler's bootstrap-
+oracle boundary.
+
+Objective: provide checked append-only syntax storage, stable typed handles,
+immutable ordered children, and a complete AST shape while preserving exactly
+two grammatical parser passes and a GC-owned parse-result lifetime.
+
+Prerequisite: Stage 44.
+
+Deliverables:
+
+1. **45.1 — Contract (complete).** Freeze the bootstrap boundary, abstract tree,
+   declaration/definition pass split, segmented storage, handle and lifetime
+   invariants, recovery, organization, compatibility, verification, and
+   non-goals.
+2. **45.2 — Syntax storage (complete).** Implement typed handles, segmented
+   arenas, child builders and immutable sequences, publication, checked access,
+   and focused storage coverage without adding grammar.
+3. **45.3 — Syntax tree (complete).** Implement root, type, import,
+   declaration, block, statement, expression, and invalid-node representations
+   plus deterministic tree records.
+4. **45.4 — Exit audit (complete).** Close storage, tree, source, malformed-
+   state, GC, determinism, native, both-target, Shuttle, sanitizer,
+   documentation, and repository gates.
+
+Compatibility remains artifact/compiler/runtime 7/6/10, schemas 2/1/1/1, and
+`cloth` v0.4.0. Stage 45 changes no language syntax, standard-library API,
+runtime ABI, package artifact, or Shuttle protocol.
+
+Non-goals include parser grammar, semantic analysis, HIR/MIR/backend work,
+lossless or incremental trees, interning, general collections, and public
+compiler APIs.
+
+Checkpoint 45.2 provides one managed 64-slot paged arena, typed expression,
+statement, and block handles with constant-time checked resolution, and
+specialized builders that freeze into exact ordered sequences. Boundary,
+owner, family, sealing, and failure propagation checks run through the real
+bootstrap project without changing language or compatibility surfaces.
+
+Checkpoint 45.3 adds the complete grammar-neutral AST shape over that storage:
+the source root, unresolved types, imports and aliases, enum cases, directly
+ordered declarations, blocks, all 24 expression forms, all 12 statement forms,
+and explicit invalid nodes. Names and arbitrary spellings remain source-backed.
+A temporary 46-record adapter covers every family and produces identical output
+across repeated native runs; declaration and definition grammar remain deferred.
+
+Checkpoint 45.4 adds the mandatory verified-tree publication boundary and
+closes source ownership, nested ranges, child validity, typed-handle ownership,
+kind/payload agreement, type-shape, and switch-shape invariants. Ten exact
+malformed-tree failures and repeated whole-tree allocation stress cover
+rejection and GC reachability. Tree records agree across direct, serial,
+repeated, and parallel builds; the complete native, wasm32, Shuttle, sanitizer,
+editor, formatting, documentation, and repository gates pass.
+
+## Beyond Stage 45
+
+Stage 45 is complete. The remaining backlog does not acquire priority or enter
 the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 
-- self-hosted parser and AST representation after lexer parity; and
+- self-hosted declaration and definition grammar after Stage 45; and
 - immutable per-case enum metadata, after its constant-data prerequisites.
 
 These candidates follow completion of their prerequisites and approved stages.
