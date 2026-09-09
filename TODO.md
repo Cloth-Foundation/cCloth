@@ -79,6 +79,10 @@ Stage 41 is complete following its separately authorized 41.4 exit audit on
 2026-09-07.
 Stage 42 is complete following its separately authorized 42.4 runtime-sized
 fixed-array exit audit on 2026-09-08.
+Stage 43 is complete following its separately authorized 43.4 exit audit on
+2026-09-08.
+Stage 44 is complete following its separately authorized 44.4 differential
+parity and exit audit on 2026-09-08.
 
 ## Scheduled work
 
@@ -1204,6 +1208,113 @@ class override validation. Existing ABI and artifact versions are unchanged.
   documentation, formatting, link, and repository gates pass. Compatibility
   remains 7/6/9 and 2/1/1/1 with `cloth` v0.3.0.
 
+### Stage 43: Portable file bytes and source representation
+
+- [x] **43.1 — Contract.** Freeze `cloth.io::File.ReadBytes`, standard-library,
+  compiler, runtime, Shuttle, and bootstrap ownership; native path behavior;
+  exact binary results; the 64 MiB bound; stable `IoError` failures; private
+  bridge and source representation; compatibility; diagnostics; verification;
+  and non-goals.
+
+  Approved and completed 2026-09-08. This documentation-only checkpoint keeps
+  compatibility at 7/6/9 and 2/1/1/1 with `cloth` v0.3.0. At this checkpoint,
+  runtime ABI 10 and `cloth` v0.4.0 were reserved for 43.2 while artifact
+  format 7 and compiler ABI 6 remained fixed. See the
+  [contract](docs/proposals/stage_43_file_bytes_and_source.md).
+- [x] **43.2 — File foundation.** Implement `cloth_rt_file_read_bytes`, the
+  canonical-library-only compiler bridge, `std/src/io/File.co`, stable failure
+  mapping, independent runtime and standard-library coverage, the runtime ABI
+  10 transition, and `cloth` v0.4.0 publication boundary.
+
+  Completed 2026-09-08. Exact binary and empty reads, independent arrays, the
+  64 MiB boundary, stable failures, malformed runtime state, canonical bridge
+  isolation, both LLVM targets, native and source-free execution, Shuttle
+  input-independent reuse, and failed-output preservation pass. Active
+  compatibility is 7/6/10 and 2/1/1/1 with `cloth` v0.4.0.
+- [x] **43.3 — Bootstrap integration.** Add
+  `F:\Cloth\src\frontend\source\SourceFile.co`, load an actual `.co` file,
+  integrate checked byte access and file-derived token-buffer sizing, and
+  verify direct, package, source-free, native, both-target, Shuttle, reuse,
+  invalidation, and failure-preservation behavior.
+
+  Completed 2026-09-08. The bootstrap-owned immutable source object loads
+  `src/Main.co` once, retains its original path and exact bytes, exposes checked
+  byte access, and sizes the existing token buffer from its byte length. Direct
+  x86-64/wasm32 checks, development and sanitizer native runs, source-free
+  linking, exact warm reuse, runtime failure, and failed-build output
+  preservation pass without a compatibility change.
+- [x] **43.4 — Exit audit.** Complete native path, exact-byte, size/resource,
+  handle cleanup, typed failure, GC, malformed-state, compatibility,
+  determinism, bootstrap, Rust/MSRV, editor, documentation, formatting, link,
+  sanitizer, and repository quality matrices.
+
+  Completed 2026-09-08. Coverage now fixes empty, relative, absolute, Unicode,
+  space-containing, dot-component, native-separator, symlink-capable, missing,
+  denied-capable, directory, non-regular, and U+0000 paths; exact binary,
+  empty, chunk-boundary, 64 MiB, and oversized results; independent arrays,
+  repeated GC-stressed reads, handle cleanup, typed call failures, malformed
+  HIR/MIR, and defensive runtime-status lowering. Development and sanitizer
+  builds each pass all 354 CTests. Both targets, package/source-free,
+  determinism, failure preservation, the real bootstrap, 51 ordinary Rust
+  tests, Rust 1.85, Clippy, formatting, 24 compiler-backed and 16 standalone
+  editor checks, and all documentation and repository gates pass.
+
+### Stage 44: Self-hosted lexer parity
+
+- [x] **44.1 — Contract and source architecture.** Freeze the C++ lexer as the
+  temporary oracle; exact token, byte-span, source-range, diagnostic and
+  recovery parity; source-backed tokens; bounded two-pass exact allocation;
+  component boundaries; compatibility; verification; and non-goals.
+
+  Approved and completed 2026-09-08. This non-semantic checkpoint keeps
+  compatibility at 7/6/10 and 2/1/1/1 with `cloth` v0.4.0. The bootstrap source
+  map, style rules, mechanical formatting, Shuttle check/native run, warm
+  package reuse, and documentation links pass; implementation waits for
+  separate 44.2 authorization. See the
+  [contract](docs/proposals/stage_44_self_hosted_lexer.md).
+- [x] **44.2 — Scanner foundation.** Implement source spans and cursors,
+  exact-sized result buffers, byte classification, trivia, identifiers,
+  keywords, punctuation, operators, EOF, focused diagnostics, and native
+  bootstrap execution.
+
+  Completed 2026-09-08. The Cloth bootstrap now owns immutable source
+  locations/spans, a CR/LF-aware cursor, source-backed tokens, structured
+  foundation diagnostics, exact-sized two-pass token and diagnostic buffers,
+  byte classification, collision-checked keyword classification, trivia,
+  longest-match punctuation/operators, unexpected-byte recovery, and EOF.
+  Empty, canonical-token, malformed-comment, LF, and tracked CRLF source checks
+  pass natively with development and sanitizer compilers and check on wasm32.
+  Compatibility remains unchanged.
+- [x] **44.3 — Literal completion.** Implement numeric spelling, string,
+  character, UTF-8, escape, structured diagnostic, and recovery parity without
+  parser coupling.
+
+  Completed 2026-09-08. `NumberScanner` now consumes decimal, radix, separated,
+  scientific, and suffixed candidates atomically and preserves the C++ oracle's
+  token kind, diagnostic category, and recovery boundary. `TextScanner` covers
+  string and character termination, simple and Unicode escapes, scalar counts,
+  canonical UTF-8 validation, and malformed recovery. The exact-sized
+  measure/emit path is unchanged. Focused valid, malformed, unterminated,
+  invalid-byte, and tracked-source checks pass natively with development and
+  sanitizer compilers, check on both targets, and retain exact warm reuse. The
+  complete 354-test development matrix passes. Compatibility remains unchanged.
+- [x] **44.4 — Differential parity and exit audit.** Compare canonical token
+  and diagnostic records across fixed and generated bytes and real bootstrap
+  sources; close both-target, native, Shuttle, determinism, sanitizer,
+  formatting, documentation, and repository gates.
+
+  Completed 2026-09-08. A test-only C++ oracle and bootstrap record adapter
+  compare category, byte span, source range, and exact covered bytes across all
+  36 bootstrap `.co` files, 17 fixed lexer cases, every single byte value, and
+  96 bounded deterministic byte sequences: 405 inputs total. Repeated direct
+  x86-64 executables and wasm32 LLVM outputs are stable; relocated one-job and
+  four-job Shuttle executables match; warm builds reuse exact `cloth` and
+  `clothc` artifacts without changing output; invalid source preserves the last
+  executable; and native bootstrap checks pass. Development and sanitizer
+  configurations each pass all 355 CTests. Rust, editor, formatting,
+  documentation-link, and repository gates pass. Stage 44 is complete with no
+  compatibility change.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1255,6 +1366,10 @@ active stage without first updating `ROADMAP.md`.
 
 ### Nullability
 
+- Fix nullable-enum flow narrowing when a narrowed value is passed as a call
+  argument. The current bootstrap reproducer reaches an internal HIR verifier
+  error because the value loses its nominal enum identity; Stage 44.2 uses an
+  explicit scan-result struct until that independently scheduled repair lands.
 - Safe indexing, safe slicing, and safe callable meta operations remain
   deferred beyond Stage 41. They require independent syntax, evaluation,
   failure, and API contracts.
@@ -1274,13 +1389,7 @@ active stage without first updating `ROADMAP.md`.
 
 ### Bootstrap compiler
 
-- Design portable, bounded source-file byte input and source representation
-  after Stage 42. The contract must own path behavior, encoding, size limits,
-  deterministic I/O failures, GC, and standard-library/runtime boundaries.
-- Implement lexer parity in `F:\Cloth` only after runtime-sized storage and
-  source input are complete. Preserve current token kinds, source ranges,
-  diagnostics, bounded-token behavior, determinism, and differential tests
-  against `clothc`.
+- Self-hosted lexer parity is scheduled as Stage 44 above.
 - Define self-hosted parser and AST storage only after lexer parity. Preserve
   the two-pass architecture and implicit file-class identity without making
   the bootstrap source or its data structures part of the compiler ABI.

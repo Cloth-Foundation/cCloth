@@ -1,0 +1,11 @@
+import cloth.io::File;
+
+static func Main(string[] arguments) throws IoError {
+  byte[] contents = File.ReadBytes(arguments[0]);
+  println(contents::length);
+  if (contents::length > 0) {
+    println(contents[0]);
+    println(contents[1]);
+    println(contents[contents::length - 1]);
+  }
+}

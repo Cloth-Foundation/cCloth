@@ -1,5 +1,277 @@
 # Cloth testing and diagnostic builds
 
+## Stage 44.4 self-hosted lexer parity and exit audit
+
+Completed on Windows on 2026-09-08. A test-only C++ oracle and the bootstrap's
+temporary record adapter now serialize the same canonical token and diagnostic
+records. Every record carries its numeric category, byte span, begin and end
+offset/line/column, and exact covered bytes. A mismatch stops at the first
+record and reports its input path and byte offset; presentation text, compiler
+CLI output, artifacts, and public protocols are not comparison surfaces.
+
+The differential corpus contains all 36 `.co` files in `F:\Cloth`, 17 fixed
+cases derived from the C++ lexer domains, all 256 one-byte inputs, and 96
+bounded deterministic byte sequences: 405 inputs total. It covers empty and
+trivia-only files, every keyword and operator family, CR/LF/CRLF accounting,
+comments, numeric candidates, text and Unicode validation, every unexpected
+byte, malformed recovery, and arbitrary bounded source bytes.
+
+The audit builds the bootstrap twice through direct protocol-v1 compiler
+invocations and requires stable x86-64 executables and wasm32 LLVM output. It
+also copies the real project into independent one-job and four-job Shuttle
+build roots, requires byte-identical native executables, verifies exact warm
+reuse of `cloth` v0.4.0 and `clothc` v0.0.1 without changing the executable,
+checks wasm32, runs the native bootstrap self-check, and proves invalid source
+cannot replace the last completed executable.
+
+Development and ASan/UBSan configurations each pass all **355** CTests: 84
+unit and 271 integration entries, including the new parity audit. All 51
+ordinary Rust tests, Rust 1.85 checking, warning-denied Clippy, Rust and C++
+format checks, TypeScript compilation, and all 24 editor grammar/compiler tests
+per compiler pass. All 36 bootstrap source and fixture files meet whitespace
+and 100-column rules, all 378 local Markdown targets resolve, and repository
+diff checks are clean.
+
+No compiler, parser, runtime, standard-library, Shuttle, editor, user syntax,
+artifact, protocol, receipt, manifest, schema, or cache behavior changed. The
+new C++ executable is a test adapter, and the bootstrap's record path remains
+temporary acceptance infrastructure. Compatibility remains artifact/compiler/
+runtime **7/6/10**, schemas **2/1/1/1**, and `cloth` v0.4.0. **Stage 44 is
+complete.** Parser and AST design remain unscheduled pending a separately
+approved stage.
+
+Configure the opt-in cross-repository test with both checkout paths, then run
+its single CTest entry:
+
+```sh
+cmake --preset dev \
+  -DCLOTH_SELF_HOST_SOURCE_DIR=<path-to-Cloth> \
+  -DCLOTH_SELF_HOST_SHUTTLE_EXECUTABLE=<path-to-shuttle>
+ctest --test-dir build/dev -R '^cloth_self_host_lexer_parity$' \
+  --output-on-failure
+```
+
+## Stage 44.3 self-hosted literal completion
+
+Completed on Windows on 2026-09-08. `NumberScanner` consumes the same atomic
+numeric-shaped candidates as the C++ oracle and classifies decimal, binary,
+octal, hexadecimal, separated, scientific, and suffixed forms as integer or
+floating tokens. Structured diagnostics distinguish invalid cores and suffixes,
+missing or invalid base digits and prefixes, invalid separators, missing
+exponent digits, and incompatible integer or floating suffixes.
+
+`TextScanner` retains the oracle's quote, newline, escape, and EOF recovery
+boundaries for strings and characters. It validates all seven simple escapes,
+one-to-six-digit `\u{...}` escapes, Unicode scalar bounds, empty and
+multi-scalar characters, and canonical one-to-four-byte UTF-8 without decoding
+or copying token text. `SourceFile.FromBytes` copies caller bytes before
+publishing source-backed results, preserving source ownership for malformed
+byte tests and future in-memory compiler inputs.
+
+The focused corpus covers valid numeric notation, raw and escaped Unicode,
+malformed numeric atoms, every text diagnostic family reachable through the
+lexer, unterminated recovery at newlines and EOF, invalid leading and truncated
+UTF-8, exact result capacities, source-backed spans, and complete tokenization
+of the real `LexerLiteralCheck.co` source. The two C++ lexer/numeric oracle unit
+groups pass.
+
+The real `F:\Cloth` project checks on x86-64 and wasm32. Development and
+ASan/UBSan native runs print `lexer literals ok`; a warm development run reuses
+both exact package artifacts and reproduces the output. The full development
+matrix passes all **354** CTests: 84 unit and 270 integration tests.
+All 33 bootstrap source and fixture files pass the whitespace and 100-column
+checks, with no unsupported control-flow forms. All 378 local Markdown targets
+resolve, and repository diff checks report no errors.
+
+No C++ compiler, parser, runtime, standard-library production source, Shuttle
+production source, editor, user syntax, artifact, protocol, receipt, manifest,
+toolchain schema, or cache meaning changed. Compatibility remains
+artifact/compiler/runtime **7/6/10**, schemas **2/1/1/1**, and `cloth` v0.4.0.
+Differential parity and the repository exit audit remain separately authorized
+44.4 work.
+
+## Stage 44.2 self-hosted scanner foundation
+
+Completed on Windows on 2026-09-08. The bootstrap now owns immutable
+`SourceLocation`, `SourceRange`, and `SourceSpan` values; a byte-oriented
+`SourceCursor` with exact CR, LF, and CRLF accounting; source-backed tokens;
+structured lexical diagnostics; and exact-sized token and diagnostic buffers.
+One scanner core measures and emits through `LexSink`, and rejects any pass or
+capacity mismatch with `StateError`.
+
+The foundation corpus covers all 56 keywords, three identifier forms, 14
+punctuation forms, 33 longest-match operators, line and block comments,
+unexpected-byte recovery, unterminated block comments, empty input, EOF spans,
+and one-based source coordinates. The 106 non-EOF kinds and final EOF occupy an
+exact 107-entry token buffer. Empty and malformed inputs likewise allocate only
+their measured token and diagnostic counts. A tracked `TokenKind.co` scan
+exercises the checkout's CRLF path on Windows while retaining equal coordinates
+under LF checkout normalization.
+
+The real `F:\Cloth` project checks on x86-64 and wasm32 and prints
+`lexer foundation ok` under development and ASan/UBSan compiler builds. A warm
+development run reuses both `cloth` and `clothc` package artifacts and
+reproduces the output. The complete 354-test development CTest matrix passes,
+including existing invalidation and completed-output preservation coverage.
+Repository gates also pass: all 25 bootstrap source and fixture files satisfy
+the whitespace and 100-column checks; all 378 local Markdown targets resolve;
+and `git diff --check` reports no errors in the compiler, bootstrap, Shuttle,
+standard-library, or user documentation repositories.
+
+No C++ compiler, runtime, standard-library, Shuttle production, editor, or
+user-language behavior changed. Compatibility remains artifact/compiler/runtime
+**7/6/10**, schemas **2/1/1/1**, and `cloth` v0.4.0. At this checkpoint,
+numeric and text literal scanners remained separately authorized 44.3 work.
+
+The implementation also exposed an existing nullable-enum HIR verification
+defect when a flow-narrowed enum value is passed as a call argument. Stage 44.2
+uses an explicit `OperatorScanResult` struct, and the independent compiler fix
+is recorded in `TODO.md` rather than hidden inside this checkpoint.
+
+## Stage 44.1 self-hosted lexer contract
+
+Approved and recorded on Windows on 2026-09-08. The contract freezes the C++23
+lexer as the temporary behavior oracle and defines exact token-kind, byte-span,
+source-range, diagnostic-category, and recovery parity for the Cloth bootstrap.
+It also fixes source-backed token spelling, one-based byte columns, exact-sized
+two-pass result storage, component ownership, manual source navigation, and the
+four Stage 44 checkpoints.
+
+This checkpoint changes contracts, bootstrap maintainer documentation, and
+mechanical Cloth formatting only. No `.co` lexer implementation, C++ compiler
+behavior, public library source, runtime, artifact, protocol, or schema changed.
+Compatibility remains
+artifact/compiler/runtime **7/6/10**, schemas **2/1/1/1**, and `cloth` v0.4.0.
+Scanner implementation and focused native coverage remain separately
+authorized 44.2 work.
+
+The mechanically formatted `F:\Cloth` source passes Shuttle check and native
+execution with the development compiler. Its current LF source reports `962`,
+`105`, `10`, `2`, `src/Main.co`, and `true`; a second run reuses both package
+artifacts and reproduces the output. All 378 local Markdown targets across 123
+compiler, submodule, and bootstrap files resolve, and repository diff checks
+are clean. The focused C++ lexer and numeric-literal oracle tests both pass.
+
+## Stage 43.4 portable file-byte and source exit audit
+
+Completed on Windows on 2026-09-08. Runtime coverage now fixes relative and
+absolute paths, spaces, Unicode scalars, native separators, dot components,
+empty paths, U+0000, missing files, directories, and host-supported symlinks.
+POSIX builds additionally exercise FIFO and permission behavior when the host
+can create it. The read matrix preserves every byte value, embedded zero, BOM,
+invalid UTF-8, and mixed CR/LF bytes; crosses both sides of the 1 MiB native
+read chunk; accepts exactly 67,108,864 bytes; and rejects one byte more.
+
+Every successful call returns fresh storage. Repeated reads survive forced GC,
+and successful and failed calls release their native resources before fixture
+removal. Empty files remain valid. Missing, empty, directory, non-regular, and
+invalid-native-path cases retain stable typed failures with no partial result.
+Post-open short/read failures remain structurally guarded: managed publication
+occurs only after the complete sequential read and final consistency check.
+
+Compiler coverage rejects wrong arity, wrong and nullable path types, uncovered
+`IoError`, noncanonical or malformed library declarations, escaped private
+bridges, and forged file-read HIR/MIR metadata. Both target IR paths verify the
+runtime result/status correspondence and trap unknown or inconsistent states.
+Existing array bounds, allocation, evaluation-order, artifact compatibility,
+source-free, relocation, serial/parallel, reuse, invalidation, deterministic
+diagnostic, and failure-preservation suites close the surrounding invariants.
+
+Development and ASan/UBSan configurations each pass all 354 CTests: 84 unit
+and 270 integration entries, including all 38 compiler-backed and 37 native
+Shuttle cases. Both x86-64 and wasm32 pass before and after LLVM optimization.
+All 51 ordinary Rust tests, Rust 1.85 checking, all-target checking,
+warning-denied Clippy, Rust and C++ formatting, TypeScript compilation, 24
+compiler-backed editor tests, and 16 standalone editor tests with eight
+expected skips pass. All 367 local Markdown targets across 118 files and
+repository whitespace checks pass.
+
+The real `F:\Cloth` project checks on both targets, runs natively under the
+development and sanitizer compilers, loads its actual `src/Main.co`, reports
+`992`, `105`, `10`, `2`, `src/Main.co`, and `true` for the LF checkout, and
+reuses exact warm package artifacts. Compatibility remains
+artifact/compiler/runtime **7/6/10**, schemas **2/1/1/1**, and `cloth` v0.4.0.
+Stage 43 is complete.
+
+## Stage 43.3 bootstrap source integration
+
+Completed on Windows on 2026-09-08. The real `F:\Cloth` bootstrap now owns
+`frontend.source::SourceFile`, an immutable path and byte-array wrapper with a
+private constructor. `Load` calls `File.ReadBytes` once; `GetLength` is
+byte-based, and `GetByte` uses ordinary checked array indexing without exposing
+the backing array or introducing text decoding.
+
+`Main.co` loads its actual `src/Main.co`, observes its byte length and the exact
+first and final bytes 105 and 10, and sizes the existing `TokenBuffer` from that
+length. The checkpoint's LF checkout reports `992`, `105`, `10`, token count
+`2`, path `src/Main.co`, and an EOF check of `true`; a CRLF checkout reports its
+own exact byte length. Running outside the project working directory reports
+the stable `IoError: could not open file` failure.
+
+Direct whole-project checks pass on x86-64 and wasm32. Shuttle checks both
+targets and runs the native bootstrap with both development and ASan/UBSan
+compilers. A direct protocol-v2 build links and runs the bootstrap from
+source-free `cloth` and `clothc` object artifacts. Warm builds reuse both
+packages with stable artifacts and executable output. An isolated invalid
+bootstrap rebuild reuses `cloth`, rejects the affected `clothc` package, does
+not run the stale executable, and preserves all completed outputs.
+
+The unchanged compiler/runtime baseline remains 354 development and 354
+sanitizer CTests, 51 ordinary Rust tests, 24 compiler-backed and 16 standalone
+editor tests, and 367 local Markdown targets across 118 files. Compatibility
+remains artifact/compiler/runtime **7/6/10**, schemas **2/1/1/1**, and `cloth`
+v0.4.0. Stage 43.4 remains separately authorized.
+
+## Stage 43.2 portable file foundation
+
+Completed on Windows on 2026-09-08. `cloth.io::File.ReadBytes` now crosses the
+canonical standard-library declaration, private compiler bridge, verified LLVM,
+and `cloth_rt_file_read_bytes`. The runtime returns exact fresh `byte[]` values,
+accepts empty regular files, rejects inputs over 64 MiB, closes native resources,
+and maps path, open, non-regular, read, and size failures to stable `IoError`
+messages. Application code cannot name or reproduce the trusted bridge.
+
+Runtime coverage verifies every byte value, independent result storage, empty
+files, one byte over the size bound, missing files, directories, embedded NUL,
+null status pointers, null paths, and forged string layouts. Standard-library
+and integration coverage verifies the exact public declaration and effect,
+malformed canonical declarations, stable lowering, relative and absolute paths,
+source-free consumers, x86-64 and wasm32 IR, native execution, and failure
+propagation. Shuttle proves that changing or removing a runtime input does not
+change package artifacts or executables and does not trigger compilation.
+
+Development and ASan/UBSan configurations each pass all 354 CTests: 84 unit and
+270 integration entries, including all 38 compiler-backed and 37 native Shuttle
+tests. All 51 ordinary Rust tests, Rust 1.85 checking, warning-denied Clippy,
+Rust and C++ formatting, TypeScript compilation, 24 compiler-backed editor
+tests, and 16 standalone editor tests with eight expected skips pass. All 367
+local Markdown targets across 118 files and repository whitespace checks pass.
+The complete `F:\Cloth` bootstrap source still passes a direct read-only check.
+
+Active artifact/compiler/runtime compatibility is **7/6/10**, schemas remain
+**2/1/1/1**, and the compiler-paired standard library is `cloth` v0.4.0.
+Bootstrap `SourceFile` integration remains separately authorized 43.3 work.
+
+## Stage 43.1 portable file-byte and source-representation contract
+
+Approved and recorded on Windows on 2026-09-08. The contract freezes
+`cloth.io::File.ReadBytes(string): byte[] throws IoError`, exact binary results,
+native path behavior, a 64 MiB whole-file limit, stable failures, trusted
+canonical-library lowering, runtime ownership, and the bootstrap-owned
+`frontend.source::SourceFile` boundary.
+
+This checkpoint changes documentation only. The completed Stage 42 baseline
+remains 350 development and sanitizer CTests, 51 ordinary Rust tests, 24
+compiler-backed editor tests, and 16 standalone editor tests with eight
+compiler-dependent skips. All 367 local Markdown targets across 118 files and
+repository whitespace checks pass. A read-only direct check of the complete
+`F:\Cloth` source root remains green.
+
+Compatibility remains artifact/compiler/runtime 7/6/9, schemas remain
+2/1/1/1, and `cloth` remains v0.3.0. Runtime ABI 10, `cloth` v0.4.0,
+`File.co`, compiler/runtime bridge code, file-backed tests, and bootstrap source
+changes require separately authorized 43.2 and 43.3 work.
+
 ## Stage 42.4 runtime-sized array exit audit
 
 Completed on Windows on 2026-09-08. Development and ASan/UBSan builds each

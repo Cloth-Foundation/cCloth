@@ -79,8 +79,10 @@ and foreign-function boundary.
 Cloth is under active development. The language, compiler interfaces, runtime
 ABI, and tooling are not stable. The compiler-paired standard library provides
 `cloth.math::Math` plus a recursive `cloth.lang` prelude currently containing
-`ArgumentError` and `StateError`. It is intentionally incomplete, and there is
-not yet an external package registry.
+`ArgumentError`, `StateError`, `IoError`, and `ParseError`. Its `cloth.io`
+package provides line-oriented console input and bounded binary file reads. It
+is intentionally incomplete, and there is not yet an external package
+registry.
 
 The compiler currently provides a deterministic lexer, two-pass parser,
 semantic analysis, typed HIR, control-flow MIR, a verified target ABI, and an

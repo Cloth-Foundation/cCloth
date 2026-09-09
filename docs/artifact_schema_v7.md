@@ -9,11 +9,12 @@ types.
 ## Compatibility
 
 Header offset 8 contains little-endian format integer **7**. Compiler ABI **6**
-uses `_C6` native names. Runtime ABI **9** adds the tagged nullable-value
-assertion guard. Capabilities advertise `artifact_formats: [7]`; receipts carry
+uses `_C6` native names. Runtime ABI **10** adds bounded regular-file byte input
+and retains the ABI-9 tagged nullable-value assertion guard. Capabilities
+advertise `artifact_formats: [7]`; receipts carry
 `artifact_format: 7`. Process protocol **2**, receipt schema **1**, manifest
 schema **1**, toolchain-metadata schema **1**, and the compiler-paired `cloth`
-package version **0.3.0** are unchanged.
+package version **0.4.0** is compiler-paired.
 
 Formats 1–6 and compiler/runtime ABI mismatches are rejected and rebuilt. They
 are never migrated or reinterpreted.

@@ -213,18 +213,18 @@ void canonical_interface_round_trip(TestContext& test) {
   test.expect(!metadata.empty() && metadata.front() == '{' &&
                   metadata.back() == '}' && !metadata.ends_with('\n') &&
                   metadata.starts_with("{\"compatibility\":") &&
-                  metadata.contains("\"runtime_abi\":\"9\"") &&
+                  metadata.contains("\"runtime_abi\":\"10\"") &&
                   metadata.contains("\"value\":\"3fc00000\"") &&
                   !metadata.contains("FileId") && !metadata.contains("Mir"),
               "metadata is not the approved canonical record form");
   test.expect(
-      metadata.size() == 12377 &&
+      metadata.size() == 12378 &&
           cloth::artifact_digest_hex(cloth::sha256(metadata)) ==
-              "e1f96c626adaa064b0fe1b53a26cae93"
-              "9481d4254514a9b7630d7ca5064e37ce" &&
+              "813da4fca343bcc28f782b7b74bda6f2"
+              "2b26d03bee3ea4601c72da0ae87d43cb" &&
           cloth::artifact_digest_hex(encoded.artifact->digest) ==
-              "87e5e90e95f5ee097f89d148b9aa1d46"
-              "bf9be4045fb49fdfff9cfa5324582fcc",
+              "f042675435b699848a7a99ffc9e4353c"
+              "3cb8b1168c74f8f51aad6cffed0875c8",
       "canonical version-7 fixture: size=" + std::to_string(metadata.size()) +
           " metadata=" + cloth::artifact_digest_hex(cloth::sha256(metadata)) +
           " artifact=" + cloth::artifact_digest_hex(encoded.artifact->digest));
@@ -586,18 +586,18 @@ void metadata_canonicality_and_reference_failures(TestContext& test) {
                   "\"compiler_abi\":6");
   expect_rejected(std::move(changed), "raw JSON integer was accepted");
   changed = original;
-  const std::string_view current_runtime = "\"runtime_abi\":\"9\"";
+  const std::string_view current_runtime = "\"runtime_abi\":\"10\"";
   const std::size_t runtime = changed.find(current_runtime);
   test.expect(runtime != std::string::npos,
-              "runtime ABI fixture did not contain version 9");
+              "runtime ABI fixture did not contain version 10");
   if (runtime != std::string::npos) {
-    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"8\"");
+    changed.replace(runtime, current_runtime.size(), "\"runtime_abi\":\"9\"");
     const auto rejected = cloth::read_package_artifact(
         replace_metadata(encoded.artifact->bytes, std::move(changed)));
     test.expect(
         !rejected.is_valid() && !rejected.issues.empty() &&
             rejected.issues[0].code == cloth::ArtifactIssueCode::kIncompatible,
-        "artifact with runtime ABI 8 was accepted by runtime ABI 9");
+        "artifact with runtime ABI 9 was accepted by runtime ABI 10");
   }
   changed = original;
   changed.replace(changed.find("sample"), 1, "\\u0073");

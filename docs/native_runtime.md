@@ -23,6 +23,7 @@ parsing under runtime ABI 6. Stage 39.3 adds Unicode-scalar string indexing and
 cursor traversal under runtime ABI 7. Stage 40.3 adds allocating, checked
 Unicode-scalar string slicing under runtime ABI 8.
 Stage 41.3 adds tagged nullable-value assertion validation under runtime ABI 9.
+Stage 43.2 adds bounded regular-file byte input under runtime ABI 10.
 
 ## Source contract
 
@@ -32,6 +33,7 @@ The core scope contains these intrinsic families:
 print(T): no value
 println(T): no value
 println(): no value
+cloth.io::File.ReadBytes(string): byte[] throws IoError
 ```
 
 `T` covers every primitive, `object`, and `null`; file classes and arrays widen

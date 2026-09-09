@@ -1143,7 +1143,8 @@ class SemanticAnalyzer {
 
   void register_standard_library_bridges() {
     std::optional<FileId> console_file;
-    std::optional<TypeId> io_error;
+    std::optional<FileId> file_file;
+    std::optional<FileId> io_error_file;
     for (std::size_t index = 0; index < files_.size(); ++index) {
       const FileSemantics& file = model_.file(FileId{index});
       const NominalIdentity& identity = file.identity;
@@ -1154,29 +1155,106 @@ class SemanticAnalyzer {
       if (identity.source_package == "io" && identity.name == "Console" &&
           file.kind == FileTypeKind::kClass) {
         console_file = FileId{index};
+      } else if (identity.source_package == "io" && identity.name == "File" &&
+                 file.kind == FileTypeKind::kClass) {
+        file_file = FileId{index};
       } else if (identity.source_package == "lang.errors" &&
                  identity.name == "IoError" &&
                  file.kind == FileTypeKind::kError) {
-        io_error = file.type;
+        io_error_file = FileId{index};
       }
     }
-    if (!console_file || !io_error) {
+    if (!io_error_file) {
+      if (file_file) {
+        diagnostics_.error(model_.symbol(model_.file(*file_file).symbol).range,
+                           "compiler-paired 'cloth.io.File' requires "
+                           "'cloth.lang.errors.IoError'");
+        model_.mutable_file(*file_file).is_valid = false;
+      }
       return;
     }
+    const FileSemantics& io_error_declaration = model_.file(*io_error_file);
+    const TypeId io_error = io_error_declaration.type;
+    const bool has_message_constructor = std::ranges::any_of(
+        io_error_declaration.constructors, [&](SymbolId candidate) {
+          const SemanticSymbol& constructor = model_.symbol(candidate);
+          return constructor.is_valid &&
+                 constructor.visibility == Visibility::kPublic &&
+                 constructor.parameter_types ==
+                     std::vector{model_.string_type()};
+        });
+    if (file_file && !has_message_constructor) {
+      diagnostics_.error(
+          model_.symbol(model_.file(*io_error_file).symbol).range,
+          "compiler-paired 'cloth.lang.errors.IoError' requires a public "
+          "message constructor");
+      model_.mutable_file(*file_file).is_valid = false;
+    }
 
-    SemanticSymbol bridge{
-        SymbolKind::kFunction,
-        "__readLine",
-        model_.get_nullable_type(model_.string_type()),
-        {},
-        Visibility::kPrivate,
-        std::nullopt,
-        model_.symbol(model_.file(*console_file).symbol).range};
-    bridge.intrinsic = IntrinsicKind::kConsoleReadLine;
-    bridge.is_static = true;
-    bridge.thrown_types = std::vector<TypeId>{*io_error};
-    bridge.has_explicit_throws = true;
-    static_cast<void>(model_.add_symbol(std::move(bridge)));
+    if (console_file) {
+      SemanticSymbol bridge{
+          SymbolKind::kFunction,
+          "__readLine",
+          model_.get_nullable_type(model_.string_type()),
+          {},
+          Visibility::kPrivate,
+          std::nullopt,
+          model_.symbol(model_.file(*console_file).symbol).range};
+      bridge.intrinsic = IntrinsicKind::kConsoleReadLine;
+      bridge.is_static = true;
+      bridge.thrown_types = std::vector<TypeId>{io_error};
+      bridge.has_explicit_throws = true;
+      static_cast<void>(model_.add_symbol(std::move(bridge)));
+    }
+    if (file_file && has_message_constructor) {
+      const std::optional<TypeId> byte_type = model_.find_type("byte");
+      if (!byte_type) {
+        return;
+      }
+      const TypeId byte_array = model_.get_array_type(*byte_type);
+      const FileSemantics& file_declaration = model_.file(*file_file);
+      const auto read_bytes = std::ranges::find_if(
+          file_declaration.functions, [&](SymbolId candidate) {
+            const SemanticSymbol& function = model_.symbol(candidate);
+            return function.name == "ReadBytes";
+          });
+      const SemanticSymbol* function =
+          read_bytes == file_declaration.functions.end()
+              ? nullptr
+              : &model_.symbol(*read_bytes);
+      const bool has_exact_declaration =
+          function != nullptr && function->is_valid && function->is_static &&
+          function->visibility == Visibility::kPublic &&
+          function->parameter_types == std::vector{model_.string_type()} &&
+          function->type == byte_array &&
+          function->thrown_types == std::vector{io_error} &&
+          function->has_explicit_throws &&
+          std::ranges::count_if(
+              file_declaration.functions, [&](SymbolId candidate) {
+                return model_.symbol(candidate).name == "ReadBytes";
+              }) == 1;
+      if (!has_exact_declaration) {
+        diagnostics_.error(
+            model_.symbol(file_declaration.symbol).range,
+            "compiler-paired 'cloth.io.File' must declare exactly "
+            "'static func ReadBytes(string): byte[] throws IoError'");
+        model_.mutable_file(*file_file).is_valid = false;
+        return;
+      }
+      SemanticSymbol bridge{
+          SymbolKind::kFunction,
+          "__readBytes",
+          byte_array,
+          {model_.string_type()},
+          Visibility::kPrivate,
+          std::nullopt,
+          model_.symbol(model_.file(*file_file).symbol).range};
+      bridge.intrinsic = IntrinsicKind::kFileReadBytes;
+      bridge.is_static = true;
+      bridge.thrown_types = std::vector<TypeId>{io_error};
+      bridge.has_explicit_throws = true;
+      static_cast<void>(model_.add_symbol(std::move(bridge)));
+    }
   }
 
   void register_primitive_parse_intrinsics() {
@@ -1239,6 +1317,18 @@ class SemanticAnalyzer {
     return identity.package.name == kStandardLibraryPackageName &&
            identity.package.version == kStandardLibraryPackageVersion &&
            identity.source_package == "io" && identity.name == "Console" &&
+           file.kind == FileTypeKind::kClass;
+  }
+
+  bool is_standard_library_file(FileId file_id) const {
+    if (file_id.value >= files_.size()) {
+      return false;
+    }
+    const FileSemantics& file = model_.file(file_id);
+    const NominalIdentity& identity = file.identity;
+    return identity.package.name == kStandardLibraryPackageName &&
+           identity.package.version == kStandardLibraryPackageVersion &&
+           identity.source_package == "io" && identity.name == "File" &&
            file.kind == FileTypeKind::kClass;
   }
 
@@ -3224,7 +3314,9 @@ class SemanticAnalyzer {
       const IntrinsicKind intrinsic = model_.symbol(symbol).intrinsic;
       return intrinsic == IntrinsicKind::kPrimitiveParse ||
              (intrinsic == IntrinsicKind::kConsoleReadLine &&
-              !is_standard_library_console(current_file_));
+              !is_standard_library_console(current_file_)) ||
+             (intrinsic == IntrinsicKind::kFileReadBytes &&
+              !is_standard_library_file(current_file_));
     });
     if (!intrinsics.empty()) {
       return ExpressionState{model_.error_type(),

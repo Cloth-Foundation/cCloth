@@ -9,12 +9,15 @@
 #include <cfenv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 #if defined(_WIN32)
@@ -22,6 +25,7 @@
 #include <io.h>
 #include <windows.h>
 #else
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -70,6 +74,68 @@ struct NullableInlineValue {
   std::uint8_t tag;
   InlineValue payload;
 };
+
+std::FILE* open_file_for_writing(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  std::FILE* file = nullptr;
+  return _wfopen_s(&file, path.c_str(), L"wb") == 0 ? file : nullptr;
+#else
+  return std::fopen(path.c_str(), "wb");
+#endif
+}
+
+std::string path_to_utf8(const std::filesystem::path& path) {
+  const std::u8string encoded = path.u8string();
+  return std::string{reinterpret_cast<const char*>(encoded.data()),
+                     encoded.size()};
+}
+
+bool write_file(const std::filesystem::path& path,
+                std::span<const std::uint8_t> contents) {
+  std::FILE* output = open_file_for_writing(path);
+  if (output == nullptr) return false;
+  const std::size_t written =
+      std::fwrite(contents.data(), 1, contents.size(), output);
+  return std::fclose(output) == 0 && written == contents.size();
+}
+
+bool file_read_matches(const std::filesystem::path& path,
+                       std::span<const std::uint8_t> expected) {
+  const std::string encoded_path = path_to_utf8(path);
+  void* managed_path =
+      cloth_rt_string_literal(encoded_path.data(), encoded_path.size());
+  void* result = nullptr;
+  void** roots[]{&managed_path, &result};
+  ClothGcRootFrame frame{};
+  cloth_rt_gc_push_frame(&frame, roots, 2);
+  std::uint8_t status = UINT8_MAX;
+  result = cloth_rt_file_read_bytes(managed_path, &status);
+  cloth_rt_gc_collect();
+  bool matches = status == kClothFileReadValue && result != nullptr &&
+                 cloth_rt_array_length(result) ==
+                     static_cast<std::int32_t>(expected.size());
+  for (std::size_t index = 0; matches && index < expected.size(); ++index) {
+    const auto* actual = static_cast<const std::uint8_t*>(
+        cloth_rt_array_element(result, static_cast<std::int32_t>(index)));
+    matches = *actual == expected[index];
+  }
+  cloth_rt_gc_pop_frame(&frame);
+  return matches;
+}
+
+std::uint8_t file_read_status(const std::filesystem::path& path) {
+  const std::string encoded_path = path_to_utf8(path);
+  void* managed_path =
+      cloth_rt_string_literal(encoded_path.data(), encoded_path.size());
+  void* result = nullptr;
+  void** roots[]{&managed_path, &result};
+  ClothGcRootFrame frame{};
+  cloth_rt_gc_push_frame(&frame, roots, 2);
+  std::uint8_t status = UINT8_MAX;
+  result = cloth_rt_file_read_bytes(managed_path, &status);
+  cloth_rt_gc_pop_frame(&frame);
+  return result == nullptr ? status : kClothFileReadValue;
+}
 
 struct ParseResult {
   std::uint8_t status;
@@ -181,6 +247,270 @@ int console_invalid_encoding_scenario() {
     return 1;
   }
   std::cout << "console input passed\n";
+  return 0;
+}
+
+int file_read_scenario(std::string_view path) {
+  std::array<std::uint8_t, 256> expected{};
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    expected[index] = static_cast<std::uint8_t>(index);
+  }
+  const std::filesystem::path native_path{std::string{path}};
+  std::error_code file_error;
+  static_cast<void>(std::filesystem::remove(native_path, file_error));
+  if (!write_file(native_path, expected)) {
+    std::cerr << "could not create file-read fixture\n";
+    return 1;
+  }
+
+  const std::string encoded_path = path_to_utf8(native_path);
+  void* managed_path =
+      cloth_rt_string_literal(encoded_path.data(), encoded_path.size());
+  void* first = nullptr;
+  void* second = nullptr;
+  void** roots[]{&managed_path, &first, &second};
+  ClothGcRootFrame frame{};
+  cloth_rt_gc_push_frame(&frame, roots, 3);
+  std::uint8_t status = UINT8_MAX;
+  first = cloth_rt_file_read_bytes(managed_path, &status);
+  if (status != kClothFileReadValue || first == nullptr ||
+      cloth_rt_array_length(first) !=
+          static_cast<std::int32_t>(expected.size())) {
+    std::cerr << "file read did not return the exact array size\n";
+    return 1;
+  }
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    const auto* actual = static_cast<const std::uint8_t*>(
+        cloth_rt_array_element(first, static_cast<std::int32_t>(index)));
+    if (*actual != expected[index]) {
+      std::cerr << "file read changed a byte\n";
+      return 1;
+    }
+  }
+  second = cloth_rt_file_read_bytes(managed_path, &status);
+  *static_cast<std::uint8_t*>(cloth_rt_array_element(first, 0)) = UINT8_MAX;
+  if (status != kClothFileReadValue || second == first ||
+      *static_cast<const std::uint8_t*>(cloth_rt_array_element(second, 0)) !=
+          0) {
+    std::cerr << "file reads did not return independent storage\n";
+    return 1;
+  }
+
+  if (!write_file(native_path, {})) {
+    std::cerr << "could not create empty file-read fixture\n";
+    return 1;
+  }
+  second = cloth_rt_file_read_bytes(managed_path, &status);
+  if (status != kClothFileReadValue || second == nullptr ||
+      cloth_rt_array_length(second) != 0) {
+    std::cerr << "empty file did not produce an empty array\n";
+    return 1;
+  }
+
+  constexpr std::array<std::uint8_t, 10> kBinaryText{
+      0, 0xef, 0xbb, 0xbf, 0xff, '\r', '\n', '\r', 'X', '\n'};
+  if (!write_file(native_path, kBinaryText) ||
+      !file_read_matches(native_path, kBinaryText)) {
+    std::cerr << "binary text bytes were not preserved\n";
+    return 1;
+  }
+
+  constexpr std::size_t kReadChunkSize = 1024U * 1024U;
+  for (const std::size_t size :
+       {kReadChunkSize - 1, kReadChunkSize, kReadChunkSize + 1}) {
+    std::vector<std::uint8_t> chunk_bytes(size);
+    for (std::size_t index = 0; index < size; ++index) {
+      chunk_bytes[index] = static_cast<std::uint8_t>(index * 31U);
+    }
+    if (!write_file(native_path, chunk_bytes) ||
+        !file_read_matches(native_path, chunk_bytes)) {
+      std::cerr << "file read failed across a chunk boundary\n";
+      return 1;
+    }
+  }
+
+  if (!write_file(native_path, kBinaryText)) {
+    std::cerr << "could not create repeated-read fixture\n";
+    return 1;
+  }
+  first = nullptr;
+  second = nullptr;
+  for (int attempt = 0; attempt < 16; ++attempt) {
+    second = cloth_rt_file_read_bytes(managed_path, &status);
+    cloth_rt_gc_collect();
+    if (status != kClothFileReadValue || second == nullptr ||
+        cloth_rt_array_length(second) !=
+            static_cast<std::int32_t>(kBinaryText.size()) ||
+        *static_cast<const std::uint8_t*>(cloth_rt_array_element(second, 3)) !=
+            kBinaryText[3]) {
+      std::cerr << "repeated file read failed under GC pressure\n";
+      return 1;
+    }
+  }
+
+  constexpr std::uintmax_t kMaximumFileByteCount = 64ULL * 1024ULL * 1024ULL;
+  if (!write_file(native_path, {})) {
+    std::cerr << "could not create size-boundary fixture\n";
+    return 1;
+  }
+  std::filesystem::resize_file(native_path, kMaximumFileByteCount, file_error);
+  if (file_error) {
+    std::cerr << "could not create size-boundary fixture\n";
+    return 1;
+  }
+  second = nullptr;
+  cloth_rt_gc_collect();
+  first = cloth_rt_file_read_bytes(managed_path, &status);
+  if (status != kClothFileReadValue || first == nullptr ||
+      cloth_rt_array_length(first) !=
+          static_cast<std::int32_t>(kMaximumFileByteCount) ||
+      *static_cast<const std::uint8_t*>(cloth_rt_array_element(first, 0)) !=
+          0 ||
+      *static_cast<const std::uint8_t*>(cloth_rt_array_element(
+          first, static_cast<std::int32_t>(kMaximumFileByteCount - 1))) != 0) {
+    std::cerr << "exact size-limit file was rejected or changed\n";
+    return 1;
+  }
+  first = nullptr;
+  cloth_rt_gc_collect();
+  std::filesystem::resize_file(native_path, kMaximumFileByteCount + 1,
+                               file_error);
+  if (file_error) {
+    std::cerr << "could not create oversized file-read fixture\n";
+    return 1;
+  }
+  first = cloth_rt_file_read_bytes(managed_path, &status);
+  if (status != kClothFileReadTooLarge || first != nullptr) {
+    std::cerr << "oversized file did not report the size limit\n";
+    return 1;
+  }
+
+  file_error.clear();
+  if (!std::filesystem::remove(native_path, file_error) || file_error) {
+    std::cerr << "file read retained its native handle\n";
+    return 1;
+  }
+  first = cloth_rt_file_read_bytes(managed_path, &status);
+  if (status != kClothFileReadOpenError || first != nullptr) {
+    std::cerr << "missing file did not report an open failure\n";
+    return 1;
+  }
+
+  void* empty_path = cloth_rt_string_literal(nullptr, 0);
+  first = cloth_rt_file_read_bytes(empty_path, &status);
+  if (status != kClothFileReadOpenError || first != nullptr) {
+    std::cerr << "empty path did not report an open failure\n";
+    return 1;
+  }
+
+  void* directory = cloth_rt_string_literal(".", 1);
+  first = cloth_rt_file_read_bytes(directory, &status);
+  if (status != kClothFileReadNotRegular || first != nullptr) {
+    std::cerr << "directory did not report a non-regular input\n";
+    return 1;
+  }
+  constexpr char kEmbeddedZero[]{'b', 'a', 'd', '\0', 'p', 'a', 't', 'h'};
+  void* embedded_zero =
+      cloth_rt_string_literal(kEmbeddedZero, sizeof(kEmbeddedZero));
+  first = cloth_rt_file_read_bytes(embedded_zero, &status);
+  if (status != kClothFileReadInvalidPath || first != nullptr) {
+    std::cerr << "embedded U+0000 did not report an invalid path\n";
+    return 1;
+  }
+
+  const std::filesystem::path path_directory =
+      native_path.parent_path() /
+      std::filesystem::path{u8"runtime-file-paths-\u03bb"};
+  file_error.clear();
+  if (!std::filesystem::create_directory(path_directory, file_error) ||
+      file_error) {
+    std::cerr << "could not create path-semantics directory\n";
+    return 1;
+  }
+  const std::filesystem::path named_file =
+      path_directory / std::filesystem::path{u8"source bytes-\u03bc.bin"};
+  if (!write_file(named_file, kBinaryText)) {
+    std::cerr << "could not create path-semantics fixture\n";
+    return 1;
+  }
+  const std::filesystem::path absolute_file =
+      std::filesystem::absolute(named_file, file_error);
+  const std::filesystem::path relative_file = std::filesystem::relative(
+      named_file, std::filesystem::current_path(), file_error);
+  std::filesystem::path preferred_file = absolute_file;
+  preferred_file.make_preferred();
+  const std::filesystem::path dotted_file =
+      named_file.parent_path() / "." / named_file.filename();
+  if (file_error || !file_read_matches(absolute_file, kBinaryText) ||
+      !file_read_matches(relative_file, kBinaryText) ||
+      !file_read_matches(preferred_file, kBinaryText) ||
+      !file_read_matches(dotted_file, kBinaryText)) {
+    std::cerr << "host path spellings did not resolve consistently\n";
+    return 1;
+  }
+
+  const std::filesystem::path link_file = path_directory / "source-link.bin";
+  std::filesystem::create_symlink(absolute_file, link_file, file_error);
+  if (!file_error && !file_read_matches(link_file, kBinaryText)) {
+    std::cerr << "symlink to a regular file was not followed\n";
+    return 1;
+  }
+  file_error.clear();
+  static_cast<void>(std::filesystem::remove(link_file, file_error));
+
+  const std::filesystem::path directory_input =
+      path_directory / "directory-input";
+  file_error.clear();
+  if (!std::filesystem::create_directory(directory_input, file_error) ||
+      file_error ||
+      file_read_status(directory_input) != kClothFileReadNotRegular) {
+    std::cerr << "directory path did not report a non-regular input\n";
+    return 1;
+  }
+  file_error.clear();
+  if (!std::filesystem::remove(directory_input, file_error) || file_error) {
+    std::cerr << "failed file read retained its native handle\n";
+    return 1;
+  }
+
+#if !defined(_WIN32)
+  const std::filesystem::path fifo_path = path_directory / "source.fifo";
+  if (mkfifo(fifo_path.c_str(), 0600) != 0 ||
+      file_read_status(fifo_path) != kClothFileReadNotRegular) {
+    std::cerr << "non-regular file did not report its kind\n";
+    return 1;
+  }
+  static_cast<void>(std::filesystem::remove(fifo_path, file_error));
+
+  const std::filesystem::path denied_file = path_directory / "denied.bin";
+  if (!write_file(denied_file, kBinaryText) ||
+      chmod(denied_file.c_str(), 0000) != 0) {
+    std::cerr << "could not create denied-path fixture\n";
+    return 1;
+  }
+  const std::uint8_t denied_status = file_read_status(denied_file);
+  if (chmod(denied_file.c_str(), 0600) != 0 ||
+      (denied_status != kClothFileReadOpenError &&
+       denied_status != kClothFileReadValue)) {
+    std::cerr << "denied path produced an invalid result\n";
+    return 1;
+  }
+  static_cast<void>(std::filesystem::remove(denied_file, file_error));
+#endif
+
+  file_error.clear();
+  if (!std::filesystem::remove(named_file, file_error) || file_error ||
+      !std::filesystem::remove(path_directory, file_error) || file_error) {
+    std::cerr << "path-semantics fixtures could not be cleaned up\n";
+    return 1;
+  }
+
+  managed_path = nullptr;
+  first = nullptr;
+  second = nullptr;
+  cloth_rt_gc_collect();
+  cloth_rt_gc_pop_frame(&frame);
+  std::cout << "file read passed\n";
   return 0;
 }
 
@@ -351,6 +681,20 @@ int runtime_failure_scenario(std::string_view scenario) {
   if (scenario == "console_status") {
     static_cast<void>(cloth_rt_console_read_line(nullptr));
   }
+  if (scenario == "file_status") {
+    void* path = cloth_rt_string_literal("missing", 7);
+    static_cast<void>(cloth_rt_file_read_bytes(path, nullptr));
+  }
+  if (scenario == "file_path") {
+    std::uint8_t status = UINT8_MAX;
+    static_cast<void>(cloth_rt_file_read_bytes(nullptr, &status));
+  }
+  if (scenario == "file_path_layout") {
+    auto* path = static_cast<TestString*>(cloth_rt_string_literal("a", 1));
+    path->scalar_count = 2;
+    std::uint8_t status = UINT8_MAX;
+    static_cast<void>(cloth_rt_file_read_bytes(path, &status));
+  }
   constexpr std::string_view kPlainName = "Plain";
   const ClothTypeDescriptor plain_type{ClothHeapObjectKind::kFileClass,
                                        nullptr,
@@ -422,6 +766,9 @@ void store_reference(void* object, std::size_t offset, void* reference) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string_view{argv[1]} == "file_read") {
+    return file_read_scenario(argv[2]);
+  }
   if (argc == 2 && std::string_view{argv[1]} == "emit_console_edges") {
     return emit_console_edge_input();
   }

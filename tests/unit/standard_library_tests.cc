@@ -6,7 +6,9 @@
 #include "cloth/backend/llvm_ir.h"
 #include "cloth/compiler/compilation.h"
 #include "cloth/diagnostics/diagnostic_engine.h"
+#include "cloth/hir/hir_verifier.h"
 #include "cloth/identity/package_identity.h"
+#include "cloth/mir/mir_verifier.h"
 #include "cloth/sema/semantic_model.h"
 #include "cloth/source/source_file.h"
 #include "cloth/target/data_layout.h"
@@ -499,6 +501,7 @@ void console_api_and_source_free_consumer(TestContext& test) {
         Source{source_root / "lang" / "errors" / "ParseError.co",
                "lang.errors"},
         Source{source_root / "io" / "Console.co", "io"},
+        Source{source_root / "io" / "File.co", "io"},
     };
     bool loaded = true;
     for (const Source& source : sources) {
@@ -518,9 +521,13 @@ void console_api_and_source_free_consumer(TestContext& test) {
 
   constexpr std::string_view kConsumer = R"(
     import cloth.io::Console;
+    import cloth.io::File;
     static func Keep(ParseError value): ParseError { return value; }
     static func Read(): string? throws IoError {
       return Console.ReadLine();
+    }
+    static func Load(string path): byte[] throws IoError {
+      return File.ReadBytes(path);
     }
     func infer(string text): int32 {
       return int32::parse(text);
@@ -545,6 +552,7 @@ void console_api_and_source_free_consumer(TestContext& test) {
     }
     static func Main() throws IoError, ParseError {
       string? line = Read();
+      byte[] contents = Load("source.co");
       ParseValues();
     }
   )";
@@ -567,16 +575,20 @@ void console_api_and_source_free_consumer(TestContext& test) {
           });
     };
     const auto console = find_file("cloth.io.Console");
+    const auto file = find_file("cloth.io.File");
     const auto io_error = find_file("cloth.lang.errors.IoError");
     const auto parse_error = find_file("cloth.lang.errors.ParseError");
     test.expect(console != produced.semantics.files().end() &&
                     console->constructors.empty() &&
+                    file != produced.semantics.files().end() &&
+                    file->constructors.empty() &&
                     io_error != produced.semantics.files().end() &&
                     io_error->constructors.size() == 2 &&
                     parse_error != produced.semantics.files().end() &&
                     parse_error->constructors.size() == 2,
-                "console or input error declarations have the wrong shape");
+                "I/O or input error declarations have the wrong shape");
     if (console == produced.semantics.files().end() ||
+        file == produced.semantics.files().end() ||
         io_error == produced.semantics.files().end()) {
       continue;
     }
@@ -587,6 +599,22 @@ void console_api_and_source_free_consumer(TestContext& test) {
                         cloth::TypeKind::kNullable &&
                     read_line->thrown_types == std::vector{io_error->type},
                 "Console.ReadLine lost its nullable result or IoError effect");
+    const cloth::SemanticSymbol* read_bytes =
+        find_function(produced.semantics, *file, "ReadBytes");
+    const cloth::SemanticType* read_bytes_type =
+        read_bytes == nullptr ? nullptr
+                              : &produced.semantics.type(read_bytes->type);
+    test.expect(
+        read_bytes != nullptr && read_bytes->is_static &&
+            read_bytes->parameter_types ==
+                std::vector{produced.semantics.string_type()} &&
+            read_bytes_type != nullptr &&
+            read_bytes_type->kind == cloth::TypeKind::kArray &&
+            read_bytes_type->element_type &&
+            produced.semantics.type(*read_bytes_type->element_type).kind ==
+                cloth::TypeKind::kByte &&
+            read_bytes->thrown_types == std::vector{io_error->type},
+        "File.ReadBytes lost its byte-array result or IoError effect");
 
     cloth::LlvmIrOptions producer_options;
     producer_options.package = cloth::PackageIdentity{
@@ -598,11 +626,72 @@ void console_api_and_source_free_consumer(TestContext& test) {
         producer_ir.has_value() &&
             producer_ir->text.contains(
                 "call ptr @cloth_rt_console_read_line") &&
+            producer_ir->text.contains("call ptr @cloth_rt_file_read_bytes") &&
             producer_ir->text.contains("could not read standard input") &&
             producer_ir->text.contains("standard input is not valid Unicode") &&
             producer_ir->text.contains("standard input line is too large") &&
+            producer_ir->text.contains("file path contains U+0000") &&
+            producer_ir->text.contains("could not open file") &&
+            producer_ir->text.contains("file is not a regular file") &&
+            producer_ir->text.contains("could not read file") &&
+            producer_ir->text.contains("file is too large") &&
+            producer_ir->text.contains("file.dispatch.") &&
+            producer_ir->text.contains("file.invalid.") &&
+            producer_ir->text.contains("icmp ne ptr") &&
+            producer_ir->text.contains("switch i8") &&
+            producer_ir->text.contains("call void @llvm.trap()") &&
             producer_ir->text.contains("phi ptr"),
-        "Console.ReadLine did not lower through the checked ABI-6 bridge");
+        "standard-library I/O did not lower through its checked status and "
+        "result bridge");
+
+    cloth::HirModule malformed_file_hir = produced.hir;
+    bool changed_file_hir = false;
+    for (const cloth::HirExpression& stored :
+         malformed_file_hir.storage.expressions()) {
+      auto& expression = const_cast<cloth::HirExpression&>(stored);
+      const auto* call =
+          std::get_if<cloth::HirCallExpression>(&expression.data);
+      if (call != nullptr && call->callable &&
+          produced.semantics.symbol(*call->callable).intrinsic ==
+              cloth::IntrinsicKind::kFileReadBytes) {
+        expression.type = cloth::TypeId{produced.semantics.types().size()};
+        changed_file_hir = true;
+        break;
+      }
+    }
+    cloth::DiagnosticEngine malformed_file_hir_diagnostics;
+    test.expect(changed_file_hir &&
+                    !cloth::verify_hir(malformed_file_hir, produced.semantics,
+                                       malformed_file_hir_diagnostics),
+                "HIR verifier accepted forged file-read result metadata");
+
+    cloth::MirModule malformed_file_mir = produced.mir;
+    bool changed_file_mir = false;
+    for (cloth::MirFileClass& mir_file : malformed_file_mir.files) {
+      for (cloth::MirCallable& function : mir_file.functions) {
+        for (cloth::MirBasicBlock& block : function.body.blocks) {
+          for (cloth::MirInstruction& instruction : block.instructions) {
+            auto* call =
+                std::get_if<cloth::MirCallInstruction>(&instruction.data);
+            if (call != nullptr &&
+                produced.semantics.symbol(call->callable).intrinsic ==
+                    cloth::IntrinsicKind::kFileReadBytes) {
+              call->arguments.clear();
+              changed_file_mir = true;
+              break;
+            }
+          }
+          if (changed_file_mir) break;
+        }
+        if (changed_file_mir) break;
+      }
+      if (changed_file_mir) break;
+    }
+    cloth::DiagnosticEngine malformed_file_mir_diagnostics;
+    test.expect(changed_file_mir &&
+                    !cloth::verify_mir(malformed_file_mir, produced.semantics,
+                                       malformed_file_mir_diagnostics),
+                "MIR verifier accepted forged file-read argument metadata");
 
     const cloth::ImportedPackageResult imported =
         cloth::build_imported_package_view(
@@ -704,22 +793,107 @@ void console_api_and_source_free_consumer(TestContext& test) {
 
   cloth::Compilation inaccessible;
   inaccessible.add_package_source(cloth::SourceFile::from_memory("Main.co", R"(
-      static func Main() { __readLine(); }
+      static func Main() {
+        __readLine();
+        __readBytes("source.co");
+      }
     )"),
                                   "app", "", "0.1.0");
   cloth::DiagnosticEngine inaccessible_diagnostics;
   test.expect(!inaccessible.analyze(inaccessible_diagnostics).is_valid &&
                   messages(inaccessible_diagnostics)
-                      .contains("unknown name '__readLine'"),
-              "the private Console bridge escaped the compiler-paired library");
+                      .contains("unknown name '__readLine'") &&
+                  messages(inaccessible_diagnostics)
+                      .contains("unknown name '__readBytes'"),
+              "a private I/O bridge escaped the compiler-paired library");
 
   cloth::Compilation mismatched;
   if (add_console_sources(mismatched, "0.2.0")) {
     cloth::DiagnosticEngine mismatched_diagnostics;
     test.expect(!mismatched.analyze(mismatched_diagnostics).is_valid &&
                     messages(mismatched_diagnostics)
-                        .contains("unknown name '__readLine'"),
-                "the private Console bridge accepted an unpaired library");
+                        .contains("unknown name '__readLine'") &&
+                    messages(mismatched_diagnostics)
+                        .contains("unknown name '__readBytes'"),
+                "a private I/O bridge accepted an unpaired library");
+  }
+
+  cloth::Compilation malformed_file;
+  auto io_error_source =
+      cloth::SourceFile::load(source_root / "lang" / "errors" / "IoError.co");
+  test.expect(io_error_source.has_value(), "IoError.co could not be read");
+  if (io_error_source) {
+    malformed_file.add_package_source(
+        std::move(*io_error_source), "cloth", "lang.errors",
+        std::string{cloth::kStandardLibraryPackageVersion});
+    malformed_file.add_package_source(
+        cloth::SourceFile::from_memory("File.co", R"(
+          static func ReadBytes(int32 path): byte[] throws IoError {
+            return __readBytes("source.co");
+          }
+        )"),
+        "cloth", "io", std::string{cloth::kStandardLibraryPackageVersion});
+    cloth::DiagnosticEngine malformed_diagnostics;
+    test.expect(
+        !malformed_file.analyze(malformed_diagnostics).is_valid &&
+            messages(malformed_diagnostics)
+                .contains("must declare exactly 'static func "
+                          "ReadBytes(string): byte[] throws IoError'"),
+        "an incompatible compiler-paired File declaration was accepted");
+  }
+
+  cloth::Compilation malformed_error;
+  auto file_source = cloth::SourceFile::load(source_root / "io" / "File.co");
+  test.expect(file_source.has_value(), "File.co could not be read");
+  if (file_source) {
+    malformed_error.add_package_source(
+        cloth::SourceFile::from_memory("IoError.co", R"(
+          error { IoError() {} }
+        )"),
+        "cloth", "lang.errors",
+        std::string{cloth::kStandardLibraryPackageVersion});
+    malformed_error.add_package_source(
+        std::move(*file_source), "cloth", "io",
+        std::string{cloth::kStandardLibraryPackageVersion});
+    cloth::DiagnosticEngine malformed_diagnostics;
+    test.expect(
+        !malformed_error.analyze(malformed_diagnostics).is_valid &&
+            messages(malformed_diagnostics)
+                .contains("IoError' requires a public message constructor"),
+        "File accepted an incompatible compiler-paired IoError declaration");
+  }
+
+  cloth::Compilation invalid_calls;
+  if (add_console_sources(invalid_calls,
+                          cloth::kStandardLibraryPackageVersion)) {
+    invalid_calls.set_package_dependencies({{"app", "cloth", "cloth"}});
+    invalid_calls.add_package_source(
+        cloth::SourceFile::from_memory("Main.co", R"(
+          import cloth.io::File;
+          static func MissingThrows(): byte[] {
+            return File.ReadBytes("source.co");
+          }
+          static func Main() throws IoError {
+            string? nullablePath = null;
+            byte[] missing = File.ReadBytes();
+            byte[] wrong = File.ReadBytes(1);
+            byte[] nullable = File.ReadBytes(nullablePath);
+            byte[] extra = File.ReadBytes("a", "b");
+          }
+        )"),
+        "app", "", "0.1.0");
+    cloth::DiagnosticEngine invalid_call_diagnostics;
+    const cloth::CompilationResult invalid_result =
+        invalid_calls.analyze(invalid_call_diagnostics);
+    const std::string text = messages(invalid_call_diagnostics);
+    test.expect(
+        !invalid_result.is_valid &&
+            text.contains("function 'MissingThrows(): byte[]' may throw ") &&
+            text.contains("cloth.lang.errors.IoError") &&
+            text.contains("no matching overload for call with 0 argument(s)") &&
+            text.contains("no matching overload for call with 1 argument(s)") &&
+            text.contains("no matching overload for call with 2 argument(s)"),
+        text);
   }
 }
 

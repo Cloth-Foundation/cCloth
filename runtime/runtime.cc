@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
@@ -27,6 +28,10 @@
 #ifdef interface
 #undef interface
 #endif
+#else
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -106,6 +111,8 @@ constexpr ClothTypeDescriptor kArrayTypeDescriptor{ClothHeapObjectKind::kArray,
 constexpr std::uint64_t kProgramArgumentReferenceOffsets[]{0};
 constexpr ClothArrayElementLayout kProgramArgumentElementLayout{
     sizeof(void*), alignof(void*), kProgramArgumentReferenceOffsets, 1};
+constexpr ClothArrayElementLayout kByteElementLayout{1, 1, nullptr, 0};
+constexpr std::size_t kMaximumFileByteCount = 64U * 1024U * 1024U;
 
 thread_local ClothGcRootFrame* current_root_frame = nullptr;
 ClothAllocation* allocations = nullptr;
@@ -905,6 +912,254 @@ class NativeBuffer {
   std::size_t capacity_{0};
 };
 
+template <typename Value>
+class NativeAllocation {
+ public:
+  NativeAllocation(std::size_t count, std::string_view failure) noexcept {
+    if (count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
+      runtime_failure(failure);
+    }
+    const std::size_t bytes = std::max<std::size_t>(count * sizeof(Value), 1);
+    data_ = static_cast<Value*>(std::malloc(bytes));
+    if (data_ == nullptr) {
+      runtime_failure(failure);
+    }
+  }
+  NativeAllocation(const NativeAllocation&) = delete;
+  NativeAllocation& operator=(const NativeAllocation&) = delete;
+  ~NativeAllocation() { std::free(data_); }
+
+  [[nodiscard]] Value* data() noexcept { return data_; }
+  [[nodiscard]] const Value* data() const noexcept { return data_; }
+
+ private:
+  Value* data_{nullptr};
+};
+
+void* allocate_file_bytes(const std::byte* bytes, std::size_t size) noexcept {
+  auto* result = static_cast<ClothArray*>(cloth_rt_array_alloc(
+      static_cast<std::int32_t>(size), &kByteElementLayout));
+  if (size != 0) {
+    std::memcpy(result->data, bytes, size);
+  }
+  return result;
+}
+
+const ClothString& require_file_path(const void* value) noexcept {
+  const ClothString& path = require_string(value);
+  if (!has_valid_string_layout(path)) {
+    runtime_failure("file path string has an invalid layout");
+  }
+  return path;
+}
+
+bool has_native_path_terminator(const ClothString& path) noexcept {
+  return path.byte_size != 0 &&
+         std::memchr(path.data, '\0', path.byte_size) != nullptr;
+}
+
+#if defined(_WIN32)
+
+class FileHandle {
+ public:
+  explicit FileHandle(HANDLE value) noexcept : value_(value) {}
+  FileHandle(const FileHandle&) = delete;
+  FileHandle& operator=(const FileHandle&) = delete;
+  ~FileHandle() {
+    if (value_ != INVALID_HANDLE_VALUE) {
+      static_cast<void>(CloseHandle(value_));
+    }
+  }
+
+  [[nodiscard]] HANDLE get() const noexcept { return value_; }
+
+ private:
+  HANDLE value_{INVALID_HANDLE_VALUE};
+};
+
+void* read_file_bytes(const ClothString& path, std::uint8_t& status) noexcept {
+  const int input_size = static_cast<int>(path.byte_size);
+  int wide_size = 0;
+  if (input_size != 0) {
+    wide_size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data,
+                                    input_size, nullptr, 0);
+    if (wide_size == 0) {
+      runtime_failure("file path string has an invalid layout");
+    }
+  }
+  NativeAllocation<wchar_t> native_path(static_cast<std::size_t>(wide_size) + 1,
+                                        "native file path allocation failed");
+  if (wide_size != 0 &&
+      MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path.data, input_size,
+                          native_path.data(), wide_size) != wide_size) {
+    runtime_failure("file path string has an invalid layout");
+  }
+  native_path.data()[wide_size] = L'\0';
+
+  FileHandle file{
+      CreateFileW(native_path.data(), GENERIC_READ,
+                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                  nullptr, OPEN_EXISTING,
+                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
+  if (file.get() == INVALID_HANDLE_VALUE) {
+    status = kClothFileReadOpenError;
+    return nullptr;
+  }
+  if (GetFileType(file.get()) != FILE_TYPE_DISK) {
+    status = kClothFileReadNotRegular;
+    return nullptr;
+  }
+  BY_HANDLE_FILE_INFORMATION information{};
+  if (GetFileInformationByHandle(file.get(), &information) == 0) {
+    status = kClothFileReadIoError;
+    return nullptr;
+  }
+  if ((information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+    status = kClothFileReadNotRegular;
+    return nullptr;
+  }
+  LARGE_INTEGER length{};
+  if (GetFileSizeEx(file.get(), &length) == 0 || length.QuadPart < 0) {
+    status = kClothFileReadIoError;
+    return nullptr;
+  }
+  if (static_cast<std::uint64_t>(length.QuadPart) > kMaximumFileByteCount) {
+    status = kClothFileReadTooLarge;
+    return nullptr;
+  }
+
+  const std::size_t size = static_cast<std::size_t>(length.QuadPart);
+  NativeAllocation<std::byte> bytes(size,
+                                    "native file buffer allocation failed");
+  std::size_t offset = 0;
+  while (offset < size) {
+    const DWORD request =
+        static_cast<DWORD>(std::min<std::size_t>(size - offset, 1024U * 1024U));
+    DWORD received = 0;
+    if (ReadFile(file.get(), bytes.data() + offset, request, &received,
+                 nullptr) == 0 ||
+        received == 0) {
+      status = kClothFileReadIoError;
+      return nullptr;
+    }
+    offset += received;
+  }
+  std::byte extra{};
+  DWORD received = 0;
+  if (ReadFile(file.get(), &extra, 1, &received, nullptr) == 0) {
+    status = kClothFileReadIoError;
+    return nullptr;
+  }
+  if (received != 0) {
+    LARGE_INTEGER current_length{};
+    status = GetFileSizeEx(file.get(), &current_length) != 0 &&
+                     current_length.QuadPart >= 0 &&
+                     static_cast<std::uint64_t>(current_length.QuadPart) >
+                         kMaximumFileByteCount
+                 ? kClothFileReadTooLarge
+                 : kClothFileReadIoError;
+    return nullptr;
+  }
+  status = kClothFileReadValue;
+  return allocate_file_bytes(bytes.data(), size);
+}
+
+#else
+
+class FileDescriptor {
+ public:
+  explicit FileDescriptor(int value) noexcept : value_(value) {}
+  FileDescriptor(const FileDescriptor&) = delete;
+  FileDescriptor& operator=(const FileDescriptor&) = delete;
+  ~FileDescriptor() {
+    if (value_ >= 0) {
+      static_cast<void>(close(value_));
+    }
+  }
+
+  [[nodiscard]] int get() const noexcept { return value_; }
+
+ private:
+  int value_{-1};
+};
+
+void* read_file_bytes(const ClothString& path, std::uint8_t& status) noexcept {
+  NativeAllocation<char> native_path(path.byte_size + 1,
+                                     "native file path allocation failed");
+  if (path.byte_size != 0) {
+    std::memcpy(native_path.data(), path.data, path.byte_size);
+  }
+  native_path.data()[path.byte_size] = '\0';
+
+  int flags = O_RDONLY | O_NONBLOCK;
+#if defined(O_CLOEXEC)
+  flags |= O_CLOEXEC;
+#endif
+  FileDescriptor file{open(native_path.data(), flags)};
+  if (file.get() < 0) {
+    status = kClothFileReadOpenError;
+    return nullptr;
+  }
+  struct stat information{};
+  if (fstat(file.get(), &information) != 0) {
+    status = kClothFileReadIoError;
+    return nullptr;
+  }
+  if (!S_ISREG(information.st_mode)) {
+    status = kClothFileReadNotRegular;
+    return nullptr;
+  }
+  if (information.st_size < 0) {
+    status = kClothFileReadIoError;
+    return nullptr;
+  }
+  if (static_cast<std::uint64_t>(information.st_size) > kMaximumFileByteCount) {
+    status = kClothFileReadTooLarge;
+    return nullptr;
+  }
+
+  const std::size_t size = static_cast<std::size_t>(information.st_size);
+  NativeAllocation<std::byte> bytes(size,
+                                    "native file buffer allocation failed");
+  std::size_t offset = 0;
+  while (offset < size) {
+    const ssize_t received =
+        read(file.get(), bytes.data() + offset,
+             std::min<std::size_t>(size - offset, 1024U * 1024U));
+    if (received < 0 && errno == EINTR) {
+      continue;
+    }
+    if (received <= 0) {
+      status = kClothFileReadIoError;
+      return nullptr;
+    }
+    offset += static_cast<std::size_t>(received);
+  }
+  std::byte extra{};
+  ssize_t received = 0;
+  do {
+    received = read(file.get(), &extra, 1);
+  } while (received < 0 && errno == EINTR);
+  if (received < 0) {
+    status = kClothFileReadIoError;
+    return nullptr;
+  }
+  if (received != 0) {
+    struct stat current_information{};
+    status = fstat(file.get(), &current_information) == 0 &&
+                     current_information.st_size >= 0 &&
+                     static_cast<std::uint64_t>(current_information.st_size) >
+                         kMaximumFileByteCount
+                 ? kClothFileReadTooLarge
+                 : kClothFileReadIoError;
+    return nullptr;
+  }
+  status = kClothFileReadValue;
+  return allocate_file_bytes(bytes.data(), size);
+}
+
+#endif
+
 struct StreamInputState {
   std::array<char, 4096> bytes{};
   std::size_t next{0};
@@ -1537,6 +1792,20 @@ extern "C" void* cloth_rt_console_read_line(std::uint8_t* status) noexcept {
   }
 #endif
   return read_stream_line(*status);
+}
+
+extern "C" void* cloth_rt_file_read_bytes(const void* value,
+                                          std::uint8_t* status) noexcept {
+  if (status == nullptr) {
+    runtime_failure("file read status pointer is null");
+  }
+  *status = kClothFileReadIoError;
+  const ClothString& path = require_file_path(value);
+  if (has_native_path_terminator(path)) {
+    *status = kClothFileReadInvalidPath;
+    return nullptr;
+  }
+  return read_file_bytes(path, *status);
 }
 
 extern "C" std::uint8_t cloth_rt_parse_primitive(std::uint8_t kind,

@@ -63,6 +63,13 @@ inline constexpr std::uint8_t kClothConsoleInputIoError = 2;
 inline constexpr std::uint8_t kClothConsoleInputEncodingError = 3;
 inline constexpr std::uint8_t kClothConsoleInputLineTooLarge = 4;
 
+inline constexpr std::uint8_t kClothFileReadValue = 0;
+inline constexpr std::uint8_t kClothFileReadInvalidPath = 1;
+inline constexpr std::uint8_t kClothFileReadOpenError = 2;
+inline constexpr std::uint8_t kClothFileReadNotRegular = 3;
+inline constexpr std::uint8_t kClothFileReadIoError = 4;
+inline constexpr std::uint8_t kClothFileReadTooLarge = 5;
+
 inline constexpr std::uint8_t kClothParseValue = 0;
 inline constexpr std::uint8_t kClothParseInvalid = 1;
 inline constexpr std::uint8_t kClothParseOutOfRange = 2;
@@ -100,6 +107,8 @@ void cloth_rt_gc_collect() noexcept;
 [[nodiscard]] void* cloth_rt_string_concat(const void* left,
                                            const void* right) noexcept;
 [[nodiscard]] void* cloth_rt_console_read_line(std::uint8_t* status) noexcept;
+[[nodiscard]] void* cloth_rt_file_read_bytes(const void* path,
+                                             std::uint8_t* status) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_parse_primitive(
     std::uint8_t kind, const void* text, std::uint64_t* bits) noexcept;
 [[nodiscard]] void* cloth_rt_program_arguments(

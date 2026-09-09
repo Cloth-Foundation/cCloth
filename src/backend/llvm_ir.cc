@@ -464,6 +464,10 @@ class BodyEmitter {
                               const MirCallInstruction& call,
                               const SemanticSymbol& symbol,
                               std::ostringstream& output);
+  void emit_file_read_bytes(const MirInstruction& instruction,
+                            const MirCallInstruction& call,
+                            const SemanticSymbol& symbol,
+                            std::ostringstream& output);
   void emit_primitive_parse(const MirInstruction& instruction,
                             const MirCallInstruction& call,
                             const SemanticSymbol& symbol,
@@ -647,6 +651,7 @@ class ModuleEmitter {
            << "declare void @cloth_rt_print_object(ptr)\n"
            << "declare void @cloth_rt_print_newline()\n"
            << "declare ptr @cloth_rt_console_read_line(ptr)\n"
+           << "declare ptr @cloth_rt_file_read_bytes(ptr, ptr)\n"
            << "declare i8 @cloth_rt_parse_primitive(i8, ptr, ptr)\n\n";
     for (const unsigned int width : {8U, 16U, 32U, 64U}) {
       for (const std::string_view sign : {"s", "u"}) {
@@ -3621,6 +3626,130 @@ void BodyEmitter::emit_console_read_line(const MirInstruction& instruction,
   output << "\n";
 }
 
+void BodyEmitter::emit_file_read_bytes(const MirInstruction& instruction,
+                                       const MirCallInstruction& call,
+                                       const SemanticSymbol& symbol,
+                                       std::ostringstream& output) {
+  if (call.arguments.size() != 1 || call.receiver || instruction.result ||
+      !call.success_storage || !call.error_result ||
+      symbol.parameter_types !=
+          std::vector<TypeId>{module_.semantics().string_type()} ||
+      value_type(call.arguments[0]) != module_.semantics().string_type() ||
+      symbol.type != value_type(*call.success_storage) ||
+      module_.semantics().type(symbol.type).kind != TypeKind::kArray ||
+      !module_.semantics().type(symbol.type).element_type ||
+      module_.semantics()
+              .type(*module_.semantics().type(symbol.type).element_type)
+              .kind != TypeKind::kByte ||
+      symbol.thrown_types.size() != 1 || !symbol.is_static) {
+    module_.report(instruction.range,
+                   "invalid file-read intrinsic reached LLVM lowering");
+    return;
+  }
+  const SemanticType& error_type =
+      module_.semantics().type(symbol.thrown_types[0]);
+  if (!error_type.file) {
+    module_.report(instruction.range,
+                   "file-read error has no source declaration");
+    return;
+  }
+  const FileSemantics& error_file = module_.semantics().file(*error_type.file);
+  const auto constructor =
+      std::ranges::find_if(error_file.constructors, [&](SymbolId candidate) {
+        const SemanticSymbol& value = module_.semantics().symbol(candidate);
+        return value.is_valid && value.parameter_types.size() == 1 &&
+               value.parameter_types[0] == module_.semantics().string_type();
+      });
+  const AbiCallable* constructor_abi =
+      constructor == error_file.constructors.end()
+          ? nullptr
+          : module_.find_callable(*constructor);
+  if (constructor_abi == nullptr || constructor_abi->uses_error_abi ||
+      constructor_abi->return_mode != AbiReturnMode::kDirect) {
+    module_.report(instruction.range,
+                   "file-read error has no usable message constructor");
+    return;
+  }
+
+  const std::string status_storage = next_address();
+  const std::string contents = next_address();
+  const std::string status = next_address();
+  const std::string has_contents = next_address();
+  const std::string status_has_contents = next_address();
+  const std::string is_consistent = next_address();
+  const std::string dispatch_label = next_label("file.dispatch.");
+  const std::string value_label = next_label("file.value.");
+  const std::string invalid_path_label = next_label("file.invalid_path.");
+  const std::string open_label = next_label("file.open.");
+  const std::string non_regular_label = next_label("file.non_regular.");
+  const std::string read_label = next_label("file.read.");
+  const std::string too_large_label = next_label("file.too_large.");
+  const std::string invalid_label = next_label("file.invalid.");
+  const std::string join_label = next_label("file.join.");
+  output << "  " << status_storage << " = alloca i8, align 1\n"
+         << "  " << contents << " = call ptr @cloth_rt_file_read_bytes(ptr "
+         << value(call.arguments[0]) << ", ptr " << status_storage << ")\n"
+         << "  " << status << " = load i8, ptr " << status_storage
+         << ", align 1\n"
+         << "  " << has_contents << " = icmp ne ptr " << contents << ", null\n"
+         << "  " << status_has_contents << " = icmp eq i8 " << status << ", 0\n"
+         << "  " << is_consistent << " = icmp eq i1 " << has_contents << ", "
+         << status_has_contents << "\n"
+         << "  br i1 " << is_consistent << ", label %" << dispatch_label
+         << ", label %" << invalid_label << "\n\n"
+         << dispatch_label << ":\n"
+         << "  switch i8 " << status << ", label %" << invalid_label << " [\n"
+         << "    i8 0, label %" << value_label << "\n"
+         << "    i8 1, label %" << invalid_path_label << "\n"
+         << "    i8 2, label %" << open_label << "\n"
+         << "    i8 3, label %" << non_regular_label << "\n"
+         << "    i8 4, label %" << read_label << "\n"
+         << "    i8 5, label %" << too_large_label << "\n"
+         << "  ]\n\n"
+         << value_label << ":\n"
+         << "  store ptr " << contents << ", ptr "
+         << value(*call.success_storage) << ", align "
+         << module_.pointer_alignment() << "\n"
+         << "  br label %" << join_label << "\n\n";
+
+  struct ErrorBranch {
+    std::string_view label;
+    std::string_view message;
+    std::string error;
+  };
+  std::array<ErrorBranch, 5> errors{{
+      {invalid_path_label, "file path contains U+0000", next_address()},
+      {open_label, "could not open file", next_address()},
+      {non_regular_label, "file is not a regular file", next_address()},
+      {read_label, "could not read file", next_address()},
+      {too_large_label, "file is too large", next_address()},
+  }};
+  for (ErrorBranch& branch : errors) {
+    const std::string bytes =
+        module_.add_string_literal(std::string{branch.message});
+    const std::string message = next_address();
+    output << branch.label << ":\n"
+           << "  " << message << " = call ptr @cloth_rt_string_literal(ptr "
+           << bytes << ", i64 " << branch.message.size() << ")\n"
+           << "  store ptr " << message << ", ptr "
+           << gc_value_address(*call.error_result) << ", align "
+           << module_.pointer_alignment() << "\n"
+           << "  " << branch.error << " = call ptr @"
+           << constructor_abi->mangled_name << "(ptr " << message << ")\n"
+           << "  br label %" << join_label << "\n\n";
+  }
+  output << invalid_label << ":\n"
+         << "  call void @llvm.trap()\n"
+         << "  unreachable\n\n"
+         << join_label << ":\n"
+         << "  " << value(*call.error_result) << " = phi ptr [ null, %"
+         << value_label << " ]";
+  for (const ErrorBranch& branch : errors) {
+    output << ", [ " << branch.error << ", %" << branch.label << " ]";
+  }
+  output << "\n";
+}
+
 void BodyEmitter::emit_primitive_parse(const MirInstruction& instruction,
                                        const MirCallInstruction& call,
                                        const SemanticSymbol& symbol,
@@ -3812,6 +3941,10 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
       emit_console_read_line(instruction, call, symbol, output);
       return;
     }
+    if (symbol.intrinsic == IntrinsicKind::kFileReadBytes) {
+      emit_file_read_bytes(instruction, call, symbol, output);
+      return;
+    }
     if (symbol.intrinsic == IntrinsicKind::kPrimitiveParse) {
       emit_primitive_parse(instruction, call, symbol, output);
       return;
@@ -3893,6 +4026,7 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
                << ")\n";
         break;
       case IntrinsicKind::kConsoleReadLine:
+      case IntrinsicKind::kFileReadBytes:
       case IntrinsicKind::kPrimitiveParse:
       case IntrinsicKind::kPrintNewline:
       case IntrinsicKind::kNone:

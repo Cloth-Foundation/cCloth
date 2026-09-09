@@ -121,9 +121,10 @@ checking, then prints typed HIR. It emits no artifact and does not change
 Shuttle's versioned check/build operations. This path supports the complete
 current language frontend. Struct and nullable-value native builds and source-
 free dependencies are supported by artifact format 7. Compiler ABI 6 and
-runtime ABI 9 are compiler-owned; Shuttle requires format 7 in capabilities and
+runtime ABI 10 are compiler-owned; Shuttle requires format 7 in capabilities and
 receipts while `clothc` validates the runtime ABI inside opaque artifacts.
-Process protocol 2 and manifest schema 1 remain unchanged.
+Process protocol 2 and manifest schema 1 remain unchanged. The paired standard
+library is `cloth` v0.4.0.
 
 ## Versioning and failures
 

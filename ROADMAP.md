@@ -98,6 +98,11 @@ packages introduced artifact format 3, compiler ABI 4, and runtime ABI 2. The ex
 interface-override follow-up and Stage 27 switch implementation are complete,
 including the coordinated 27.4 exit audit on 2026-09-02.
 
+Stage 43 is complete following its
+[43.4 exit audit](docs/testing.md#stage-434-portable-file-byte-and-source-exit-audit)
+on 2026-09-08. The bounded file API and the real `F:\Cloth` file-backed source
+and token-buffer smoke path pass the complete coordinated matrix.
+
 Stage 28 is complete, including its separately authorized
 [28.4 exit audit](docs/testing.md#stage-284-scalar-constant-exit-audit) on
 2026-09-02. Typed scalar evaluation, native/source-free integration, artifact
@@ -1333,15 +1338,91 @@ fill or factory initialization, multidimensional arrays, default construction
 of non-null user types, file input, a complete self-hosted lexer or parser,
 recoverable allocation errors, and unrelated language or toolchain work.
 
-## Beyond Stage 42
+## Stage 43: Portable file bytes and source representation
 
-Stage 42 is complete for the approved scope above. The remaining backlog does
-not acquire priority or enter the Cloth 1.0 scope automatically.
+Status: **complete — 43.4 exit audit passed 2026-09-08**
+
+The [approved contract](docs/proposals/stage_43_file_bytes_and_source.md) adds
+the bounded `cloth.io::File.ReadBytes(string): byte[] throws IoError` API and a
+bootstrap-owned `frontend.source::SourceFile` representation. The standard
+library owns public file access, the runtime owns native I/O, the compiler owns
+only the trusted canonical-library bridge, and `F:\Cloth` owns source meaning.
+
+Objective: load exact source bytes through a portable, bounded, deterministic
+failure boundary so the bootstrap compiler can consume real `.co` files without
+adding text decoding, streams, a path framework, or lexer behavior prematurely.
+
+Prerequisites: Stages 38 and 42.
+
+Deliverables:
+
+1. **43.1 — Contract (complete).** Freeze ownership, API, native path rules,
+   exact bytes, the 64 MiB bound, stable `IoError` failures, source
+   representation, bridge/ABI boundaries, compatibility, verification, and
+   non-goals.
+2. **43.2 — File foundation (complete).** Implement the runtime operation,
+   trusted compiler lowering, canonical standard-library `File`, independent
+   runtime/library tests, runtime ABI 10, and `cloth` v0.4.0.
+3. **43.3 — Bootstrap integration (complete).** Add bootstrap `SourceFile`, load
+   an actual `.co` file, feed its length and bytes into the token-buffer smoke
+   path, and close package, source-free, and Shuttle integration.
+4. **43.4 — Exit audit (complete).** Close path, byte, error, resource, GC,
+   malformed-state, compatibility, determinism, bootstrap, native/cross-target,
+   and repository matrices.
+
+The completed stage retains artifact/compiler/runtime 7/6/10, schemas
+2/1/1/1, and `cloth` v0.4.0. Native paths, exact bytes and bounds, typed
+failures, resources, GC, malformed state, deterministic packages, both targets,
+the real bootstrap project, and all repository gates pass.
+
+Non-goals include writes, directories, metadata, streams, large-file support,
+path objects, normalization, async I/O, memory mapping, text decoding, source
+line indexing, general FFI, and self-hosted lexer or parser implementation.
+
+## Stage 44: Self-hosted lexer parity
+
+Status: **complete — 2026-09-08**
+
+The [approved contract](docs/proposals/stage_44_self_hosted_lexer.md) makes the
+C++23 lexer the temporary behavior oracle while lexical analysis is implemented
+in the Cloth bootstrap compiler at `F:\Cloth`.
+
+Objective: tokenize exact file bytes in Cloth with the same kinds, byte spans,
+source ranges, diagnostics, and recovery as `cCloth`, using maintainable
+compiler-owned components and bounded exact-sized storage.
+
+Prerequisites: Stages 42 and 43.
+
+Deliverables:
+
+1. **44.1 — Contract and source architecture (complete).** Freeze parity,
+   byte/range rules, recovery, source-backed tokens, bounded two-pass storage,
+   component boundaries, compatibility, verification, and non-goals.
+2. **44.2 — Scanner foundation (complete).** Implement source cursor/span behavior,
+   exact-sized results, trivia, identifiers, keywords, punctuation, operators,
+   EOF, and focused bootstrap execution.
+3. **44.3 — Literal completion (complete).** Implement numeric, string,
+   character, UTF-8, escape, diagnostic, and recovery parity without parser
+   coupling.
+4. **44.4 — Differential parity and exit audit (complete).** Compare both lexers across
+   fixed and generated inputs, real bootstrap sources, both targets, native and
+   Shuttle paths, and all repository quality gates.
+
+Compatibility remains artifact/compiler/runtime 7/6/10, schemas 2/1/1/1, and
+`cloth` v0.4.0. Bootstrap internals do not enter artifacts, runtime ABI,
+standard-library APIs, or Shuttle protocols.
+
+Non-goals include a parser or AST, Unicode identifiers, incremental lexing,
+editor services, a language server, general collections, streaming input,
+public token APIs, and unrelated language or toolchain work.
+
+## Beyond Stage 44
+
+Stage 44 is complete. The remaining backlog does not acquire priority or enter
+the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 
-- portable, bounded source-file byte input for the bootstrap compiler;
-- self-hosted lexer parity after runtime-sized storage and source input;
 - self-hosted parser and AST representation after lexer parity; and
 - immutable per-case enum metadata, after its constant-data prerequisites.
 

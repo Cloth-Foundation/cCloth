@@ -15,6 +15,34 @@ set(CLOTH_NULLABLE_VALUE_PROJECT
 set(CLOTH_NULLABLE_AUDIT_PROJECT
     "${CLOTH_INTEGRATION_PROJECTS}/nullable_audit/src")
 set(CLOTH_STANDARD_LIBRARY_ROOT "${PROJECT_SOURCE_DIR}/std/src")
+set(CLOTH_SELF_HOST_SOURCE_DIR "" CACHE PATH
+    "Optional Cloth bootstrap checkout used by the lexer parity audit")
+set(CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE "" CACHE FILEPATH
+    "Optional Shuttle executable used by the lexer parity audit")
+
+add_executable(cloth_lexer_parity_oracle lexer_parity_oracle.cc)
+target_link_libraries(cloth_lexer_parity_oracle PRIVATE cloth_compiler)
+cloth_enable_warnings(cloth_lexer_parity_oracle)
+
+if(CLOTH_SELF_HOST_SOURCE_DIR OR CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE)
+    if(NOT CLOTH_SELF_HOST_SOURCE_DIR OR
+       NOT CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE)
+        message(FATAL_ERROR
+            "CLOTH_SELF_HOST_SOURCE_DIR and "
+            "CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE must be set together")
+    endif()
+    add_test(NAME cloth_self_host_lexer_parity
+        COMMAND ${CMAKE_COMMAND}
+            "-DCLOTH_BOOTSTRAP_SOURCE=${CLOTH_SELF_HOST_SOURCE_DIR}"
+            "-DCLOTH_COMPILER=$<TARGET_FILE:clothc>"
+            "-DCLOTH_ORACLE=$<TARGET_FILE:cloth_lexer_parity_oracle>"
+            "-DCLOTH_SHUTTLE=${CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE}"
+            "-DCLOTH_STANDARD_LIBRARY=${CLOTH_STANDARD_LIBRARY_ROOT}"
+            "-DCLOTH_STANDARD_LIBRARY_VERSION=${PROJECT_VERSION}"
+            "-DCLOTH_WORK_DIRECTORY=${PROJECT_BINARY_DIR}/lexer-parity"
+            "-DCLOTH_EXECUTABLE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}"
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/RunLexerParity.cmake)
+endif()
 
 foreach(target IN ITEMS x86_64 wasm32)
     set(standard_library_ir
@@ -281,6 +309,7 @@ add_test(NAME cloth_standard_library_artifacts
         "-DCLOTH_STANDARD_LIBRARY_ROOT=${CLOTH_STANDARD_LIBRARY_ROOT}"
         "-DCLOTH_APPLICATION_ROOT=${CLOTH_STANDARD_LIBRARY_PROJECT}"
         "-DCLOTH_CONSOLE_APPLICATION_ROOT=${CLOTH_INTEGRATION_PROJECTS}/console/src"
+        "-DCLOTH_FILE_APPLICATION_ROOT=${CLOTH_INTEGRATION_PROJECTS}/file_bytes/src"
         "-DCLOTH_CONSOLE_INPUT=${CLOTH_INTEGRATION_PROJECTS}/console/input.txt"
         "-DCLOTH_CONSOLE_EXPECTED=${CLOTH_INTEGRATION_EXPECTED}/console.txt"
         "-DCLOTH_WORK_DIRECTORY=${PROJECT_BINARY_DIR}/standard-library-artifacts"
@@ -1004,6 +1033,20 @@ cloth_add_cli_failure_test(inheritance_error
     ${CLOTH_INTEGRATION_ERRORS}/InheritanceErrors.co)
 
 cloth_finalize_tests(LABEL integration)
+
+if(TEST cloth_self_host_lexer_parity)
+    set_tests_properties(cloth_self_host_lexer_parity PROPERTIES
+        LABELS "integration;bootstrap"
+        TIMEOUT 1200
+    )
+    if(CLOTH_ENABLE_SANITIZERS AND WIN32 AND
+       CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        set_tests_properties(cloth_self_host_lexer_parity PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${CLOTH_CLANG_RUNTIME_DIRECTORY}"
+        )
+    endif()
+endif()
 
 # This test compiles five package artifacts, links two native objects, and runs
 # the result. Allow sanitizer instrumentation headroom without relaxing the
