@@ -24,6 +24,10 @@ add_executable(cloth_lexer_parity_oracle lexer_parity_oracle.cc)
 target_link_libraries(cloth_lexer_parity_oracle PRIVATE cloth_compiler)
 cloth_enable_warnings(cloth_lexer_parity_oracle)
 
+add_executable(cloth_declaration_parity_oracle declaration_parity_oracle.cc)
+target_link_libraries(cloth_declaration_parity_oracle PRIVATE cloth_compiler)
+cloth_enable_warnings(cloth_declaration_parity_oracle)
+
 if(CLOTH_SELF_HOST_SOURCE_DIR OR CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE)
     if(NOT CLOTH_SELF_HOST_SOURCE_DIR OR
        NOT CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE)
@@ -36,6 +40,7 @@ if(CLOTH_SELF_HOST_SOURCE_DIR OR CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE)
             "-DCLOTH_BOOTSTRAP_SOURCE=${CLOTH_SELF_HOST_SOURCE_DIR}"
             "-DCLOTH_COMPILER=$<TARGET_FILE:clothc>"
             "-DCLOTH_ORACLE=$<TARGET_FILE:cloth_lexer_parity_oracle>"
+            "-DCLOTH_DECLARATION_ORACLE=$<TARGET_FILE:cloth_declaration_parity_oracle>"
             "-DCLOTH_SHUTTLE=${CLOTH_SELF_HOST_SHUTTLE_EXECUTABLE}"
             "-DCLOTH_STANDARD_LIBRARY=${CLOTH_STANDARD_LIBRARY_ROOT}"
             "-DCLOTH_STANDARD_LIBRARY_VERSION=${PROJECT_VERSION}"

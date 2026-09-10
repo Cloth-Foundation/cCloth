@@ -1,0 +1,8 @@
+static static int32 Recovered;
+func () {}
+Wrong(int32 value): {}
+int32 MissingInitializer =
+func Good(): void {}
+class Nested {
+  func Ignored(): void {}
+}

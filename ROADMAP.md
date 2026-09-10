@@ -83,13 +83,19 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 43 | Portable file-byte input and bootstrap source representation |
 | 44 | Self-hosted lexer parity with the C++ bootstrap oracle |
 | 45 | Managed self-hosted parser storage and verified syntax-tree foundations |
+| 45.5 | Universal Object root and verified value boxing |
+| 46 | Self-hosted declaration parser |
 
 Stage 45 is complete following its separately authorized
 [45.4 exit audit](docs/testing.md#stage-454-self-hosted-syntax-tree-exit-audit)
 on 2026-09-09. Verified managed syntax trees are the current self-hosted
 compiler baseline, and Stage 31 is the current completed optimizer baseline.
 Stage 45.5 is complete following its integration and exit audit on 2026-09-09.
-The universal Object and value-box model is now the baseline for Stage 46.
+Stage 46 is complete following its 46.4 declaration-parser exit audit on
+2026-09-09. The verified self-hosted declaration result is now the bootstrap
+parser baseline. The C++ declaration pass remains authoritative until the
+separately approved definition pass and complete parser authority-transfer
+audit are complete.
 Stages 35 and 36 are complete, including their standard-library and prelude
 exit audits.
 Coordinated toolchain Stage 22 and separate-compilation Stage 23 are complete,
@@ -1519,14 +1525,53 @@ Active compatibility is artifact/compiler/runtime **8/7/11**, schemas
 payload. A future public `Hash` utility and hash collections remain separate
 API and security contracts.
 
-## Beyond Stage 45.5
+## Stage 46: Self-hosted declaration parser
 
-Stages 45 and 45.5 are complete. The remaining backlog does not acquire
+Status: **complete — 46.4 exit audit passed 2026-09-09**
+
+The [approved contract](docs/proposals/stage_46_self_hosted_declaration_parser.md)
+implements the declaration half of Cloth's two-pass parser in the self-hosted
+compiler at `F:\Cloth`.
+
+Objective: consume the immutable lexer result and publish a verified,
+deterministic declaration result containing the file envelope, imports, enum
+cases, member signatures, and exact deferred initializer and body token ranges.
+
+Prerequisites: Stages 44, 45, and 45.5.
+
+Deliverables:
+
+1. **46.1 — Contract (complete).** Freeze declaration grammar, immutable
+   outlines and result ownership, token intervals, cursor rules, recovery,
+   diagnostics, complexity, phase separation, compatibility, and parity.
+2. **46.2 — Parser substrate (complete).** Implement bounded token navigation,
+   checked token intervals, structured parse diagnostics, segmented outline
+   builders, immutable publication, verification, and focused boundary tests
+   without declaration grammar.
+3. **46.3 — Declaration grammar (complete).** Parse every supported import,
+   file envelope, enum case, type, field, function signature, constructor,
+   modifier, throws clause, and deferred region with deterministic recovery and
+   C++ differential records.
+4. **46.4 — Integration and exit audit (complete).** Close declaration parity, real-
+   bootstrap coverage, malformed and adversarial inputs, resource bounds, GC,
+   determinism, native and both-target builds, Shuttle, sanitizers,
+   documentation, and repository gates.
+
+Stage 46 changes no source language, artifact, ABI, standard-library, editor, or
+Shuttle contract. Compatibility remains artifact/compiler/runtime **8/7/11**,
+schemas **2/1/1/1**, and `cloth` **v0.5.0**. The C++ parser remains authoritative
+after 46.4; the definition pass and complete authority transfer require later
+approved stages.
+
+## Beyond Stage 46
+
+Stages 45, 45.5, and 46 are complete. The remaining backlog does not acquire
 priority or enter the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 
-- self-hosted declaration and definition grammar after Stage 45; and
+- self-hosted definition grammar after Stage 46 declaration parity;
+- complete parser parity and authority transfer after the definition pass; and
 - immutable per-case enum metadata, after its constant-data prerequisites.
 
 These candidates follow completion of their prerequisites and approved stages.

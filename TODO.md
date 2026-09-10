@@ -85,7 +85,9 @@ Stage 44 is complete following its separately authorized 44.4 differential
 parity and exit audit on 2026-09-08.
 Stage 45 is complete following its separately authorized 45.4 syntax-tree exit
 audit on 2026-09-09. Stage 45.5 is complete following its 45.5d integration and
-exit audit on 2026-09-09.
+exit audit on 2026-09-09. Stage 46 is complete following its 46.4 declaration-
+parser exit audit on 2026-09-09. The C++ declaration pass remains authoritative
+until the definition pass and complete parser authority-transfer audit.
 
 ## Scheduled work
 
@@ -1426,6 +1428,65 @@ class override validation. Existing ABI and artifact versions are unchanged.
   real bootstrap, editor, Rust, format, documentation, and repository gates
   pass. Stage 45.5 is complete at 8/7/11, schemas 2/1/1/1, and `cloth` v0.5.0.
 
+### Stage 46: Self-hosted declaration parser
+
+- [x] **46.1 — Contract.** Freeze the accepted declaration grammar, immutable
+  declaration result and member outlines, checked half-open token intervals,
+  bounded cursor behavior, phase separation, structured diagnostics, recovery,
+  progress, complexity, resource limits, source organization, compatibility,
+  differential parity, and non-goals.
+
+  Approved and completed 2026-09-09. The self-hosted pass will retain source-
+  backed imports, file-envelope state, enum cases, unresolved signatures, and
+  exact deferred initializer and body intervals without constructing incomplete
+  declaration nodes. Source errors publish bounded invalid results; malformed
+  token ownership and storage remain internal `StateError` failures. No source,
+  artifact, ABI, standard-library, editor, or Shuttle behavior changes. See the
+  [contract](docs/proposals/stage_46_self_hosted_declaration_parser.md).
+- [x] **46.2 — Parser substrate.** Implement and verify bounded token cursors,
+  checked token intervals, structured declaration diagnostics, specialized
+  segmented builders, exact immutable sequences, declaration-result
+  publication, malformed-state rejection, progress sentinels, and GC lifetime
+  without declaration grammar.
+
+  Completed 2026-09-09. The self-hosted compiler now verifies complete token
+  ownership and coordinates, uses bounded EOF-saturating cursors, freezes typed
+  64-slot builders into exact sequences, and publishes only verified immutable
+  declaration results. Native boundary, malformed-state, progress, 64/65-page,
+  invalid-result, and GC checks pass through the direct, serial, parallel,
+  warm-reuse, x86-64, and wasm32 bootstrap gate. Declaration grammar remains
+  isolated to 46.3.
+- [x] **46.3 — Declaration grammar.** Implement imports, implicit and explicit
+  file types, inheritance and conformance clauses, enum cases, unresolved
+  types, fields, function signatures, constructors, modifiers, throws clauses,
+  deferred-region discovery, duplicates, recovery, canonical record adapters,
+  and C++ differential coverage.
+
+  Completed 2026-09-09. The self-hosted declaration pass now publishes verified
+  immutable outlines for the complete declaration grammar while leaving
+  initializers and bodies as exact token intervals. Stable `O(D log D)`
+  duplicate validation retains later invalid enum cases and member signatures
+  with related-source context. Focused native and GC checks pass, and canonical
+  C++/Cloth records agree across the 13-input accepted and recovery corpus
+  through the deterministic direct, serial, parallel, warm-reuse, x86-64, and
+  wasm32 bootstrap gate.
+- [x] **46.4 — Integration and exit audit.** Close complete declaration parity,
+  the real bootstrap corpus, malformed and adversarial inputs, complexity and
+  resource limits, GC, native and both targets, serial/parallel determinism,
+  Shuttle reuse and failure preservation, sanitizers, documentation, and
+  repository gates. Retain compatibility 8/7/11, schemas 2/1/1/1, and `cloth`
+  v0.5.0.
+
+  Completed 2026-09-09. Canonical C++ and Cloth records agree for 28 fixed
+  accepted, malformed, and adversarial inputs, four generated scale/resource
+  inputs, and all 185 production bootstrap sources. The generated cases cross
+  the 65,536-case enum boundary, 4,096 members, and 8,192-level balanced
+  deferred regions. Both complete 355-test development and ASan/UBSan matrices
+  pass, including direct, serial, parallel, warm-reuse, x86-64, wasm32, GC,
+  determinism, and failure-preservation coverage. Shuttle, editor, formatting,
+  documentation-link, self-hosted style, and repository gates pass without a
+  compatibility change.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1499,10 +1560,12 @@ active stage without first updating `ROADMAP.md`.
 
 ### Bootstrap compiler
 
-- Self-hosted lexer parity is scheduled as Stage 44 above.
-- Define self-hosted parser and AST storage only after lexer parity. Preserve
-  the two-pass architecture and implicit file-class identity without making
-  the bootstrap source or its data structures part of the compiler ABI.
+- Stage 46 completed the self-hosted declaration pass. Define the self-hosted
+  definition pass only under a separately approved stage while preserving
+  immutable outlines, exact deferred ranges, and the two-pass architecture.
+- Transfer parser authority away from C++ only after a separately approved full
+  differential parser audit covers declarations, definitions, diagnostics,
+  recovery, resource bounds, and real-project behavior.
 
 ### Strings, formatting, and representation
 

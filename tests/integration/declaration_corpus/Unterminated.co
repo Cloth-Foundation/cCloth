@@ -1,0 +1,3 @@
+func Run(): void {
+  if (true) {
+    println("open");

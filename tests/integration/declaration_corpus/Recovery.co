@@ -1,0 +1,4 @@
+int32 First
+import later::Thing;
+return;
+func Good(): void {}

@@ -1,0 +1,4 @@
+abstract abstract struct BadEnvelope: {
+  int32 Value;
+}
+trailing

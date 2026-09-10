@@ -1,0 +1,3 @@
+func Clash(int32 value): void {}
+int32 Clash;
+func Clash(int32 value): void {}

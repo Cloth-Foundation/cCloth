@@ -1,0 +1,6 @@
+string? Maybe;
+string[] Values;
+string?[] NullableValues;
+string[]? MaybeValues;
+string?[]? MaybeNullableValues;
+func Convert(int8 small, uint64 large, float value): object? {}

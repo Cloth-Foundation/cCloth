@@ -1,5 +1,101 @@
 # Cloth testing and diagnostic builds
 
+## Stage 46.4 self-hosted declaration-parser exit audit
+
+Completed on Windows on 2026-09-09. The canonical C++ and Cloth declaration
+adapters agree across 28 fixed accepted, malformed, recovery, and adversarial
+inputs; four generated scale/resource inputs; and all 185 production `.co`
+files in the real `F:\Cloth` bootstrap. The generated cases exercise 65,536 and
+65,537 enum cases, 4,096 members, and 8,192 nested initializer and body
+delimiters. The malformed corpus reaches 52 source-reachable structured parse
+diagnostic categories while preserving later independent records.
+
+The bootstrap gate also retains the complete 566-input lexer differential
+corpus, focused declaration substrate and grammar checks, GC lifetime stress,
+native execution, x86-64 and wasm32 checking, direct and serial/parallel Shuttle
+determinism, exact warm reuse, and failed-output preservation. The final-source
+reruns pass in 220.56 seconds under the development compiler and 490.27 seconds
+under Clang ASan/UBSan when the two isolated gates run concurrently.
+
+All 355 development and 355 sanitizer CTests pass. Rust formatting,
+warning-denied Clippy, all 51 ordinary Shuttle tests, Rust 1.85 all-target
+checking, TypeScript compilation, and all 24 editor tests against each compiler
+pass. All 197 self-hosted source and fixture files meet the tab, trailing-
+whitespace, and 100-column rules; every nonempty file has a final newline, while
+the zero-byte lexer fixture remains intentionally empty. C++ formatting, all
+386 local Markdown targets across 124 files, and both repositories' whitespace
+checks pass.
+
+Stage 46 is complete. Compatibility remains artifact/compiler/runtime
+**8/7/11**, schemas remain **2/1/1/1**, and `cloth` remains v0.5.0. The C++
+declaration pass remains authoritative until the separately approved definition
+pass and complete parser authority-transfer audit.
+
+## Stage 46.3 self-hosted declaration grammar
+
+Completed on Windows on 2026-09-09. The self-hosted compiler now parses imports,
+implicit and explicit file types, inheritance and conformance clauses, enum
+cases, unresolved nullable and array types, fields, function signatures,
+constructors, modifiers, throws clauses, and exact deferred initializer and
+body intervals. Initializer expressions and callable bodies remain definition-
+pass work and are never parsed by the declaration pass.
+
+Duplicate enum cases and callable signatures retain the later declaration as an
+invalid immutable record with structured related-source context. Deterministic
+stable merge sorting bounds duplicate validation to `O(D log D)`, and parse
+diagnostics freeze in primary-source order. Focused native checks cover implicit
+classes, every explicit file kind, interface contracts, overload conflicts,
+constructor spellings, nullable array shapes, throws clauses, recovery, and
+deferred ranges. A 256-iteration check verifies result, token, span, outline,
+and deferred-range retention across managed allocation pressure.
+
+The C++ and Cloth canonical declaration adapters agree across a 13-input corpus
+covering accepted declarations, duplicate enum and member records, and recovery.
+`ctest --test-dir build/dev -R '^cloth_self_host_lexer_parity$'` passes in
+164.86 seconds. That gate also proves direct and serial/parallel deterministic
+builds, exact warm reuse, x86-64 native execution, wasm32 checking, lexer parity,
+GC retention, and failed-output preservation. Compatibility remains 8/7/11,
+schemas remain 2/1/1/1, and `cloth` remains v0.5.0. The C++ declaration pass
+remains authoritative through 46.4.
+
+## Stage 46.2 self-hosted declaration-parser substrate
+
+Completed on Windows on 2026-09-09. The self-hosted compiler now owns checked
+half-open token intervals, complete token-buffer ownership and coordinate
+verification, bounded EOF-saturating token cursors, structured declaration
+diagnostics, typed 64-slot construction pages, exact immutable sequences,
+member and file outlines, and a verified immutable `DeclarationResult`.
+
+The bootstrap self-check crosses empty, one-token, 64-entry, and 65-entry
+boundaries. Dedicated failure modes preserve negative range and lookahead,
+foreign source, forged coordinate, parent-slice, progress, source-order,
+freeze-once, sequence-bound, deferred-body, capitalization visibility, file-
+range, and aggregate-validity rejection. A 256-iteration native GC check keeps
+published results alive while obsolete builders and pages become collectible.
+
+`ctest --test-dir build/dev -R cloth_self_host_lexer_parity` passes. That gate
+covers direct and serial/parallel Shuttle builds, exact warm reuse, x86-64
+native execution, wasm32 checking, deterministic outputs, failed-build
+preservation, the complete lexer differential corpus, and the Stage 46.2
+checks. Declaration grammar remains deferred to 46.3; compatibility remains
+8/7/11, schemas remain 2/1/1/1, and `cloth` remains v0.5.0.
+
+## Stage 46.1 self-hosted declaration-parser contract
+
+Approved on Windows on 2026-09-09. The contract freezes the complete
+declaration-pass grammar, immutable declaration result and outline model,
+checked half-open token ranges, bounded cursor semantics, exact two-pass
+separation, structured diagnostics, deterministic recovery, progress and
+complexity requirements, GC ownership, source organization, parity boundary,
+and non-goals.
+
+This checkpoint changes maintainer documentation only. The C++ declaration
+pass remains authoritative, and definition parsing remains unscheduled until
+46.4 passes. Artifact/compiler/runtime compatibility remains 8/7/11, schemas
+remain 2/1/1/1, and the compiler-paired standard library remains `cloth`
+v0.5.0. No compiler, bootstrap, runtime, standard-library, editor, Shuttle, or
+user-language behavior changed.
+
 ## Stage 45.5d Object-model exit audit
 
 Completed on Windows on 2026-09-09. A permanent compiler-backed Shuttle case

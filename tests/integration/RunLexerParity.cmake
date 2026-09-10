@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 foreach(required IN ITEMS CLOTH_BOOTSTRAP_SOURCE CLOTH_COMPILER CLOTH_ORACLE
-                          CLOTH_SHUTTLE CLOTH_STANDARD_LIBRARY
+                          CLOTH_DECLARATION_ORACLE CLOTH_SHUTTLE
+                          CLOTH_STANDARD_LIBRARY
                           CLOTH_STANDARD_LIBRARY_VERSION CLOTH_WORK_DIRECTORY)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
         message(FATAL_ERROR "${required} is required")
@@ -18,7 +19,8 @@ if(NOT EXISTS "${CLOTH_STANDARD_LIBRARY}/io/File.co")
     message(FATAL_ERROR
         "standard-library source not found: ${CLOTH_STANDARD_LIBRARY}")
 endif()
-foreach(executable IN ITEMS CLOTH_COMPILER CLOTH_ORACLE CLOTH_SHUTTLE)
+foreach(executable IN ITEMS CLOTH_COMPILER CLOTH_ORACLE
+                            CLOTH_DECLARATION_ORACLE CLOTH_SHUTTLE)
     if(NOT EXISTS "${${executable}}")
         message(FATAL_ERROR "executable not found: ${${executable}}")
     endif()
@@ -44,6 +46,62 @@ function(run_required description working_directory)
         message(FATAL_ERROR "${description} failed with status ${result}")
     endif()
     set(CLOTH_LAST_PROCESS_OUTPUT "${stdout}${stderr}" PARENT_SCOPE)
+endfunction()
+
+function(compare_declarations input bootstrap_executable)
+    get_filename_component(file_name "${input}" NAME_WE)
+    execute_process(
+        COMMAND "${CLOTH_DECLARATION_ORACLE}" "${input}"
+        RESULT_VARIABLE oracle_result
+        OUTPUT_VARIABLE oracle_records
+        ERROR_VARIABLE oracle_error
+        ENCODING UTF-8
+    )
+    if(NOT oracle_result EQUAL 0)
+        message(FATAL_ERROR
+            "C++ declaration oracle failed for ${input}:\n${oracle_error}")
+    endif()
+    execute_process(
+        COMMAND "${bootstrap_executable}" --declaration-records
+            "${input}" "${file_name}"
+        RESULT_VARIABLE bootstrap_result
+        OUTPUT_VARIABLE bootstrap_records
+        ERROR_VARIABLE bootstrap_error
+        ENCODING UTF-8
+    )
+    if(NOT bootstrap_result EQUAL 0)
+        message(FATAL_ERROR
+            "Cloth declaration parser failed for ${input}:\n"
+            "${bootstrap_error}")
+    endif()
+    string(REPLACE "\r\n" "\n" oracle_records "${oracle_records}")
+    string(REPLACE "\r\n" "\n" bootstrap_records "${bootstrap_records}")
+    if(NOT oracle_records STREQUAL bootstrap_records)
+        message(FATAL_ERROR
+            "declaration parity mismatch in ${input}\n"
+            "C++ records:\n${oracle_records}\n"
+            "Cloth records:\n${bootstrap_records}")
+    endif()
+endfunction()
+
+function(read_declaration_records output_name input bootstrap_executable)
+    get_filename_component(file_name "${input}" NAME_WE)
+    execute_process(
+        COMMAND "${bootstrap_executable}" --declaration-records
+            "${input}" "${file_name}"
+        RESULT_VARIABLE record_result
+        OUTPUT_VARIABLE records
+        ERROR_VARIABLE record_error
+        ENCODING UTF-8
+    )
+    string(REPLACE "\r\n" "\n" records "${records}")
+    if(NOT record_result EQUAL 0 OR NOT record_error STREQUAL "" OR
+       records STREQUAL "")
+        message(FATAL_ERROR
+            "declaration record adapter failed for ${input} with status "
+            "${record_result}\nstdout: ${records}\nstderr: ${record_error}")
+    endif()
+    set(${output_name} "${records}" PARENT_SCOPE)
 endfunction()
 
 function(require_same_file description left right)
@@ -253,6 +311,106 @@ if(NOT native_result EQUAL 0 OR
         "stdout: ${native_output}\nstderr: ${native_error}")
 endif()
 
+function(require_declaration_substrate_failure mode expected)
+    execute_process(
+        COMMAND "${serial_executable}" --declaration-substrate-failure
+            "${mode}"
+        WORKING_DIRECTORY "${serial_source}"
+        RESULT_VARIABLE failure_result
+        OUTPUT_VARIABLE failure_output
+        ERROR_VARIABLE failure_error
+        ENCODING UTF-8
+    )
+    if(failure_result EQUAL 0 OR NOT failure_output STREQUAL "" OR
+       NOT failure_error MATCHES "${expected}")
+        message(FATAL_ERROR
+            "declaration substrate failure '${mode}' was not preserved\n"
+            "status: ${failure_result}\nstdout: ${failure_output}\n"
+            "stderr: ${failure_error}")
+    endif()
+endfunction()
+
+require_declaration_substrate_failure("range" "invalid token index range")
+require_declaration_substrate_failure(
+    "token-buffer" "parser token buffer is not immutable and complete")
+require_declaration_substrate_failure(
+    "foreign-source" "parser token does not belong to its source")
+require_declaration_substrate_failure(
+    "location" "parser token does not belong to its source")
+require_declaration_substrate_failure(
+    "slice" "token cursor slice is outside its parent")
+require_declaration_substrate_failure(
+    "slice-parent" "token cursor slice is outside its parent")
+require_declaration_substrate_failure(
+    "lookahead" "token cursor lookahead is negative")
+require_declaration_substrate_failure(
+    "progress" "token cursor did not make progress")
+require_declaration_substrate_failure(
+    "progress-checkpoint" "token cursor progress checkpoint is invalid")
+require_declaration_substrate_failure(
+    "diagnostic-order" "parse diagnostics must be added in source order")
+require_declaration_substrate_failure(
+    "diagnostic-finished" "parse diagnostic builder is already finished")
+require_declaration_substrate_failure(
+    "member-finished" "member outline builder is already finished")
+require_declaration_substrate_failure(
+    "import-finished" "import syntax builder is already finished")
+require_declaration_substrate_failure(
+    "type-finished" "type syntax builder is already finished")
+require_declaration_substrate_failure(
+    "parameter-finished" "parameter syntax builder is already finished")
+require_declaration_substrate_failure(
+    "enum-finished" "enum case syntax builder is already finished")
+require_declaration_substrate_failure(
+    "diagnostic-bounds" "parse diagnostic sequence index is out of bounds")
+require_declaration_substrate_failure(
+    "member-bounds" "member outline sequence index is out of bounds")
+require_declaration_substrate_failure(
+    "result-validity" "declaration result validity is inconsistent")
+require_declaration_substrate_failure(
+    "body-delimiter" "valid body token range is not brace delimited")
+require_declaration_substrate_failure(
+    "body-bounds" "deferred token range is outside its declaration")
+require_declaration_substrate_failure(
+    "visibility" "member outline token identity is inconsistent")
+require_declaration_substrate_failure(
+    "file-range" "declaration file range does not cover its source")
+
+execute_process(
+    COMMAND "${serial_executable}" --declaration-substrate-gc-check
+    WORKING_DIRECTORY "${serial_source}"
+    RESULT_VARIABLE declaration_gc_result
+    OUTPUT_VARIABLE declaration_gc_output
+    ERROR_VARIABLE declaration_gc_error
+    ENCODING UTF-8
+)
+if(NOT declaration_gc_result EQUAL 0 OR
+   NOT declaration_gc_output STREQUAL "" OR
+   NOT declaration_gc_error STREQUAL "")
+    message(FATAL_ERROR
+        "declaration substrate GC check failed with status "
+        "${declaration_gc_result}\nstdout: ${declaration_gc_output}\n"
+        "stderr: ${declaration_gc_error}")
+endif()
+
+execute_process(
+    COMMAND "${serial_executable}" --declaration-grammar-gc-check
+    WORKING_DIRECTORY "${serial_source}"
+    RESULT_VARIABLE declaration_grammar_gc_result
+    OUTPUT_VARIABLE declaration_grammar_gc_output
+    ERROR_VARIABLE declaration_grammar_gc_error
+    ENCODING UTF-8
+)
+if(NOT declaration_grammar_gc_result EQUAL 0 OR
+   NOT declaration_grammar_gc_output STREQUAL "" OR
+   NOT declaration_grammar_gc_error STREQUAL "")
+    message(FATAL_ERROR
+        "declaration grammar GC check failed with status "
+        "${declaration_grammar_gc_result}\n"
+        "stdout: ${declaration_grammar_gc_output}\n"
+        "stderr: ${declaration_grammar_gc_error}")
+endif()
+
 function(require_storage_failure mode expected)
     execute_process(
         COMMAND "${serial_executable}" --syntax-storage-failure "${mode}"
@@ -395,6 +553,68 @@ foreach(input IN LISTS bootstrap_inputs)
     compare_lexers("${input}" "${serial_executable}")
 endforeach()
 
+file(GLOB declaration_inputs LIST_DIRECTORIES FALSE
+    "${CMAKE_CURRENT_LIST_DIR}/declaration_corpus/*.co")
+set(generated_declaration_directory
+    "${CLOTH_WORK_DIRECTORY}/generated-declarations")
+run_required("generate bounded declaration corpus" "${CLOTH_WORK_DIRECTORY}"
+    "${CLOTH_DECLARATION_ORACLE}" generate
+    "${generated_declaration_directory}")
+file(GLOB generated_declaration_inputs LIST_DIRECTORIES FALSE
+    "${generated_declaration_directory}/*.co")
+list(APPEND declaration_inputs ${generated_declaration_inputs})
+list(SORT declaration_inputs)
+list(LENGTH declaration_inputs declaration_input_count)
+set(declaration_input_index 0)
+foreach(input IN LISTS declaration_inputs)
+    math(EXPR declaration_input_index "${declaration_input_index} + 1")
+    message(STATUS
+        "declaration parity ${declaration_input_index}/"
+        "${declaration_input_count}: ${input}")
+    compare_declarations("${input}" "${serial_executable}")
+endforeach()
+
+file(GLOB_RECURSE real_declaration_inputs LIST_DIRECTORIES FALSE
+    "${CLOTH_BOOTSTRAP_SOURCE}/src/*.co")
+list(SORT real_declaration_inputs)
+list(LENGTH real_declaration_inputs real_declaration_input_count)
+set(real_declaration_input_index 0)
+foreach(input IN LISTS real_declaration_inputs)
+    math(EXPR real_declaration_input_index
+        "${real_declaration_input_index} + 1")
+    math(EXPR progress_remainder "${real_declaration_input_index} % 25")
+    if(real_declaration_input_index EQUAL 1 OR
+       progress_remainder EQUAL 0 OR
+       real_declaration_input_index EQUAL real_declaration_input_count)
+        message(STATUS
+            "real bootstrap declaration parity "
+            "${real_declaration_input_index}/${real_declaration_input_count}: "
+            "${input}")
+    endif()
+    compare_declarations("${input}" "${serial_executable}")
+endforeach()
+
+set(declaration_determinism_input
+    "${CMAKE_CURRENT_LIST_DIR}/declaration_corpus/Implicit.co")
+read_declaration_records(direct_declaration_records
+    "${declaration_determinism_input}" "${direct_executable}")
+read_declaration_records(first_serial_declaration_records
+    "${declaration_determinism_input}" "${serial_executable}")
+read_declaration_records(second_serial_declaration_records
+    "${declaration_determinism_input}" "${serial_executable}")
+read_declaration_records(parallel_declaration_records
+    "${declaration_determinism_input}" "${parallel_executable}")
+if(NOT direct_declaration_records STREQUAL
+       first_serial_declaration_records OR
+   NOT first_serial_declaration_records STREQUAL
+       second_serial_declaration_records OR
+   NOT first_serial_declaration_records STREQUAL
+       parallel_declaration_records)
+    message(FATAL_ERROR
+        "declaration records differ across direct, repeated serial, or "
+        "parallel builds")
+endif()
+
 file(SHA256 "${serial_executable}" preserved_hash)
 file(SHA256 "${serial_source}/target/x86_64/packages/cloth.cpa"
     preserved_library_hash)
@@ -437,6 +657,8 @@ if(NOT preserved_library_hash STREQUAL failed_library_hash OR
 endif()
 
 message(STATUS
-    "Stage 44 lexer parity passed for ${input_count} inputs; direct and "
-    "Shuttle builds are deterministic, both targets pass, warm reuse is "
-    "exact, and failed output is preserved")
+    "Stage 44 lexer parity and Stage 46 declaration audit passed for "
+    "${input_count} lexer, ${declaration_input_count} bounded declaration, "
+    "and ${real_declaration_input_count} real bootstrap inputs; direct and "
+    "Shuttle builds and declaration records are deterministic, "
+    "both targets pass, warm reuse is exact, and failed output is preserved")

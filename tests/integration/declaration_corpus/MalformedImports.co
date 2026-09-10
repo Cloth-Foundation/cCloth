@@ -1,0 +1,6 @@
+import ;
+import alpha::;
+import alpha.beta as Alias;
+import alpha.beta.* as Bad;
+int32 Value;
+import later::Thing;

@@ -1,0 +1,4 @@
+class Inner {
+  func Ignored(): void {}
+}
+func Kept(): void {}

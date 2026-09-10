@@ -1,0 +1,4 @@
+static final func Build(): object {}
+final static func Other(): object {}
+override func Render(): string {}
+abstract func Read(): byte;

@@ -1,0 +1,6 @@
+struct is Serializable {
+  final uint64 Id;
+  Record(uint64 id) {
+    Id = id;
+  }
+}

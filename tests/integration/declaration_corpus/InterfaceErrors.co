@@ -1,0 +1,5 @@
+interface {
+  static func Bad(): void {}
+  InterfaceErrors() {}
+  int32 Field;
+}

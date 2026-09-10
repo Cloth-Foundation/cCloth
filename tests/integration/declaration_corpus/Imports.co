@@ -1,0 +1,6 @@
+import Local;
+import alpha::Thing;
+import alpha.beta::Other as Renamed;
+import alpha.beta.*;
+
+int32 Value;

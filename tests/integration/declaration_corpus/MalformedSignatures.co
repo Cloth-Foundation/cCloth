@@ -1,0 +1,10 @@
+func NoOpen: void {}
+func NoName(int32, string okay): void {}
+func NoSeparator(int32 first string second): void {}
+func NoClose(int32 value {}
+int32 ;
+static static func Duplicate(): void {}
+abstract func NoTerminator()
+int32 Recovered;
+func NoBody(): void;
+func NoThrows(): void throws {}

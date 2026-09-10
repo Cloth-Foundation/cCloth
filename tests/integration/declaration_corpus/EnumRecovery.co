@@ -1,0 +1,5 @@
+enum {
+  ONE TWO,
+  ,
+  THREE
+}
