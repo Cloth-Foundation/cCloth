@@ -7,7 +7,6 @@
 #include "cloth/parser/declaration_pass.h"
 #include "cloth/source/source_file.h"
 
-#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -20,18 +19,14 @@
 #include <utility>
 #include <vector>
 
+#include "parse_diagnostic_records.h"
+
 namespace {
 
 struct CanonicalEnumCase {
   std::string_view name;
   cloth::SourceRange range;
   bool is_valid;
-};
-
-struct CanonicalDiagnostic {
-  int kind;
-  cloth::SourceRange range;
-  std::optional<cloth::SourceRange> related_range;
 };
 
 void write_flag(bool value) { std::cout << (value ? 1 : 0); }
@@ -92,113 +87,6 @@ void write_member_type(char category, std::size_t member_index,
   std::cout << category << '|' << member_index << '|' << index << '|';
   write_type_value(value);
   std::cout << '\n';
-}
-
-[[nodiscard]] bool starts_with(std::string_view value,
-                               std::string_view prefix) {
-  return value.starts_with(prefix);
-}
-
-[[nodiscard]] std::optional<int> diagnostic_kind(std::string_view message) {
-  if (starts_with(message, "source file stem '")) return 0;
-  if (starts_with(message, "expected a field, function, or constructor")) {
-    return 1;
-  }
-  if (starts_with(message, "imports must appear before")) return 2;
-  if (starts_with(message, "expected a package or type name")) return 3;
-  if (message == "expected a type name after '::'") return 4;
-  if (starts_with(message, "expected a package name or '*' after") ||
-      starts_with(message, "expected '::' for a type")) {
-    return 5;
-  }
-  if (message == "standard library root must be spelled 'cloth'") return 6;
-  if (starts_with(message, "import alias '") &&
-      message.ends_with("standard library root 'cloth'")) {
-    return 7;
-  }
-  if (message == "expected an alias name after 'as'") return 8;
-  if (message == "wildcard imports cannot have an alias") return 9;
-  if (message == "expected ';' after import") return 10;
-  if (starts_with(message, "duplicate '") &&
-      message.ends_with("class modifier")) {
-    return 11;
-  }
-  if (message == "expected a file type after declaration modifiers") {
-    return 12;
-  }
-  if (message ==
-      "interfaces, enums, and structs cannot be declared abstract or sealed") {
-    return 13;
-  }
-  if (starts_with(message, "the source file already defines implicit type")) {
-    return 14;
-  }
-  if (message == "expected a file class name after ':'") return 15;
-  if (starts_with(message, "expected an interface name")) return 16;
-  if (message == "expected '{' after file type declaration") return 17;
-  if (message == "expected '}' to close file type declaration") return 18;
-  if (message == "expected end of file after file type declaration") return 19;
-  if (message == "expected an enum case name") return 20;
-  if (starts_with(message, "duplicate enum case '")) return 21;
-  if (message == "enum exceeds the 65536-case limit") return 22;
-  if (message == "enum must declare at least one case") return 23;
-  if (message == "expected ',' or '}' after enum case") return 24;
-  if (message == "expected a type") return 25;
-  if (message == "nullable qualification cannot be repeated") return 26;
-  if (message == "multidimensional array types are not supported") return 27;
-  if (message == "expected ']' in array type") return 28;
-  if (starts_with(message, "expected '(' after '")) return 29;
-  if (starts_with(message, "expected parameter name after type")) return 30;
-  if (message == "expected ',' or ')' after parameter") return 31;
-  if (message == "expected parameter after ','") return 32;
-  if (message == "expected ')' after parameter list") return 33;
-  if (starts_with(message, "expected field name after type")) return 34;
-  if (message == "expected expression after '=' in field declaration") {
-    return 35;
-  }
-  if (message == "expected ';' after field declaration") return 36;
-  if (starts_with(message, "duplicate '") &&
-      message.ends_with("function modifier")) {
-    return 37;
-  }
-  if (message ==
-      "interface function contracts do not accept function modifiers") {
-    return 38;
-  }
-  if (message == "expected 'func' after function modifiers") return 39;
-  if (message == "expected function name after 'func'") return 40;
-  if (starts_with(message, "abstract function '") &&
-      message.ends_with("cannot have a body")) {
-    return 41;
-  }
-  if (message == "expected ';' after abstract function declaration") {
-    return 42;
-  }
-  if (starts_with(message, "expected '{' to begin body of '")) return 43;
-  if (starts_with(message, "unterminated body for '")) return 44;
-  if (message == "expected an error type after 'throws'") return 45;
-  if (message == "expected an error type after ',' in throws clause") {
-    return 46;
-  }
-  if (starts_with(message, "constructor '") &&
-      message.find("must use a class-derived name") != std::string_view::npos) {
-    return 47;
-  }
-  if (message == "interfaces cannot declare constructors") return 48;
-  if (message == "interfaces cannot declare fields") return 49;
-  if (message == "expected base constructor after ':'") return 50;
-  if (starts_with(message, "member '") &&
-      message.find("conflicts with previous") != std::string_view::npos) {
-    return 51;
-  }
-  if (starts_with(message, "duplicate function signature") ||
-      starts_with(message, "duplicate constructor signature")) {
-    return 52;
-  }
-  if (starts_with(message, "nested type declarations are reserved")) {
-    return 53;
-  }
-  return std::nullopt;
 }
 
 [[nodiscard]] std::vector<CanonicalEnumCase> canonical_enum_cases(
@@ -374,44 +262,11 @@ int write_records(const std::filesystem::path& path) {
     }
   }
 
-  const std::span<const cloth::Diagnostic> diagnostic_values =
-      diagnostics.diagnostics();
-  std::vector<CanonicalDiagnostic> canonical_diagnostics;
-  for (std::size_t index = 0; index < diagnostic_values.size(); ++index) {
-    const cloth::Diagnostic& value = diagnostic_values[index];
-    if (value.severity == cloth::DiagnosticSeverity::kNote) continue;
-    const std::optional<int> kind = diagnostic_kind(value.message);
-    if (!kind) {
-      std::cerr << "unclassified declaration diagnostic: " << value.message
-                << '\n';
-      return 1;
-    }
-    std::optional<cloth::SourceRange> related_range;
-    if (index + 1 < diagnostic_values.size() &&
-        diagnostic_values[index + 1].severity ==
-            cloth::DiagnosticSeverity::kNote) {
-      related_range = diagnostic_values[index + 1].range;
-    }
-    canonical_diagnostics.push_back(
-        CanonicalDiagnostic{*kind, value.range, related_range});
-  }
-  std::ranges::stable_sort(canonical_diagnostics, {},
-                           [](const CanonicalDiagnostic& value) {
-                             return value.range.begin.byte_offset;
-                           });
-  for (std::size_t index = 0; index < canonical_diagnostics.size(); ++index) {
-    const CanonicalDiagnostic& value = canonical_diagnostics[index];
-    std::cout << "D|" << index << '|' << value.kind << '|';
-    write_range(value.range);
-    std::cout << '|';
-    if (value.related_range) {
-      write_range(*value.related_range);
-    } else {
-      std::cout << '-';
-    }
-    std::cout << '\n';
-  }
-  return 0;
+  return cloth::test::write_parse_diagnostic_records(diagnostics.diagnostics(),
+                                                     "D", std::cout, std::cerr,
+                                                     "declaration")
+             ? 0
+             : 1;
 }
 
 [[nodiscard]] bool generate_enum(const std::filesystem::path& path,

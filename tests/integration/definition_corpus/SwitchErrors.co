@@ -1,0 +1,48 @@
+func SwitchOpen(): void {
+  switch value) { default: {} }
+}
+
+func SwitchClose(): void {
+  switch (value { default: {} }
+}
+
+func SwitchBody(): void {
+  switch (value)
+}
+
+func SwitchArm(): void {
+  switch (value) { value; default: {} }
+}
+
+func DefaultRepeated(): void {
+  switch (value) { default: {} default: {} }
+}
+
+func DefaultNotLast(): void {
+  switch (value) { default: {} case 1: {} }
+}
+
+func SwitchLabel(): void {
+  switch (value) { case: {} }
+}
+
+func SwitchLabelTrailing(): void {
+  switch (value) { case 1,: {} }
+}
+
+func SwitchColon(): void {
+  switch (value) { case 1 {} }
+}
+
+func SwitchArmBody(): void {
+  switch (value) { case 1: return; default: {} }
+}
+
+func EmptySwitch(): void {
+  switch (value) {}
+}
+
+func LabelOutsideSwitch(): void {
+  case 1: {}
+  return;
+}

@@ -1,0 +1,6 @@
+int32 ArrayElement = [1,];
+int32 ArraySeparator = [1 2];
+int32 ArrayClose = [1;
+int32 ArrayColon = int32[1];
+int32 ArrayLength = int32[:];
+int32 ArrayConstructionClose = int32[:1;

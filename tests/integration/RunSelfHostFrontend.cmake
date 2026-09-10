@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 foreach(required IN ITEMS CLOTH_BOOTSTRAP_SOURCE CLOTH_COMPILER CLOTH_ORACLE
-                          CLOTH_DECLARATION_ORACLE CLOTH_SHUTTLE
+                          CLOTH_DECLARATION_ORACLE CLOTH_DEFINITION_ORACLE
+                          CLOTH_SHUTTLE
                           CLOTH_STANDARD_LIBRARY
                           CLOTH_STANDARD_LIBRARY_VERSION CLOTH_WORK_DIRECTORY)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
@@ -15,12 +16,18 @@ if(NOT EXISTS "${CLOTH_BOOTSTRAP_SOURCE}/Shuttle.toml")
     message(FATAL_ERROR
         "bootstrap manifest not found: ${CLOTH_BOOTSTRAP_SOURCE}/Shuttle.toml")
 endif()
+if(NOT EXISTS "${CLOTH_BOOTSTRAP_SOURCE}/tests/self_host/Shuttle.toml")
+    message(FATAL_ERROR
+        "self-host test manifest not found: "
+        "${CLOTH_BOOTSTRAP_SOURCE}/tests/self_host/Shuttle.toml")
+endif()
 if(NOT EXISTS "${CLOTH_STANDARD_LIBRARY}/io/File.co")
     message(FATAL_ERROR
         "standard-library source not found: ${CLOTH_STANDARD_LIBRARY}")
 endif()
 foreach(executable IN ITEMS CLOTH_COMPILER CLOTH_ORACLE
-                            CLOTH_DECLARATION_ORACLE CLOTH_SHUTTLE)
+                            CLOTH_DECLARATION_ORACLE CLOTH_DEFINITION_ORACLE
+                            CLOTH_SHUTTLE)
     if(NOT EXISTS "${${executable}}")
         message(FATAL_ERROR "executable not found: ${${executable}}")
     endif()
@@ -46,6 +53,67 @@ function(run_required description working_directory)
         message(FATAL_ERROR "${description} failed with status ${result}")
     endif()
     set(CLOTH_LAST_PROCESS_OUTPUT "${stdout}${stderr}" PARENT_SCOPE)
+endfunction()
+
+function(read_definition_records output_name input file_name executable)
+    execute_process(
+        COMMAND "${executable}" --definition-records "${input}" "${file_name}"
+        RESULT_VARIABLE record_result
+        OUTPUT_VARIABLE records
+        ERROR_VARIABLE record_error
+        ENCODING UTF-8
+    )
+    string(REPLACE "\r\n" "\n" records "${records}")
+    if(NOT record_result EQUAL 0 OR NOT record_error STREQUAL "" OR
+       records STREQUAL "")
+        message(FATAL_ERROR
+            "definition record adapter failed for ${input} with status "
+            "${record_result}\nstdout: ${records}\nstderr: ${record_error}")
+    endif()
+    set(${output_name} "${records}" PARENT_SCOPE)
+endfunction()
+
+function(compare_definitions input file_name direct_executable
+                             serial_executable parallel_executable)
+    execute_process(
+        COMMAND "${CLOTH_DEFINITION_ORACLE}" "${input}"
+        RESULT_VARIABLE oracle_result
+        OUTPUT_VARIABLE oracle_records
+        ERROR_VARIABLE oracle_error
+        ENCODING UTF-8
+    )
+    if(NOT oracle_result EQUAL 0)
+        message(FATAL_ERROR
+            "C++ definition oracle failed for ${input}:\n${oracle_error}")
+    endif()
+    string(REPLACE "\r\n" "\n" oracle_records "${oracle_records}")
+    read_definition_records(direct_records "${input}" "${file_name}"
+        "${direct_executable}")
+    read_definition_records(first_serial_records "${input}" "${file_name}"
+        "${serial_executable}")
+    read_definition_records(second_serial_records "${input}" "${file_name}"
+        "${serial_executable}")
+    read_definition_records(parallel_records "${input}" "${file_name}"
+        "${parallel_executable}")
+    if(NOT oracle_records STREQUAL direct_records)
+        first_record_mismatch("definition parity" "${input}" "C++"
+            "${oracle_records}" "direct Cloth" "${direct_records}")
+    endif()
+    if(NOT direct_records STREQUAL first_serial_records)
+        first_record_mismatch("definition determinism" "${input}"
+            "direct Cloth" "${direct_records}" "serial Shuttle"
+            "${first_serial_records}")
+    endif()
+    if(NOT first_serial_records STREQUAL second_serial_records)
+        first_record_mismatch("definition repeatability" "${input}"
+            "first serial run" "${first_serial_records}" "second serial run"
+            "${second_serial_records}")
+    endif()
+    if(NOT first_serial_records STREQUAL parallel_records)
+        first_record_mismatch("definition determinism" "${input}"
+            "serial Shuttle" "${first_serial_records}" "parallel Shuttle"
+            "${parallel_records}")
+    endif()
 endfunction()
 
 function(compare_declarations input bootstrap_executable)
@@ -114,47 +182,41 @@ function(require_same_file description left right)
     endif()
 endfunction()
 
-function(first_record_mismatch input oracle_records bootstrap_records)
-    string(REPLACE "\n" ";" oracle_lines "${oracle_records}")
-    string(REPLACE "\n" ";" bootstrap_lines "${bootstrap_records}")
-    list(LENGTH oracle_lines oracle_count)
-    list(LENGTH bootstrap_lines bootstrap_count)
-    if(oracle_count GREATER bootstrap_count)
-        set(limit ${oracle_count})
+function(first_record_mismatch description input left_name left_records
+                               right_name right_records)
+    string(REPLACE "\n" ";" left_lines "${left_records}")
+    string(REPLACE "\n" ";" right_lines "${right_records}")
+    list(LENGTH left_lines left_count)
+    list(LENGTH right_lines right_count)
+    if(left_count GREATER right_count)
+        set(limit ${left_count})
     else()
-        set(limit ${bootstrap_count})
+        set(limit ${right_count})
     endif()
 
     set(index 0)
     while(index LESS limit)
-        if(index LESS oracle_count)
-            list(GET oracle_lines ${index} oracle_line)
+        if(index LESS left_count)
+            list(GET left_lines ${index} left_line)
         else()
-            set(oracle_line "<missing>")
+            set(left_line "<missing>")
         endif()
-        if(index LESS bootstrap_count)
-            list(GET bootstrap_lines ${index} bootstrap_line)
+        if(index LESS right_count)
+            list(GET right_lines ${index} right_line)
         else()
-            set(bootstrap_line "<missing>")
+            set(right_line "<missing>")
         endif()
-        if(NOT oracle_line STREQUAL bootstrap_line)
-            set(offset "unknown")
-            if(NOT oracle_line STREQUAL "<missing>")
-                string(REPLACE "|" ";" fields "${oracle_line}")
-                list(LENGTH fields field_count)
-                if(field_count GREATER 2)
-                    list(GET fields 2 offset)
-                endif()
-            endif()
+        if(NOT left_line STREQUAL right_line)
+            math(EXPR line "${index} + 1")
             message(FATAL_ERROR
-                "lexer parity mismatch in ${input} at record ${index}, "
-                "input offset ${offset}\n"
-                "C++:   ${oracle_line}\nCloth: ${bootstrap_line}")
+                "${description} mismatch in ${input} at record ${index}, "
+                "line ${line}\n${left_name}: ${left_line}\n"
+                "${right_name}: ${right_line}")
         endif()
         math(EXPR index "${index} + 1")
     endwhile()
 
-    message(FATAL_ERROR "lexer parity mismatch in ${input}")
+    message(FATAL_ERROR "${description} mismatch in ${input}")
 endfunction()
 
 function(compare_lexers input bootstrap_executable)
@@ -183,8 +245,8 @@ function(compare_lexers input bootstrap_executable)
     string(REPLACE "\r\n" "\n" oracle_records "${oracle_records}")
     string(REPLACE "\r\n" "\n" bootstrap_records "${bootstrap_records}")
     if(NOT oracle_records STREQUAL bootstrap_records)
-        first_record_mismatch(
-            "${input}" "${oracle_records}" "${bootstrap_records}")
+        first_record_mismatch("lexer parity" "${input}" "C++"
+            "${oracle_records}" "Cloth" "${bootstrap_records}")
     endif()
 endfunction()
 
@@ -192,6 +254,8 @@ file(REMOVE_RECURSE "${CLOTH_WORK_DIRECTORY}")
 file(MAKE_DIRECTORY "${CLOTH_WORK_DIRECTORY}")
 set(serial_source "${CLOTH_WORK_DIRECTORY}/serial")
 set(parallel_source "${CLOTH_WORK_DIRECTORY}/parallel")
+set(serial_test_root "${serial_source}/tests/self_host")
+set(parallel_test_root "${parallel_source}/tests/self_host")
 file(MAKE_DIRECTORY "${serial_source}" "${parallel_source}")
 file(COPY "${CLOTH_BOOTSTRAP_SOURCE}/" DESTINATION "${serial_source}"
     PATTERN ".git" EXCLUDE PATTERN "target" EXCLUDE)
@@ -203,28 +267,33 @@ set(direct_executable
 set(direct_ir "${CLOTH_WORK_DIRECTORY}/direct-wasm32.ll")
 set(direct_arguments
     --shuttle-protocol 1
-    --root-package clothc
-    --entry Main.co
+    --root-package clothc-tests
+    --entry BootstrapMain.co
+    --package clothc-tests 0.0.1 "${serial_test_root}/src"
     --package clothc 0.0.1 "${serial_source}/src"
     --package cloth "${CLOTH_STANDARD_LIBRARY_VERSION}"
         "${CLOTH_STANDARD_LIBRARY}"
+    --dependency clothc-tests clothc clothc
+    --dependency clothc-tests cloth cloth
     --dependency clothc cloth cloth)
-run_required("direct x86-64 bootstrap build" "${serial_source}"
+run_required("direct x86-64 self-host test build" "${serial_test_root}"
     "${CLOTH_COMPILER}" --target x86_64 --output-kind executable
     --output "${direct_executable}" ${direct_arguments})
 file(SHA256 "${direct_executable}" direct_hash)
-run_required("repeated direct x86-64 bootstrap build" "${serial_source}"
+run_required("repeated direct x86-64 self-host test build"
+    "${serial_test_root}"
     "${CLOTH_COMPILER}" --target x86_64 --output-kind executable
     --output "${direct_executable}" ${direct_arguments})
 file(SHA256 "${direct_executable}" repeated_direct_hash)
 if(NOT direct_hash STREQUAL repeated_direct_hash)
     message(FATAL_ERROR "repeated direct bootstrap build is not deterministic")
 endif()
-run_required("direct wasm32 bootstrap build" "${serial_source}"
+run_required("direct wasm32 self-host test build" "${serial_test_root}"
     "${CLOTH_COMPILER}" --target wasm32 --output-kind llvm-ir
     --output "${direct_ir}" ${direct_arguments})
 file(SHA256 "${direct_ir}" direct_wasm_hash)
-run_required("repeated direct wasm32 bootstrap build" "${serial_source}"
+run_required("repeated direct wasm32 self-host test build"
+    "${serial_test_root}"
     "${CLOTH_COMPILER}" --target wasm32 --output-kind llvm-ir
     --output "${direct_ir}" ${direct_arguments})
 file(SHA256 "${direct_ir}" repeated_direct_wasm_hash)
@@ -232,41 +301,80 @@ if(NOT direct_wasm_hash STREQUAL repeated_direct_wasm_hash)
     message(FATAL_ERROR "repeated direct wasm32 build is not deterministic")
 endif()
 
-run_required("serial Shuttle bootstrap build" "${serial_source}"
+set(direct_compiler_executable
+    "${CLOTH_WORK_DIRECTORY}/clothc${CLOTH_EXECUTABLE_SUFFIX}")
+set(direct_compiler_arguments
+    --shuttle-protocol 1
+    --root-package clothc
+    --entry Main.co
+    --package clothc 0.0.1 "${serial_source}/src"
+    --package cloth "${CLOTH_STANDARD_LIBRARY_VERSION}"
+        "${CLOTH_STANDARD_LIBRARY}"
+    --dependency clothc cloth cloth)
+run_required("direct production clothc build" "${serial_source}"
+    "${CLOTH_COMPILER}" --target x86_64 --output-kind executable
+    --output "${direct_compiler_executable}" ${direct_compiler_arguments})
+run_required("production clothc help" "${serial_source}"
+    "${direct_compiler_executable}" --help)
+run_required("production clothc frontend check" "${serial_source}"
+    "${direct_compiler_executable}" check
+    "${serial_test_root}/testdata/parser/DefinitionValid.co")
+execute_process(
+    COMMAND "${direct_compiler_executable}" check
+        "${serial_test_root}/testdata/parser/definition_recovery.co"
+    WORKING_DIRECTORY "${serial_source}"
+    RESULT_VARIABLE compiler_failure_result
+    OUTPUT_VARIABLE compiler_failure_output
+    ERROR_VARIABLE compiler_failure_error
+    ENCODING UTF-8
+)
+if(NOT compiler_failure_result EQUAL 1 OR
+   NOT compiler_failure_output MATCHES "syntax analysis failed" OR
+   NOT compiler_failure_error STREQUAL "")
+    message(FATAL_ERROR
+        "production clothc did not reject malformed syntax predictably\n"
+        "status: ${compiler_failure_result}\n"
+        "stdout: ${compiler_failure_output}\n"
+        "stderr: ${compiler_failure_error}")
+endif()
+
+run_required("serial Shuttle self-host test build" "${serial_test_root}"
     "${CLOTH_SHUTTLE}" build --manifest-path
-    "${serial_source}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
+    "${serial_test_root}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
     --target x86_64 --jobs 1)
 set(serial_executable
-    "${serial_source}/target/x86_64/cloth${CLOTH_EXECUTABLE_SUFFIX}")
+    "${serial_test_root}/target/x86_64/clothc-tests${CLOTH_EXECUTABLE_SUFFIX}")
 if(NOT EXISTS "${serial_executable}")
     message(FATAL_ERROR "serial Shuttle build did not publish an executable")
 endif()
 
-run_required("parallel Shuttle bootstrap build" "${parallel_source}"
+run_required("parallel Shuttle self-host test build" "${parallel_test_root}"
     "${CLOTH_SHUTTLE}" build --manifest-path
-    "${parallel_source}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
+    "${parallel_test_root}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
     --target x86_64 --jobs 4)
 set(parallel_executable
-    "${parallel_source}/target/x86_64/cloth${CLOTH_EXECUTABLE_SUFFIX}")
+    "${parallel_test_root}/target/x86_64/clothc-tests${CLOTH_EXECUTABLE_SUFFIX}")
 if(NOT EXISTS "${parallel_executable}")
     message(FATAL_ERROR "parallel Shuttle build did not publish an executable")
 endif()
 require_same_file("serial and parallel Shuttle executables"
     "${serial_executable}" "${parallel_executable}")
-foreach(package IN ITEMS cloth clothc)
+foreach(package IN ITEMS cloth clothc clothc-tests)
     require_same_file("serial and parallel ${package} artifacts"
-        "${serial_source}/target/x86_64/packages/${package}.cpa"
-        "${parallel_source}/target/x86_64/packages/${package}.cpa")
+        "${serial_test_root}/target/x86_64/packages/${package}.cpa"
+        "${parallel_test_root}/target/x86_64/packages/${package}.cpa")
 endforeach()
 
 file(SHA256 "${serial_executable}" cold_shuttle_hash)
-file(SHA256 "${serial_source}/target/x86_64/packages/cloth.cpa"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/cloth.cpa"
     cold_library_hash)
-file(SHA256 "${serial_source}/target/x86_64/packages/clothc.cpa"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/clothc.cpa"
     cold_bootstrap_hash)
-run_required("warm Shuttle bootstrap build" "${serial_source}"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/clothc-tests.cpa"
+    cold_test_hash)
+run_required("warm Shuttle self-host test build" "${serial_test_root}"
     "${CLOTH_SHUTTLE}" build --manifest-path
-    "${serial_source}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
+    "${serial_test_root}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
     --target x86_64 --jobs 4)
 string(REPLACE "." "\\." standard_library_version_pattern
     "${CLOTH_STANDARD_LIBRARY_VERSION}")
@@ -280,23 +388,26 @@ file(SHA256 "${serial_executable}" warm_shuttle_hash)
 if(NOT cold_shuttle_hash STREQUAL warm_shuttle_hash)
     message(FATAL_ERROR "warm Shuttle build changed the executable")
 endif()
-file(SHA256 "${serial_source}/target/x86_64/packages/cloth.cpa"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/cloth.cpa"
     warm_library_hash)
-file(SHA256 "${serial_source}/target/x86_64/packages/clothc.cpa"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/clothc.cpa"
     warm_bootstrap_hash)
+file(SHA256 "${serial_test_root}/target/x86_64/packages/clothc-tests.cpa"
+    warm_test_hash)
 if(NOT cold_library_hash STREQUAL warm_library_hash OR
-   NOT cold_bootstrap_hash STREQUAL warm_bootstrap_hash)
+   NOT cold_bootstrap_hash STREQUAL warm_bootstrap_hash OR
+   NOT cold_test_hash STREQUAL warm_test_hash)
     message(FATAL_ERROR "warm Shuttle build changed a reused package artifact")
 endif()
 
-run_required("Shuttle wasm32 bootstrap check" "${serial_source}"
+run_required("Shuttle wasm32 self-host test check" "${serial_test_root}"
     "${CLOTH_SHUTTLE}" check --manifest-path
-    "${serial_source}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
+    "${serial_test_root}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
     --target wasm32 --jobs 4)
 
 execute_process(
     COMMAND "${serial_executable}"
-    WORKING_DIRECTORY "${serial_source}"
+    WORKING_DIRECTORY "${serial_test_root}"
     RESULT_VARIABLE native_result
     OUTPUT_VARIABLE native_output
     ERROR_VARIABLE native_error
@@ -304,7 +415,7 @@ execute_process(
 )
 string(REPLACE "\r\n" "\n" native_output "${native_output}")
 if(NOT native_result EQUAL 0 OR
-   NOT native_output STREQUAL "lexer literals ok\n" OR
+   NOT native_output STREQUAL "self-host checks ok\n" OR
    NOT native_error STREQUAL "")
     message(FATAL_ERROR
         "native bootstrap self-check failed with status ${native_result}\n"
@@ -315,7 +426,7 @@ function(require_declaration_substrate_failure mode expected)
     execute_process(
         COMMAND "${serial_executable}" --declaration-substrate-failure
             "${mode}"
-        WORKING_DIRECTORY "${serial_source}"
+        WORKING_DIRECTORY "${serial_test_root}"
         RESULT_VARIABLE failure_result
         OUTPUT_VARIABLE failure_output
         ERROR_VARIABLE failure_error
@@ -378,7 +489,7 @@ require_declaration_substrate_failure(
 
 execute_process(
     COMMAND "${serial_executable}" --declaration-substrate-gc-check
-    WORKING_DIRECTORY "${serial_source}"
+    WORKING_DIRECTORY "${serial_test_root}"
     RESULT_VARIABLE declaration_gc_result
     OUTPUT_VARIABLE declaration_gc_output
     ERROR_VARIABLE declaration_gc_error
@@ -395,7 +506,7 @@ endif()
 
 execute_process(
     COMMAND "${serial_executable}" --declaration-grammar-gc-check
-    WORKING_DIRECTORY "${serial_source}"
+    WORKING_DIRECTORY "${serial_test_root}"
     RESULT_VARIABLE declaration_grammar_gc_result
     OUTPUT_VARIABLE declaration_grammar_gc_output
     ERROR_VARIABLE declaration_grammar_gc_error
@@ -411,10 +522,63 @@ if(NOT declaration_grammar_gc_result EQUAL 0 OR
         "stderr: ${declaration_grammar_gc_error}")
 endif()
 
+foreach(expression_check IN ITEMS depth gc)
+    execute_process(
+        COMMAND "${serial_executable}" --expression-${expression_check}-check
+        WORKING_DIRECTORY "${serial_test_root}"
+        RESULT_VARIABLE expression_result
+        OUTPUT_VARIABLE expression_output
+        ERROR_VARIABLE expression_error
+        ENCODING UTF-8
+    )
+    if(NOT expression_result EQUAL 0 OR
+       NOT expression_output STREQUAL "" OR
+       NOT expression_error STREQUAL "")
+        message(FATAL_ERROR
+            "expression ${expression_check} check failed with status "
+            "${expression_result}\nstdout: ${expression_output}\n"
+            "stderr: ${expression_error}")
+    endif()
+endforeach()
+
+execute_process(
+    COMMAND "${serial_executable}" --definition-depth-check
+    WORKING_DIRECTORY "${serial_test_root}"
+    RESULT_VARIABLE definition_depth_result
+    OUTPUT_VARIABLE definition_depth_output
+    ERROR_VARIABLE definition_depth_error
+    ENCODING UTF-8
+)
+if(NOT definition_depth_result EQUAL 0 OR
+   NOT definition_depth_output STREQUAL "" OR
+   NOT definition_depth_error STREQUAL "")
+    message(FATAL_ERROR
+        "definition depth check failed with status ${definition_depth_result}\n"
+        "stdout: ${definition_depth_output}\n"
+        "stderr: ${definition_depth_error}")
+endif()
+
+execute_process(
+    COMMAND "${serial_executable}" --definition-gc-check
+    WORKING_DIRECTORY "${serial_test_root}"
+    RESULT_VARIABLE definition_gc_result
+    OUTPUT_VARIABLE definition_gc_output
+    ERROR_VARIABLE definition_gc_error
+    ENCODING UTF-8
+)
+if(NOT definition_gc_result EQUAL 0 OR
+   NOT definition_gc_output STREQUAL "" OR
+   NOT definition_gc_error STREQUAL "")
+    message(FATAL_ERROR
+        "definition GC check failed with status ${definition_gc_result}\n"
+        "stdout: ${definition_gc_output}\n"
+        "stderr: ${definition_gc_error}")
+endif()
+
 function(require_storage_failure mode expected)
     execute_process(
         COMMAND "${serial_executable}" --syntax-storage-failure "${mode}"
-        WORKING_DIRECTORY "${serial_source}"
+        WORKING_DIRECTORY "${serial_test_root}"
         RESULT_VARIABLE failure_result
         OUTPUT_VARIABLE failure_output
         ERROR_VARIABLE failure_error
@@ -440,7 +604,7 @@ require_storage_failure(
 function(require_tree_failure mode expected)
     execute_process(
         COMMAND "${serial_executable}" --syntax-tree-failure "${mode}"
-        WORKING_DIRECTORY "${serial_source}"
+        WORKING_DIRECTORY "${serial_test_root}"
         RESULT_VARIABLE failure_result
         OUTPUT_VARIABLE failure_output
         ERROR_VARIABLE failure_error
@@ -477,7 +641,7 @@ require_tree_failure(
 
 execute_process(
     COMMAND "${serial_executable}" --syntax-tree-gc-check
-    WORKING_DIRECTORY "${serial_source}"
+    WORKING_DIRECTORY "${serial_test_root}"
     RESULT_VARIABLE gc_result
     OUTPUT_VARIABLE gc_output
     ERROR_VARIABLE gc_error
@@ -493,7 +657,7 @@ endif()
 function(read_tree_records output_name executable)
     execute_process(
         COMMAND "${executable}" --syntax-tree-records
-        WORKING_DIRECTORY "${serial_source}"
+        WORKING_DIRECTORY "${serial_test_root}"
         RESULT_VARIABLE record_result
         OUTPUT_VARIABLE records
         ERROR_VARIABLE record_error
@@ -594,6 +758,48 @@ foreach(input IN LISTS real_declaration_inputs)
     compare_declarations("${input}" "${serial_executable}")
 endforeach()
 
+file(GLOB definition_inputs LIST_DIRECTORIES FALSE
+    "${CMAKE_CURRENT_LIST_DIR}/definition_corpus/*.co")
+file(GLOB declaration_recovery_definition_inputs LIST_DIRECTORIES FALSE
+    "${CMAKE_CURRENT_LIST_DIR}/declaration_corpus/*.co")
+list(APPEND definition_inputs ${declaration_recovery_definition_inputs})
+list(APPEND definition_inputs
+    "${CLOTH_BOOTSTRAP_SOURCE}/tests/self_host/testdata/parser/DefinitionValid.co"
+    "${CLOTH_BOOTSTRAP_SOURCE}/tests/self_host/testdata/parser/definition_recovery.co"
+    "${CLOTH_BOOTSTRAP_SOURCE}/tests/self_host/testdata/parser/expression_valid.txt"
+    "${CLOTH_BOOTSTRAP_SOURCE}/tests/self_host/testdata/parser/expression_recovery.txt")
+list(SORT definition_inputs)
+list(LENGTH definition_inputs definition_input_count)
+set(definition_input_index 0)
+foreach(input IN LISTS definition_inputs)
+    math(EXPR definition_input_index "${definition_input_index} + 1")
+    get_filename_component(file_name "${input}" NAME_WE)
+    message(STATUS
+        "definition parity ${definition_input_index}/"
+        "${definition_input_count}: ${input}")
+    compare_definitions("${input}" "${file_name}" "${direct_executable}"
+        "${serial_executable}" "${parallel_executable}")
+endforeach()
+
+list(LENGTH real_declaration_inputs real_definition_input_count)
+set(real_definition_input_index 0)
+foreach(input IN LISTS real_declaration_inputs)
+    math(EXPR real_definition_input_index
+        "${real_definition_input_index} + 1")
+    math(EXPR progress_remainder "${real_definition_input_index} % 25")
+    if(real_definition_input_index EQUAL 1 OR
+       progress_remainder EQUAL 0 OR
+       real_definition_input_index EQUAL real_definition_input_count)
+        message(STATUS
+            "real bootstrap definition parity "
+            "${real_definition_input_index}/${real_definition_input_count}: "
+            "${input}")
+    endif()
+    get_filename_component(file_name "${input}" NAME_WE)
+    compare_definitions("${input}" "${file_name}" "${direct_executable}"
+        "${serial_executable}" "${parallel_executable}")
+endforeach()
+
 set(declaration_determinism_input
     "${CMAKE_CURRENT_LIST_DIR}/declaration_corpus/Implicit.co")
 read_declaration_records(direct_declaration_records
@@ -616,16 +822,18 @@ if(NOT direct_declaration_records STREQUAL
 endif()
 
 file(SHA256 "${serial_executable}" preserved_hash)
-file(SHA256 "${serial_source}/target/x86_64/packages/cloth.cpa"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/cloth.cpa"
     preserved_library_hash)
-file(SHA256 "${serial_source}/target/x86_64/packages/clothc.cpa"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/clothc.cpa"
     preserved_bootstrap_hash)
-file(APPEND "${serial_source}/src/Main.co" "\n@\n")
+file(SHA256 "${serial_test_root}/target/x86_64/packages/clothc-tests.cpa"
+    preserved_test_hash)
+file(APPEND "${serial_test_root}/src/BootstrapMain.co" "\n@\n")
 execute_process(
     COMMAND "${CLOTH_SHUTTLE}" build --manifest-path
-        "${serial_source}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
+        "${serial_test_root}/Shuttle.toml" --compiler "${CLOTH_COMPILER}"
         --target x86_64 --jobs 4
-    WORKING_DIRECTORY "${serial_source}"
+    WORKING_DIRECTORY "${serial_test_root}"
     RESULT_VARIABLE failed_result
     OUTPUT_VARIABLE failed_stdout
     ERROR_VARIABLE failed_stderr
@@ -647,18 +855,24 @@ file(SHA256 "${serial_executable}" failed_hash)
 if(NOT preserved_hash STREQUAL failed_hash)
     message(FATAL_ERROR "failed rebuild replaced the completed executable")
 endif()
-file(SHA256 "${serial_source}/target/x86_64/packages/cloth.cpa"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/cloth.cpa"
     failed_library_hash)
-file(SHA256 "${serial_source}/target/x86_64/packages/clothc.cpa"
+file(SHA256 "${serial_test_root}/target/x86_64/packages/clothc.cpa"
     failed_bootstrap_hash)
+file(SHA256 "${serial_test_root}/target/x86_64/packages/clothc-tests.cpa"
+    failed_test_hash)
 if(NOT preserved_library_hash STREQUAL failed_library_hash OR
-   NOT preserved_bootstrap_hash STREQUAL failed_bootstrap_hash)
+   NOT preserved_bootstrap_hash STREQUAL failed_bootstrap_hash OR
+   NOT preserved_test_hash STREQUAL failed_test_hash)
     message(FATAL_ERROR "failed rebuild replaced a completed package artifact")
 endif()
 
 message(STATUS
-    "Stage 44 lexer parity and Stage 46 declaration audit passed for "
+    "Self-host frontend and compiler/test separation passed for "
     "${input_count} lexer, ${declaration_input_count} bounded declaration, "
-    "and ${real_declaration_input_count} real bootstrap inputs; direct and "
-    "Shuttle builds and declaration records are deterministic, "
-    "both targets pass, warm reuse is exact, and failed output is preserved")
+    "${real_declaration_input_count} real declaration, "
+    "${definition_input_count} bounded definition, and "
+    "${real_definition_input_count} real definition inputs; direct and "
+    "Shuttle test builds and parser records are deterministic, the "
+    "production compiler driver and both targets pass, warm reuse is exact, "
+    "and failed output is preserved")

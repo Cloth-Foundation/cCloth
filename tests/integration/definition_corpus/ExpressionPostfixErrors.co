@@ -1,0 +1,6 @@
+int32 IndexValue = value[];
+int32 IndexClose = value[1;
+int32 MemberName = value.;
+int32 MetaName = value::;
+int32 SafeMemberName = value?.;
+int32 SafeMetaName = value?::;

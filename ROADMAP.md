@@ -85,6 +85,7 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 45 | Managed self-hosted parser storage and verified syntax-tree foundations |
 | 45.5 | Universal Object root and verified value boxing |
 | 46 | Self-hosted declaration parser |
+| 47 | Self-hosted definition parser and verified full-tree publication |
 
 Stage 45 is complete following its separately authorized
 [45.4 exit audit](docs/testing.md#stage-454-self-hosted-syntax-tree-exit-audit)
@@ -92,10 +93,12 @@ on 2026-09-09. Verified managed syntax trees are the current self-hosted
 compiler baseline, and Stage 31 is the current completed optimizer baseline.
 Stage 45.5 is complete following its integration and exit audit on 2026-09-09.
 Stage 46 is complete following its 46.4 declaration-parser exit audit on
-2026-09-09. The verified self-hosted declaration result is now the bootstrap
-parser baseline. The C++ declaration pass remains authoritative until the
-separately approved definition pass and complete parser authority-transfer
-audit are complete.
+2026-09-09. Stage 47 is complete following its 47.4 definition-parser exit
+audit on 2026-09-10. Verified declaration results now materialize as complete
+managed syntax trees with bounded expression parsing, iterative statement
+handling, and exact full-tree parity across the production bootstrap. The C++
+parser remains authoritative until the complete parser authority-transfer
+audit.
 Stages 35 and 36 are complete, including their standard-library and prelude
 exit audits.
 Coordinated toolchain Stage 22 and separate-compilation Stage 23 are complete,
@@ -1552,25 +1555,67 @@ Deliverables:
    file envelope, enum case, type, field, function signature, constructor,
    modifier, throws clause, and deferred region with deterministic recovery and
    C++ differential records.
-4. **46.4 — Integration and exit audit (complete).** Close declaration parity, real-
-   bootstrap coverage, malformed and adversarial inputs, resource bounds, GC,
-   determinism, native and both-target builds, Shuttle, sanitizers,
+4. **46.4 — Integration and exit audit (complete).** Close declaration parity,
+   real-bootstrap coverage, malformed and adversarial inputs, resource bounds,
+   GC, determinism, native and both-target builds, Shuttle, sanitizers,
    documentation, and repository gates.
 
 Stage 46 changes no source language, artifact, ABI, standard-library, editor, or
 Shuttle contract. Compatibility remains artifact/compiler/runtime **8/7/11**,
 schemas **2/1/1/1**, and `cloth` **v0.5.0**. The C++ parser remains authoritative
-after 46.4; the definition pass and complete authority transfer require later
-approved stages.
+after 46.4. Stage 47 owns the definition pass; complete authority transfer
+requires a later approved audit.
 
-## Beyond Stage 46
+## Stage 47: Self-hosted definition parser
 
-Stages 45, 45.5, and 46 are complete. The remaining backlog does not acquire
-priority or enter the Cloth 1.0 scope automatically.
+Status: **complete — 47.4 exit audit passed 2026-09-10**
+
+The [approved contract](docs/proposals/stage_47_self_hosted_definition_parser.md)
+implements the definition half of Cloth's two-pass parser in the self-hosted
+compiler at `F:\Cloth`.
+
+Objective: consume each verified Stage 46 outline and its exact deferred token
+intervals, materialize every declaration, statement, block, and expression in
+one sealed `SyntaxStorage`, and publish a deterministic `VerifiedSyntaxTree`.
+
+Prerequisites: Stages 44, 45, 45.5, and 46.
+
+Deliverables:
+
+1. **47.1 — Contract (complete).** Freeze definition and expression grammar,
+   precedence, bounded interval consumption, recovery, constant-parser limits,
+   explicit-depth handling, publication, GC ownership, parity, compatibility,
+   and non-goals.
+2. **47.2 — Expression parser (complete).** Implement every existing
+   expression syntax kind, exact precedence and associativity, postfix chains,
+   initializer parsing, constant budgets, structured diagnostics, recovery,
+   and focused verification and GC coverage.
+3. **47.3 — Definitions and statements (complete).** Materialize fields,
+   functions, and constructors in outline order; implement blocks and every
+   existing statement form; publish the verified tree; and add canonical
+   C++/Cloth full-tree differential records.
+4. **47.3.1 — Compiler/test separation (complete).** Keep the production
+   `clothc` entry limited to compiler-driver behavior; move checks, fixtures,
+   probes, and parity adapters into an independently built test package; and
+   organize parser implementation by owned grammar domain.
+5. **47.4 — Integration and exit audit (complete).** Close complete definition
+   parity, real-bootstrap and malformed/adversarial coverage, resource and
+   complexity
+   bounds, GC, determinism, native and both-target builds, Shuttle, sanitizers,
+   documentation, and repository gates.
+
+Stage 47 changes no source language, artifact, ABI, standard-library, editor,
+or Shuttle contract. Compatibility remains artifact/compiler/runtime
+**8/7/11**, schemas **2/1/1/1**, and `cloth` **v0.5.0**. The C++ parser remains
+authoritative after 47.4 until a separately approved authority-transfer audit.
+
+## Beyond Stage 47
+
+Stages 45, 45.5, 46, and 47 are complete. The remaining
+backlog does not acquire priority or enter the Cloth 1.0 scope automatically.
 
 The following candidates remain recorded without priority or order:
 
-- self-hosted definition grammar after Stage 46 declaration parity;
 - complete parser parity and authority transfer after the definition pass; and
 - immutable per-case enum metadata, after its constant-data prerequisites.
 

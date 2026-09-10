@@ -86,8 +86,9 @@ parity and exit audit on 2026-09-08.
 Stage 45 is complete following its separately authorized 45.4 syntax-tree exit
 audit on 2026-09-09. Stage 45.5 is complete following its 45.5d integration and
 exit audit on 2026-09-09. Stage 46 is complete following its 46.4 declaration-
-parser exit audit on 2026-09-09. The C++ declaration pass remains authoritative
-until the definition pass and complete parser authority-transfer audit.
+parser exit audit on 2026-09-09. Stage 47 is complete following its 47.4
+definition-parser exit audit on 2026-09-10. The C++ parser remains authoritative
+until the complete parser authority-transfer audit.
 
 ## Scheduled work
 
@@ -1487,6 +1488,96 @@ class override validation. Existing ABI and artifact versions are unchanged.
   documentation-link, self-hosted style, and repository gates pass without a
   compatibility change.
 
+### Stage 47: Self-hosted definition parser
+
+- [x] **47.1 — Contract.** Freeze the verified declaration-result input,
+  deferred-interval boundary, full definition and expression grammar, exact
+  precedence, structured diagnostics and recovery, constant-parser resources,
+  source-depth-independent parsing and verification, syntax publication, GC
+  ownership, organization, differential parity, compatibility, and non-goals.
+
+  Approved and completed 2026-09-09. The definition pass will consume only
+  Stage 46's exact deferred ranges, emit one declaration per outline into one
+  sealed managed syntax storage, and publish through `VerifiedSyntaxTree`.
+  Runtime expressions gain no artificial nesting limit; static initializers
+  preserve the existing 65,536/1,048,576-node, depth-256, and 4,096-byte
+  constant budgets. No source, artifact, ABI, standard-library, editor, Shuttle,
+  or production compiler behavior changes. See the
+  [contract](docs/proposals/stage_47_self_hosted_definition_parser.md).
+- [x] **47.2 — Expression parser.** Implement bounded parsing for every
+  existing expression syntax kind, exact precedence and associativity, postfix
+  chains, field and constructor initializer expressions, required-constant
+  budgets, structured diagnostics, deterministic recovery, verification, and
+  focused GC coverage.
+
+  Completed 2026-09-09. `ExpressionParser` now consumes only an exact
+  half-open token interval and constructs every Stage 45 expression kind with
+  explicit managed parse frames, exact precedence/associativity, complete
+  postfix chaining, source-backed types and spellings, and bounded list
+  recovery. `ConstructorInitializerParser` parses the retained base type and
+  argument interval without widening it. Structured definition diagnostics
+  cover expression, delimiter, conversion, initializer, and constant-limit
+  failures. The package-owned constant budget enforces 65,536 declarations,
+  65,536 nodes per initializer, 1,048,576 package nodes, depth 256, and 4,096
+  numeric-literal bytes. Expression verification is iterative. Native checks
+  cover every expression kind and operator, recovery into a later field,
+  constructor arguments, 4,096-level ordinary nesting, exact resource limits,
+  and retained storage/source handles under allocation pressure. Declaration
+  materialization, statements, combined diagnostics, and final tree
+  publication remain 47.3.
+- [x] **47.3 — Definitions and statements.** Materialize fields, functions,
+  constructors, constructor initializers, blocks, and every existing statement
+  kind in outline order; seal and verify the final tree; and add canonical C++
+  and Cloth full-tree differential adapters and corpus.
+
+  Completed 2026-09-09. `DefinitionParser` materializes each immutable outline
+  in source order, parses only its retained intervals, shares the package
+  constant budget, combines declaration and definition diagnostics in stable
+  source order, seals one storage, and publishes one `VerifiedSyntaxTree`.
+  Blocks and all existing statement forms use managed parse frames; statement
+  and expression verification are iterative. Valid, malformed-recovery,
+  4,096-level block-depth, and retained-result GC checks run natively. Canonical
+  preorder records hide C++ indices and Cloth storage identities while covering
+  130 complete statement/declaration records and 352 expression records; both
+  corpora agree exactly with the C++ oracle. All 354 ordinary tests and the
+  isolated direct/serial/parallel, x86-64/wasm32 self-host gate pass. Complete
+  malformed/adversarial and real-bootstrap definition parity, sanitizers, and
+  the exit audit remain 47.4.
+- [x] **47.3.1 — Compiler/test separation.** Remove bootstrap tests from the
+  production compiler package, establish a real compiler driver entry, move
+  checks and fixtures into an independent Shuttle package, and organize parser
+  sources by declaration, definition, expression, statement, support, and
+  storage ownership.
+
+  Completed 2026-09-09. `src/Main.co` now delegates only to the production
+  `CompilerDriver`; `clothc check <file.co>`, `--help`, and `--version` are the
+  current executable surface. The `clothc-tests` package under
+  `tests/self_host` depends on the exported `clothc` artifact and exclusively
+  owns checkpoint checks, GC/depth probes, failure injection, canonical record
+  writers, and test data. The parser no longer has a flat implementation
+  directory. This package boundary exposed and fixed duplicate imported
+  derived-type accounting when two dependencies export the same canonical
+  type. Focused importer regression coverage and the complete isolated
+  self-host gate pass without a compatibility change.
+- [x] **47.4 — Integration and exit audit.** Close complete definition parity,
+  real-bootstrap and malformed/adversarial coverage, precedence, recovery,
+  resource and complexity bounds, GC, native and both targets, serial/parallel
+  determinism, Shuttle reuse and failure preservation, sanitizers,
+  documentation, and repository gates. Retain compatibility 8/7/11, schemas
+  2/1/1/1, and `cloth` v0.5.0.
+
+  Completed 2026-09-10. The canonical definition adapter now covers structured
+  diagnostics and invalid recovery trees. Eleven focused definition failures,
+  four retained valid/recovery fixtures, all 28 declaration-recovery fixtures,
+  and all 177 production compiler sources agree exactly with the C++ oracle.
+  Direct, repeated serial, and parallel
+  test executables emit identical definition records. The audit added exact
+  accepted/one-over resource checks, retained GC and 4,096-level nesting
+  checks, and corrected cursor-boundary, constructor-list, switch, abstract-
+  body, and invalid-range recovery differences exposed by the differential
+  corpus. All 354 ordinary tests and the complete self-host gate pass in both
+  development and ASan/UBSan configurations. Compatibility remains unchanged.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1560,8 +1651,7 @@ active stage without first updating `ROADMAP.md`.
 
 ### Bootstrap compiler
 
-- Stage 46 completed the self-hosted declaration pass. Define the self-hosted
-  definition pass only under a separately approved stage while preserving
+- Stage 47 owns the self-hosted definition pass while preserving Stage 46's
   immutable outlines, exact deferred ranges, and the two-pass architecture.
 - Transfer parser authority away from C++ only after a separately approved full
   differential parser audit covers declarations, definitions, diagnostics,

@@ -21,6 +21,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
@@ -548,19 +549,19 @@ class SemanticAnalyzer {
       imported_type_ids_.try_emplace(canonical_type_identity(type, model_),
                                      type);
     }
-    std::size_t remaining_types = 0;
+    std::set<std::string, std::less<>> remaining_types;
     for (const ImportedPackageView& package : imported_packages_) {
       for (const ImportedType& imported : package.types) {
         if (!imported_type_ids_.contains(imported.identity)) {
-          ++remaining_types;
+          remaining_types.insert(imported.identity);
         }
       }
     }
-    while (remaining_types != 0) {
+    while (!remaining_types.empty()) {
       bool made_progress = false;
       for (const ImportedPackageView& package : imported_packages_) {
         for (const ImportedType& imported : package.types) {
-          if (imported_type_ids_.contains(imported.identity)) {
+          if (!remaining_types.contains(imported.identity)) {
             continue;
           }
           std::optional<TypeId> type;
@@ -591,7 +592,7 @@ class SemanticAnalyzer {
             continue;
           }
           imported_type_ids_.emplace(imported.identity, *type);
-          --remaining_types;
+          remaining_types.erase(imported.identity);
           made_progress = true;
         }
       }

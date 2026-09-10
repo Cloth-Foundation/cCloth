@@ -399,6 +399,51 @@ void compiles_against_imported_declarations_without_dependency_sources(
       "separate compilation changed canonical linker-symbol ownership");
 }
 
+void accepts_shared_derived_types_across_imported_packages(TestContext& test) {
+  cloth::Compilation dependencies;
+  dependencies.add_package_source(
+      cloth::SourceFile::from_memory(
+          "left/LeftApi.co",
+          "static func Echo(byte[] value): byte[] { return value; }"),
+      "left", "", "1.0.0");
+  dependencies.add_package_source(
+      cloth::SourceFile::from_memory(
+          "right/RightApi.co",
+          "static func Echo(byte[] value): byte[] { return value; }"),
+      "right", "", "1.0.0");
+  cloth::DiagnosticEngine dependency_diagnostics;
+  const auto built = dependencies.analyze(dependency_diagnostics);
+  test.expect(built.is_valid,
+              "shared derived-type dependencies did not compile");
+  if (!built.is_valid) return;
+
+  auto left = cloth::build_imported_package_view(
+      {"left", "1.0.0"}, built.semantics, built.mir, built.abi);
+  auto right = cloth::build_imported_package_view(
+      {"right", "1.0.0"}, built.semantics, built.mir, built.abi);
+  test.expect(left.is_valid() && right.is_valid(),
+              "shared derived-type dependencies did not export");
+  if (!left.view || !right.view) return;
+
+  cloth::Compilation consumer;
+  consumer.add_imported_package(std::move(*left.view));
+  consumer.add_imported_package(std::move(*right.view));
+  consumer.set_package_dependencies(
+      {{"app", "left", "left"}, {"app", "right", "right"}});
+  consumer.add_package_source(
+      cloth::SourceFile::from_memory("app/Main.co", "static func Main() {}"),
+      "app", "", "1.0.0");
+  cloth::DiagnosticEngine diagnostics;
+  const auto result = consumer.analyze_frontend(diagnostics);
+  std::string errors;
+  for (const cloth::Diagnostic& diagnostic : diagnostics.diagnostics()) {
+    if (!errors.empty()) errors += "; ";
+    errors += diagnostic.message;
+  }
+  test.expect(result.is_valid,
+              "shared imported byte[] identity was rejected: " + errors);
+}
+
 }  // namespace
 
 int main() {
@@ -413,6 +458,8 @@ int main() {
        deterministic_and_corruption_checked},
       {"compiles against imported declarations without dependency sources",
        compiles_against_imported_declarations_without_dependency_sources},
+      {"accepts shared derived types across imported packages",
+       accepts_shared_derived_types_across_imported_packages},
   };
   return cloth::test::run_tests(tests);
 }

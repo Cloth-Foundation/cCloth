@@ -1,0 +1,7 @@
+ConstructorErrors(): Base {}
+
+constructorErrors(int32 value): Base(1,) {}
+
+_ConstructorErrors(string value): Base(1 2) {}
+
+_ConstructorErrors(bool value): Base(1 {}

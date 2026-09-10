@@ -1,0 +1,9 @@
+int32 NumericOpen = int32 value;
+int32 NumericValue = int32();
+int32 NumericArity = int32(1, 2);
+int32 NumericClose = int32(1;
+int32 IntegerMode = int32::(1);
+int32 IntegerOpen = int32::wrap 1;
+int32 IntegerValue = int32::wrap();
+int32 IntegerArity = int32::wrap(1, 2);
+int32 IntegerClose = int32::wrap(1;

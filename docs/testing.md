@@ -1,5 +1,153 @@
 # Cloth testing and diagnostic builds
 
+## Stage 47.4 self-hosted definition-parser exit audit
+
+Completed on Windows on 2026-09-10. All **354/354 development** CTests passed
+in 149.61 seconds, and the complete `cloth_self_host_frontend` gate passed in
+600.52 seconds. All **354/354 Clang ASan/UBSan** CTests passed in 543.28
+seconds, and the same complete gate passed under sanitizers in 1,044.35
+seconds. C++ formatting and repository whitespace checks pass. The exhaustive
+gate keeps the 1,200-second development timeout and uses a 1,800-second
+sanitizer timeout to account for instrumented Windows process startup; coverage
+is identical in both configurations.
+
+The permanent gate compares **599 lexer**, **32 bounded declaration**, **177
+real declaration**, **43 bounded definition**, and **177 real definition**
+inputs. Definition coverage includes eleven focused malformed/adversarial files,
+four retained complete-expression, complete-statement, and recovery fixtures,
+and all 28 declaration-recovery fixtures. Canonical records contain the full
+tree and structured diagnostics;
+the C++ oracle, direct build, repeated serial Shuttle build, and parallel
+Shuttle build agree exactly for every definition input.
+
+The expanded differential corpus exposed and corrected recovery discrepancies:
+bounded cursors now report the enclosing delimiter at their exclusive limit;
+constructor argument recovery preserves missing and trailing elements; missing
+switch bodies retain the oracle range; abstract/interface functions publish
+the oracle's invalid synthetic body; missing initializer intervals publish no
+expression; invalid constructor base starts publish no initializer; and
+verification permits invalid recovery ranges and bodies that are source-valid
+while continuing to enforce parent containment and child validity on valid
+trees. No malformed case weakens valid-tree verification.
+
+Exact accepted and one-over checks cover constant nesting depth 256, 4,096-byte
+numeric spellings, 65,536 expression nodes per initializer, and 1,048,576
+package expression nodes. Existing 4,096-level ordinary expression/block
+nesting and allocation-pressure GC checks remain green. The gate also verifies
+the production compiler CLI, x86-64 execution, wasm32 checking and deterministic
+IR, direct/repeated output identity, one-job/four-job artifact identity, exact
+warm reuse, and completed-output preservation after a failed rebuild.
+
+**Stage 47 is complete.** Compatibility remains artifact/compiler/runtime
+**8/7/11**, schemas remain **2/1/1/1**, and `cloth` remains v0.5.0. Parser
+authority remains with C++ until a separately approved complete-parser parity
+and authority-transfer stage.
+
+## Stage 47.3.1 compiler/test separation
+
+Completed on Windows on 2026-09-09. The self-hosted repository now builds two
+deliberate packages. Production `clothc` contains `Main`, the compiler driver,
+and compiler implementation only. Independent `clothc-tests` depends on the
+exported `clothc` artifact and owns all bootstrap checks, fixtures, probes,
+failure injection, GC/depth stress, and canonical record adapters. Production
+`Main` no longer contains private test modes or executes checks by default.
+
+Parser implementation is organized into declaration, definition, expression,
+statement, support, and storage packages. Empty backend and AST placeholders
+were removed. The current production driver provides `clothc check <file.co>`,
+`--help`, and `--version`; the C++ compiler remains authoritative.
+
+The package split exposed duplicate pending-type accounting when multiple
+imported artifacts exported the same canonical derived type, such as `byte[]`.
+The importer now tracks unique identities, with a focused two-dependency
+regression test. The focused regression passed in 0.08 seconds, and all 354
+ordinary development CTests passed in 144.67 seconds. The isolated self-host
+gate passed in 359.03 seconds across direct/repeated and
+serial/parallel Shuttle builds, warm reuse, x86-64/wasm32, the production CLI,
+all self-host checks, parity records, deterministic artifacts, and failed-build
+preservation. Compatibility remains 8/7/11, schemas remain 2/1/1/1, and
+`cloth` remains v0.5.0.
+
+## Stage 47.3 self-hosted definitions and statements
+
+Completed on Windows on 2026-09-09. `DefinitionParser` now materializes every
+Stage 46 member outline in source order, consumes only its retained initializer
+and body intervals, carries the package constant budget into static field
+initializers, combines declaration and definition diagnostics in stable source
+order, seals one managed syntax storage, and publishes one verified tree.
+
+The statement pass covers locals, returns, expression statements, `if`,
+`while`, for-each and traditional `for`, `switch`, `break`, `continue`, and
+nested blocks. Managed parse frames remove source-proportional native recursion
+from block construction, and whole-tree statement verification is iterative.
+A 4,096-level nested-block check passes during native execution. Allocation
+pressure preserves the final tree, originating declaration result, source,
+storage, and handles after temporary cursors, frames, and builders are gone.
+
+The canonical differential adapter emits preorder-local IDs rather than C++
+vector indices or Cloth storage identities. C++ and Cloth agree exactly on 130
+records covering all statement and declaration forms and 352 records covering
+the complete Stage 47.2 expression corpus, including types, constructor
+initializers, source ranges and spans, child order, modifiers, operations, and
+validity. A separate malformed corpus confirms recovery into a later function.
+
+All 354 ordinary development CTests passed in 177.04 seconds. The isolated
+self-host gate passed in 300.29 seconds, including direct and repeated builds,
+serial/parallel and warm Shuttle builds, x86-64 native execution, wasm32
+checking, definition depth and GC checks, canonical differential records,
+determinism, and failure preservation. Stage 47.4 retains complete malformed,
+adversarial, resource-boundary, and real-bootstrap definition parity plus the
+sanitizer and repository exit audit. Compatibility remains 8/7/11, schemas
+remain 2/1/1/1, `cloth` remains v0.5.0, and the C++ parser remains
+authoritative.
+
+## Stage 47.2 self-hosted expression parser
+
+Completed on Windows on 2026-09-09. The self-hosted parser now consumes exact
+Stage 46 token intervals and constructs all 24 existing expression syntax
+kinds. Focused native coverage exercises every binary and assignment operator,
+right- and left-associative precedence boundaries, prefix and postfix updates,
+complete postfix chains, primitive meta parsing, conversions, nullable checked
+types, arrays, field initializers, constructor initializer arguments, and
+deterministic malformed-list recovery into a later field.
+
+The implementation uses managed parse frames instead of source-proportional
+native recursion. Its iterative verifier accepts 4,096 nested ordinary
+parentheses. Required-constant checks cover the exact 65,536-declaration,
+65,536-node-per-initializer, 1,048,576-node-per-package, depth-256, and
+4,096-byte numeric-literal boundaries. A focused allocation-pressure check
+retains the parsed source, sealed syntax storage, and expression handles while
+temporary parser frames and builders are abandoned.
+
+The native self-check, `--expression-depth-check`,
+`--expression-gc-check`, x86-64/wasm32 compile checks, and the existing Stage 46
+baseline are the 47.2 gate. Full declaration materialization, statement
+parsing, combined diagnostic publication, and C++/Cloth full-tree differential
+records remain 47.3. Compatibility remains 8/7/11, schemas remain 2/1/1/1,
+and `cloth` remains v0.5.0; the C++ parser remains authoritative.
+
+The final development run passed all 355 CTests. The isolated self-host gate,
+including direct and Shuttle bootstrap builds, both targets, the new expression
+checks, and the retained lexer/declaration differential corpus, passed in
+249.96 seconds; the other 354 tests passed in 148.51 seconds with four-way
+parallel execution.
+
+## Stage 47.1 self-hosted definition-parser contract
+
+Approved on Windows on 2026-09-09. The contract freezes the verified Stage 46
+input boundary, exact deferred-region consumption, full statement and expression
+grammar, operator precedence and associativity, structured diagnostics,
+deterministic recovery, required-constant parser limits, source-depth-
+independent parsing and verification, managed syntax publication, GC ownership,
+canonical full-tree parity, compatibility, and non-goals.
+
+This checkpoint changes maintainer documentation only. The complete Stage 46
+baseline remains green, the C++ parser remains authoritative, and implementation
+begins only after separate 47.2 authorization. Artifact/compiler/runtime
+compatibility remains 8/7/11, schemas remain 2/1/1/1, and `cloth` remains
+v0.5.0. No source language, compiler, runtime, standard-library, editor, or
+Shuttle behavior changed.
+
 ## Stage 46.4 self-hosted declaration-parser exit audit
 
 Completed on Windows on 2026-09-09. The canonical C++ and Cloth declaration
@@ -51,7 +199,7 @@ and deferred-range retention across managed allocation pressure.
 
 The C++ and Cloth canonical declaration adapters agree across a 13-input corpus
 covering accepted declarations, duplicate enum and member records, and recovery.
-`ctest --test-dir build/dev -R '^cloth_self_host_lexer_parity$'` passes in
+`ctest --test-dir build/dev -R '^cloth_self_host_frontend$'` passes in
 164.86 seconds. That gate also proves direct and serial/parallel deterministic
 builds, exact warm reuse, x86-64 native execution, wasm32 checking, lexer parity,
 GC retention, and failed-output preservation. Compatibility remains 8/7/11,
@@ -73,7 +221,7 @@ freeze-once, sequence-bound, deferred-body, capitalization visibility, file-
 range, and aggregate-validity rejection. A 256-iteration native GC check keeps
 published results alive while obsolete builders and pages become collectible.
 
-`ctest --test-dir build/dev -R cloth_self_host_lexer_parity` passes. That gate
+`ctest --test-dir build/dev -R cloth_self_host_frontend` passes. That gate
 covers direct and serial/parallel Shuttle builds, exact warm reuse, x86-64
 native execution, wasm32 checking, deterministic outputs, failed-build
 preservation, the complete lexer differential corpus, and the Stage 46.2
@@ -343,7 +491,7 @@ its single CTest entry:
 cmake --preset dev \
   -DCLOTH_SELF_HOST_SOURCE_DIR=<path-to-Cloth> \
   -DCLOTH_SELF_HOST_SHUTTLE_EXECUTABLE=<path-to-shuttle>
-ctest --test-dir build/dev -R '^cloth_self_host_lexer_parity$' \
+ctest --test-dir build/dev -R '^cloth_self_host_frontend$' \
   --output-on-failure
 ```
 
