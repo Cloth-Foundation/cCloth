@@ -160,6 +160,7 @@ void cloth_rt_gc_collect() noexcept;
 [[nodiscard]] void* cloth_rt_string_concat(const void* left,
                                            const void* right) noexcept;
 [[nodiscard]] void* cloth_rt_console_read_line(std::uint8_t* status) noexcept;
+void cloth_rt_console_write_error(const void* value) noexcept;
 [[nodiscard]] void* cloth_rt_file_read_bytes(const void* path,
                                              std::uint8_t* status) noexcept;
 [[nodiscard]] std::uint8_t cloth_rt_parse_primitive(

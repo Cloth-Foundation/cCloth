@@ -1776,6 +1776,26 @@ void write_stdout(std::string_view text) noexcept {
   }
 }
 
+void configure_stderr() noexcept {
+#if defined(_WIN32)
+  static const bool configured = _setmode(_fileno(stderr), _O_BINARY) != -1;
+  if (!configured) {
+    runtime_failure("standard error mode configuration failed");
+  }
+#endif
+}
+
+void write_stderr(std::string_view text) noexcept {
+  configure_stderr();
+  if (!text.empty() &&
+      std::fwrite(text.data(), 1, text.size(), stderr) != text.size()) {
+    runtime_failure("standard error write failed");
+  }
+  if (std::fflush(stderr) != 0) {
+    runtime_failure("standard error flush failed");
+  }
+}
+
 template <typename Integer>
 void write_integer(Integer value) noexcept {
   std::array<char, 32> buffer{};
@@ -2409,6 +2429,14 @@ extern "C" void* cloth_rt_console_read_line(std::uint8_t* status) noexcept {
   }
 #endif
   return read_stream_line(*status);
+}
+
+extern "C" void cloth_rt_console_write_error(const void* value) noexcept {
+  const ClothString& string = require_string(value);
+  if (string.data == nullptr && string.byte_size != 0) {
+    runtime_failure("standard error string has an invalid layout");
+  }
+  write_stderr(std::string_view{string.data, string.byte_size});
 }
 
 extern "C" void* cloth_rt_file_read_bytes(const void* value,

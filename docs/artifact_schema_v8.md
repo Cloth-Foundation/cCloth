@@ -9,11 +9,12 @@ metadata described here.
 ## Compatibility
 
 Header offset 8 contains little-endian format integer **8**. Compiler ABI **7**
-uses `_C7` native names. Runtime ABI **11** adds managed value boxes. Compiler
+uses `_C7` native names. Runtime ABI **12** includes the standard-error write
+operation; runtime ABI 11 introduced managed value boxes. Compiler
 capabilities advertise `artifact_formats: [8]`; receipts carry
 `artifact_format: 8`. Process protocol **2**, receipt schema **1**, manifest
 schema **1**, and toolchain-metadata schema **1** remain unchanged. The exact
-compiler-paired standard-library package is `cloth` **v0.5.0**.
+compiler-paired standard-library package is `cloth` **v0.6.0**.
 
 Formats 1–7 and compiler/runtime ABI mismatches are rejected and rebuilt. They
 are never migrated or reinterpreted.

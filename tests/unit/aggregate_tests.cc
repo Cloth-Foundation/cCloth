@@ -225,10 +225,10 @@ void imported_aggregates(TestContext& test) {
     for (const auto& issue : encoded.issues) test.expect(false, issue.message);
     if (!encoded.artifact) continue;
     const bool native = target.pointer.size == 8;
-    const std::string_view digest = native ? "42c7c69b4797ab891778c369c5a85365"
-                                             "c42d54cf7dd2a8e439b8931a9596f2ec"
-                                           : "0df5575c16f065809dbd6908e342f515"
-                                             "5c8b5f3f23c41c77948604c314a99617";
+    const std::string_view digest = native ? "9ac3e9bb4c7c571947c16ec2e8df0a81"
+                                             "c3ac863ed73e4b6b1bd89b2765f9a16e"
+                                           : "3e129b73cdf787835e56f34187180f316"
+                                             "2df08d92f53c067d81f123ff355e1a5";
     test.expect(
         encoded.artifact->bytes.size() == (native ? 30669U : 30667U) &&
             cloth::artifact_digest_hex(encoded.artifact->digest) == digest,

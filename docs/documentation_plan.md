@@ -64,7 +64,7 @@ checked-in example project. These supplement, rather than replace, `docs/`.
   struct output, and aggregate reference tracing follow their dedicated contracts.
 - Static members now include direct enum-case constants, as specified in
   `enums.md` and `grammar.md`.
-- Artifact compatibility follows v8 / compiler ABI 7 / runtime ABI 11; process
+- Artifact compatibility follows v8 / compiler ABI 7 / runtime ABI 12; process
   protocol 2 and manifest schema 1 are separate contracts.
 - Shuttle searches `PATH` only when `--compiler` is omitted. An explicit compiler
   argument is a filesystem path, as confirmed in `shuttle/src/compiler.rs`.

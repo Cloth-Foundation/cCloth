@@ -584,6 +584,10 @@ void console_api_and_source_free_consumer(TestContext& test) {
     static func Load(string path): byte[] throws IoError {
       return File.ReadBytes(path);
     }
+    static func Report() {
+      Console.WriteError("diagnostic");
+      Console.WriteErrorLine("line");
+    }
     func infer(string text): int32 {
       return int32::parse(text);
     }
@@ -608,6 +612,7 @@ void console_api_and_source_free_consumer(TestContext& test) {
     static func Main() throws IoError, ParseError {
       string? line = Read();
       byte[] contents = Load("source.co");
+      Report();
       ParseValues();
     }
   )";
@@ -654,6 +659,22 @@ void console_api_and_source_free_consumer(TestContext& test) {
                         cloth::TypeKind::kNullable &&
                     read_line->thrown_types == std::vector{io_error->type},
                 "Console.ReadLine lost its nullable result or IoError effect");
+    const cloth::SemanticSymbol* write_error =
+        find_function(produced.semantics, *console, "WriteError");
+    const cloth::SemanticSymbol* write_error_line =
+        find_function(produced.semantics, *console, "WriteErrorLine");
+    test.expect(write_error != nullptr && write_error->is_static &&
+                    write_error->parameter_types ==
+                        std::vector{produced.semantics.string_type()} &&
+                    write_error->type == produced.semantics.void_type() &&
+                    write_error->thrown_types.empty() &&
+                    write_error_line != nullptr &&
+                    write_error_line->is_static &&
+                    write_error_line->parameter_types ==
+                        std::vector{produced.semantics.string_type()} &&
+                    write_error_line->type == produced.semantics.void_type() &&
+                    write_error_line->thrown_types.empty(),
+                "Console standard-error surface has the wrong shape");
     const cloth::SemanticSymbol* read_bytes =
         find_function(produced.semantics, *file, "ReadBytes");
     const cloth::SemanticType* read_bytes_type =
@@ -681,6 +702,8 @@ void console_api_and_source_free_consumer(TestContext& test) {
         producer_ir.has_value() &&
             producer_ir->text.contains(
                 "call ptr @cloth_rt_console_read_line") &&
+            producer_ir->text.contains(
+                "call void @cloth_rt_console_write_error") &&
             producer_ir->text.contains("call ptr @cloth_rt_file_read_bytes") &&
             producer_ir->text.contains("could not read standard input") &&
             producer_ir->text.contains("standard input is not valid Unicode") &&
@@ -850,6 +873,7 @@ void console_api_and_source_free_consumer(TestContext& test) {
   inaccessible.add_package_source(cloth::SourceFile::from_memory("Main.co", R"(
       static func Main() {
         __readLine();
+        __writeError("diagnostic");
         __readBytes("source.co");
       }
     )"),
@@ -858,6 +882,8 @@ void console_api_and_source_free_consumer(TestContext& test) {
   test.expect(!inaccessible.analyze(inaccessible_diagnostics).is_valid &&
                   messages(inaccessible_diagnostics)
                       .contains("unknown name '__readLine'") &&
+                  messages(inaccessible_diagnostics)
+                      .contains("unknown name '__writeError'") &&
                   messages(inaccessible_diagnostics)
                       .contains("unknown name '__readBytes'"),
               "a private I/O bridge escaped the compiler-paired library");
@@ -868,6 +894,8 @@ void console_api_and_source_free_consumer(TestContext& test) {
     test.expect(!mismatched.analyze(mismatched_diagnostics).is_valid &&
                     messages(mismatched_diagnostics)
                         .contains("unknown name '__readLine'") &&
+                    messages(mismatched_diagnostics)
+                        .contains("unknown name '__writeError'") &&
                     messages(mismatched_diagnostics)
                         .contains("unknown name '__readBytes'"),
                 "a private I/O bridge accepted an unpaired library");

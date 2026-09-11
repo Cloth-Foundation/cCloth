@@ -1487,6 +1487,19 @@ class SemanticAnalyzer {
       add_bridge("__valueBoxToString", model_.string_type(), {wrapper.type},
                  IntrinsicKind::kValueBoxToString);
     }
+    if (console_file) {
+      SemanticSymbol bridge{
+          SymbolKind::kFunction,
+          "__writeError",
+          model_.void_type(),
+          {model_.string_type()},
+          Visibility::kPrivate,
+          std::nullopt,
+          model_.symbol(model_.file(*console_file).symbol).range};
+      bridge.intrinsic = IntrinsicKind::kConsoleWriteError;
+      bridge.is_static = true;
+      static_cast<void>(model_.add_symbol(std::move(bridge)));
+    }
     if (!io_error_file) {
       if (file_file) {
         diagnostics_.error(model_.symbol(model_.file(*file_file).symbol).range,
@@ -3763,7 +3776,8 @@ class SemanticAnalyzer {
                intrinsic == IntrinsicKind::kObjectHashCode ||
                intrinsic == IntrinsicKind::kObjectToString) &&
               !is_standard_library_object(current_file_)) ||
-             (intrinsic == IntrinsicKind::kConsoleReadLine &&
+             ((intrinsic == IntrinsicKind::kConsoleReadLine ||
+               intrinsic == IntrinsicKind::kConsoleWriteError) &&
               !is_standard_library_console(current_file_)) ||
              (intrinsic == IntrinsicKind::kFileReadBytes &&
               !is_standard_library_file(current_file_));

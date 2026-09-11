@@ -1,5 +1,234 @@
 # Cloth testing and diagnostic builds
 
+## Stage 49.4 package-frontend authority audit
+
+Completed on Windows on 2026-09-10. The self-hosted package frontend is now
+authoritative for Cloth lexing and parsing. The frozen C++ frontend remains the
+bootstrap implementation and a declared differential regression oracle; it no
+longer owns production frontend behavior.
+
+The first full run correctly rejected a stale corpus-size invariant after the
+Stage 49.3 sources expanded the declared closure. The pinned dimensions were
+updated from measured declared inputs, not weakened: 614 lexer inputs, 32
+bounded and 188 production declaration inputs, and 43 bounded and 188
+production definition inputs. The rerun produced byte-identical C++ and Cloth
+records for every input.
+
+The uncached `//tests:full` run passed all 82 targets in 102.365 seconds. It
+covers the 19-target presubmit, eight GC/depth targets, 23 declaration-state
+failures, 12 package-frontend failures, four storage failures, ten tree
+failures, four canonical record checks, exhaustive cross-compiler parity, and
+the isolated Shuttle audit. The Shuttle target passed in 98.0 seconds with a
+declared staging tree whose path contains spaces: parallel x86-64 cold and warm
+builds were byte-identical, the native program ran silently, wasm32 checking
+passed, and a deliberately invalid rebuild preserved every completed output.
+
+Development and Clang ASan/UBSan builds each pass all 85 native unit entries.
+The sanitized compiler additionally checks the complete 188-source production
+self-hosted package through Shuttle on x86-64 and wasm32 from a relocated
+staging tree. All 51 ordinary Shuttle tests, C++ and Rust formatting,
+warning-denied Clippy, the 100-column self-hosted source check, local Markdown
+links, and repository diff checks pass. Compatibility remains
+artifact/compiler/runtime **8/7/12**, schemas **2/1/1/1**, and compiler-paired
+`cloth` **v0.6.0**. **Stage 49 is complete.**
+
+## Stage 49.3 production diagnostics and driver
+
+Completed on Windows on 2026-09-10. The self-hosted compiler has exhaustive
+lexer and parser message catalogs, a typed severity boundary, deterministic
+plain rendering, related declaration notes, and terminal-safe diagnostic-path
+escaping. Its public `check <file.co>` driver now enters through the package
+frontend coordinator. Successful checks are silent; source failures use status
+1 and standard error; malformed requests use status 2 and standard error.
+
+The renderer target covers lexical and parser output, related locations,
+control/backslash escaping, and empty packages. Six independent driver targets
+cover successful silence, lexical failure, parser failure, invalid requests,
+invalid source-path spelling, and missing-source I/O propagation. The paired
+runtime/standard-library tests cover the private stderr bridge and public
+`Console.WriteError`/`WriteErrorLine` surface. The 19-target Bazel presubmit,
+all 85 native unit tests, all 51 ordinary Shuttle tests, C++ and Rust format
+checks, warning-denied Clippy, local documentation links, and repository diff
+checks pass. Compatibility is artifact/compiler/runtime **8/7/12**,
+schemas **2/1/1/1**, and compiler-paired `cloth` **v0.6.0**. Parser authority
+remains with C++ until 49.4.
+
+## Stage 49.2 package frontend coordinator
+
+Completed on Windows on 2026-09-10. The self-hosted compiler now owns explicit
+package identities and sources, normalized logical-path validation, canonical
+ASCII byte ordering, duplicate and ASCII-case collision rejection, exact
+owning/source/file identity, managed per-file results, and immutable package
+publication. One shared constant budget spans the package. A lexical failure
+suppresses parser construction only for that file; every lexically valid file
+runs both declaration and definition passes.
+
+The focused coordinator and GC targets cover empty and standalone inputs,
+SemVer owner identity, shuffled nested sources, caller-array immutability,
+mixed valid/lexical/parser-invalid files, invalid implicit class names, complete
+result retention, and repeated allocation pressure. Twelve independent
+expected-failure targets cover duplicate and case-colliding paths, invalid and
+reserved directories, parent components, backslashes, malformed owner identity,
+SemVer numeric leading zeroes, null sources, and invalid result publication.
+All 14 focused targets pass.
+
+The authoritative presubmit suite passes all 12 targets. Cross-compiler parity
+passes 609 lexer inputs, 32 bounded and 184 real declaration inputs, and 43
+bounded and 184 real definition inputs. The production `clothc` Bazel target
+also builds. Stage 49.2 changes no driver output; production rendering and
+driver routing remain assigned to 49.3. Compatibility stays artifact/compiler/
+runtime **8/7/11**, schemas **2/1/1/1**, and `cloth` **v0.5.0**.
+
+## Stage 49.1 self-hosted frontend authority contract
+
+Approved on 2026-09-10. The Stage 49 contract assigns package discovery to
+Shuttle, Bazel, or the direct driver and gives the production frontend an
+explicit immutable package source set. Normalized package-relative logical
+paths derive source packages, implicit file-class names, and complete qualified
+identities. Canonical UTF-8 byte ordering and duplicate/ASCII-case-collision
+rejection make the result independent of request order and host filesystem.
+
+The contract defines managed per-file and package result lifetimes, lexical
+failure isolation, declaration/definition composition without duplicated
+diagnostics, structured diagnostic ownership, safe production rendering, and
+the exact 49.4 authority-transfer gate. The C++ frontend remains authoritative
+through 49.3. Compatibility stays artifact/compiler/runtime **8/7/11**,
+schemas **2/1/1/1**, and `cloth` **v0.5.0**.
+
+This checkpoint changes documentation only. Repository whitespace, local
+Markdown links, and diff checks pass. Implementation and executable Bazel
+coverage begin only when 49.2 is separately authorized.
+
+## Stage 48.4 integration and authority audit
+
+Completed on Windows on 2026-09-10 with Bazel 9.2.0. Bazel is now
+authoritative for self-hosted compiler testing in `F:\Cloth`; Shuttle remains
+the public package/build system, and the frozen C++ compiler remains the
+bootstrap implementation and observable-behavior oracle.
+
+The authoritative `//tests:full` suite contains 61 independently reported
+targets. Its declared cross-compiler parity target checks the exact Stage 47
+closure in parallel: 599 lexer inputs, 32 bounded and 177 real declaration
+inputs, and 43 bounded and 177 real definition inputs. The three C++ oracle
+executables, oracle corpora, compiler sources, self-hosted frontend sources, and
+fixtures are Bazel inputs; the test rejects an undeclared workspace-file leak.
+It passed in 16.6 seconds inside the full run.
+
+The Shuttle compatibility target stages only declared repository files beneath
+`TEST_TMPDIR` in a path containing spaces. It builds x86-64 cold and warm,
+requires byte-identical completed artifacts, executes the native result, checks
+wasm32, then injects invalid staged source and proves the failed rebuild cannot
+replace the completed executable or package artifacts. It passed in 67.2
+seconds. This is the only remaining nested Shuttle test.
+
+An isolated clean Bazel root passed presubmit in 63.35 seconds; its warm rerun
+used all 11 cached test results and completed in 0.33 seconds. Two independent
+clean roots produced byte-identical `clothc.cpa`, receipt, and executable files.
+The uncached eight-worker full suite passed 61/61 in 69.34 seconds. A manual
+one-second hanging probe was terminated and classified as `TIMEOUT` rather than
+success. Bzlmod lock validation, full target-graph loading, CMake regeneration,
+repository whitespace, Python syntax, Markdown links, and diff checks form the
+remaining repository gates.
+
+The old `BootstrapMain.co` dispatcher is replaced by isolated targets and a
+no-op Shuttle compatibility entry. The CMake `cloth_self_host_frontend` test and
+its 600-second orchestration script are removed; the C++ oracle executables and
+ordinary C++ tests remain owned by `cCloth`. Compatibility remains artifact/
+compiler/runtime **8/7/11**, schemas **2/1/1/1**, and compiler-paired `cloth`
+**v0.5.0**. **Stage 48 is complete.**
+
+## Stage 48.3 self-hosted test migration
+
+Completed on Windows on 2026-09-10 with Bazel 9.2.0. The self-hosted compiler
+repository now exposes `//tests:presubmit` and `//tests:full`. The presubmit
+suite contains 11 independently cacheable assertion and rule tests. The full
+suite contains 60 targets: presubmit, five GC checks, two depth/resource checks,
+four exact-output parity checks, all 37 diagnostic-checked failure-injection
+modes, and one Shuttle compatibility check.
+
+The lexer, declaration parser, definition parser, expression parser, syntax
+arena, syntax sequences, and syntax-tree checks consume a shared compiled test
+package through explicit Bazel dependency metadata. Thin Cloth adapters replace
+the `BootstrapMain.co` status ladder with typed assertions that report the
+check name plus expected and actual status. Lexer and parser inputs are declared
+runfiles with stable repository-relative paths. Syntax arena and sequence
+coverage is split into distinct targets instead of remaining hidden behind the
+old storage-check ladder.
+
+Lexical, declaration, definition, and full syntax-tree record writers are
+separate `cloth_binary` tools. Focused parity targets compare their complete
+ordered output with checked-in records. Failure probes are separate binaries;
+each mode is a named Bazel test that passes only for a nonzero process result,
+empty stdout, and the exact required diagnostic fragment. An uncached test-
+result run with cached build actions passed all 60 targets in 8.76 seconds. The
+warm presubmit run passed all 11 targets in 0.32 seconds.
+
+The explicit Shuttle target stages the root compiler package and retained
+`clothc-tests` package beneath `TEST_TMPDIR`, then runs `shuttle check` against
+the declared frozen compiler distribution without writing into the checkout.
+It passed in 8.4 seconds. A refreshed legacy Shuttle executable still passed its
+default check ladder, and its focused lexical, declaration, and definition
+records matched the new Bazel tool outputs exactly. The CMake compatibility
+bridge now launches legacy checks from the copied repository root, matching the
+repository-relative runfile contract.
+
+**48.3 is complete; Stage 48 remains active.** Stage 48.4 owns the clean/warm
+cache, deterministic artifact, parallelism, timeout, both-target,
+cross-compiler exhaustive parity, complete old/new coverage, repository-gate,
+and authority audit. The legacy dispatcher remains only through that audit.
+Compatibility remains artifact/compiler/runtime **8/7/11**, schemas
+**2/1/1/1**, and compiler-paired `cloth` **v0.5.0**.
+
+## Stage 48.2 Bazel rules and Cloth test support
+
+Completed on Windows on 2026-09-10 with Bazel 9.2.0. The self-hosted compiler
+repository now imports the frozen bootstrap distribution through explicit
+Bzlmod configuration and publishes repository-private `cloth_library`,
+`cloth_binary`, and `cloth_test` rules. Compile and link actions stage only
+declared sources, consume protocol 2, validate receipt schema 1 and artifact
+format 8, and carry exact dependency closures. The configured compiler,
+descriptor, recursive standard-library sources, Python action runtime, and
+MinGW runtime DLLs are declared inputs.
+
+The Cloth-owned `testing` package provides typed `TestFailure` plus boolean,
+scalar, string, enum/value-box, object, and null assertions. Generated test
+entries declare the process boundary without adding source boilerplate. Bazel's
+native Windows runfiles tree exposes only declared fixture data through stable
+repository-relative paths.
+
+Focused Bazel query, support-library build, assertion smoke test, declared-
+runfile smoke test, production `clothc` build/run, warm-cache check, and explicit
+negative assertion target all behaved as required. The negative target exited
+nonzero and reported the assertion operation, context, expected value, and
+actual value. Python syntax, repository whitespace, and BUILD/Starlark analysis
+checks pass. The legacy CTest matrix was intentionally not run because Stage
+48.2 changes no frozen C++ code.
+
+**48.2 is complete; Stage 48 remains active.** Stage 48.3 owns target-by-target
+migration from `BootstrapMain.co`; Stage 48.4 owns the final hermeticity,
+determinism, platform, equivalence, and authority audit. Compatibility remains
+artifact/compiler/runtime **8/7/11**, schemas **2/1/1/1**, and compiler-paired
+`cloth` **v0.5.0**.
+
+## Stage 48.1 self-hosted testing contract and Bazel foundation
+
+Completed on Windows on 2026-09-10. The approved Stage 48 contract separates
+repository test orchestration from Shuttle's public build-system role, keeps
+the C++ compiler frozen, and defines a declared bootstrap-toolchain closure,
+protocol-2 Starlark actions, isolated Cloth test processes, deterministic
+results, explicit presubmit/full suites, and target-by-target migration.
+
+The self-hosted repository pins Bazel 9.2.0 in `.bazelversion`, declares the
+`cloth_compiler` Bzlmod root in `MODULE.bazel`, records concise progress and
+failure output in `.bazelrc`, declares
+`//tools/bazel/cloth:toolchain_type`, and ignores generated `bazel-*` links.
+Repository whitespace and the new file/layout contracts pass static checks.
+
+Neither `bazel` nor `bazelisk` is installed on this verification host. Stage
+48.1 therefore makes no executable Bazel claim; concrete toolchain and rule
+analysis/execution coverage is a required part of 48.2. No compiler, language,
+artifact, ABI, standard-library, Shuttle, or editor behavior changed.
+
 ## Stage 47.4 self-hosted definition-parser exit audit
 
 Completed on Windows on 2026-09-10. All **354/354 development** CTests passed
@@ -484,15 +713,11 @@ runtime **7/6/10**, schemas **2/1/1/1**, and `cloth` v0.4.0. **Stage 44 is
 complete.** Parser and AST design remain unscheduled pending a separately
 approved stage.
 
-Configure the opt-in cross-repository test with both checkout paths, then run
-its single CTest entry:
+The opt-in CMake bridge used by this historical checkpoint was retired in Stage
+48.4. Current cross-repository parity is owned by the self-hosted repository:
 
 ```sh
-cmake --preset dev \
-  -DCLOTH_SELF_HOST_SOURCE_DIR=<path-to-Cloth> \
-  -DCLOTH_SELF_HOST_SHUTTLE_EXECUTABLE=<path-to-shuttle>
-ctest --test-dir build/dev -R '^cloth_self_host_frontend$' \
-  --output-on-failure
+bazel test //tests/self_host:cross_compiler_parity_test
 ```
 
 ## Stage 44.3 self-hosted literal completion

@@ -2,7 +2,7 @@
   "schema": 1,
   "standard_library": {
     "package": "cloth",
-    "version": "@PROJECT_VERSION@",
+    "version": "@CLOTH_STANDARD_LIBRARY_VERSION@",
     "manifest": "@CLOTH_STANDARD_LIBRARY_MANIFEST@"
   }
 }

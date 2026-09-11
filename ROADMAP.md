@@ -86,6 +86,8 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 45.5 | Universal Object root and verified value boxing |
 | 46 | Self-hosted declaration parser |
 | 47 | Self-hosted definition parser and verified full-tree publication |
+| 48 | Bazel-owned self-hosted compiler testing and isolated test targets |
+| 49 | Self-hosted package frontend integration and parser authority transfer |
 
 Stage 45 is complete following its separately authorized
 [45.4 exit audit](docs/testing.md#stage-454-self-hosted-syntax-tree-exit-audit)
@@ -96,9 +98,14 @@ Stage 46 is complete following its 46.4 declaration-parser exit audit on
 2026-09-09. Stage 47 is complete following its 47.4 definition-parser exit
 audit on 2026-09-10. Verified declaration results now materialize as complete
 managed syntax trees with bounded expression parsing, iterative statement
-handling, and exact full-tree parity across the production bootstrap. The C++
-parser remains authoritative until the complete parser authority-transfer
-audit.
+handling, and exact full-tree parity across the production bootstrap.
+Stage 48 is complete following its Bazel authority audit on 2026-09-10. Bazel
+owns self-hosted testing in `F:\Cloth`; the frozen C++ compiler remains only the
+bootstrap, behavior oracle, and subject of its existing validation.
+Stage 49 is complete following its package-frontend authority audit on
+2026-09-10. The self-hosted frontend now owns package lexing and parsing. The
+frozen C++ frontend remains the bootstrap and a declared differential oracle,
+not the production frontend authority.
 Stages 35 and 36 are complete, including their standard-library and prelude
 exit audits.
 Coordinated toolchain Stage 22 and separate-compilation Stage 23 are complete,
@@ -1609,18 +1616,102 @@ or Shuttle contract. Compatibility remains artifact/compiler/runtime
 **8/7/11**, schemas **2/1/1/1**, and `cloth` **v0.5.0**. The C++ parser remains
 authoritative after 47.4 until a separately approved authority-transfer audit.
 
-## Beyond Stage 47
+## Stage 48: Self-hosted testing and Bazel orchestration
 
-Stages 45, 45.5, 46, and 47 are complete. The remaining
-backlog does not acquire priority or enter the Cloth 1.0 scope automatically.
+Status: **complete**
 
-The following candidates remain recorded without priority or order:
+The [approved contract](docs/proposals/stage_48_self_hosted_testing.md) replaces
+the self-hosted compiler's monolithic test executable with independently
+cacheable and executable Bazel targets backed by test support written in Cloth.
 
-- complete parser parity and authority transfer after the definition pass; and
+Objective: make Bazel authoritative for repository testing in `F:\Cloth` while
+keeping Shuttle the public project/package build system and retaining the
+frozen C++ compiler solely as bootstrap and observable-behavior oracle.
+
+Prerequisite: Stage 47.
+
+Deliverables:
+
+1. **48.1 — Contract and repository foundation (complete).** Freeze authority,
+   Bazel/Shuttle ownership, bootstrap inputs, rule and test-result contracts,
+   declared source staging, suite taxonomy, migration, security,
+   compatibility, and non-goals. Pin Bazel 9.2.0, declare the Bzlmod root and
+   Cloth toolchain type, and ignore generated Bazel links.
+2. **48.2 — Rules and Cloth test support (complete).** Implement the declared
+   bootstrap toolchain, package providers, `cloth_library`, `cloth_binary`,
+   `cloth_test`, generated test entry and runfiles support, assertions, typed
+   failures, and focused rule coverage.
+3. **48.3 — Self-hosted test migration (complete).** Replace
+   `BootstrapMain.co` with independent lexer, parser, syntax, parity, GC,
+   failure, depth, and resource targets; establish presubmit and full suites;
+   demonstrate result equivalence; and retain one Shuttle compatibility test.
+4. **48.4 — Integration and authority audit (complete).** Verify hermetic
+   declared inputs, clean/warm caching, deterministic artifacts, parallel
+   execution, Windows paths, failed output, timeouts, both Cloth targets,
+   cross-compiler parity, old/new coverage equivalence, documentation, and
+   repository gates. Make Bazel authoritative for self-hosted tests and retire
+   superseded orchestration.
+
+Stage 48 changes no Cloth syntax, artifact, ABI, standard-library, editor,
+Shuttle, compiler-process, or receipt contract. Compatibility remains
+artifact/compiler/runtime **8/7/11**, schemas **2/1/1/1**, and `cloth`
+**v0.5.0**. Parser authority remains with C++.
+
+## Stage 49: Self-hosted frontend integration and parser authority
+
+Status: **complete — 49.4 authority audit passed 2026-09-10**
+
+The [approved contract](docs/proposals/stage_49_self_hosted_frontend_authority.md)
+turns the verified self-hosted lexer and two-pass parser into one deterministic
+production package frontend, gives compiler diagnostics a structured
+presentation boundary, and transfers parser authority only after a complete
+differential audit.
+
+Objective: make the Cloth implementation own production package lexing and
+parsing without turning the frontend into a source-discovery, semantic,
+build-system, or test-dispatch layer.
+
+Prerequisite: Stage 48.
+
+Deliverables:
+
+1. **49.1 — Frontend authority contract (complete).** Freeze Shuttle, Bazel,
+   driver, and frontend ownership; explicit package source inputs; path-derived
+   source and file-class identity; managed result lifetimes; phase behavior;
+   structured diagnostics; deterministic ordering; security; compatibility;
+   authority transfer; tests; and non-goals.
+2. **49.2 — Package frontend coordinator (complete).** Implement package
+   inputs, derived identities, file/package results, deterministic validation
+   and ordering, production phase composition, lifetime verification, and
+   focused Bazel coverage.
+3. **49.3 — Production diagnostics and driver (complete).** Implement exhaustive
+   diagnostic catalogs, safe deterministic rendering, related notes, standard-
+   stream and status behavior, and route the self-hosted `check` command
+   through the production coordinator.
+4. **49.4 — Integration and authority audit (complete).** Close package, malformed,
+   recovery, resource, GC, determinism, target, real-project, cross-compiler,
+   build-system, documentation, and repository gates; then transfer parser
+   authority to the self-hosted frontend.
+
+Stage 49 changes no Cloth syntax, artifact format, compiler ABI, editor,
+Shuttle schema, compiler-process, or receipt contract. The 49.3 standard-error
+foundation advances runtime ABI to **12** and compiler-paired `cloth` to
+**v0.6.0**. Compatibility is artifact/compiler/runtime **8/7/12** with schemas
+**2/1/1/1**. The self-hosted package frontend is authoritative for lexing and
+parsing; the C++ implementation remains the bootstrap and differential oracle.
+
+## Beyond Stage 49
+
+Stages 45, 45.5, 46, 47, 48, and 49 are complete. The
+remaining backlog does not acquire priority or enter the Cloth 1.0 scope
+automatically.
+
+The following candidate remains recorded without priority or order:
+
 - immutable per-case enum metadata, after its constant-data prerequisites.
 
-These candidates follow completion of their prerequisites and approved stages.
-Each candidate still requires its own stage charter, dependency review,
-non-goals, approved language or optimizer contract, concrete `TODO.md` items,
-and explicit implementation go-ahead. Inclusion here does not activate or
-reserve a stage number for any candidate.
+This candidate follows completion of its prerequisites and approved stages. It
+still requires its own stage charter, dependency review, non-goals, approved
+language or optimizer contract, concrete `TODO.md` items, and explicit
+implementation go-ahead. Inclusion here does not activate or reserve a stage
+number.

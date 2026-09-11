@@ -681,6 +681,9 @@ int runtime_failure_scenario(std::string_view scenario) {
   if (scenario == "console_status") {
     static_cast<void>(cloth_rt_console_read_line(nullptr));
   }
+  if (scenario == "console_error_null") {
+    cloth_rt_console_write_error(nullptr);
+  }
   if (scenario == "file_status") {
     void* path = cloth_rt_string_literal("missing", 7);
     static_cast<void>(cloth_rt_file_read_bytes(path, nullptr));

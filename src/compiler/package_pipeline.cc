@@ -509,6 +509,11 @@ std::vector<ArtifactSymbol> artifact_symbols(
                        ArtifactSymbolRole::kRequirement,
                        ArtifactSymbolKind::kRuntime, "c:ptr(ptr)"});
     symbols.try_emplace(
+        "cloth_rt_console_write_error",
+        ArtifactSymbol{"cloth_rt_console_write_error", std::nullopt,
+                       ArtifactSymbolRole::kRequirement,
+                       ArtifactSymbolKind::kRuntime, "c:void(ptr)"});
+    symbols.try_emplace(
         "cloth_rt_file_read_bytes",
         ArtifactSymbol{"cloth_rt_file_read_bytes", std::nullopt,
                        ArtifactSymbolRole::kRequirement,

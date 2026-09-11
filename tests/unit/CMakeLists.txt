@@ -157,6 +157,12 @@ add_test(NAME cloth_runtime_console_status
         "-DCLOTH_PROGRAM_ARGUMENTS=console_status"
         "-DCLOTH_EXPECTED_ERROR=standard input status pointer is null"
         -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
+add_test(NAME cloth_runtime_console_error_null
+    COMMAND ${CMAKE_COMMAND}
+        "-DCLOTH_PROGRAM=$<TARGET_FILE:cloth_runtime_tests>"
+        "-DCLOTH_PROGRAM_ARGUMENTS=console_error_null"
+        "-DCLOTH_EXPECTED_ERROR=null string"
+        -P ${PROJECT_SOURCE_DIR}/tests/integration/RunProgram.cmake)
 add_test(NAME cloth_runtime_file_read
     COMMAND cloth_runtime_tests file_read
             ${PROJECT_BINARY_DIR}/runtime-file-read.bin)

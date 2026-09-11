@@ -6,6 +6,8 @@ cmake_minimum_required(VERSION 3.25)
 
 project(Cloth VERSION 0.5.0 LANGUAGES CXX)
 
+set(CLOTH_STANDARD_LIBRARY_VERSION "0.6.0")
+
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
 include(ClothOptions)

@@ -669,6 +669,7 @@ class ModuleEmitter {
            << "declare void @cloth_rt_print_object(ptr)\n"
            << "declare void @cloth_rt_print_newline()\n"
            << "declare ptr @cloth_rt_console_read_line(ptr)\n"
+           << "declare void @cloth_rt_console_write_error(ptr)\n"
            << "declare ptr @cloth_rt_file_read_bytes(ptr, ptr)\n"
            << "declare i8 @cloth_rt_parse_primitive(i8, ptr, ptr)\n\n";
     for (const unsigned int width : {8U, 16U, 32U, 64U}) {
@@ -4218,6 +4219,19 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
       emit_console_read_line(instruction, call, symbol, output);
       return;
     }
+    if (symbol.intrinsic == IntrinsicKind::kConsoleWriteError) {
+      if (call.arguments.size() != 1 || call.receiver || instruction.result ||
+          !symbol.is_static || symbol.parameter_types.size() != 1 ||
+          symbol.parameter_types[0] != module_.semantics().string_type() ||
+          symbol.type != module_.semantics().void_type()) {
+        module_.report(instruction.range,
+                       "invalid console error intrinsic reached LLVM lowering");
+        return;
+      }
+      output << "  call void @cloth_rt_console_write_error(ptr "
+             << value(call.arguments[0]) << ")\n";
+      return;
+    }
     if (symbol.intrinsic == IntrinsicKind::kFileReadBytes) {
       emit_file_read_bytes(instruction, call, symbol, output);
       return;
@@ -4350,6 +4364,7 @@ void BodyEmitter::emit_call(const MirInstruction& instruction,
                << ")\n";
         break;
       case IntrinsicKind::kConsoleReadLine:
+      case IntrinsicKind::kConsoleWriteError:
       case IntrinsicKind::kFileReadBytes:
       case IntrinsicKind::kObjectEquals:
       case IntrinsicKind::kObjectHashCode:

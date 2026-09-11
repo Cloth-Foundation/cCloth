@@ -24,6 +24,8 @@ cursor traversal under runtime ABI 7. Stage 40.3 adds allocating, checked
 Unicode-scalar string slicing under runtime ABI 8.
 Stage 41.3 adds tagged nullable-value assertion validation under runtime ABI 9.
 Stage 43.2 adds bounded regular-file byte input under runtime ABI 10.
+Stage 49.3 adds deterministic standard-error string output under runtime ABI
+12; runtime ABI 11 introduced managed value boxes during Stage 45.5.
 
 ## Source contract
 
@@ -34,6 +36,8 @@ print(T): no value
 println(T): no value
 println(): no value
 cloth.io::File.ReadBytes(string): byte[] throws IoError
+cloth.io::Console.WriteError(string): void
+cloth.io::Console.WriteErrorLine(string): void
 ```
 
 `T` covers every primitive, `object`, and `null`; file classes and arrays widen

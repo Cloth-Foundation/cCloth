@@ -87,8 +87,14 @@ Stage 45 is complete following its separately authorized 45.4 syntax-tree exit
 audit on 2026-09-09. Stage 45.5 is complete following its 45.5d integration and
 exit audit on 2026-09-09. Stage 46 is complete following its 46.4 declaration-
 parser exit audit on 2026-09-09. Stage 47 is complete following its 47.4
-definition-parser exit audit on 2026-09-10. The C++ parser remains authoritative
-until the complete parser authority-transfer audit.
+definition-parser exit audit on 2026-09-10.
+Stage 48 is complete following its Bazel authority audit on 2026-09-10. Bazel
+owns self-hosted compiler test orchestration; Shuttle remains the public
+project/package build system, and the C++ compiler remains frozen.
+Stage 49 is complete following its 49.4 authority audit on 2026-09-10. The
+self-hosted package frontend is authoritative for lexing and parsing. The
+frozen C++ implementation remains the bootstrap and declared differential
+oracle.
 
 ## Scheduled work
 
@@ -1578,6 +1584,154 @@ class override validation. Existing ABI and artifact versions are unchanged.
   corpus. All 354 ordinary tests and the complete self-host gate pass in both
   development and ASan/UBSan configurations. Compatibility remains unchanged.
 
+### Stage 48: Self-hosted testing and Bazel orchestration
+
+- [x] **48.1 — Contract and repository foundation.** Freeze the C++ bootstrap
+  boundary, Bazel/Shuttle ownership, explicit bootstrap toolchain closure,
+  Starlark rule and provider contracts, test result behavior, source staging,
+  runfiles, suite taxonomy, migration, security, compatibility, and non-goals.
+  Pin Bazel, create the Bzlmod root, declare the Cloth toolchain type, and keep
+  Bazel outputs out of source control.
+
+  Approved and completed 2026-09-10. The
+  [contract](docs/proposals/stage_48_self_hosted_testing.md) assigns new test
+  infrastructure exclusively to `F:\Cloth`, prohibits invoking Shuttle inside
+  compilation actions, reserves compiler protocol 2 as the Starlark process
+  boundary, and defines the future bootstrap-to-self-hosted toolchain swap.
+  The self-hosted repository pins Bazel 9.2.0, declares the
+  `cloth_compiler` module and `//tools/bazel/cloth:toolchain_type`, configures
+  concise failure/progress output, and ignores generated Bazel links. Bazel was
+  not installed during the 48.1 verification, so executable validation was
+  deliberately assigned to 48.2. The checkpoint changed no compatibility
+  contract.
+- [x] **48.2 — Rules and Cloth test support.** Implement the explicit bootstrap
+  toolchain repository, `ClothToolchainInfo`, `ClothPackageInfo`,
+  `cloth_library`, `cloth_binary`, `cloth_test`, action-owned source staging,
+  generated entry/runfiles support, repository-private assertions and typed
+  failures written in Cloth, and focused Starlark analysis and execution
+  coverage.
+
+  Completed 2026-09-10 in `F:\Cloth`. The Bzlmod extension imports and validates
+  an explicit compiler, descriptor, recursive standard-library source closure,
+  Python action runtime, and Windows compiler-runtime closure. Private Starlark
+  rules stage declared sources, invoke protocol 2 without a shell, validate
+  receipts, propagate deterministic package closures, link binaries, generate
+  test entries, and publish Bazel runfiles. The Cloth `testing` package provides
+  typed failures and scalar, string, enum/value-box, object, and null assertions
+  with stable expected/actual diagnostics. Focused positive, declared-runfile,
+  and intentional-failure targets validate execution; the production self-hosted
+  `clothc` also builds and runs through Bazel. Warm actions reuse cached outputs.
+  No C++ feature, Cloth syntax, public standard-library surface, Shuttle path,
+  or compatibility number changed.
+- [x] **48.3 — Self-hosted test migration.** Replace the monolithic
+  `BootstrapMain.co` routing ladder with independently named lexer, parser,
+  syntax, parity, GC, failure, depth, and resource targets. Establish
+  `//tests:presubmit` and `//tests:full`, preserve fixtures and exact result
+  coverage, and retain one explicit Shuttle compatibility target.
+
+  Completed 2026-09-10 in `F:\Cloth`. A shared self-host support package and
+  thin Cloth assertion adapters expose independent lexer, declaration,
+  definition, expression, syntax-arena, syntax-sequence, syntax-tree, GC, and
+  depth/resource processes. Four record writers are standalone `cloth_binary`
+  tools with exact-output parity targets. All 37 failure-injection modes are
+  independently addressable and require nonzero status, empty stdout, and the
+  expected diagnostic. `//tests:presubmit` passed 11 targets; `//tests:full`
+  passed all 60 targets, including an isolated Shuttle check staged beneath
+  `TEST_TMPDIR`. The refreshed legacy executable passed its default ladder and
+  agreed with the focused lexical, declaration, and definition record outputs.
+  The legacy dispatcher remains only for the complete Stage 48.4 equivalence
+  and authority audit. No compiler feature, language syntax, public library
+  surface, artifact, ABI, schema, or Shuttle protocol changed.
+- [x] **48.4 — Integration and authority audit.** Verify declared-input
+  hermeticity, clean and warm caching, deterministic artifacts, parallel
+  execution, Windows paths, failed-output safety, timeouts, x86-64 and wasm32,
+  cross-compiler parity, old/new coverage equivalence, documentation, and
+  repository gates. Make Bazel authoritative for tests in `F:\Cloth` and
+  retire only the superseded self-host orchestration.
+
+  Completed 2026-09-10 in `F:\Cloth`. Bazel's full suite now contains 61
+  independently reported targets and is authoritative for self-hosted compiler
+  testing. The declared C++/Cloth differential target covers the locked 599,
+  32/177, and 43/177 lexer/declaration/definition corpus dimensions in parallel.
+  The Shuttle audit stages only declared files under a Windows path containing
+  spaces, proves deterministic x86-64 cold/warm artifacts, runs the native
+  binary, checks wasm32, and preserves completed output after an invalid
+  rebuild. Independent clean roots produced byte-identical compiler package,
+  receipt, and executable outputs; clean presubmit passed in 63.35 seconds and
+  its warm rerun used 11 cache hits in 0.33 seconds. The uncached eight-worker
+  full suite passed 61/61 in 69.34 seconds, and the manual one-second probe was
+  classified as `TIMEOUT`. The legacy `BootstrapMain.co` dispatcher and CMake
+  `cloth_self_host_frontend` bridge are removed. Compatibility is unchanged.
+
+### Stage 49: Self-hosted frontend integration and parser authority
+
+- [x] **49.1 — Frontend authority contract.** Freeze ownership, explicit
+  package sources, logical-path and implicit-class identity, managed result
+  lifetimes, phase composition, structured and rendered diagnostics,
+  deterministic ordering, security, authority transfer, compatibility, tests,
+  and non-goals.
+
+  Approved 2026-09-10. The
+  [contract](docs/proposals/stage_49_self_hosted_frontend_authority.md) keeps
+  discovery with Shuttle, Bazel, or the direct driver and gives the frontend an
+  explicit immutable package source set. It derives `fib.api.Data` from owning
+  package `fib` and logical path `api/Data.co`, sorts normalized paths by UTF-8
+  bytes, rejects duplicates and ASCII-case collisions, and retains complete
+  lexer/parser ownership in immutable file and package results. Lexical failure
+  skips parsing only for that file; lexically valid files run both parser
+  passes. Stage 49.3 owns exhaustive safe diagnostic rendering. The checkpoint
+  changes documentation only and leaves compatibility unchanged.
+- [x] **49.2 — Package frontend coordinator.** Implement package source/input,
+  per-file and package result types, path-derived identity, deterministic input
+  validation and ordering, phase composition, managed-lifetime verification,
+  mixed-validity behavior, and focused Bazel tests.
+
+  Completed 2026-09-10 in `F:\Cloth`. Seven production types now own validated
+  package identities, printable-ASCII logical paths, immutable sorted source
+  sets, exact owner/source/file identities, per-file phase results, and package
+  publication. The coordinator shares one package constant budget, isolates
+  lexical failures to their file, runs both parser passes for every lexically
+  valid file, and retains complete managed result graphs. Declaration outlines
+  and syntax trees now preserve the owning package separately without changing
+  source-package import spelling. Two focused executable tests and twelve
+  invalid-input/publication cases pass. The authoritative presubmit suite and
+  the 609/32/184/43/184 C++ differential corpus pass. Driver routing and
+  diagnostic presentation remain assigned to 49.3; compatibility is unchanged.
+- [x] **49.3 — Production diagnostics and driver.** Implement exhaustive lexer
+  and parser diagnostic catalogs, safe deterministic primary and related
+  rendering, standard-error and process-status behavior, and route the
+  self-hosted single-file `check` command through the package coordinator.
+
+  Completed 2026-09-10 across `F:\Cloth`, the compiler runtime, and the paired
+  standard library. Exhaustive enum switches own all 22 lexer and 125 parser
+  messages. One renderer emits canonical file/line/column errors and immediate
+  related notes, escapes C0/C1 controls and backslashes in paths, and keeps
+  check stdout empty. The production driver now constructs a standalone
+  package input and calls `FrontendCoordinator.Check`; exact success, lexical,
+  parser, related-note, path-escape, request-status, and stream tests pass.
+  `DiagnosticSeverity` is semantic; future presentation presets remain a
+  separate deferred contract. The new standard-error bridge publishes
+  `Console.WriteError`/`WriteErrorLine`, runtime ABI 12, and `cloth` v0.6.0;
+  artifact/compiler and schemas remain 8/7 and 2/1/1/1.
+- [x] **49.4 — Integration and authority audit.** Verify package identity,
+  malformed and mixed-validity inputs, exact diagnostics, recovery, resource
+  bounds, GC, determinism, both targets, real projects, complete cross-compiler
+  parity, Bazel and Shuttle gates, documentation, and repository hygiene; then
+  record the explicit parser authority transfer.
+
+  Completed 2026-09-10. The uncached Bazel full suite passes all 82 targets.
+  Exact differential records agree across 614 lexer inputs, 32 bounded and 188
+  production declaration inputs, and 43 bounded and 188 production definition
+  inputs. The isolated Shuttle audit passes relocated parallel x86-64 cold and
+  warm builds, native execution, wasm32 checking, deterministic reuse, and
+  failed-output preservation. Development and Clang ASan/UBSan unit suites each
+  pass 85 entries; the sanitized compiler checks the complete production
+  self-hosted package on both targets. All 51 ordinary Shuttle tests, formatting,
+  warning-denied Clippy, documentation links, and repository checks pass. No
+  unexplained divergence remains, so package lexer and parser authority moves
+  to the self-hosted frontend. Compatibility remains 8/7/12 and 2/1/1/1 with
+  compiler-paired `cloth` v0.6.0.
+
 ## Unscheduled backlog
 
 These entries are intentionally unnumbered. They cannot be pulled into an
@@ -1649,14 +1803,6 @@ active stage without first updating `ROADMAP.md`.
   range, binding, destructuring, async, or iterable contracts independently.
 - Allow multidimensional array types (`object[][][]`).
 
-### Bootstrap compiler
-
-- Stage 47 owns the self-hosted definition pass while preserving Stage 46's
-  immutable outlines, exact deferred ranges, and the two-pass architecture.
-- Transfer parser authority away from C++ only after a separately approved full
-  differential parser audit covers declarations, definitions, diagnostics,
-  recovery, resource bounds, and real-project behavior.
-
 ### Strings, formatting, and representation
 
 - Add interpolation and type-checked formatting.
@@ -1689,6 +1835,9 @@ active stage without first updating `ROADMAP.md`.
 - Add selectable optimization levels and debug information.
 - Add platform packaging and distribution tooling.
 - Add ability for Shuttle to build to .lib or .a (Linux/MacOS) for library files.
+- Add a separately approved rich diagnostic renderer after 49.4. Preserve the
+  semantic `DiagnosticSeverity` enum and define output presets/configuration
+  independently for source excerpts, labels, color, and machine records.
 
 ### Memory management
 
