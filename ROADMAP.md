@@ -88,6 +88,7 @@ and deliberate deferrals are recorded in `TODO.md`.
 | 47 | Self-hosted definition parser and verified full-tree publication |
 | 48 | Bazel-owned self-hosted compiler testing and isolated test targets |
 | 49 | Self-hosted package frontend integration and parser authority transfer |
+| 50 | Self-hosted package semantics and declared type resolution |
 
 Stage 45 is complete following its separately authorized
 [45.4 exit audit](docs/testing.md#stage-454-self-hosted-syntax-tree-exit-audit)
@@ -106,6 +107,11 @@ Stage 49 is complete following its package-frontend authority audit on
 2026-09-10. The self-hosted frontend now owns package lexing and parsing. The
 frozen C++ frontend remains the bootstrap and a declared differential oracle,
 not the production frontend authority.
+Stage 50 is complete following its semantic-authority audit on 2026-09-12.
+The self-hosted compiler now owns package symbols, canonical semantic type
+identity, import binding, and declared type-name resolution. The frozen C++
+compiler remains the bootstrap and differential oracle for later semantic and
+lowering stages.
 Stages 35 and 36 are complete, including their standard-library and prelude
 exit audits.
 Coordinated toolchain Stage 22 and separate-compilation Stage 23 are complete,
@@ -1700,9 +1706,50 @@ foundation advances runtime ABI to **12** and compiler-paired `cloth` to
 **2/1/1/1**. The self-hosted package frontend is authoritative for lexing and
 parsing; the C++ implementation remains the bootstrap and differential oracle.
 
-## Beyond Stage 49
+## Stage 50: Self-hosted semantic identity and name resolution
 
-Stages 45, 45.5, 46, 47, 48, and 49 are complete. The
+Status: **complete — 50.4 authority audit passed 2026-09-12**
+
+The [approved contract](docs/proposals/stage_50_self_hosted_semantic_foundation.md)
+builds deterministic package symbols, canonical semantic type identity, import
+scopes, and declared type-name resolution directly on the authoritative Stage
+49 package frontend.
+
+Objective: make the Cloth implementation own the complete namespace and
+declared-type semantic boundary without mixing it with source discovery,
+expression type checking, HIR construction, or the compiler driver.
+
+Prerequisite: Stage 49.
+
+Deliverables:
+
+1. **50.1 — Semantic model contract (complete).** Freeze authority, semantic
+   inputs, local and persistent identity, type and symbol domains, visibility,
+   import lookup, deterministic construction, immutable results, diagnostics,
+   resources, organization, compatibility, verification, and non-goals.
+2. **50.2 — Package symbols and type identity (complete).** Implement checked local
+   handles, persistent identities, immutable semantic inputs/results, core and
+   nominal type registration, declaration symbols, deterministic indexes,
+   validation, diagnostics, and focused GC/resource tests.
+3. **50.3 — Imports and declared type-name resolution (complete).** Implement local,
+   dependency, alias, wildcard, prelude, and core scopes; bind every declared
+   type syntax; preserve recovery and related diagnostics; and add exhaustive
+   valid, invalid, and differential coverage.
+4. **50.4 — Integration and authority audit (complete).** Close production-package,
+   dependency-view, malformed, determinism, resource, GC, target,
+   cross-compiler, Bazel, Shuttle, documentation, and repository gates; then
+   transfer authority for the Stage 50 semantic boundary.
+
+Stage 50 changes no Cloth grammar, artifact, ABI, standard-library, editor,
+Shuttle, compiler-process, receipt, or toolchain-metadata contract.
+Compatibility remains artifact/compiler/runtime **8/7/12**, schemas
+**2/1/1/1**, and compiler-paired `cloth` **v0.6.0**. The frozen C++ compiler
+remains the bootstrap and differential oracle for boundaries not transferred
+by Stage 50.
+
+## Beyond Stage 50
+
+Stages 45, 45.5, 46, 47, 48, 49, and 50 are complete. The
 remaining backlog does not acquire priority or enter the Cloth 1.0 scope
 automatically.
 

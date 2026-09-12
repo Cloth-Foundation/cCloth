@@ -95,6 +95,11 @@ Stage 49 is complete following its 49.4 authority audit on 2026-09-10. The
 self-hosted package frontend is authoritative for lexing and parsing. The
 frozen C++ implementation remains the bootstrap and declared differential
 oracle.
+Stage 50 is complete following its 50.4 semantic-authority audit on
+2026-09-12. The self-hosted compiler owns package symbols, canonical semantic
+type identity, import binding, and declared type-name resolution. Later
+semantic and lowering boundaries remain with the frozen C++ bootstrap until
+their own scheduled authority audits.
 
 ## Scheduled work
 
@@ -1731,6 +1736,79 @@ class override validation. Existing ABI and artifact versions are unchanged.
   unexplained divergence remains, so package lexer and parser authority moves
   to the self-hosted frontend. Compatibility remains 8/7/12 and 2/1/1/1 with
   compiler-paired `cloth` v0.6.0.
+
+### Stage 50: Self-hosted semantic identity and name resolution
+
+- [x] **50.1 — Semantic model contract.** Freeze semantic inputs, local and
+  persistent identity, type and symbol domains, capitalization visibility,
+  import lookup, deterministic construction, immutable results, diagnostics,
+  resource behavior, organization, compatibility, verification, authority,
+  and non-goals.
+
+  Completed 2026-09-10 in
+  `docs/proposals/stage_50_self_hosted_semantic_foundation.md`. The contract
+  consumes the authoritative package frontend, keeps dependency aliases out of
+  identity, preserves compiler ABI 7 canonical identities and nullable overload
+  erasure, fixes the existing local/import/wildcard/prelude/core lookup order,
+  and separates declared type-name resolution from expression type checking.
+  It introduces no source or compatibility change.
+- [x] **50.2 — Package symbols and type identity.** Implement checked local
+  handles, persistent identities, immutable semantic inputs/results, core and
+  nominal type registration, declaration symbols, deterministic indexes,
+  validation, diagnostics, and focused GC/resource tests.
+
+  Completed 2026-09-11 in `F:\Cloth`. Result-owned file, type, and symbol
+  handles reject cross-result use without exposing their owner token. The
+  implementation registers the fixed core catalog, local and detached nominal
+  types, file/self/member symbols, canonical `cloth.lang.Object`, field and enum
+  member identities, immutable verified results, and sorted nominal/member
+  indexes. Named budgets cover files, dependencies, types, symbols,
+  diagnostics, structural depth, and retained name bytes. Focused valid, GC,
+  resource, malformed-view, alias, host-path, and foreign-handle tests pass.
+  The expanded 664-lexer, 32/226-declaration, and 43/226-definition corpus has
+  exact C++/Cloth frontend parity. All 20 presubmit targets pass. Callable
+  member identities intentionally finalize in 50.3 after their parameter
+  `TypeSyntax` values are bound.
+- [x] **50.3 — Imports and declared type-name resolution.** Implement local,
+  dependency, exact, alias, wildcard, prelude, and core scopes; bind every
+  declared `TypeSyntax`; preserve recovery and related diagnostics; and add
+  exhaustive valid, invalid, and differential coverage.
+
+  Completed 2026-09-11 in `F:\Cloth`. Immutable file scopes resolve the current
+  file, current package, exact and aliased imports, nonrecursive wildcards,
+  direct dependencies, recursive `cloth.lang` prelude types, and core aliases
+  through canonical sorted indexes. Every type position in file headers,
+  declarations, constructor initializers, bodies, conversions, array
+  construction, loops, and type tests publishes a result-owned binding or a
+  recovery binding with structured diagnostics. Structural array/nullability
+  identities are interned, callable identities erase nullable parameter
+  wrappers, and invalid overload collisions remain ambiguous. Focused valid,
+  invalid, determinism, ownership, GC, and ten failure-process contracts pass.
+  Exact differential parity covers 693 lexer inputs, 32/247 declaration inputs,
+  and 47/247 definition inputs; all 21 presubmit and 95 full-suite targets
+  pass. The driver and semantic authority remain unchanged until 50.4.
+- [x] **50.4 — Integration and authority audit.** Verify production packages,
+  dependency views, malformed inputs, determinism, resources, GC, both targets,
+  complete cross-compiler parity, Bazel and Shuttle gates, documentation, and
+  repository hygiene; then transfer authority for the Stage 50 semantic
+  boundary.
+
+  Completed 2026-09-12 across `cCloth` and `F:\Cloth`. The production driver
+  now composes the Stage 49 frontend with the Stage 50 semantic collector and
+  renders structured semantic diagnostics without owning semantic state.
+  Canonical semantic records match the frozen C++ oracle for two focused valid
+  and invalid inputs; repeated, relocated, and parallel records are identical.
+  The full 248-source compiler package resolves with five detached standard-
+  library types, producing 253 semantic files, 410 types, and 3,314 symbols.
+  Exact frontend parity covers 697 lexer inputs, 32 bounded and 248 production
+  declaration inputs, and 47 bounded and 248 production definition inputs.
+  All 355 development and 355 sanitizer CTests, 22 Bazel presubmit targets,
+  and the uncached 96-target Bazel full suite pass. Shuttle x86-64 cold/warm,
+  native execution, wasm32 checking, and failed-output preservation also pass.
+  The complete production package also checks on x86-64 and wasm32 through the
+  sanitized bootstrap compiler from an isolated staging tree.
+  Compatibility remains artifact/compiler/runtime **8/7/12**, schemas
+  **2/1/1/1**, and compiler-paired `cloth` **v0.6.0**.
 
 ## Unscheduled backlog
 

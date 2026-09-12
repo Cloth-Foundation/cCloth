@@ -1,5 +1,111 @@
 # Cloth testing and diagnostic builds
 
+## Stage 50.4 semantic authority audit
+
+Completed on Windows on 2026-09-12. The production self-hosted driver now
+composes the authoritative package frontend with `PackageSymbolCollector` and
+renders structured frontend and semantic diagnostics without retaining
+semantic state. A new test-only C++ oracle and Cloth record adapter agree on
+canonical file, member, type, modifier, callable-identity, and diagnostic
+records for two focused semantic inputs. Repeated, relocated, and parallel
+Cloth records are byte-identical.
+
+The complete 248-source compiler package resolves with five detached standard-
+library types and publishes **253 files, 410 types, and 3,314 symbols**. Exact
+differential parity covers **697 lexer inputs**, **32 bounded and 248 production
+declaration inputs**, **47 bounded and 248 production definition inputs**, and
+**two semantic inputs**. The driver suite passes all seven process contracts,
+including an unknown-type failure rendered on standard error with status 1.
+
+All **355 development** and **355 Clang ASan/UBSan** CTests pass. All **22
+Bazel presubmit** targets pass. An uncached `//tests:full` run passes all **96**
+targets in 423.4 seconds. The package-scale targets are exclusive: Shuttle
+passes in 115.8 seconds and cross-compiler parity passes in 206.7 seconds,
+avoiding CPU contention. Shuttle covers x86-64 cold and byte-identical warm
+builds, native execution, wasm32 checking, and failed-output preservation.
+Malformed dependency views, deterministic diagnostics, resource limits,
+foreign handles, retained source ownership, and collection pressure remain
+covered by focused tests.
+
+The complete production package also checks through the Clang ASan/UBSan
+bootstrap compiler from an isolated staging tree. x86-64 completes in 23.58
+seconds and wasm32 in 23.97 seconds, covering every Stage 50 production source
+under instrumentation on both supported targets.
+
+Authority now belongs to the self-hosted implementation for package symbols,
+canonical semantic type identity, import binding, and declared type-name
+resolution. Expression typing, HIR, and later boundaries remain with the
+frozen C++ bootstrap and differential oracle. Compatibility remains
+artifact/compiler/runtime **8/7/12**, schemas **2/1/1/1**, and compiler-paired
+`cloth` **v0.6.0**.
+
+## Stage 50.3 imports and declared type-name resolution
+
+Completed on Windows on 2026-09-11. The self-hosted semantic collector now
+builds immutable per-file import scopes across current-package, exact, alias,
+wildcard, direct-dependency, recursive `cloth.lang` prelude, and core lookup.
+Sorted canonical indexes and binary lookup avoid repeated package rescans;
+stable import events preserve phase/source diagnostic order.
+
+Every declared `TypeSyntax`, including body-local declarations, conversions,
+array construction, loops, and type tests, publishes a result-owned binding or
+an explicit recovery binding. Preflight counts those positions through the same
+exhaustive classification used by binding. Structural shapes are interned and
+resolved callable identities apply nullable overload erasure before duplicate
+validation.
+
+The focused semantic resolution target passes valid, invalid, shuffled-order,
+ownership, privacy, ambiguity, recovery, and complete type-position checks.
+Semantic GC retains scopes, bindings, and source-backed names through 64
+allocation-pressure iterations. Ten independently named semantic failure
+contracts, all 21 presubmit targets, and all 95 full-suite targets pass. Exact
+differential parity covers **693 lexer inputs**, **32 bounded and 247 production
+declaration inputs**, and **47 bounded and 247 production definition inputs**.
+Compatibility remains artifact/compiler/runtime **8/7/12**, schemas
+**2/1/1/1**, and compiler-paired `cloth` **v0.6.0**. The 50.4 audit remains
+required before semantic authority transfers from the frozen C++ compiler.
+
+## Stage 50.2 package symbols and type identity
+
+Completed on Windows on 2026-09-11. Production `src/semantic` now provides
+opaque result-owned handles, persistent nominal/structural/member identities,
+immutable semantic inputs and results, the 22-entry core catalog, canonical
+`cloth.lang.Object` registration, local and detached file/type/member symbols,
+sorted nominal and member indexes, structured registration diagnostics, and
+named resource budgets.
+
+`//tests/self_host/tests:semantic_package_test` passes core and alias identity,
+all nominal kinds, capitalization visibility, public enum cases, source member
+order, dependency shuffling, duplicate ambiguity, canonical Object, recovery,
+and immutable-input checks. `semantic_package_gc_test` retains complete results
+through 64 allocation-pressure iterations. Five independently named semantic
+failure tests pass for foreign handles, dependency limits, host-path injection,
+invalid canonical Object kinds, and dependency/local namespace collisions.
+The complete `//tests:presubmit` suite passes all 20 targets, and the production
+`//src:clothc` target builds successfully.
+
+The expanded differential audit passes **664 lexer inputs**, **32 bounded and
+226 production declaration inputs**, and **43 bounded and 226 production
+definition inputs**. Import scopes, declared `TypeSyntax` binding, callable
+parameter identities, and semantic authority remain scheduled for 50.3 and
+50.4. Compatibility remains artifact/compiler/runtime **8/7/12**, schemas
+**2/1/1/1**, and compiler-paired `cloth` **v0.6.0**.
+
+## Stage 50.1 semantic-model contract
+
+Completed on Windows on 2026-09-10. The approved Stage 50 contract fixes the
+self-hosted semantic input boundary, result-local and persistent identity,
+canonical type and member identity, capitalization visibility, dependency and
+import lookup, deterministic construction, recovery, immutable ownership,
+diagnostics, resource behavior, and the 50.4 authority-transfer gate.
+
+This checkpoint changes documentation only. The unchanged 19-target self-hosted
+Bazel presubmit passes. Local Markdown links, line-length policy, and repository
+diff checks pass. Compatibility remains artifact/compiler/runtime **8/7/12**,
+schemas **2/1/1/1**, and compiler-paired `cloth` **v0.6.0**. Package symbol and
+type-identity implementation begins only at the separately authorized 50.2
+checkpoint.
+
 ## Stage 49.4 package-frontend authority audit
 
 Completed on Windows on 2026-09-10. The self-hosted package frontend is now

@@ -31,6 +31,10 @@ add_executable(cloth_definition_parity_oracle
 target_link_libraries(cloth_definition_parity_oracle PRIVATE cloth_compiler)
 cloth_enable_warnings(cloth_definition_parity_oracle)
 
+add_executable(cloth_semantic_parity_oracle semantic_parity_oracle.cc)
+target_link_libraries(cloth_semantic_parity_oracle PRIVATE cloth_compiler)
+cloth_enable_warnings(cloth_semantic_parity_oracle)
+
 foreach(target IN ITEMS x86_64 wasm32)
     set(standard_library_ir
         "${PROJECT_BINARY_DIR}/cloth-standard-library-${target}.ll")
